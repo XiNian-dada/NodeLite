@@ -1,4 +1,7 @@
+mod history;
+mod snapshot;
 mod state;
+mod ui;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -25,7 +28,10 @@ use ximonitor_proto::{
     ServerNoticeMessage, WireMessage, parse_server_config,
 };
 
+use crate::history::HistoryStore;
+use crate::snapshot::{load_snapshot, spawn_snapshot_persistor};
 use crate::state::SharedState;
+use crate::ui::{index_html, node_html};
 
 #[derive(Debug, Parser)]
 #[command(name = "ximonitor-server")]
@@ -37,6 +43,7 @@ struct Cli {
 
 #[derive(Clone)]
 struct AppState {
+    history: HistoryStore,
     shared: SharedState,
 }
 
@@ -78,10 +85,14 @@ async fn main() -> Result<()> {
     let public_base_url = config.public_base_url.clone();
     let refresh_interval_secs = config.refresh_interval_secs;
     let shared = SharedState::new(Arc::clone(&config));
+    let history = HistoryStore::new(config.history_db_path.clone());
+    history.initialize().await;
+    restore_snapshot_if_available(&shared, config.snapshot_path.as_path()).await;
 
     spawn_stale_reaper(shared.clone());
+    spawn_snapshot_persistor(shared.clone(), config.snapshot_path.clone());
 
-    let state = AppState { shared };
+    let state = AppState { history, shared };
     let app = Router::new()
         .route("/", get(index))
         .route("/nodes/:node_id", get(node_detail))
@@ -90,6 +101,7 @@ async fn main() -> Result<()> {
         .route("/api/overview", get(overview))
         .route("/api/nodes", get(nodes))
         .route("/api/nodes/:node_id", get(node_status))
+        .route("/api/nodes/:node_id/history", get(node_history))
         .route("/ws", get(ws_handler))
         .with_state(state)
         .layer(TraceLayer::new_for_http());
@@ -137,67 +149,17 @@ async fn load_server_config(path: &Path) -> Result<ServerConfig> {
     Ok(config)
 }
 
-async fn index() -> Html<&'static str> {
-    Html(
-        r#"<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>XiMonitor</title>
-    <style>
-      :root {
-        color-scheme: light;
-        font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
-        background: linear-gradient(135deg, #f3efe3 0%, #f9f7f1 55%, #e9f0f5 100%);
-        color: #17212b;
-      }
-      body {
-        margin: 0;
-        min-height: 100vh;
-        display: grid;
-        place-items: center;
-      }
-      main {
-        width: min(720px, calc(100vw - 32px));
-        background: rgba(255, 255, 255, 0.82);
-        border: 1px solid rgba(23, 33, 43, 0.08);
-        border-radius: 24px;
-        padding: 40px;
-        box-shadow: 0 24px 80px rgba(23, 33, 43, 0.12);
-        backdrop-filter: blur(20px);
-      }
-      h1 {
-        font-size: clamp(2.5rem, 6vw, 4rem);
-        line-height: 0.95;
-        margin: 0 0 12px;
-      }
-      p {
-        font-size: 1.1rem;
-        line-height: 1.7;
-        margin: 0 0 12px;
-      }
-      code {
-        font-family: "SFMono-Regular", "SF Mono", ui-monospace, monospace;
-      }
-    </style>
-  </head>
-  <body>
-    <main>
-      <h1>XiMonitor</h1>
-      <p>WebSocket ingress is live. Agents can authenticate with a <code>hello</code> message and then stream <code>metrics</code>.</p>
-      <p>Dashboard APIs and node details land in the next commits.</p>
-      <p>Node placeholder route: <code>/nodes/&lt;node_id&gt;</code>.</p>
-    </main>
-  </body>
-</html>"#,
-    )
+async fn index(State(state): State<AppState>) -> Html<String> {
+    Html(index_html(state.shared.config().refresh_interval_secs))
 }
 
-async fn node_detail(AxumPath(node_id): AxumPath<String>) -> Html<String> {
-    Html(format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>XiMonitor Node</title></head><body><main><h1>{}</h1><p>Read-only node details will be rendered here in the next commit.</p></main></body></html>",
-        html_escape(&node_id)
+async fn node_detail(
+    State(state): State<AppState>,
+    AxumPath(node_id): AxumPath<String>,
+) -> Html<String> {
+    Html(node_html(
+        &node_id,
+        state.shared.config().refresh_interval_secs,
     ))
 }
 
@@ -233,12 +195,25 @@ async fn node_status(
     }
 }
 
+async fn node_history(
+    State(state): State<AppState>,
+    AxumPath(node_id): AxumPath<String>,
+) -> Response {
+    match state.history.query_recent_history(&node_id).await {
+        Ok(points) => Json(points).into_response(),
+        Err(error) => {
+            error!(node_id = %node_id, error = ?error, "failed to query node history");
+            (StatusCode::SERVICE_UNAVAILABLE, "history store unavailable").into_response()
+        }
+    }
+}
+
 async fn ws_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> impl IntoResponse {
     let max_message_bytes = state.shared.config().max_message_bytes;
     ws.max_frame_size(max_message_bytes)
         .max_message_size(max_message_bytes)
         .on_upgrade(move |socket| async move {
-            if let Err(error) = handle_socket(state.shared, socket).await {
+            if let Err(error) = handle_socket(state, socket).await {
                 match error {
                     ProtocolError::Client(message) => {
                         warn!(reason = %message, "websocket client disconnected");
@@ -251,7 +226,8 @@ async fn ws_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> impl
         })
 }
 
-async fn handle_socket(shared: SharedState, mut socket: WebSocket) -> Result<(), ProtocolError> {
+async fn handle_socket(state: AppState, mut socket: WebSocket) -> Result<(), ProtocolError> {
+    let shared = state.shared.clone();
     let hello = recv_hello(&mut socket).await?;
     validate_hello(shared.config(), &hello)?;
 
@@ -288,6 +264,9 @@ async fn handle_socket(shared: SharedState, mut socket: WebSocket) -> Result<(),
                         if !shared.update_snapshot(&node_id, session_id, snapshot).await {
                             warn!(node_id = %node_id, session_id, "dropping metrics from superseded session");
                             break Ok(());
+                        }
+                        if let Some(status) = shared.get_status(&node_id).await {
+                            state.history.record_status(&status).await;
                         }
                     }
                     ParsedFrame::Wire(WireMessage::Pong(PongMessage { nonce })) => {
@@ -430,13 +409,19 @@ fn spawn_stale_reaper(shared: SharedState) {
     });
 }
 
-fn html_escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
+async fn restore_snapshot_if_available(shared: &SharedState, path: &Path) {
+    if !path.exists() {
+        return;
+    }
+
+    match load_snapshot(path).await {
+        Ok(statuses) => {
+            shared.restore_statuses(statuses).await;
+        }
+        Err(error) => {
+            warn!(error = ?error, path = %path.display(), "failed to restore snapshot; continuing with empty state");
+        }
+    }
 }
 
 fn init_tracing() {

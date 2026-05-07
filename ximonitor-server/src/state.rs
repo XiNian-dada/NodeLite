@@ -87,6 +87,11 @@ impl SharedState {
         let registry = self.registry.read().await;
         registry.overview()
     }
+
+    pub async fn restore_statuses(&self, statuses: Vec<NodeStatus>) {
+        let mut registry = self.registry.write().await;
+        registry.restore_statuses(statuses);
+    }
 }
 
 #[derive(Debug, Default)]
@@ -261,6 +266,21 @@ impl Registry {
             current_rx_bytes_per_sec,
             current_tx_bytes_per_sec,
             average_latency_ms,
+        }
+    }
+
+    fn restore_statuses(&mut self, statuses: Vec<NodeStatus>) {
+        self.nodes.clear();
+        for mut status in statuses {
+            status.online = false;
+            let node_id = status.identity.node_id.clone();
+            self.nodes.insert(
+                node_id,
+                NodeEntry {
+                    status,
+                    active_session_id: None,
+                },
+            );
         }
     }
 }
