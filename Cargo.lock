@@ -1636,6 +1636,17 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 [[package]]
 name = "ximonitor-agent"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "libc",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "ximonitor-proto",
+]
 
 [[package]]
 name = "ximonitor-proto"
