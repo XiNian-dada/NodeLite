@@ -366,7 +366,7 @@ mod imp {
     }
 
     fn ignored_filesystems() -> &'static [&'static str] {
-        [
+        &[
             "autofs",
             "bpf",
             "cgroup",
