@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -10,6 +12,9 @@ use tokio::fs;
 use tokio::sync::RwLock;
 use url::Url;
 use ximonitor_proto::{NodeIdentity, ReadonlyAuthConfig};
+
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RegisteredNode {
@@ -302,12 +307,13 @@ async fn save_registry_file(path: &Path, file: &RegistryFile) -> Result<()> {
     let payload =
         serde_json::to_string_pretty(file).context("failed to serialize node registry")?;
     let tmp_path = temporary_registry_path(path);
-    fs::write(&tmp_path, payload)
-        .await
+    write_registry_payload(&tmp_path, &payload)
         .with_context(|| format!("failed to write {}", tmp_path.display()))?;
     fs::rename(&tmp_path, path)
         .await
         .with_context(|| format!("failed to replace {}", path.display()))?;
+    harden_registry_permissions(path)
+        .with_context(|| format!("failed to set permissions on {}", path.display()))?;
     Ok(())
 }
 
@@ -317,6 +323,35 @@ fn temporary_registry_path(path: &Path) -> PathBuf {
         .and_then(|value| value.to_str())
         .unwrap_or("server.json");
     path.with_file_name(format!("{file_name}.tmp"))
+}
+
+fn write_registry_payload(path: &Path, payload: &str) -> Result<()> {
+    let mut options = OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+
+    let mut file = options
+        .open(path)
+        .with_context(|| format!("failed to open {}", path.display()))?;
+    file.write_all(payload.as_bytes())
+        .with_context(|| format!("failed to write {}", path.display()))?;
+    Ok(())
+}
+
+fn harden_registry_permissions(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("failed to chmod {}", path.display()))?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+
+    Ok(())
 }
 
 fn validate_registry_file(path: &Path, file: &RegistryFile) -> Result<()> {
@@ -604,6 +639,46 @@ mod tests {
             assert!(registry.reload().await.expect("reload should succeed"));
             assert!(!registry.is_token_current("hk-01", &old_token).await);
             assert!(registry.is_token_current("hk-01", &rotated.node.token).await);
+
+            let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_dir(&temp_dir);
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn issued_registry_file_is_mode_600() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let runtime = Runtime::new().expect("runtime should build");
+        runtime.block_on(async {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock should be monotonic enough")
+                .as_nanos();
+            let temp_dir =
+                std::env::temp_dir().join(format!("ximonitor-registry-mode-test-{unique}"));
+            std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+            let path = temp_dir.join("server.json");
+
+            issue_node(
+                &path,
+                IssueNodeRequest {
+                    node_id: "hk-01".to_string(),
+                    node_label: Some("Hong Kong 01".to_string()),
+                    tags: Vec::new(),
+                    rotate_token: false,
+                },
+            )
+            .await
+            .expect("node should be issued");
+
+            let mode = std::fs::metadata(&path)
+                .expect("metadata should exist")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600);
 
             let _ = std::fs::remove_file(&path);
             let _ = std::fs::remove_dir(&temp_dir);
