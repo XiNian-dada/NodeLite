@@ -37,6 +37,7 @@ impl std::error::Error for ConfigError {}
 pub struct ServerConfig {
     pub listen: SocketAddr,
     pub public_base_url: String,
+    pub readonly_auth: Option<ReadonlyAuthConfig>,
     pub shared_token: Option<String>,
     pub node_registry_path: PathBuf,
     pub history_db_path: PathBuf,
@@ -47,6 +48,12 @@ pub struct ServerConfig {
     pub refresh_interval_secs: u64,
     pub ignored_filesystems: Vec<String>,
     pub agent_release_base_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReadonlyAuthConfig {
+    pub username: String,
+    pub password: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -76,6 +83,8 @@ pub fn parse_agent_config(input: &str) -> Result<AgentConfig, ConfigError> {
 #[serde(deny_unknown_fields)]
 struct RawServerConfigFile {
     server: RawServerSection,
+    #[serde(default)]
+    auth: RawAuthSection,
     #[serde(default)]
     ui: RawUiSection,
     #[serde(default)]
@@ -110,6 +119,13 @@ struct RawServerSection {
 struct RawUiSection {
     #[serde(default = "default_refresh_interval_secs")]
     refresh_interval_secs: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RawAuthSection {
+    username: Option<String>,
+    password: Option<String>,
 }
 
 impl Default for RawUiSection {
@@ -195,6 +211,27 @@ impl RawServerConfigFile {
                 &["http", "https"],
             )?;
         }
+        let readonly_auth = match (
+            self.auth.username.map(|value| value.trim().to_string()),
+            self.auth.password.map(|value| value.trim().to_string()),
+        ) {
+            (Some(username), Some(password)) => {
+                validate_non_empty("auth.username", &username)?;
+                validate_non_empty("auth.password", &password)?;
+                Some(ReadonlyAuthConfig { username, password })
+            }
+            (None, None) => None,
+            (Some(_), None) => {
+                return Err(ConfigError::new(
+                    "auth.password must be set when auth.username is configured",
+                ));
+            }
+            (None, Some(_)) => {
+                return Err(ConfigError::new(
+                    "auth.username must be set when auth.password is configured",
+                ));
+            }
+        };
 
         if self.server.stale_after_secs < 5 {
             return Err(ConfigError::new(
@@ -216,10 +253,16 @@ impl RawServerConfigFile {
                 "ui.refresh_interval_secs must be at least 1 second",
             ));
         }
+        if readonly_auth.is_none() && !listen.ip().is_loopback() {
+            return Err(ConfigError::new(
+                "auth.username and auth.password are required when server.listen is not loopback",
+            ));
+        }
 
         Ok(ServerConfig {
             listen,
             public_base_url: self.server.public_base_url,
+            readonly_auth,
             shared_token,
             node_registry_path: self.server.node_registry_path,
             history_db_path: self.server.history_db_path,
@@ -372,6 +415,7 @@ mod tests {
         .expect("server config should parse");
 
         assert_eq!(config.listen.to_string(), "127.0.0.1:8080");
+        assert_eq!(config.readonly_auth, None);
         assert_eq!(config.shared_token, None);
         assert_eq!(config.max_message_bytes, DEFAULT_MAX_MESSAGE_BYTES);
         assert_eq!(
@@ -445,12 +489,23 @@ mod tests {
             shared_token = "legacy-token"
             node_registry_path = "/etc/ximonitor/server.json"
 
+            [auth]
+            username = "viewer"
+            password = "secret"
+
             [install]
             agent_release_base_url = "https://downloads.example.com/ximonitor/releases/latest/download"
             "#,
         )
         .expect("server config should parse");
 
+        assert_eq!(
+            config
+                .readonly_auth
+                .as_ref()
+                .map(|auth| auth.username.as_str()),
+            Some("viewer")
+        );
         assert_eq!(config.shared_token.as_deref(), Some("legacy-token"));
         assert_eq!(
             config.node_registry_path,
@@ -460,5 +515,19 @@ mod tests {
             config.agent_release_base_url.as_deref(),
             Some("https://downloads.example.com/ximonitor/releases/latest/download")
         );
+    }
+
+    #[test]
+    fn rejects_public_listener_without_auth() {
+        let error = parse_server_config(
+            r#"
+            [server]
+            listen = "0.0.0.0:8080"
+            public_base_url = "https://monitor.example.com"
+            "#,
+        )
+        .expect_err("public listener without auth should fail");
+
+        assert!(error.to_string().contains("auth.username"));
     }
 }

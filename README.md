@@ -68,7 +68,7 @@ mkdir -p config
 cp config/server.example.toml config/server.toml
 ```
 
-2. 修改 `config/server.toml` 中的监听地址、`public_base_url`、`node_registry_path`，以及可选的 `[install].agent_release_base_url`。
+2. 修改 `config/server.toml` 中的监听地址、`public_base_url`、`node_registry_path`、`[auth]` 用户名密码，以及可选的 `[install].agent_release_base_url`。
 
 3. 准备节点清单文件：
 
@@ -111,6 +111,11 @@ cargo run -p ximonitor-server -- \
 - 打印 `agent.toml` 片段
 - 打印一条可直接复制到子机执行的安装命令
 
+注意：
+
+- `/`、`/nodes/*`、`/api/*` 和安装脚本默认受 HTTP Basic Auth 保护
+- `issue-node` 打印的安装命令会自动带上 `curl --user ...`，这样子机可以安全地取到安装脚本
+
 如果你需要轮换某个节点 token，可以追加 `--rotate-token`。
 
 ## Agent 启动
@@ -146,7 +151,7 @@ scripts/install-agent.sh
 示例：
 
 ```bash
-curl -fsSL https://monitor.example.com/install/install-agent.sh | sh -s -- \
+curl -fsSL --user 'viewer:change-this-password' https://monitor.example.com/install/install-agent.sh | sh -s -- \
   --server wss://monitor.example.com/ws \
   --node-id hk-01 \
   --token YOUR_TOKEN \
@@ -173,6 +178,7 @@ sh scripts/install-agent.sh \
 ## 说明
 
 - 网页端默认只读，不提供写配置入口。
+- `/healthz` 和 `/ws` 不走只读面板鉴权；面板、JSON API 和安装脚本走 HTTP Basic Auth。
 - agent 优先使用服务端 `server.json` 中的逐节点 token；旧的 `shared_token` 仅作为兼容迁移手段保留。
 - 首版 agent 只支持 Linux。
 - 当前历史图保存基础趋势，不做长期归档。

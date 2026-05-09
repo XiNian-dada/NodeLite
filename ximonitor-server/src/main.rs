@@ -10,12 +10,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
+use axum::extract::Request;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path as AxumPath, State};
 use axum::http::{StatusCode, header};
+use axum::middleware::{Next, from_fn_with_state};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
+use base64::Engine;
 use clap::{Parser, Subcommand};
 use futures::{SinkExt, StreamExt};
 use serde::Serialize;
@@ -25,8 +28,8 @@ use tokio::time::interval;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn};
 use ximonitor_proto::{
-    HelloMessage, MetricsMessage, NodeSnapshot, PingMessage, PongMessage, ServerConfig,
-    ServerNoticeMessage, WireMessage, parse_server_config,
+    HelloMessage, MetricsMessage, NodeSnapshot, PingMessage, PongMessage, ReadonlyAuthConfig,
+    ServerConfig, ServerNoticeMessage, WireMessage, parse_server_config,
 };
 
 use crate::history::HistoryStore;
@@ -72,6 +75,11 @@ struct AppState {
     shared: SharedState,
 }
 
+#[derive(Debug, Clone)]
+struct ReadonlyRouteAuth {
+    expected_authorization: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct BootstrapResponse {
     service: &'static str,
@@ -104,6 +112,31 @@ impl From<anyhow::Error> for ProtocolError {
     }
 }
 
+impl ReadonlyRouteAuth {
+    fn from_config(config: Option<ReadonlyAuthConfig>) -> Self {
+        let expected_authorization = config.map(|config| {
+            let credentials = format!("{}:{}", config.username, config.password);
+            let encoded = base64::engine::general_purpose::STANDARD.encode(credentials);
+            format!("Basic {encoded}")
+        });
+        Self {
+            expected_authorization,
+        }
+    }
+
+    fn is_authorized(&self, request: &Request) -> bool {
+        let Some(expected_authorization) = self.expected_authorization.as_deref() else {
+            return true;
+        };
+
+        request
+            .headers()
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            == Some(expected_authorization)
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing();
@@ -120,6 +153,7 @@ async fn run_server(config_path: &Path) -> Result<()> {
     let listen_addr = config.listen;
     let public_base_url = config.public_base_url.clone();
     let refresh_interval_secs = config.refresh_interval_secs;
+    let readonly_route_auth = ReadonlyRouteAuth::from_config(config.readonly_auth.clone());
     let registry = NodeRegistry::load(
         config.node_registry_path.as_path(),
         config.shared_token.clone(),
@@ -157,17 +191,23 @@ async fn run_server(config_path: &Path) -> Result<()> {
         registry,
         shared,
     };
-    let app = Router::new()
+    let protected_routes = Router::new()
         .route("/", get(index))
         .route("/nodes/{node_id}", get(node_detail))
-        .route("/healthz", get(healthz))
         .route("/install/install-agent.sh", get(install_agent_script))
         .route("/api/bootstrap", get(bootstrap))
         .route("/api/overview", get(overview))
         .route("/api/nodes", get(nodes))
         .route("/api/nodes/{node_id}", get(node_status))
         .route("/api/nodes/{node_id}/history", get(node_history))
+        .route_layer(from_fn_with_state(
+            readonly_route_auth,
+            require_readonly_auth,
+        ));
+    let app = Router::new()
+        .route("/healthz", get(healthz))
         .route("/ws", get(ws_handler))
+        .merge(protected_routes)
         .with_state(state)
         .layer(TraceLayer::new_for_http());
 
@@ -203,6 +243,7 @@ async fn issue_node_command(config_path: &Path, args: IssueNodeArgs) -> Result<(
     let install_command = render_install_command(
         &config.public_base_url,
         &issued.node,
+        config.readonly_auth.as_ref(),
         config.agent_release_base_url.as_deref(),
     )?;
     let agent_config = render_agent_config(&config.public_base_url, &issued.node)?;
@@ -279,6 +320,23 @@ async fn node_detail(
 
 async fn healthz() -> StatusCode {
     StatusCode::OK
+}
+
+async fn require_readonly_auth(
+    State(auth): State<ReadonlyRouteAuth>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if auth.is_authorized(&request) {
+        return next.run(request).await;
+    }
+
+    (
+        StatusCode::UNAUTHORIZED,
+        [(header::WWW_AUTHENTICATE, "Basic realm=\"XiMonitor\"")],
+        "authentication required",
+    )
+        .into_response()
 }
 
 async fn bootstrap(State(state): State<AppState>) -> impl IntoResponse {
@@ -577,11 +635,13 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use axum::Router;
+    use axum::body::Body;
+    use axum::http::{Request, header};
     use tokio::runtime::Runtime;
 
     use super::{
-        AppState, bootstrap, healthz, index, install_agent_script, node_detail, node_history,
-        node_status, nodes, overview, ws_handler,
+        AppState, ReadonlyRouteAuth, bootstrap, healthz, index, install_agent_script, node_detail,
+        node_history, node_status, nodes, overview, ws_handler,
     };
     use crate::history::HistoryStore;
     use crate::registry::NodeRegistry;
@@ -601,6 +661,7 @@ mod tests {
         let config = Arc::new(ServerConfig {
             listen: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8080)),
             public_base_url: "http://127.0.0.1:8080".to_string(),
+            readonly_auth: None,
             shared_token: None,
             node_registry_path: registry_path,
             history_db_path: PathBuf::from("./data/history.sqlite3"),
@@ -637,5 +698,20 @@ mod tests {
             .route("/ws", get(ws_handler))
             .with_state(state)
             .layer(TraceLayer::new_for_http());
+    }
+
+    #[test]
+    fn readonly_route_auth_matches_basic_header() {
+        let auth = ReadonlyRouteAuth::from_config(Some(ximonitor_proto::ReadonlyAuthConfig {
+            username: "viewer".to_string(),
+            password: "secret".to_string(),
+        }));
+        let request = Request::builder()
+            .uri("/api/overview")
+            .header(header::AUTHORIZATION, "Basic dmlld2VyOnNlY3JldA==")
+            .body(Body::empty())
+            .expect("request should build");
+
+        assert!(auth.is_authorized(&request));
     }
 }

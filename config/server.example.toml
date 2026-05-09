@@ -1,5 +1,5 @@
 [server]
-listen = "0.0.0.0:8080"
+listen = "127.0.0.1:8080"
 public_base_url = "https://monitor.example.com"
 node_registry_path = "./config/server.json"
 history_db_path = "./data/history.sqlite3"
@@ -7,6 +7,10 @@ snapshot_path = "./data/snapshot.json"
 stale_after_secs = 20
 ping_interval_secs = 10
 max_message_bytes = 65536
+
+[auth]
+username = "viewer"
+password = "change-this-password"
 
 [ui]
 refresh_interval_secs = 5

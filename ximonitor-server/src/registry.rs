@@ -8,7 +8,7 @@ use getrandom::fill as fill_random;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 use url::Url;
-use ximonitor_proto::NodeIdentity;
+use ximonitor_proto::{NodeIdentity, ReadonlyAuthConfig};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RegisteredNode {
@@ -189,12 +189,24 @@ pub fn build_install_script_url(public_base_url: &str) -> Result<String> {
 pub fn render_install_command(
     public_base_url: &str,
     node: &RegisteredNode,
+    readonly_auth: Option<&ReadonlyAuthConfig>,
     agent_release_base_url: Option<&str>,
 ) -> Result<String> {
     let script_url = build_install_script_url(public_base_url)?;
     let server_url = build_agent_server_url(public_base_url)?;
+    let mut curl_command = "curl -fsSL".to_string();
+    if let Some(readonly_auth) = readonly_auth {
+        curl_command.push_str(&format!(
+            " --user {}",
+            shell_quote(&format!(
+                "{}:{}",
+                readonly_auth.username, readonly_auth.password
+            ))
+        ));
+    }
+
     let mut lines = vec![
-        format!("curl -fsSL {} | sh -s -- \\", shell_quote(&script_url)),
+        format!("{curl_command} {} | sh -s -- \\", shell_quote(&script_url)),
         format!("  --server {} \\", shell_quote(&server_url)),
         format!("  --node-id {} \\", shell_quote(&node.node_id)),
         format!("  --node-label {} \\", shell_quote(&node.node_label)),
@@ -380,7 +392,7 @@ mod tests {
         IssueNodeRequest, NodeRegistry, RegisteredNode, RegistryFile, build_agent_server_url,
         issue_node, render_install_command,
     };
-    use ximonitor_proto::NodeIdentity;
+    use ximonitor_proto::{NodeIdentity, ReadonlyAuthConfig};
 
     #[test]
     fn agent_server_url_uses_wss_for_https() {
@@ -455,11 +467,16 @@ mod tests {
             let command = render_install_command(
                 "https://monitor.example.com",
                 &issued.node,
+                Some(&ReadonlyAuthConfig {
+                    username: "viewer".to_string(),
+                    password: "secret".to_string(),
+                }),
                 Some("https://downloads.example.com/releases/latest/download"),
             )
             .expect("install command should render");
             assert!(command.contains("--token"));
             assert!(command.contains("/install/install-agent.sh"));
+            assert!(command.contains("--user"));
 
             let _ = std::fs::remove_file(&path);
             let _ = std::fs::remove_dir(&temp_dir);
