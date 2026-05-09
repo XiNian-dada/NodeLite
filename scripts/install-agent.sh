@@ -16,7 +16,8 @@ INSTALL_TOKEN="${XIMONITOR_AGENT_INSTALL_TOKEN:-}"
 INSTALL_TOKEN_FILE="${XIMONITOR_AGENT_INSTALL_TOKEN_FILE:-}"
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/ximonitor"
-BASE_URL="${XIMONITOR_AGENT_BASE_URL:-https://example.invalid/ximonitor/releases/latest/download}"
+BASE_URL="${XIMONITOR_AGENT_BASE_URL:-https://github.com/XiNian-dada/XiMonitor/releases/latest/download}"
+CHECKSUMS_URL="${XIMONITOR_AGENT_CHECKSUMS_URL:-}"
 BINARY_URL="${XIMONITOR_AGENT_BINARY_URL:-}"
 SHA256_X86_64="${XIMONITOR_AGENT_SHA256_X86_64:-}"
 SHA256_AARCH64="${XIMONITOR_AGENT_SHA256_AARCH64:-}"
@@ -29,11 +30,13 @@ UNIT_PATH="/etc/systemd/system/ximonitor-agent.service"
 TMP_PATH=""
 BOOTSTRAP_TMP=""
 CURL_AUTH_CONFIG=""
+CHECKSUMS_TMP=""
 
 cleanup() {
   [ -n "$TMP_PATH" ] && rm -f "$TMP_PATH"
   [ -n "$BOOTSTRAP_TMP" ] && rm -f "$BOOTSTRAP_TMP"
   [ -n "$CURL_AUTH_CONFIG" ] && rm -f "$CURL_AUTH_CONFIG"
+  [ -n "$CHECKSUMS_TMP" ] && rm -f "$CHECKSUMS_TMP"
 }
 
 trap cleanup EXIT HUP INT TERM
@@ -139,6 +142,36 @@ fetch_bootstrap_config() {
   grep -q '^token = "' "$BOOTSTRAP_TMP" || fail "bootstrap response did not contain an agent token"
 }
 
+fetch_expected_sha256() {
+  artifact_name="$1"
+
+  if [ -n "$EXPECTED_SHA256" ]; then
+    return 0
+  fi
+
+  if [ -z "$CHECKSUMS_URL" ]; then
+    CHECKSUMS_URL="$BASE_URL/SHA256SUMS.txt"
+  fi
+
+  printf '%s\n' "Fetching checksums from $CHECKSUMS_URL"
+  curl -fsSL "$CHECKSUMS_URL" -o "$CHECKSUMS_TMP" \
+    || fail "failed to fetch release checksums"
+
+  EXPECTED_SHA256="$(awk -v artifact="$artifact_name" '
+    NF >= 2 {
+      path = $2
+      sub(/^\*/, "", path)
+      count = split(path, parts, "/")
+      if (parts[count] == artifact) {
+        print $1
+        exit
+      }
+    }
+  ' "$CHECKSUMS_TMP")"
+
+  [ -n "$EXPECTED_SHA256" ] || fail "missing checksum entry for $artifact_name"
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --bootstrap-url)
@@ -171,6 +204,11 @@ while [ "$#" -gt 0 ]; do
       BASE_URL="$2"
       shift 2
       ;;
+    --checksums-url)
+      [ "$#" -ge 2 ] || fail "--checksums-url requires a value"
+      CHECKSUMS_URL="$2"
+      shift 2
+      ;;
     --binary-url)
       [ "$#" -ge 2 ] || fail "--binary-url requires a value"
       BINARY_URL="$2"
@@ -190,9 +228,7 @@ while [ "$#" -gt 0 ]; do
       cat <<'EOF'
 Usage:
   sh install-agent.sh \
-    --bootstrap-url https://monitor.example.com/install/bootstrap \
-    --sha256-x86_64 <sha256> \
-    --sha256-aarch64 <sha256>
+    --bootstrap-url https://monitor.example.com/install/bootstrap
 
 Optional:
   --install-token <one-time-token>
@@ -200,7 +236,10 @@ Optional:
   --install-dir <dir>
   --config-dir <dir>
   --base-url <release-base-url>
+  --checksums-url <release-checksums-url>
   --binary-url <exact-binary-url>
+  --sha256-x86_64 <sha256-override>
+  --sha256-aarch64 <sha256-override>
 EOF
       exit 0
       ;;
@@ -215,6 +254,7 @@ done
 
 need_cmd uname
 need_cmd curl
+need_cmd awk
 need_cmd grep
 need_cmd id
 need_cmd install
@@ -231,10 +271,12 @@ ARCH="$(uname -m)"
 case "$ARCH" in
   x86_64|amd64)
     TARGET="x86_64-unknown-linux-musl"
+    ARTIFACT_NAME="ximonitor-agent-$TARGET"
     EXPECTED_SHA256="$SHA256_X86_64"
     ;;
   aarch64|arm64)
     TARGET="aarch64-unknown-linux-musl"
+    ARTIFACT_NAME="ximonitor-agent-$TARGET"
     EXPECTED_SHA256="$SHA256_AARCH64"
     ;;
   *)
@@ -242,12 +284,10 @@ case "$ARCH" in
     ;;
 esac
 
-[ -n "$EXPECTED_SHA256" ] || fail "missing expected sha256 for target $TARGET"
-
 if [ -n "$BINARY_URL" ]; then
   DOWNLOAD_URL="$BINARY_URL"
 else
-  DOWNLOAD_URL="$BASE_URL/ximonitor-agent-$TARGET"
+  DOWNLOAD_URL="$BASE_URL/$ARTIFACT_NAME"
 fi
 
 BIN_PATH="$INSTALL_DIR/ximonitor-agent"
@@ -264,8 +304,10 @@ chmod 0750 "$CONFIG_DIR" "$STATE_DIR"
 TMP_PATH="$(mktemp "$INSTALL_DIR/ximonitor-agent.XXXXXX")"
 BOOTSTRAP_TMP="$(mktemp "$CONFIG_DIR/agent.toml.XXXXXX")"
 CURL_AUTH_CONFIG="$(mktemp "$STATE_DIR/install-curl.XXXXXX")"
+CHECKSUMS_TMP="$(mktemp "$STATE_DIR/install-sha256.XXXXXX")"
 
 fetch_bootstrap_config
+fetch_expected_sha256 "$ARTIFACT_NAME"
 
 printf '%s\n' "Downloading $DOWNLOAD_URL"
 curl -fsSL "$DOWNLOAD_URL" -o "$TMP_PATH" || fail "failed to download agent binary"
