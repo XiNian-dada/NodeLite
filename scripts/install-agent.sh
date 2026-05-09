@@ -172,6 +172,20 @@ fetch_expected_sha256() {
   [ -n "$EXPECTED_SHA256" ] || fail "missing checksum entry for $artifact_name"
 }
 
+resolve_release_base_url() {
+  case "$BASE_URL" in
+    https://github.com/*/releases/latest/download)
+      releases_root="${BASE_URL%/latest/download}"
+      redirect_location="$(curl -fsSI -o /dev/null -w '%header{location}' "$releases_root/latest")" \
+        || fail "failed to resolve latest GitHub release"
+      [ -n "$redirect_location" ] || fail "GitHub latest release redirect did not include a location"
+      resolved_tag="${redirect_location##*/}"
+      BASE_URL="${releases_root}/download/${resolved_tag}"
+      printf '%s\n' "Resolved GitHub latest release tag: $resolved_tag"
+      ;;
+  esac
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --bootstrap-url)
@@ -287,6 +301,7 @@ esac
 if [ -n "$BINARY_URL" ]; then
   DOWNLOAD_URL="$BINARY_URL"
 else
+  resolve_release_base_url
   DOWNLOAD_URL="$BASE_URL/$ARTIFACT_NAME"
 fi
 

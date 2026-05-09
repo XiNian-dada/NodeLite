@@ -131,6 +131,20 @@ fetch_expected_sha256() {
   printf '%s' "$expected_sha256"
 }
 
+resolve_release_base_url() {
+  case "$BASE_URL" in
+    https://github.com/*/releases/latest/download)
+      releases_root="${BASE_URL%/latest/download}"
+      redirect_location="$(curl -fsSI -o /dev/null -w '%header{location}' "$releases_root/latest")" \
+        || fail "failed to resolve latest GitHub release"
+      [ -n "$redirect_location" ] || fail "GitHub latest release redirect did not include a location"
+      resolved_tag="${redirect_location##*/}"
+      BASE_URL="${releases_root}/download/${resolved_tag}"
+      printf '%s\n' "Resolved GitHub latest release tag: $resolved_tag"
+      ;;
+  esac
+}
+
 validate_port() {
   value="$1"
   case "$value" in
@@ -258,6 +272,7 @@ case "$ARCH" in
 esac
 
 ARTIFACT_NAME="ximonitor-server-$TARGET"
+resolve_release_base_url
 DOWNLOAD_URL="$BASE_URL/$ARTIFACT_NAME"
 
 mkdir -p "$INSTALL_ROOT" "$CONFIG_DIR" "$DATA_DIR"
