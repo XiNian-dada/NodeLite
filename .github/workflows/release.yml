@@ -72,6 +72,15 @@ jobs:
             dist/ximonitor-agent-${{ matrix.target }}
             dist/SHA256SUMS-${{ matrix.target }}.txt
 
+      - name: Upload installer scripts
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-scripts
+          path: |
+            scripts/install-server.sh
+            scripts/install-agent.sh
+
   release:
     name: Publish GitHub Release
     needs: build
@@ -106,5 +115,7 @@ jobs:
             release-assets/release-x86_64-unknown-linux-musl/ximonitor-agent-x86_64-unknown-linux-musl \
             release-assets/release-aarch64-unknown-linux-musl/ximonitor-server-aarch64-unknown-linux-musl \
             release-assets/release-aarch64-unknown-linux-musl/ximonitor-agent-aarch64-unknown-linux-musl \
+            release-assets/release-scripts/install-server.sh \
+            release-assets/release-scripts/install-agent.sh \
             release-assets/SHA256SUMS.txt \
             --clobber
