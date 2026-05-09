@@ -150,22 +150,12 @@ impl Default for RawFiltersSection {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct RawInstallSection {
     agent_release_base_url: Option<String>,
     agent_release_sha256_x86_64: Option<String>,
     agent_release_sha256_aarch64: Option<String>,
-}
-
-impl Default for RawInstallSection {
-    fn default() -> Self {
-        Self {
-            agent_release_base_url: None,
-            agent_release_sha256_x86_64: None,
-            agent_release_sha256_aarch64: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
