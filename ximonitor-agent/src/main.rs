@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let config = load_agent_config(&cli.config).await?;
     let mut collector = new_collector();
-    let identity = collector.collect_identity(&config, env!("CARGO_PKG_VERSION"))?;
+    let identity = collector.collect_identity(&config, agent_build_version())?;
 
     info!(
         node_id = %identity.node_id,
@@ -69,6 +69,10 @@ fn install_rustls_crypto_provider() -> Result<()> {
     rustls::crypto::ring::default_provider()
         .install_default()
         .map_err(|_| anyhow!("failed to install rustls crypto provider"))
+}
+
+fn agent_build_version() -> &'static str {
+    option_env!("XIMONITOR_BUILD_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
 }
 
 async fn load_agent_config(path: &Path) -> Result<AgentConfig> {

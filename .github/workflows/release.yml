@@ -49,6 +49,7 @@ jobs:
 
       - name: Build release binaries
         run: |
+          XIMONITOR_BUILD_VERSION="${RELEASE_TAG#v}" \
           cross build --locked --release --target "${{ matrix.target }}" \
             -p ximonitor-server \
             -p ximonitor-agent

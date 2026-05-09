@@ -38,7 +38,7 @@ use ximonitor_proto::{
 use crate::history::HistoryStore;
 use crate::registry::{
     IssueNodeRequest, NodeRegistry, build_install_script_url, default_agent_release_base_url,
-    issue_node, render_agent_config, render_install_command,
+    issue_node, render_agent_config, render_install_command, render_upgrade_command,
 };
 use crate::snapshot::{load_snapshot, spawn_snapshot_persistor};
 use crate::state::SharedState;
@@ -58,6 +58,7 @@ struct Cli {
 enum Command {
     IssueNode(NodeCommandArgs),
     InstallAgent(NodeCommandArgs),
+    UpgradeAgent,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -275,6 +276,7 @@ async fn main() -> Result<()> {
         Some(Command::InstallAgent(args)) => {
             install_agent_command(cli.config.as_path(), args).await
         }
+        Some(Command::UpgradeAgent) => upgrade_agent_command(cli.config.as_path()).await,
         None => run_server(cli.config.as_path()).await,
     }
 }
@@ -393,6 +395,14 @@ async fn install_agent_command(config_path: &Path, args: NodeCommandArgs) -> Res
     let config = load_server_config(config_path).await?;
     let bundle = issue_node_bundle(&config, &args).await?;
     println!("{}", bundle.install_command);
+    Ok(())
+}
+
+async fn upgrade_agent_command(config_path: &Path) -> Result<()> {
+    let config = load_server_config(config_path).await?;
+    let agent_release_base_url = default_agent_release_base_url()?;
+    let upgrade_command = render_upgrade_command(&config.public_base_url, &agent_release_base_url)?;
+    println!("{upgrade_command}");
     Ok(())
 }
 

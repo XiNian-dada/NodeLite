@@ -311,6 +311,21 @@ pub fn render_install_command(
     Ok(lines.join("\n"))
 }
 
+pub fn render_upgrade_command(
+    public_base_url: &str,
+    agent_release_base_url: &str,
+) -> Result<String> {
+    let script_url = build_install_script_url(public_base_url)?;
+    let lines = [
+        format!("curl -fsSL {} | \\", shell_quote(&script_url)),
+        "  XIMONITOR_AGENT_MODE=upgrade sh -s -- \\".to_string(),
+        "  --mode upgrade \\".to_string(),
+        format!("  --base-url {}", shell_quote(agent_release_base_url)),
+    ];
+
+    Ok(lines.join("\n"))
+}
+
 pub fn render_agent_config(public_base_url: &str, node: &RegisteredNode) -> Result<String> {
     let server_url = build_agent_server_url(public_base_url)?;
     let mut content = String::new();
