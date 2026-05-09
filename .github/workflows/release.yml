@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*.*.*"
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Install cross
+        run: cargo install cross --locked
+
+      - name: Disable local linker overrides for CI cross build
+        run: mv .cargo/config.toml .cargo/config.toml.ci-bak
+
+      - name: Build release binaries
+        run: |
+          cross build --locked --release --target "${{ matrix.target }}" \
+            -p ximonitor-server \
+            -p ximonitor-agent
+
+      - name: Collect release assets
+        run: |
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/ximonitor-server" "dist/ximonitor-server-${{ matrix.target }}"
+          cp "target/${{ matrix.target }}/release/ximonitor-agent" "dist/ximonitor-agent-${{ matrix.target }}"
+          sha256sum \
+            "dist/ximonitor-server-${{ matrix.target }}" \
+            "dist/ximonitor-agent-${{ matrix.target }}" \
+            > "dist/SHA256SUMS-${{ matrix.target }}.txt"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            dist/ximonitor-server-${{ matrix.target }}
+            dist/ximonitor-agent-${{ matrix.target }}
+            dist/SHA256SUMS-${{ matrix.target }}.txt
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Merge checksums
+        run: |
+          find release-assets -type f -name 'SHA256SUMS-*.txt' | sort | xargs cat > release-assets/SHA256SUMS.txt
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release create "$TAG_NAME" \
+              --title "XiMonitor $TAG_NAME" \
+              --generate-notes
+          fi
+
+          gh release upload "$TAG_NAME" \
+            release-assets/release-x86_64-unknown-linux-musl/ximonitor-server-x86_64-unknown-linux-musl \
+            release-assets/release-x86_64-unknown-linux-musl/ximonitor-agent-x86_64-unknown-linux-musl \
+            release-assets/release-aarch64-unknown-linux-musl/ximonitor-server-aarch64-unknown-linux-musl \
+            release-assets/release-aarch64-unknown-linux-musl/ximonitor-agent-aarch64-unknown-linux-musl \
+            release-assets/SHA256SUMS.txt \
+            --clobber
