@@ -71,43 +71,46 @@ target/aarch64-unknown-linux-musl/release/ximonitor-agent
 
 ## 服务端部署
 
-下面给一套最直接的 Linux 手工部署步骤。假设目录是 `/opt/ximonitor`。
+推荐直接用 GitHub Release 里的交互式安装器。它会清屏、询问安装目录、监听端口、对外域名或 IP、只读面板账号密码，然后自动：
 
-1. 准备目录：
+- 按当前架构下载最新的 `ximonitor-server`
+- 拉取 `SHA256SUMS.txt` 并校验二进制
+- 生成 `server.toml` 和 `server.json`
+- 注册并启动 `ximonitor-server.service`
 
-```bash
-sudo mkdir -p /opt/ximonitor/config /opt/ximonitor/data
-cd /opt/ximonitor
-```
-
-2. 放置服务端二进制：
+一条命令安装：
 
 ```bash
-sudo install -m 0755 ximonitor-server-x86_64-unknown-linux-musl /usr/local/bin/ximonitor-server
+curl -fsSL https://github.com/XiNian-dada/XiMonitor/releases/latest/download/install-server.sh | sudo sh
 ```
 
-如果你的服务端机器是 ARM64，就把对应的 `aarch64-unknown-linux-musl` 二进制放上去。
+脚本默认会：
 
-3. 复制配置模板：
+- 把程序数据放到你输入的安装目录下，默认建议 `/opt/ximonitor`
+- 监听在 `127.0.0.1:<随机端口>`
+- 要求你输入对外访问的域名或 IP，并据此生成 `public_base_url`
+- 生成一组只读面板 Basic Auth 账号
 
-```bash
-cp config/server.example.toml /opt/ximonitor/config/server.toml
-cp config/server.json.example /opt/ximonitor/config/server.json
-```
+安装完成后会直接打印：
 
-如果你希望从空白清单开始，也可以把 `server.json` 写成：
+- 服务端二进制路径
+- 配置文件路径
+- 节点注册表路径
+- 面板只读用户名和密码
+- 下一条该执行的 `install-agent` 签发命令
 
-```json
-{
-  "nodes": []
-}
-```
+如果你更想手工部署，也可以：
 
-4. 修改 `/opt/ximonitor/config/server.toml`。最少要确认这些字段：
+1. 复制 [config/server.example.toml](/Users/bernard/Code/XiMonitor/config/server.example.toml) 和 [config/server.json.example](/Users/bernard/Code/XiMonitor/config/server.json.example)
+2. 把服务端二进制安装到 `/usr/local/bin/ximonitor-server`
+3. 手工创建 systemd unit
+4. 启动 `ximonitor-server.service`
+
+最少要确认的配置项是：
 
 ```toml
 [server]
-listen = "127.0.0.1:8080"
+listen = "127.0.0.1:28080"
 public_base_url = "https://monitor.example.com"
 node_registry_path = "/opt/ximonitor/config/server.json"
 history_db_path = "/opt/ximonitor/data/history.sqlite3"
@@ -123,54 +126,12 @@ max_connections_per_ip = 32
 auth_fail_window_secs = 300
 auth_fail_max_attempts = 12
 auth_block_secs = 900
-
-[install]
-agent_release_base_url = "https://github.com/<owner>/<repo>/releases/latest/download"
-agent_release_sha256_x86_64 = "<release 里的 x86_64 sha256>"
-agent_release_sha256_aarch64 = "<release 里的 aarch64 sha256>"
 ```
 
-5. 先手工启动验证：
+查看服务端状态：
 
 ```bash
-/usr/local/bin/ximonitor-server --config /opt/ximonitor/config/server.toml
-```
-
-确认日志正常后，再做 systemd 常驻。
-
-## 服务端 systemd
-
-创建 `/etc/systemd/system/ximonitor-server.service`：
-
-```ini
-[Unit]
-Description=XiMonitor Server
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/ximonitor-server --config /opt/ximonitor/config/server.toml
-WorkingDirectory=/opt/ximonitor
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-```
-
-启用并启动：
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable ximonitor-server.service
-sudo systemctl restart ximonitor-server.service
 sudo systemctl status ximonitor-server.service
-```
-
-查看日志：
-
-```bash
 sudo journalctl -u ximonitor-server.service -f
 ```
 
@@ -227,12 +188,12 @@ server {
 
 ## 节点签发
 
-推荐先在服务端签发节点，再去目标机器安装 agent。服务端会把节点 token 持久化到 `server.json`，并直接打印可用的安装命令。
+推荐直接在服务端执行 `install-agent` 子命令。它不会启动监听，只会修改 `server.json`、生成一次性 install token，然后打印一条可直接粘贴到子机上的安装命令。
 
 ```bash
-cargo run -p ximonitor-server -- \
-  --config config/server.toml \
-  issue-node \
+/usr/local/bin/ximonitor-server \
+  --config /opt/ximonitor/config/server.toml \
+  install-agent \
   --node-id hk-01 \
   --node-label "Hong Kong 01" \
   --tag apac \
@@ -244,41 +205,44 @@ cargo run -p ximonitor-server -- \
 - 在 `server.json` 里创建或复用 `hk-01`
 - 为该节点生成独立 token
 - 生成一个 15 分钟有效的一次性 install token
-- 打印 `agent.toml` 片段
-- 打印一条可直接复制到子机执行的安装命令
+- 直接打印一条完整的子机安装命令
 - 让运行中的服务端在下一次注册表轮询时自动接纳新 token，无需重启进程
 
 注意：
 
 - `/`、`/nodes/*`、`/api/*` 默认受 HTTP Basic Auth 保护
 - 安装脚本本身是公开静态文件；真正的节点配置通过一次性 install token 从 `/install/bootstrap` 拉取
-- `issue-node` 不会再把长期 node token 放进安装命令；它会另外打印一个短期 install token，安装器会交互式提示输入
+- `install-agent` 只会把一次性 install token 内联到命令里，长期 node token 仍然只通过 bootstrap 响应体下发
+
+如果你想看更详细的输出，包括 `agent.toml` 片段和到期时间，也可以继续使用 `issue-node`：
+
+```bash
+/usr/local/bin/ximonitor-server \
+  --config /opt/ximonitor/config/server.toml \
+  issue-node \
+  --node-id hk-01 \
+  --node-label "Hong Kong 01"
+```
 
 如果你需要轮换某个节点 token，可以追加 `--rotate-token`。
 
 ## 一键安装
 
-脚本位置：
+服务端 `install-agent` 打印出来的命令大概长这样：
 
 ```bash
-scripts/install-agent.sh
-```
-
-示例：
-
-```bash
-curl -fsSL https://monitor.example.com/install/install-agent.sh | sh -s -- \
+curl -fsSL https://monitor.example.com/install/install-agent.sh | \
+  XIMONITOR_AGENT_INSTALL_TOKEN='one-time-token' sh -s -- \
   --bootstrap-url https://monitor.example.com/install/bootstrap \
-  --base-url https://downloads.example.com/ximonitor/releases/latest/download \
-  --sha256-x86_64 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
-  --sha256-aarch64 abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+  --base-url https://github.com/XiNian-dada/XiMonitor/releases/latest/download
 ```
 
 说明：
 
 - 脚本会检测架构并下载对应的 `ximonitor-agent-<target>` 二进制
-- 脚本会按当前架构校验服务端签发的 SHA-256，校验失败会直接终止
-- 安装时会提示输入一次性 install token；长期 node token 只通过 bootstrap 响应体下发，不出现在 URL 或命令参数里
+- 脚本会自动下载 GitHub Release 的 `SHA256SUMS.txt`，并按当前架构校验 agent 二进制
+- 一次性 install token 已经内联在命令里，所以正常情况下不需要再手工输入
+- 长期 node token 只通过 bootstrap 响应体下发，不出现在 URL 或命令参数里
 - 会创建 `ximonitor-agent` 专用系统用户，并以该用户运行 systemd service
 - 会写入 `/etc/ximonitor/agent.toml`，并将目录/文件权限收紧到仅 root 与该服务用户可读
 - 会生成 `ximonitor-agent.service`
@@ -288,9 +252,9 @@ curl -fsSL https://monitor.example.com/install/install-agent.sh | sh -s -- \
 
 推荐按下面顺序操作：
 
-1. 在服务端执行 `issue-node`
+1. 在服务端执行 `install-agent`
 2. 复制它打印出的安装命令到目标 Linux 子机
-3. 子机执行命令后，按提示输入 `install_token`
+3. 子机直接执行
 4. 等脚本结束后检查服务状态
 
 检查 Agent 服务：
@@ -300,28 +264,22 @@ sudo systemctl status ximonitor-agent.service
 sudo journalctl -u ximonitor-agent.service -f
 ```
 
-如果你想把一次性 install token 放进 root-only 文件，而不是手工粘贴，也可以这样：
-
-```bash
-printf '%s\n' 'INSTALL_TOKEN_FROM_ISSUE_NODE' | sudo tee /root/ximonitor-install.token >/dev/null
-sudo chmod 600 /root/ximonitor-install.token
-
-curl -fsSL https://monitor.example.com/install/install-agent.sh | sh -s -- \
-  --bootstrap-url https://monitor.example.com/install/bootstrap \
-  --install-token-file /root/ximonitor-install.token \
-  --base-url https://downloads.example.com/ximonitor/releases/latest/download \
-  --sha256-x86_64 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
-  --sha256-aarch64 abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
-```
-
-如果你已经有精确二进制地址，也可以改用：
+如果你想手工运行安装脚本，也可以：
 
 ```bash
 sh scripts/install-agent.sh \
   --bootstrap-url https://monitor.example.com/install/bootstrap \
-  --install-token-file /root/ximonitor-install.token \
-  --sha256-x86_64 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
-  --sha256-aarch64 abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789 \
+  --install-token <one-time-token> \
+  --base-url https://github.com/XiNian-dada/XiMonitor/releases/latest/download
+```
+
+如果你已经有精确二进制地址，也可以继续使用自定义下载地址和校验文件：
+
+```bash
+sh scripts/install-agent.sh \
+  --bootstrap-url https://monitor.example.com/install/bootstrap \
+  --install-token <one-time-token> \
+  --checksums-url https://your-host/releases/SHA256SUMS.txt \
   --binary-url https://your-host/releases/ximonitor-agent-x86_64-unknown-linux-musl
 ```
 
@@ -353,7 +311,7 @@ cargo run -p ximonitor-agent -- --config config/agent.toml
 
 - 面板能打开但没有节点，先看 Agent 日志里是不是 `wss://.../ws` 证书或反代问题。
 - 如果服务端日志里频繁出现 TLS 警告，说明你还在用 `http://` 或 `ws://` 明文链路。
-- 如果子机安装时提示 `invalid install token`，通常是一次性 token 过期了，重新执行一次 `issue-node` 即可。
+- 如果子机安装时提示 `invalid install token`，通常是一次性 token 过期了，重新执行一次 `install-agent` 或 `issue-node` 即可。
 - 如果 Agent 被 `/ws` 限流挡住，先检查服务端 `[ws]` 配额是否太小，或者反代是否把所有请求都转成同一个源 IP。
 
 ## GitHub Release
@@ -366,8 +324,9 @@ cargo run -p ximonitor-agent -- --config config/agent.toml
 4. 生成 `ximonitor-agent-x86_64-unknown-linux-musl`
 5. 生成 `ximonitor-server-aarch64-unknown-linux-musl`
 6. 生成 `ximonitor-agent-aarch64-unknown-linux-musl`
-7. 上传 `SHA256SUMS.txt`
-8. 自动创建 GitHub Release
+7. 上传 `install-server.sh` 和 `install-agent.sh`
+8. 上传 `SHA256SUMS.txt`
+9. 自动创建 GitHub Release
 
 ## 说明
 
