@@ -75,7 +75,12 @@ impl NodeRegistry {
         validate_runtime_identity(identity)?;
         validate_non_empty("hello.token", token)?;
         let state = self.state.read().await;
-        authorize_identity(&state.entries, self.legacy_shared_token.as_deref(), identity, token)
+        authorize_identity(
+            &state.entries,
+            self.legacy_shared_token.as_deref(),
+            identity,
+            token,
+        )
     }
 
     pub async fn is_token_current(&self, node_id: &str, token: &str) -> bool {
@@ -206,6 +211,8 @@ pub fn render_install_command(
     node: &RegisteredNode,
     readonly_auth: Option<&ReadonlyAuthConfig>,
     agent_release_base_url: Option<&str>,
+    agent_release_sha256_x86_64: Option<&str>,
+    agent_release_sha256_aarch64: Option<&str>,
 ) -> Result<String> {
     let script_url = build_install_script_url(public_base_url)?;
     let server_url = build_agent_server_url(public_base_url)?;
@@ -229,12 +236,24 @@ pub fn render_install_command(
     ];
 
     if let Some(agent_release_base_url) = agent_release_base_url {
+        let Some(agent_release_sha256_x86_64) = agent_release_sha256_x86_64 else {
+            bail!("missing x86_64 agent checksum for install command");
+        };
+        let Some(agent_release_sha256_aarch64) = agent_release_sha256_aarch64 else {
+            bail!("missing aarch64 agent checksum for install command");
+        };
         lines.push(format!(
-            "  --base-url {}",
+            "  --base-url {} \\",
             shell_quote(agent_release_base_url)
         ));
-        let token_line_index = lines.len().saturating_sub(2);
-        lines[token_line_index].push_str(" \\");
+        lines.push(format!(
+            "  --sha256-x86_64 {} \\",
+            shell_quote(agent_release_sha256_x86_64)
+        ));
+        lines.push(format!(
+            "  --sha256-aarch64 {}",
+            shell_quote(agent_release_sha256_aarch64)
+        ));
     }
 
     Ok(lines.join("\n"))
@@ -584,11 +603,14 @@ mod tests {
                     password: "secret".to_string(),
                 }),
                 Some("https://downloads.example.com/releases/latest/download"),
+                Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
+                Some("abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"),
             )
             .expect("install command should render");
             assert!(command.contains("--token"));
             assert!(command.contains("/install/install-agent.sh"));
             assert!(command.contains("--user"));
+            assert!(command.contains("--sha256-x86_64"));
 
             let _ = std::fs::remove_file(&path);
             let _ = std::fs::remove_dir(&temp_dir);
@@ -638,7 +660,11 @@ mod tests {
             .expect("node token should rotate");
             assert!(registry.reload().await.expect("reload should succeed"));
             assert!(!registry.is_token_current("hk-01", &old_token).await);
-            assert!(registry.is_token_current("hk-01", &rotated.node.token).await);
+            assert!(
+                registry
+                    .is_token_current("hk-01", &rotated.node.token)
+                    .await
+            );
 
             let _ = std::fs::remove_file(&path);
             let _ = std::fs::remove_dir(&temp_dir);

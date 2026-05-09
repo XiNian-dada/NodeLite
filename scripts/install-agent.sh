@@ -22,6 +22,20 @@ INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/ximonitor"
 BASE_URL="${XIMONITOR_AGENT_BASE_URL:-https://example.invalid/ximonitor/releases/latest/download}"
 BINARY_URL="${XIMONITOR_AGENT_BINARY_URL:-}"
+SHA256_X86_64="${XIMONITOR_AGENT_SHA256_X86_64:-}"
+SHA256_AARCH64="${XIMONITOR_AGENT_SHA256_AARCH64:-}"
+
+calculate_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | sed 's/[[:space:]].*$//'
+    return 0
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | sed 's/[[:space:]].*$//'
+    return 0
+  fi
+  fail "missing required command: sha256sum or shasum"
+}
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -65,13 +79,25 @@ while [ "$#" -gt 0 ]; do
       BINARY_URL="$2"
       shift 2
       ;;
+    --sha256-x86_64)
+      [ "$#" -ge 2 ] || fail "--sha256-x86_64 requires a value"
+      SHA256_X86_64="$2"
+      shift 2
+      ;;
+    --sha256-aarch64)
+      [ "$#" -ge 2 ] || fail "--sha256-aarch64 requires a value"
+      SHA256_AARCH64="$2"
+      shift 2
+      ;;
     --help|-h)
       cat <<'EOF'
 Usage:
   sh install-agent.sh \
     --server wss://monitor.example.com/ws \
     --node-id hk-01 \
-    --token YOUR_TOKEN
+    --token YOUR_TOKEN \
+    --sha256-x86_64 <sha256> \
+    --sha256-aarch64 <sha256>
 
 Optional:
   --node-label <label>
@@ -108,14 +134,18 @@ ARCH="$(uname -m)"
 case "$ARCH" in
   x86_64|amd64)
     TARGET="x86_64-unknown-linux-musl"
+    EXPECTED_SHA256="$SHA256_X86_64"
     ;;
   aarch64|arm64)
     TARGET="aarch64-unknown-linux-musl"
+    EXPECTED_SHA256="$SHA256_AARCH64"
     ;;
   *)
     fail "unsupported architecture: $ARCH"
     ;;
 esac
+
+[ -n "$EXPECTED_SHA256" ] || fail "missing expected sha256 for target $TARGET"
 
 if [ -n "$BINARY_URL" ]; then
   DOWNLOAD_URL="$BINARY_URL"
@@ -132,6 +162,8 @@ mkdir -p "$INSTALL_DIR" "$CONFIG_DIR"
 
 printf '%s\n' "Downloading $DOWNLOAD_URL"
 curl -fsSL "$DOWNLOAD_URL" -o "$TMP_PATH" || fail "failed to download agent binary"
+ACTUAL_SHA256="$(calculate_sha256 "$TMP_PATH")"
+[ "$ACTUAL_SHA256" = "$EXPECTED_SHA256" ] || fail "downloaded agent checksum mismatch"
 chmod 0755 "$TMP_PATH"
 mv "$TMP_PATH" "$BIN_PATH"
 

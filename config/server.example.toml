@@ -20,3 +20,5 @@ ignored_filesystems = ["tmpfs", "devtmpfs", "overlay"]
 
 [install]
 agent_release_base_url = "https://downloads.example.com/ximonitor/releases/latest/download"
+agent_release_sha256_x86_64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+agent_release_sha256_aarch64 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"

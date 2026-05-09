@@ -68,7 +68,7 @@ mkdir -p config
 cp config/server.example.toml config/server.toml
 ```
 
-2. 修改 `config/server.toml` 中的监听地址、`public_base_url`、`node_registry_path`、`[auth]` 用户名密码，以及可选的 `[install].agent_release_base_url`。
+2. 修改 `config/server.toml` 中的监听地址、`public_base_url`、`node_registry_path`、`[auth]` 用户名密码，以及 `[install]` 里的发布地址和两种架构对应的 SHA-256。
 
 3. 准备节点清单文件：
 
@@ -156,12 +156,15 @@ curl -fsSL --user 'viewer:change-this-password' https://monitor.example.com/inst
   --server wss://monitor.example.com/ws \
   --node-id hk-01 \
   --token YOUR_TOKEN \
-  --base-url https://downloads.example.com/ximonitor/releases/latest/download
+  --base-url https://downloads.example.com/ximonitor/releases/latest/download \
+  --sha256-x86_64 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  --sha256-aarch64 abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
 ```
 
 说明：
 
 - 脚本会检测架构并下载对应的 `ximonitor-agent-<target>` 二进制
+- 脚本会按当前架构校验服务端签发的 SHA-256，校验失败会直接终止
 - 会写入 `/etc/ximonitor/agent.toml`，并将权限收紧到 `0600`
 - 会生成 `ximonitor-agent.service`
 - 会执行 `daemon-reload`、`enable` 和 `restart`

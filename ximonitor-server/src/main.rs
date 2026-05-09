@@ -247,6 +247,8 @@ async fn issue_node_command(config_path: &Path, args: IssueNodeArgs) -> Result<(
         &issued.node,
         config.readonly_auth.as_ref(),
         config.agent_release_base_url.as_deref(),
+        config.agent_release_sha256_x86_64.as_deref(),
+        config.agent_release_sha256_aarch64.as_deref(),
     )?;
     let agent_config = render_agent_config(&config.public_base_url, &issued.node)?;
     let install_script_url = build_install_script_url(&config.public_base_url)?;
@@ -715,6 +717,8 @@ mod tests {
             refresh_interval_secs: 5,
             ignored_filesystems: vec!["tmpfs".to_string()],
             agent_release_base_url: None,
+            agent_release_sha256_x86_64: None,
+            agent_release_sha256_aarch64: None,
         });
         let runtime = Runtime::new().expect("runtime should build");
         let state = AppState {

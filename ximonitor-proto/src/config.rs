@@ -48,6 +48,8 @@ pub struct ServerConfig {
     pub refresh_interval_secs: u64,
     pub ignored_filesystems: Vec<String>,
     pub agent_release_base_url: Option<String>,
+    pub agent_release_sha256_x86_64: Option<String>,
+    pub agent_release_sha256_aarch64: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -155,12 +157,16 @@ impl Default for RawFiltersSection {
 #[serde(deny_unknown_fields)]
 struct RawInstallSection {
     agent_release_base_url: Option<String>,
+    agent_release_sha256_x86_64: Option<String>,
+    agent_release_sha256_aarch64: Option<String>,
 }
 
 impl Default for RawInstallSection {
     fn default() -> Self {
         Self {
             agent_release_base_url: None,
+            agent_release_sha256_x86_64: None,
+            agent_release_sha256_aarch64: None,
         }
     }
 }
@@ -210,6 +216,27 @@ impl RawServerConfigFile {
                 agent_release_base_url,
                 &["http", "https"],
             )?;
+        }
+        let agent_release_sha256_x86_64 = self
+            .install
+            .agent_release_sha256_x86_64
+            .map(|value| value.trim().to_string());
+        let agent_release_sha256_aarch64 = self
+            .install
+            .agent_release_sha256_aarch64
+            .map(|value| value.trim().to_string());
+        if let Some(sha256) = agent_release_sha256_x86_64.as_deref() {
+            validate_sha256("install.agent_release_sha256_x86_64", sha256)?;
+        }
+        if let Some(sha256) = agent_release_sha256_aarch64.as_deref() {
+            validate_sha256("install.agent_release_sha256_aarch64", sha256)?;
+        }
+        if self.install.agent_release_base_url.is_some()
+            && (agent_release_sha256_x86_64.is_none() || agent_release_sha256_aarch64.is_none())
+        {
+            return Err(ConfigError::new(
+                "install.agent_release_sha256_x86_64 and install.agent_release_sha256_aarch64 are required when install.agent_release_base_url is configured",
+            ));
         }
         let readonly_auth = match (
             self.auth.username.map(|value| value.trim().to_string()),
@@ -273,6 +300,8 @@ impl RawServerConfigFile {
             refresh_interval_secs: self.ui.refresh_interval_secs,
             ignored_filesystems: normalize_string_list(self.filters.ignored_filesystems),
             agent_release_base_url: self.install.agent_release_base_url,
+            agent_release_sha256_x86_64,
+            agent_release_sha256_aarch64,
         })
     }
 }
@@ -355,6 +384,16 @@ fn normalize_string_list(values: Vec<String>) -> Vec<String> {
     values.sort();
     values.dedup();
     values
+}
+
+fn validate_sha256(field: &str, value: &str) -> Result<(), ConfigError> {
+    validate_non_empty(field, value)?;
+    if value.len() != 64 || !value.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(ConfigError::new(format!(
+            "{field} must be a 64-character hexadecimal SHA-256 digest"
+        )));
+    }
+    Ok(())
 }
 
 fn default_history_db_path() -> PathBuf {
@@ -495,6 +534,8 @@ mod tests {
 
             [install]
             agent_release_base_url = "https://downloads.example.com/ximonitor/releases/latest/download"
+            agent_release_sha256_x86_64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            agent_release_sha256_aarch64 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
             "#,
         )
         .expect("server config should parse");
@@ -515,6 +556,14 @@ mod tests {
             config.agent_release_base_url.as_deref(),
             Some("https://downloads.example.com/ximonitor/releases/latest/download")
         );
+        assert_eq!(
+            config.agent_release_sha256_x86_64.as_deref(),
+            Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+        );
+        assert_eq!(
+            config.agent_release_sha256_aarch64.as_deref(),
+            Some("abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789")
+        );
     }
 
     #[test]
@@ -529,5 +578,22 @@ mod tests {
         .expect_err("public listener without auth should fail");
 
         assert!(error.to_string().contains("auth.username"));
+    }
+
+    #[test]
+    fn rejects_install_release_base_without_checksums() {
+        let error = parse_server_config(
+            r#"
+            [server]
+            listen = "127.0.0.1:8080"
+            public_base_url = "https://monitor.example.com"
+
+            [install]
+            agent_release_base_url = "https://downloads.example.com/ximonitor/releases/latest/download"
+            "#,
+        )
+        .expect_err("release base without checksums should fail");
+
+        assert!(error.to_string().contains("agent_release_sha256_x86_64"));
     }
 }
