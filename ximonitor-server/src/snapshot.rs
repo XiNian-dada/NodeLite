@@ -10,6 +10,9 @@ use ximonitor_proto::NodeStatus;
 
 use crate::state::SharedState;
 
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
 pub async fn load_snapshot(path: &Path) -> Result<Vec<NodeStatus>> {
     let content = fs::read_to_string(path)
         .await
@@ -45,15 +48,16 @@ async fn persist_snapshot(path: &Path, statuses: &[NodeStatus]) -> Result<()> {
     let payload =
         serde_json::to_vec_pretty(statuses).context("failed to serialize node snapshot")?;
     let temporary_path = temporary_snapshot_path(path);
-    fs::write(&temporary_path, payload).await.with_context(|| {
-        format!(
-            "failed to write temporary snapshot {}",
-            temporary_path.display()
-        )
-    })?;
+    let temporary_path_for_write = temporary_path.clone();
+    tokio::task::spawn_blocking(move || {
+        write_snapshot_payload(&temporary_path_for_write, &payload)
+    })
+    .await
+    .context("snapshot write task failed")??;
     fs::rename(&temporary_path, path)
         .await
         .with_context(|| format!("failed to move snapshot into place at {}", path.display()))?;
+    harden_snapshot_permissions(path)?;
     Ok(())
 }
 
@@ -61,4 +65,97 @@ fn temporary_snapshot_path(path: &Path) -> PathBuf {
     let mut temporary = path.as_os_str().to_os_string();
     temporary.push(".tmp");
     temporary.into()
+}
+
+fn write_snapshot_payload(path: &Path, payload: &[u8]) -> Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+
+    let mut file = options
+        .open(path)
+        .with_context(|| format!("failed to open {}", path.display()))?;
+    use std::io::Write;
+    file.write_all(payload)
+        .with_context(|| format!("failed to write {}", path.display()))?;
+    harden_snapshot_permissions(path)?;
+    Ok(())
+}
+
+fn harden_snapshot_permissions(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("failed to chmod {}", path.display()))?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use chrono::Utc;
+    use tokio::runtime::Runtime;
+    use ximonitor_proto::{NodeIdentity, NodeStatus};
+
+    use super::persist_snapshot;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    #[cfg(unix)]
+    fn persisted_snapshot_is_mode_600() {
+        let runtime = Runtime::new().expect("runtime should build");
+        runtime.block_on(async {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock should be monotonic enough")
+                .as_nanos();
+            let temp_dir =
+                std::env::temp_dir().join(format!("ximonitor-snapshot-mode-test-{unique}"));
+            std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+            let snapshot_path = temp_dir.join("snapshot.json");
+            let statuses = vec![NodeStatus {
+                identity: NodeIdentity {
+                    node_id: "hk-01".to_string(),
+                    node_label: "Hong Kong 01".to_string(),
+                    hostname: "hk-01.internal".to_string(),
+                    os: "Ubuntu".to_string(),
+                    kernel_version: None,
+                    cpu_model: None,
+                    cpu_cores: 2,
+                    agent_version: "1.0.6".to_string(),
+                    boot_time: None,
+                    tags: vec!["edge".to_string()],
+                },
+                snapshot: None,
+                last_seen: Some(Utc::now()),
+                latency_ms: None,
+                online: false,
+            }];
+
+            persist_snapshot(&snapshot_path, &statuses)
+                .await
+                .expect("snapshot should persist");
+
+            let mode = std::fs::metadata(&snapshot_path)
+                .expect("snapshot metadata")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600);
+
+            let _ = std::fs::remove_file(&snapshot_path);
+            let _ = std::fs::remove_dir(&temp_dir);
+        });
+    }
 }

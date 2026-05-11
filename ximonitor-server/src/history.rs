@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,6 +14,9 @@ use ximonitor_proto::{
     DEFAULT_HISTORY_RETENTION_HOURS, DEFAULT_HISTORY_WRITE_INTERVAL_SECS, HistoryPoint, NodeStatus,
     percentage,
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 const SQLITE_BUSY_TIMEOUT_SECS: u64 = 5;
 
@@ -213,6 +217,7 @@ fn initialize_database(db_path: &PathBuf) -> Result<()> {
             ON history_points (node_id, recorded_at);
         "#,
     )?;
+    harden_database_artifacts(db_path)?;
 
     Ok(())
 }
@@ -254,6 +259,7 @@ fn write_history_point(
             params![cutoff.timestamp()],
         )?;
     }
+    harden_database_artifacts(db_path)?;
 
     Ok(())
 }
@@ -329,7 +335,38 @@ fn open_database_connection(db_path: &PathBuf, enable_wal: bool) -> Result<Conne
             .pragma_update(None, "journal_mode", "WAL")
             .context("failed to enable sqlite WAL mode")?;
     }
+    harden_database_artifacts(db_path)?;
     Ok(connection)
+}
+
+fn harden_database_artifacts(db_path: &PathBuf) -> Result<()> {
+    harden_path_permissions(db_path)?;
+    for suffix in ["-wal", "-shm"] {
+        let mut artifact = OsString::from(db_path.as_os_str());
+        artifact.push(suffix);
+        let artifact = PathBuf::from(artifact);
+        if artifact.exists() {
+            harden_path_permissions(&artifact)?;
+        }
+    }
+    Ok(())
+}
+
+fn harden_path_permissions(path: &PathBuf) -> Result<()> {
+    #[cfg(unix)]
+    {
+        if path.exists() {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+                .with_context(|| format!("failed to chmod {}", path.display()))?;
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+
+    Ok(())
 }
 
 fn build_history_point(status: &NodeStatus) -> Option<HistoryPoint> {
@@ -432,12 +469,16 @@ fn average_optional_u64(values: impl Iterator<Item = Option<u64>>) -> Option<u64
 
 #[cfg(test)]
 mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use chrono::{Duration, Utc};
+    use tokio::runtime::Runtime;
     use ximonitor_proto::{
-        LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot, NodeStatus,
+        HistoryPoint, LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot,
+        NodeStatus,
     };
 
-    use super::build_history_point;
+    use super::{build_history_point, initialize_database, write_history_point};
 
     #[test]
     fn history_point_uses_server_last_seen_timestamp() {
@@ -486,5 +527,63 @@ mod tests {
 
         let point = build_history_point(&status).expect("history point should exist");
         assert_eq!(point.recorded_at, now);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn history_database_artifacts_are_mode_600() {
+        let runtime = Runtime::new().expect("runtime should build");
+        runtime.block_on(async {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock should be monotonic enough")
+                .as_nanos();
+            let temp_dir = std::env::temp_dir().join(format!("ximonitor-history-mode-{unique}"));
+            std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+            let db_path = temp_dir.join("history.sqlite3");
+
+            initialize_database(&db_path).expect("database should initialize");
+            write_history_point(
+                &db_path,
+                &HistoryPoint {
+                    node_id: "hk-01".to_string(),
+                    recorded_at: Utc::now(),
+                    cpu_usage_percent: 1.0,
+                    memory_used_percent: 2.0,
+                    rx_bytes_per_sec: Some(3.0),
+                    tx_bytes_per_sec: Some(4.0),
+                    latency_ms: Some(5),
+                    disk_used_percent: Some(6.0),
+                },
+                None,
+            )
+            .expect("history point should persist");
+
+            assert_mode_600(&db_path);
+            for suffix in ["-wal", "-shm"] {
+                let mut artifact = std::ffi::OsString::from(db_path.as_os_str());
+                artifact.push(suffix);
+                let artifact = std::path::PathBuf::from(artifact);
+                if artifact.exists() {
+                    assert_mode_600(&artifact);
+                    let _ = std::fs::remove_file(&artifact);
+                }
+            }
+
+            let _ = std::fs::remove_file(&db_path);
+            let _ = std::fs::remove_dir(&temp_dir);
+        });
+    }
+
+    #[cfg(unix)]
+    fn assert_mode_600(path: &std::path::Path) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mode = std::fs::metadata(path)
+            .expect("artifact metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }
