@@ -271,8 +271,13 @@ impl Registry {
             .filter(|status| status.online)
             .filter_map(|status| status.latency_ms)
             .collect();
-        let average_latency_ms = (!latencies.is_empty())
-            .then(|| latencies.iter().copied().sum::<u64>() as f64 / latencies.len() as f64);
+        // 用 u128 累加并取平均值,避免在罕见情况下(极大延迟、海量节点)
+        // 触发 u64 加法溢出 —— debug 构建会 panic,release 构建会回绕成
+        // 异常小的"平均延迟",污染仪表盘。
+        let average_latency_ms = (!latencies.is_empty()).then(|| {
+            let total: u128 = latencies.iter().map(|value| *value as u128).sum();
+            total as f64 / latencies.len() as f64
+        });
 
         OverviewData {
             generated_at: Utc::now(),
@@ -416,6 +421,37 @@ mod tests {
         assert_eq!(overview.total_tx_bytes, u64::MAX);
         assert_eq!(overview.current_rx_bytes_per_sec, 2.5);
         assert_eq!(overview.current_tx_bytes_per_sec, 1.5);
+    }
+
+    #[test]
+    fn overview_avoids_overflow_when_summing_latency() {
+        // 用接近 u64::MAX 的延迟值复现"原始 sum::<u64>() 会溢出"的场景:
+        // 旧实现在 debug 构建下 panic,release 构建下回绕成异常小的平均值。
+        let mut registry = Registry::default();
+        let now = Utc.with_ymd_and_hms(2026, 5, 7, 0, 0, 0).unwrap();
+
+        registry.register_node(1, sample_identity(), now);
+        registry.register_node(
+            2,
+            NodeIdentity {
+                node_id: "sg-01".to_string(),
+                node_label: "Singapore 01".to_string(),
+                ..sample_identity()
+            },
+            now,
+        );
+
+        registry.update_snapshot("hk-01", 1, sample_snapshot(now), now);
+        registry.update_snapshot("sg-01", 2, sample_snapshot(now), now);
+        registry.update_latency("hk-01", 1, u64::MAX / 2 + 1, now);
+        registry.update_latency("sg-01", 2, u64::MAX / 2 + 1, now);
+
+        let overview = registry.overview();
+        let average = overview
+            .average_latency_ms
+            .expect("average latency should be reported");
+        assert!(average.is_finite());
+        assert!(average > (u64::MAX as f64) / 4.0);
     }
 
     fn sample_identity() -> NodeIdentity {
