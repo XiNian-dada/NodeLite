@@ -1166,17 +1166,21 @@ fn resolve_client_ip(listen: SocketAddr, peer_addr: SocketAddr, headers: &Header
 }
 
 fn forwarded_ip_from_headers(headers: &HeaderMap) -> Option<IpAddr> {
+    // 优先信任直连反代写入的 X-Real-IP(Nginx 等会把它设为反代看到的对端 IP);
+    // 退而求其次取 X-Forwarded-For 最右端 —— 该位置由可信反代追加,
+    // 最左端则是客户端可任意写入的值,直接使用会被攻击者用来伪造 IP 绕过
+    // 单 IP 限流与认证失败封禁。
     headers
-        .get("x-forwarded-for")
+        .get("x-real-ip")
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split(',').next())
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .and_then(parse_ip_addr)
         .or_else(|| {
             headers
-                .get("x-real-ip")
+                .get("x-forwarded-for")
                 .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.rsplit(',').next())
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .and_then(parse_ip_addr)
@@ -2069,6 +2073,48 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             "x-forwarded-for",
+            "198.51.100.24".parse().expect("header value"),
+        );
+
+        let client_ip = resolve_client_ip(
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8080)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 51234)),
+            &headers,
+        );
+
+        assert_eq!(client_ip, IpAddr::V4("198.51.100.24".parse().expect("ip")));
+    }
+
+    #[test]
+    fn rightmost_forwarded_ip_is_preferred_over_spoofed_leftmost() {
+        // 反代会把客户端发来的 XFF 与真实远端 IP 顺序拼接,真实 IP 出现在最右侧。
+        // 最左端可能是客户端伪造的值,绝不能用来做"信任来源"判定。
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            "8.8.8.8, 198.51.100.24".parse().expect("header value"),
+        );
+
+        let client_ip = resolve_client_ip(
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8080)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 51234)),
+            &headers,
+        );
+
+        assert_eq!(client_ip, IpAddr::V4("198.51.100.24".parse().expect("ip")));
+    }
+
+    #[test]
+    fn x_real_ip_takes_precedence_over_forwarded_for() {
+        // Nginx 推荐同时下发 X-Real-IP 与 X-Forwarded-For;X-Real-IP 来自反代
+        // 本身的 $remote_addr,客户端无法影响,优先级最高。
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            "8.8.8.8, 1.1.1.1".parse().expect("header value"),
+        );
+        headers.insert(
+            "x-real-ip",
             "198.51.100.24".parse().expect("header value"),
         );
 
