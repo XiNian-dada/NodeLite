@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tokio::fs;
-use tokio::time::interval;
+use tokio::time::{MissedTickBehavior, interval};
 use tracing::warn;
 use ximonitor_proto::NodeStatus;
 
@@ -34,6 +34,8 @@ pub fn spawn_snapshot_persistor(shared: SharedState, snapshot_path: PathBuf) {
     let snapshot_path = Arc::new(snapshot_path);
     tokio::spawn(async move {
         let mut ticker = interval(Duration::from_secs(15));
+        // 主机/进程被挂起恢复后,不要连续 burst 多次磁盘 IO;保持 15 s 节奏即可。
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             ticker.tick().await;
             let statuses = shared.list_statuses().await;

@@ -42,7 +42,7 @@ use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::net::TcpListener;
-use tokio::time::interval;
+use tokio::time::{MissedTickBehavior, interval};
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn};
 use url::Url;
@@ -944,6 +944,8 @@ async fn handle_socket(
         let ping_every = Duration::from_secs(shared.config().ping_interval_secs);
         let ping_expiry = Duration::from_secs(shared.config().ping_interval_secs.saturating_mul(3));
         let mut ping_ticker = interval(ping_every);
+        // 会话挂起/恢复后不要"补打"积压的 tick,否则会瞬间灌满 outstanding_pings。
+        ping_ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut outstanding_pings: HashMap<u64, Instant> = HashMap::new();
         let mut next_ping_nonce = 1_u64;
         let mut metric_anomaly_count = 0_u32;
@@ -1115,6 +1117,9 @@ async fn send_wire_message(
 fn spawn_stale_reaper(shared: SharedState) {
     tokio::spawn(async move {
         let mut ticker = interval(Duration::from_secs(1));
+        // 进程或主机被挂起后,interval 默认会"补打"积压 tick;这里改为延后下一次,
+        // 避免恢复瞬间连续多次扫描全表(对大规模注册表是无谓的 CPU 抖动)。
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             ticker.tick().await;
             let count = shared.mark_stale().await;
@@ -1129,6 +1134,8 @@ fn spawn_stale_reaper(shared: SharedState) {
 fn spawn_registry_reloader(registry: NodeRegistry, readiness: ServerReadiness) {
     tokio::spawn(async move {
         let mut ticker = interval(Duration::from_secs(1));
+        // 挂起恢复后只想做一次最近态的 reload,而不是连续 N 次磁盘 IO。
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             ticker.tick().await;
             match registry.reload().await {
@@ -1254,6 +1261,8 @@ fn spawn_insecure_transport_warning(public_base_url: String, listen: std::net::S
 
     tokio::spawn(async move {
         let mut ticker = interval(Duration::from_secs(INSECURE_TRANSPORT_WARN_INTERVAL_SECS));
+        // 警告是节流型日志,跳过错过的 tick 即可,不要在恢复后连续 burst 多条相同警告。
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
         loop {
             ticker.tick().await;
             warn!(

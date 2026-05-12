@@ -19,7 +19,7 @@ use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use futures::{SinkExt, StreamExt};
 use tokio::fs;
-use tokio::time::{interval, sleep, timeout};
+use tokio::time::{MissedTickBehavior, interval, sleep, timeout};
 use tokio_tungstenite::connect_async_with_config;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
@@ -241,6 +241,9 @@ async fn run_session(
     .map_err(|error| session_error(false, error))?;
 
     let mut report_ticker = interval(Duration::from_secs(config.report_interval_secs));
+    // 错过的上报视为"已错过",不要在挂起恢复后 burst 多帧 metrics —— 否则会触发
+    // 服务端 sanitize 异常计数(METRIC_ANOMALY_SESSION_LIMIT)误判并主动断连。
+    report_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut authenticated = false;
 
     loop {
@@ -386,6 +389,8 @@ fn spawn_insecure_transport_warning(server_url: String) {
 
     tokio::spawn(async move {
         let mut ticker = interval(Duration::from_secs(INSECURE_TRANSPORT_WARN_INTERVAL_SECS));
+        // 警告是节流型日志,跳过错过的 tick 即可,不要在恢复后连续 burst 多条相同警告。
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
         loop {
             ticker.tick().await;
             warn!(
