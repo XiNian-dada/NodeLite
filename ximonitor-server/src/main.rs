@@ -102,6 +102,7 @@ struct NodeCommandArgs {
 #[derive(Clone)]
 struct AppState {
     history: HistoryStore,
+    install_admission: InstallAdmissionController,
     readiness: ServerReadiness,
     registry: NodeRegistry,
     shared: SharedState,
@@ -196,6 +197,86 @@ enum WsAdmissionError {
     TotalCapacity,
     IpCapacity,
     Blocked { retry_after_secs: u64 },
+}
+
+/// `/install/bootstrap` 的认证失败计数器,与 `WsAdmissionController` 的封禁逻辑
+/// 完全同型,但不维护"活动连接数":install 路径是一次性短请求,只需要按 IP
+/// 限制无效 token 尝试,防止远端攻击者把 registry flock + IO 当作免费 DoS 通道。
+#[derive(Clone)]
+struct InstallAdmissionController {
+    config: InstallAdmissionConfig,
+    state: Arc<Mutex<InstallAdmissionState>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct InstallAdmissionConfig {
+    auth_fail_window_secs: u64,
+    auth_fail_max_attempts: usize,
+    auth_block_secs: u64,
+}
+
+#[derive(Debug, Default)]
+struct InstallAdmissionState {
+    auth_failures: HashMap<IpAddr, AuthFailureState>,
+}
+
+/// 软上限:超过后顺手扫一次表清掉已过期条目,与 #28 中的 ws 失败表同源问题。
+const INSTALL_AUTH_FAILURE_TABLE_SOFT_LIMIT: usize = 1024;
+
+impl InstallAdmissionController {
+    fn new(config: InstallAdmissionConfig) -> Self {
+        Self {
+            config,
+            state: Arc::new(Mutex::new(InstallAdmissionState::default())),
+        }
+    }
+
+    /// 检查给定 client_ip 是否仍处于封禁窗口。封禁中返回 `retry_after_secs`;
+    /// 否则正常放行(不递增计数 —— `record_auth_failure` 才会递增)。
+    fn check(&self, client_ip: IpAddr) -> Result<(), u64> {
+        let now = Instant::now();
+        let mut state = self.lock_state();
+        let failure_window = Duration::from_secs(self.config.auth_fail_window_secs);
+        let failure_state = state.auth_failures.entry(client_ip).or_default();
+        prune_auth_failure_state(failure_state, now, failure_window);
+        if let Some(blocked_until) = failure_state.blocked_until
+            && blocked_until > now
+        {
+            return Err(blocked_until.duration_since(now).as_secs().max(1));
+        }
+        if failure_state.recent_failures.is_empty() && failure_state.blocked_until.is_none() {
+            state.auth_failures.remove(&client_ip);
+        }
+        Ok(())
+    }
+
+    fn record_auth_failure(&self, client_ip: IpAddr) {
+        let now = Instant::now();
+        let failure_window = Duration::from_secs(self.config.auth_fail_window_secs);
+        let mut state = self.lock_state();
+        let failure_state = state.auth_failures.entry(client_ip).or_default();
+        prune_auth_failure_state(failure_state, now, failure_window);
+        failure_state.recent_failures.push_back(now);
+        if failure_state.recent_failures.len() >= self.config.auth_fail_max_attempts {
+            failure_state.blocked_until =
+                Some(now + Duration::from_secs(self.config.auth_block_secs));
+            failure_state.recent_failures.clear();
+        }
+        if state.auth_failures.len() > INSTALL_AUTH_FAILURE_TABLE_SOFT_LIMIT {
+            sweep_expired_auth_failures(&mut state.auth_failures, now, failure_window);
+        }
+    }
+
+    fn clear_auth_failures(&self, client_ip: IpAddr) {
+        let mut state = self.lock_state();
+        state.auth_failures.remove(&client_ip);
+    }
+
+    fn lock_state(&self) -> std::sync::MutexGuard<'_, InstallAdmissionState> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 }
 
 /// 把 `scripts/install-agent.sh` 在编译期嵌入到二进制内。
@@ -461,6 +542,13 @@ async fn run_server(config_path: &Path) -> Result<()> {
 
     let state = AppState {
         history,
+        install_admission: InstallAdmissionController::new(InstallAdmissionConfig {
+            // 复用 ws 子小节里同名的限流配置 —— 站在运维视角它们是同一组
+            // "认证失败暴力策略"参数,没必要再多开一组。
+            auth_fail_window_secs: config.ws.auth_fail_window_secs,
+            auth_fail_max_attempts: config.ws.auth_fail_max_attempts,
+            auth_block_secs: config.ws.auth_block_secs,
+        }),
         readiness,
         registry,
         shared,
@@ -718,39 +806,42 @@ async fn install_agent_script() -> Response {
 }
 
 /// Agent 安装脚本通过 Bearer 安装令牌请求该端点来换取自己的 agent.toml。
-async fn install_bootstrap(State(state): State<AppState>, request: Request) -> Response {
+///
+/// 该端点是公网可达且无凭证的入口,所以在落到 registry 文件锁之前就要拦截掉
+/// 显式无效的请求与已被封禁的 IP。`InstallAdmissionController` 与 `/ws` 的限流
+/// 是同型逻辑,但只关心"该 IP 短期内累计了多少次无效尝试",因为安装请求本身
+/// 没有"长连接"概念。
+async fn install_bootstrap(
+    State(state): State<AppState>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    request: Request,
+) -> Response {
+    let client_ip = resolve_client_ip(state.shared.config().listen, peer_addr, &headers);
+    if let Err(retry_after_secs) = state.install_admission.check(client_ip) {
+        return install_blocked_response(retry_after_secs);
+    }
+
     let Some(token) = bearer_token_from_request(&request) else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            [
-                (
-                    header::WWW_AUTHENTICATE,
-                    "Bearer realm=\"XiMonitor Installer\"",
-                ),
-                (header::CACHE_CONTROL, "no-store, no-cache, must-revalidate"),
-                (header::PRAGMA, "no-cache"),
-            ],
-            "missing install token",
-        )
-            .into_response();
+        // 没带 Bearer:同样按一次失败计入,使无 Authorization 的扫描脚本也无法
+        // 用零成本反复触发 handler。
+        state.install_admission.record_auth_failure(client_ip);
+        return install_unauthorized_response("missing install token");
     };
+
+    // 在文件锁之前先做廉价的格式检查 —— install token 是 32 字节随机数的 hex
+    // 编码,长度必须为 64 且仅含 0-9a-f。任何不符合格式的输入直接 401,无需
+    // 进入 registry 的 spawn_blocking + flock 路径。
+    if !is_well_formed_install_token(token) {
+        state.install_admission.record_auth_failure(client_ip);
+        return install_unauthorized_response("invalid install token");
+    }
 
     let node = match state.registry.consume_install_token(token).await {
         Ok(Some(node)) => node,
         Ok(None) => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                [
-                    (
-                        header::WWW_AUTHENTICATE,
-                        "Bearer realm=\"XiMonitor Installer\"",
-                    ),
-                    (header::CACHE_CONTROL, "no-store, no-cache, must-revalidate"),
-                    (header::PRAGMA, "no-cache"),
-                ],
-                "invalid install token",
-            )
-                .into_response();
+            state.install_admission.record_auth_failure(client_ip);
+            return install_unauthorized_response("invalid install token");
         }
         Err(error) => {
             error!(error = ?error, "failed to consume install token");
@@ -765,6 +856,10 @@ async fn install_bootstrap(State(state): State<AppState>, request: Request) -> R
                 .into_response();
         }
     };
+
+    // 命中合法 token → 清理该 IP 的失败历史,避免合法的 install 流程被前一次
+    // 失败计数误伤。
+    state.install_admission.clear_auth_failures(client_ip);
 
     match render_agent_config(&state.shared.config().public_base_url, &node) {
         Ok(agent_config) => (
@@ -789,6 +884,49 @@ async fn install_bootstrap(State(state): State<AppState>, request: Request) -> R
                 .into_response()
         }
     }
+}
+
+/// 统一构造"无效安装 token"类响应,使每个失败分支输出的头部一致(包括
+/// WWW-Authenticate 与 no-cache),同时把响应正文集中在一处便于审计。
+fn install_unauthorized_response(detail: &'static str) -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        [
+            (
+                header::WWW_AUTHENTICATE,
+                "Bearer realm=\"XiMonitor Installer\"",
+            ),
+            (header::CACHE_CONTROL, "no-store, no-cache, must-revalidate"),
+            (header::PRAGMA, "no-cache"),
+        ],
+        detail,
+    )
+        .into_response()
+}
+
+/// 被封禁的 IP 在限流窗口结束前重试时返回 429 + Retry-After,与 `/ws` 入口
+/// `WsAdmissionError::Blocked` 对外语义保持一致。
+fn install_blocked_response(retry_after_secs: u64) -> Response {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        [
+            (header::RETRY_AFTER, retry_after_secs.to_string()),
+            (
+                header::CACHE_CONTROL,
+                "no-store, no-cache, must-revalidate".to_string(),
+            ),
+            (header::PRAGMA, "no-cache".to_string()),
+        ],
+        "too many recent install bootstrap failures",
+    )
+        .into_response()
+}
+
+/// install token 在 [registry.rs](../registry.rs) 中由 `generate_token` 生成,
+/// 固定为 32 字节随机数的 lowercase hex —— 即 64 字符 0-9a-f。这里的格式检查
+/// 让显然不合法的输入在落到文件锁前就被拒掉。
+fn is_well_formed_install_token(token: &str) -> bool {
+    token.len() == 64 && token.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// 仪表盘顶部的总览数据。
@@ -1673,17 +1811,18 @@ mod tests {
 
     use axum::Router;
     use axum::body::Body;
-    use axum::extract::State;
+    use axum::extract::{ConnectInfo, State};
     use axum::http::{HeaderMap, Request, StatusCode, header};
     use chrono::Utc;
     use tokio::runtime::Runtime;
 
     use super::{
-        AppState, MAX_SANITIZED_DISKS, MAX_SANITIZED_LOAD, MAX_SANITIZED_RATE_BYTES_PER_SEC,
-        MAX_SANITIZED_STRING_BYTES, METRIC_ANOMALY_SESSION_LIMIT, ReadonlyRouteAuth,
-        SanitizationReport, ServerReadiness, WsAdmissionController, WsAdmissionError, bootstrap,
-        healthz, index, install_agent_script, install_bootstrap, node_detail, node_history,
-        node_status, nodes, overview, readyz, resolve_client_ip, sanitize_snapshot,
+        AppState, InstallAdmissionConfig, InstallAdmissionController, MAX_SANITIZED_DISKS,
+        MAX_SANITIZED_LOAD, MAX_SANITIZED_RATE_BYTES_PER_SEC, MAX_SANITIZED_STRING_BYTES,
+        METRIC_ANOMALY_SESSION_LIMIT, ReadonlyRouteAuth, SanitizationReport, ServerReadiness,
+        WsAdmissionController, WsAdmissionError, bootstrap, healthz, index, install_agent_script,
+        install_bootstrap, is_well_formed_install_token, node_detail, node_history, node_status,
+        nodes, overview, readyz, resolve_client_ip, sanitize_snapshot,
         should_disconnect_for_metric_anomalies, sweep_expired_auth_failures,
         truncate_to_byte_boundary, ui_i18n_asset, update_metric_anomaly_window,
         uses_insecure_remote_public_base_url, ws_handler,
@@ -1730,6 +1869,11 @@ mod tests {
         let runtime = Runtime::new().expect("runtime should build");
         let state = AppState {
             history: HistoryStore::new(PathBuf::from("./data/history.sqlite3")),
+            install_admission: InstallAdmissionController::new(InstallAdmissionConfig {
+                auth_fail_window_secs: 300,
+                auth_fail_max_attempts: 6,
+                auth_block_secs: 600,
+            }),
             readiness: ServerReadiness::new(false),
             registry: runtime
                 .block_on(NodeRegistry::load(config.node_registry_path.as_path()))
@@ -1882,6 +2026,11 @@ mod tests {
             });
             let state = AppState {
                 history: HistoryStore::new(config.history_db_path.clone()),
+                install_admission: InstallAdmissionController::new(InstallAdmissionConfig {
+                    auth_fail_window_secs: 300,
+                    auth_fail_max_attempts: 6,
+                    auth_block_secs: 600,
+                }),
                 readiness: ServerReadiness::new(false),
                 registry: NodeRegistry::load(&registry_path)
                     .await
@@ -1903,7 +2052,15 @@ mod tests {
                 )
                 .body(Body::empty())
                 .expect("request should build");
-            let bootstrap_response = install_bootstrap(State(state), request).await;
+            let peer_addr =
+                SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 51234));
+            let bootstrap_response = install_bootstrap(
+                State(state),
+                ConnectInfo(peer_addr),
+                HeaderMap::new(),
+                request,
+            )
+            .await;
             assert_eq!(bootstrap_response.status(), StatusCode::OK);
             assert_eq!(
                 bootstrap_response.headers().get(header::CACHE_CONTROL),
@@ -2454,5 +2611,41 @@ mod tests {
             failures.contains_key(&recent_ip),
             "in-window failure should be preserved",
         );
+    }
+
+    #[test]
+    fn install_token_format_short_circuits_obvious_garbage() {
+        // 32-byte hex token = 64 lowercase hex chars 才是合法格式;
+        // 任何不符合的输入应在落到 registry flock 之前就被拒掉。
+        let valid = "a".repeat(64);
+        assert!(is_well_formed_install_token(&valid));
+        assert!(!is_well_formed_install_token(""));
+        assert!(!is_well_formed_install_token(&"a".repeat(63)));
+        assert!(!is_well_formed_install_token(&"a".repeat(65)));
+        // 大写不被接受 —— 与 generate_token 的 lowercase hex 输出对齐。
+        assert!(!is_well_formed_install_token(&"A".repeat(64)));
+        // 非 hex 字符
+        assert!(!is_well_formed_install_token(&"z".repeat(64)));
+    }
+
+    #[test]
+    fn install_admission_blocks_after_repeated_failures() {
+        let controller =
+            InstallAdmissionController::new(InstallAdmissionConfig {
+                auth_fail_window_secs: 60,
+                auth_fail_max_attempts: 2,
+                auth_block_secs: 300,
+            });
+        let client_ip: IpAddr = "198.51.100.24".parse().expect("ip");
+
+        // 阈值前应放行
+        assert!(controller.check(client_ip).is_ok());
+        controller.record_auth_failure(client_ip);
+        controller.record_auth_failure(client_ip);
+
+        match controller.check(client_ip) {
+            Err(retry_after_secs) => assert!(retry_after_secs > 0),
+            Ok(()) => panic!("client should be temporarily blocked after threshold"),
+        }
     }
 }
