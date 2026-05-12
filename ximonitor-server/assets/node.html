@@ -4,6 +4,21 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>XiMonitor Node</title>
+    <script>
+      // 主题闪烁修复:在第一次 paint 之前同步把存储的主题偏好写到 <html> 上。
+      // 不做这步时,浏览器会先按 :root 的 dark 默认值渲染一帧,等下方 main
+      // script 跑到 applyTheme() 才切到 light,用户能看到几十毫秒的"暗 → 亮"
+      // 闪烁。该 IIFE 必须保持同步 + 不依赖 document.body(此处 body 尚未解析)。
+      (function () {
+        try {
+          var stored = window.localStorage.getItem("ximonitor.ui.theme");
+          var theme = stored === "light" ? "light" : "dark";
+          document.documentElement.setAttribute("data-theme", theme);
+        } catch (_e) {
+          document.documentElement.setAttribute("data-theme", "dark");
+        }
+      })();
+    </script>
     <style>
       :root {
         color-scheme: dark;
@@ -617,7 +632,7 @@
       }
     </style>
   </head>
-  <body data-theme="dark">
+  <body>
     <div class="app">
       <aside class="sidebar" aria-label="primary">
         <a class="brand" href="/" title="XiMonitor">
