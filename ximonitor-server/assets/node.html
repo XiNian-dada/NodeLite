@@ -1609,9 +1609,9 @@
             { color: "var(--chart-network-up)", label: t("index.node.upload"), points: upPts },
           ], { clipSpikes: chartState.clipSpikes.network, valueKind: "rate", minValue: 0, height: 240 });
         }
-        renderTimeAxis("axis-cpu", chartHistory);
-        renderTimeAxis("axis-memory", chartHistory);
-        renderTimeAxis("axis-network", chartHistory);
+        renderTimeAxis("axis-cpu", chartHistory, "percent");
+        renderTimeAxis("axis-memory", chartHistory, "percent");
+        renderTimeAxis("axis-network", chartHistory, "rate");
       }
 
       function renderBigCharts(history) {
@@ -1631,12 +1631,16 @@
         drawAreaChart("big-chart-latency", rttPts, "var(--chart-latency)", { clipSpikes: chartState.clipSpikes.latency, valueKind: "latency", minValue: 0, label: t("node.latency_history"), height: 220 });
       }
 
-      function renderTimeAxis(id, history) {
+      function renderTimeAxis(id, history, kind) {
         const root = document.getElementById(id);
         if (!root || history.length === 0) {
           if (root) root.textContent = "";
           return;
         }
+        const padLeft = chartPadLeft(kind);
+        const padRight = 14;
+        root.style.paddingLeft = padLeft + "px";
+        root.style.paddingRight = padRight + "px";
         const fmt = (ts) => new Date(ts).toLocaleTimeString(currentLanguage, { hour: "2-digit", minute: "2-digit" });
         const first = history[0]._ts;
         const last = history[history.length - 1]._ts;
