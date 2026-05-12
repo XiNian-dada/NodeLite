@@ -123,6 +123,15 @@ struct ServerReadiness {
 #[derive(Debug, Clone)]
 struct ReadonlyRouteAuth {
     expected_authorization: Option<String>,
+    enable_2fa: bool,
+    totp_secret: Option<Vec<u8>>,
+}
+
+/// 2FA 会话状态:用户通过 Basic Auth 后,等待 TOTP 验证。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TwoFactorSession {
+    username: String,
+    authenticated_at: i64, // Unix timestamp
 }
 
 /// `/api/bootstrap` 的响应结构,只读、用于前端启动期获取基本元数据。
@@ -336,13 +345,29 @@ impl From<anyhow::Error> for ProtocolError {
 impl ReadonlyRouteAuth {
     /// 根据可选的基本认证配置预先计算"期望的 Authorization 头",免去每次请求都重新编码。
     fn from_config(config: Option<ReadonlyAuthConfig>) -> Self {
-        let expected_authorization = config.map(|config| {
-            let credentials = format!("{}:{}", config.username, config.password);
-            let encoded = base64::engine::general_purpose::STANDARD.encode(credentials);
-            format!("Basic {encoded}")
-        });
+        let (expected_authorization, enable_2fa, totp_secret) = match config {
+            Some(config) => {
+                let credentials = format!("{}:{}", config.username, config.password);
+                let encoded = base64::engine::general_purpose::STANDARD.encode(credentials);
+                let auth = format!("Basic {encoded}");
+
+                let totp_secret = if config.enable_2fa {
+                    config.totp_secret.and_then(|s| {
+                        base32::decode(base32::Alphabet::Rfc4648 { padding: false }, &s)
+                    })
+                } else {
+                    None
+                };
+
+                (Some(auth), config.enable_2fa, totp_secret)
+            }
+            None => (None, false, None),
+        };
+
         Self {
             expected_authorization,
+            enable_2fa,
+            totp_secret,
         }
     }
 

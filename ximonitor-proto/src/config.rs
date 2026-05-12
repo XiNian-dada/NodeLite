@@ -88,6 +88,10 @@ pub struct ServerConfig {
 pub struct ReadonlyAuthConfig {
     pub username: String,
     pub password: String,
+    #[serde(default)]
+    pub enable_2fa: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub totp_secret: Option<String>,
 }
 
 /// WebSocket 准入控制参数,用于限流与抗暴力破解。
@@ -311,7 +315,12 @@ impl RawServerConfigFile {
             (Some(username), Some(password)) => {
                 validate_non_empty("auth.username", &username)?;
                 validate_non_empty("auth.password", &password)?;
-                Some(ReadonlyAuthConfig { username, password })
+                Some(ReadonlyAuthConfig {
+                    username,
+                    password,
+                    enable_2fa: false,
+                    totp_secret: None,
+                })
             }
             (None, None) => None,
             (Some(_), None) => {
