@@ -36,7 +36,7 @@ use axum::response::{AppendHeaders, Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine;
-use chrono::{TimeZone, Utc};
+use chrono::{Duration as ChronoDuration, TimeZone, Utc};
 use clap::{Parser, Subcommand};
 use futures::{SinkExt, StreamExt};
 use getrandom::fill as fill_random;
@@ -329,6 +329,8 @@ const TWO_FACTOR_PENDING_SECS: u64 = 300;
 const TWO_FACTOR_AUTH_SECS: u64 = 24 * 60 * 60;
 const TWO_FACTOR_PENDING_COOKIE: &str = "ximonitor_2fa_pending";
 const TWO_FACTOR_AUTH_COOKIE: &str = "ximonitor_auth";
+/// Token 距离过期不足该天数时,服务端在已认证会话内主动轮换并下发新 token。
+const AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS: i64 = 7;
 /// 历史采样中允许的最大磁盘条目数,防止恶意 Agent 制造海量条目。
 const MAX_SANITIZED_DISKS: usize = 64;
 /// 单个磁盘字段(device/mount_point/fs_type)允许的最大字节数,防止 Agent 上报巨型字符串撑爆 UI 与历史库。
@@ -1451,7 +1453,7 @@ async fn handle_socket(
             ));
         }
     };
-    let session_token = hello.token.clone();
+    let mut session_token = hello.token.clone();
     let identity = match state
         .registry
         .authorize(&hello.identity, &session_token)
@@ -1580,6 +1582,7 @@ async fn handle_socket(
                                 }
                                 match state.registry.refresh_token(&node_id).await {
                                     Ok((new_token, expires_at)) => {
+                                        session_token = new_token.clone();
                                         let response = WireMessage::RefreshTokenResponse(
                                             ximonitor_proto::RefreshTokenResponseMessage {
                                                 new_token,
@@ -1624,6 +1627,18 @@ async fn handle_socket(
                         warn!(node_id = %node_id, "closing websocket session after registry token change");
                         break Ok(());
                     }
+                    if let Some(refresh_response) = maybe_refresh_agent_token(
+                        &state.registry,
+                        &node_id,
+                        &mut session_token,
+                    )
+                    .await?
+                    {
+                        sender
+                            .send(Message::Text(refresh_response.into()))
+                            .await
+                            .map_err(|error| anyhow!("failed to send token refresh response: {error}"))?;
+                    }
 
                     prune_outstanding_pings(&mut outstanding_pings, ping_expiry);
                     let nonce = next_ping_nonce;
@@ -1644,6 +1659,36 @@ async fn handle_socket(
     shared.mark_disconnected(&node_id, session_id).await;
     info!(node_id = %node_id, session_id, "node disconnected");
     session_result
+}
+
+async fn maybe_refresh_agent_token(
+    registry: &NodeRegistry,
+    node_id: &str,
+    session_token: &mut String,
+) -> Result<Option<String>> {
+    let refresh_after = Utc::now() + ChronoDuration::days(AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS);
+    let should_refresh = registry
+        .token_expires_at(node_id)
+        .await
+        .is_none_or(|expires_at| expires_at <= refresh_after);
+    if !should_refresh {
+        return Ok(None);
+    }
+
+    let (new_token, expires_at) = registry.refresh_token(node_id).await?;
+    *session_token = new_token.clone();
+    info!(
+        node_id = %node_id,
+        expires_at = %expires_at.to_rfc3339(),
+        "refreshed agent token before expiry",
+    );
+    let response = WireMessage::RefreshTokenResponse(ximonitor_proto::RefreshTokenResponseMessage {
+        new_token,
+        expires_at: expires_at.to_rfc3339(),
+    });
+    let payload = serde_json::to_string(&response)
+        .map_err(|error| anyhow!("failed to serialize token refresh response: {error}"))?;
+    Ok(Some(payload))
 }
 
 /// 阻塞接收 Hello 帧;期间收到的 Ping/Pong 等控制帧会被忽略,其他业务帧视为协议错误。

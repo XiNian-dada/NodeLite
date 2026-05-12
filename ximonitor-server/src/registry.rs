@@ -125,6 +125,16 @@ impl NodeRegistry {
         is_token_current(&state.entries, node_id, token)
     }
 
+    /// 查询节点 token 的过期时间。`None` 既可能表示节点不存在,也可能是旧注册表
+    /// 里的永不过期 token;调用方通常只在节点已通过认证后使用它。
+    pub async fn token_expires_at(&self, node_id: &str) -> Option<DateTime<Utc>> {
+        let state = self.state.read().await;
+        state
+            .entries
+            .get(node_id)
+            .and_then(|node| node.token_expires_at)
+    }
+
     /// 刷新节点的 Token:生成新 Token 并延长过期时间。
     /// 返回 (new_token, expires_at)。
     pub async fn refresh_token(&self, node_id: &str) -> Result<(String, DateTime<Utc>)> {

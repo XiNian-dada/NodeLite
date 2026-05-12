@@ -172,7 +172,7 @@ async fn shutdown_signal() {
 /// 当进程收到 SIGTERM / SIGINT 时立即从当前 await 点退出,使 Agent 能写一条
 /// "shutting down" 日志后干净退出,而不是被 systemd 直接 KILL 截断。
 async fn run_forever(
-    config: AgentConfig,
+    mut config: AgentConfig,
     mut collector: crate::collector::HostCollector,
     identity: ximonitor_proto::NodeIdentity,
     config_path: PathBuf,
@@ -181,7 +181,7 @@ async fn run_forever(
 
     loop {
         let next = async {
-            match run_session(&config, &mut collector, &identity, &config_path).await {
+            match run_session(&mut config, &mut collector, &identity, &config_path).await {
                 Ok(()) => {
                     attempt = 0;
                 }
@@ -218,7 +218,7 @@ async fn run_forever(
 ///
 /// 状态机:连接 → Hello → 等待服务器 `authenticated` 通知 → 周期上报 Metrics 直至连接断开。
 async fn run_session(
-    config: &AgentConfig,
+    config: &mut AgentConfig,
     collector: &mut crate::collector::HostCollector,
     identity: &ximonitor_proto::NodeIdentity,
     config_path: &Path,
@@ -302,6 +302,7 @@ async fn run_session(
                             }
                             WireMessage::RefreshTokenResponse(response) => {
                                 info!("received new token, expires at {}", response.expires_at);
+                                config.token = response.new_token.clone();
 
                                 // 持久化新 token 到配置文件
                                 if let Err(e) = update_token_in_config(config_path, &response.new_token).await {
