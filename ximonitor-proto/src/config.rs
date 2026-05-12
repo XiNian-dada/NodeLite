@@ -786,6 +786,47 @@ mod tests {
     }
 
     #[test]
+    fn parses_server_config_with_totp_2fa() {
+        let config = parse_server_config(
+            r#"
+            [server]
+            listen = "127.0.0.1:8080"
+            public_base_url = "https://monitor.example.com"
+
+            [auth]
+            username = "viewer"
+            password = "secret123"
+            enable_2fa = true
+            totp_secret = "JBSWY3DPEHPK3PXP"
+            "#,
+        )
+        .expect("2fa config should parse");
+
+        let auth = config.readonly_auth.expect("auth should be configured");
+        assert!(auth.enable_2fa);
+        assert_eq!(auth.totp_secret.as_deref(), Some("JBSWY3DPEHPK3PXP"));
+    }
+
+    #[test]
+    fn rejects_2fa_without_totp_secret() {
+        let error = parse_server_config(
+            r#"
+            [server]
+            listen = "127.0.0.1:8080"
+            public_base_url = "https://monitor.example.com"
+
+            [auth]
+            username = "viewer"
+            password = "secret123"
+            enable_2fa = true
+            "#,
+        )
+        .expect_err("2fa without totp secret should fail");
+
+        assert!(error.to_string().contains("auth.totp_secret"));
+    }
+
+    #[test]
     fn rejects_public_listener_without_auth() {
         let error = parse_server_config(
             r#"
