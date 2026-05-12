@@ -37,7 +37,13 @@ INSTALL_TOKEN_FILE="${XIMONITOR_AGENT_INSTALL_TOKEN_FILE:-}"
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/ximonitor"
 MODE="${XIMONITOR_AGENT_MODE:-auto}"
-AUTO_UPDATE="${XIMONITOR_AGENT_AUTO_UPDATE:-enable}"
+# 默认值用 sentinel 而非真实开关:
+#   - 显式传 enable / disable(env 或 --auto-update)→ 直接生效;
+#   - 未显式指定时,稍后根据 MODE 与现有 timer 文件状态解析:
+#       * 全新安装 → disable(opt-in 默认,不再让 latest 通道自动覆盖整批节点);
+#       * upgrade 且已存在 timer → enable(保留现有节点的选择,
+#         避免自我升级一次就把全队的 auto-update 静默关掉)。
+AUTO_UPDATE="${XIMONITOR_AGENT_AUTO_UPDATE:-default}"
 BASE_URL="${XIMONITOR_AGENT_BASE_URL:-https://github.com/XiNian-dada/XiMonitor/releases/latest/download}"
 CHECKSUMS_URL="${XIMONITOR_AGENT_CHECKSUMS_URL:-}"
 BINARY_URL="${XIMONITOR_AGENT_BINARY_URL:-}"
@@ -405,6 +411,9 @@ Optional:
   --mode <install|upgrade|auto>
   --base-url <release-base-url>
   --auto-update <enable|disable>
+      Default for fresh installs: disable (opt-in). In upgrade mode the
+      existing setting is preserved unless --auto-update / the
+      XIMONITOR_AGENT_AUTO_UPDATE env var is set explicitly.
   --checksums-url <release-checksums-url>
   --binary-url <exact-binary-url>
   --sha256-x86_64 <sha256-override>
@@ -486,6 +495,16 @@ esac
 
 if [ "$MODE" = "install" ] && [ -z "$BOOTSTRAP_URL" ]; then
   fail "install mode requires --bootstrap-url"
+fi
+
+# 解析 AUTO_UPDATE sentinel:全新安装走 opt-in(disable),
+# 升级模式如果已有 timer 文件则保留 enable,以免现有节点静默丢掉自动更新能力。
+if [ "$AUTO_UPDATE" = "default" ]; then
+  if [ "$MODE" = "upgrade" ] && [ -f "$AUTO_UPDATE_TIMER_PATH" ]; then
+    AUTO_UPDATE="enable"
+  else
+    AUTO_UPDATE="disable"
+  fi
 fi
 
 ensure_service_account
