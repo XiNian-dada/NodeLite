@@ -188,7 +188,8 @@ impl TwoFactorSessions {
     pub fn mark_totp_step_used(&self, step: u64) {
         let mut store = lock_mutex(&self.inner);
         prune_expired_sessions(&mut store, Instant::now());
-        let expires_at = Instant::now() + Duration::from_secs(TWO_FACTOR_TOTP_REPLAY_RETENTION_SECS);
+        let expires_at =
+            Instant::now() + Duration::from_secs(TWO_FACTOR_TOTP_REPLAY_RETENTION_SECS);
         store.used_totp_steps.insert(step, expires_at);
     }
 
@@ -220,9 +221,7 @@ impl TwoFactorSessions {
 }
 
 fn prune_expired_sessions(store: &mut TwoFactorSessionStore, now: Instant) {
-    store
-        .pending
-        .retain(|_, session| session.expires_at > now);
+    store.pending.retain(|_, session| session.expires_at > now);
     store
         .authenticated
         .retain(|_, expires_at| *expires_at > now);

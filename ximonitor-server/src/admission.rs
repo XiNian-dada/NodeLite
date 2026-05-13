@@ -66,10 +66,7 @@ impl WsAdmissionController {
     /// 尝试占用一个 WebSocket 连接配额。
     ///
     /// 返回 RAII 句柄;它一旦析构,连接计数会被自动回退,无需手动 release。
-    pub fn try_acquire(
-        &self,
-        client_ip: IpAddr,
-    ) -> Result<WsConnectionPermit, WsAdmissionError> {
+    pub fn try_acquire(&self, client_ip: IpAddr) -> Result<WsConnectionPermit, WsAdmissionError> {
         let now = Instant::now();
         let mut state = self.lock_state();
         let failure_window = Duration::from_secs(self.config.auth_fail_window_secs);
@@ -243,11 +240,7 @@ impl InstallAdmissionController {
 ///
 /// 当 Server 仅监听回环地址(典型的反向代理部署),允许从 `X-Forwarded-For` / `X-Real-IP` 中读取上游 IP;
 /// 否则直接使用 TCP 连接的对端地址,避免被恶意请求伪造来源。
-pub fn resolve_client_ip(
-    listen: SocketAddr,
-    peer_addr: SocketAddr,
-    headers: &HeaderMap,
-) -> IpAddr {
+pub fn resolve_client_ip(listen: SocketAddr, peer_addr: SocketAddr, headers: &HeaderMap) -> IpAddr {
     if !listen.ip().is_loopback() {
         return peer_addr.ip();
     }

@@ -659,7 +659,8 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        is_token_assignment_line, reconnect_delay, replace_token_line, uses_insecure_remote_transport,
+        is_token_assignment_line, reconnect_delay, replace_token_line,
+        uses_insecure_remote_transport,
     };
 
     #[test]
@@ -684,7 +685,11 @@ mod tests {
         assert!(result.contains("# token = \"old\""));
         assert!(result.contains(" token = \"newvalue\""));
         // 真正的赋值行不应该还保留旧 token。
-        assert_eq!(result.matches("token = \"old\"").count(), 1, "only the comment line keeps the old value");
+        assert_eq!(
+            result.matches("token = \"old\"").count(),
+            1,
+            "only the comment line keeps the old value"
+        );
     }
 
     #[test]
