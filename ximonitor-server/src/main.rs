@@ -1558,13 +1558,25 @@ async fn handle_socket(
             );
             state.ws_admission.record_auth_failure(client_ip);
 
-            // 检查是否是 token 过期错误,如果是则返回具体错误信息
+            // 拒绝前先通过 ServerNotice 告知 Agent 失败原因,使 Agent 端日志
+            // 与运维报警能直接区分"token 过期需要重新颁发"与"通用拒绝"。
+            // 发送失败不影响后续关闭逻辑;只是 best-effort 的诊断信息。
             let error_msg = error.to_string();
-            if error_msg.contains("token expired") {
-                return Err(ProtocolError::Client("token expired".to_string()));
+            let (notice_message, error_label): (&str, &str) = if error_msg.contains("token expired")
+            {
+                (
+                    "token expired; run `ximonitor-server install-agent --rotate-token` and reinstall this node",
+                    "token expired",
+                )
             } else {
-                return Err(ProtocolError::Client("unauthorized".to_string()));
-            }
+                ("unauthorized", "unauthorized")
+            };
+            let notice = WireMessage::ServerNotice(ServerNoticeMessage {
+                level: ximonitor_proto::NoticeLevel::Error,
+                message: notice_message.to_string(),
+            });
+            let _ = send_wire_message(&mut socket, &notice).await;
+            return Err(ProtocolError::Client(error_label.to_string()));
         }
     };
     state.ws_admission.clear_auth_failures(client_ip);

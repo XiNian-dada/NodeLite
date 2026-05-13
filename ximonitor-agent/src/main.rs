@@ -61,11 +61,21 @@ struct Cli {
 ///
 /// `established_session` 表示在出错前是否已完成认证;
 /// 重连退避逻辑会据此判断要不要重置失败计数。
+///
+/// `token_expired` 由服务端在认证阶段下发的 `token expired` 通知触发。
+/// 此类失败不会因重连自愈 —— Agent 必须等待运维通过
+/// `ximonitor-server install-agent --rotate-token` 颁发新 token 并替换
+/// 本地 agent.toml,所以重连间隔需要拉长到小时级别,避免无谓的连接风暴。
 #[derive(Debug)]
 struct SessionError {
     established_session: bool,
+    token_expired: bool,
     source: anyhow::Error,
 }
+
+/// Token 过期后的重连间隔:拉长到 1 小时,既给运维介入留足时间,也避免
+/// Agent 反复连接服务端制造无用的失败日志与 IP 限流压力。
+const TOKEN_EXPIRED_RECONNECT_DELAY: Duration = Duration::from_secs(3600);
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -190,16 +200,25 @@ async fn run_forever(
                     if error.established_session {
                         attempt = 0;
                     }
-                    let delay = reconnect_delay(attempt);
+                    let delay = if error.token_expired {
+                        // token 过期需要人工干预,指数退避在小时级别才有意义。
+                        attempt = 0;
+                        TOKEN_EXPIRED_RECONNECT_DELAY
+                    } else {
+                        reconnect_delay(attempt)
+                    };
                     warn!(
                         server = %config.server,
                         delay_secs = delay.as_secs(),
                         established_session = error.established_session,
+                        token_expired = error.token_expired,
                         error = ?error.source,
                         "agent session ended; retrying after backoff"
                     );
                     sleep(delay).await;
-                    attempt = attempt.saturating_add(1);
+                    if !error.token_expired {
+                        attempt = attempt.saturating_add(1);
+                    }
                 }
             }
         };
@@ -282,20 +301,23 @@ async fn run_session(
                                     authenticated = true;
                                 }
 
-                                // 检测 token 过期错误
-                                if matches!(level, NoticeLevel::Error) && message.contains("token expired") {
-                                    warn!("token expired, requesting refresh");
-                                    let refresh_request = WireMessage::RefreshTokenRequest(
-                                        ximonitor_proto::RefreshTokenRequestMessage {
-                                            node_id: config.node_id.clone(),
-                                        }
+                                // 服务端拒绝过期 token 时会先发一条带 "token expired"
+                                // 的 Error notice 再关闭连接。Agent 无法在线 refresh 一个
+                                // 已经过期的 token —— 必须由运维通过
+                                // `ximonitor-server install-agent --rotate-token` 重新颁发
+                                // 并替换本地 agent.toml。此处把这种失败提升为独立的
+                                // `token_expired` 错误,使 run_forever 用小时级别的退避
+                                // 代替默认的指数退避,避免无谓的连接风暴。
+                                if matches!(level, NoticeLevel::Error)
+                                    && message.contains("token expired")
+                                {
+                                    tracing::error!(
+                                        message = %message,
+                                        "agent token expired; sleeping until operator rotates token",
                                     );
-                                    let json = serde_json::to_string(&refresh_request)
-                                        .context("failed to serialize refresh request")
-                                        .map_err(|error| session_error(authenticated, error))?;
-                                    sender.send(Message::Text(json.into())).await
-                                        .context("failed to send refresh request")
-                                        .map_err(|error| session_error(authenticated, error))?;
+                                    return Err(token_expired_error(anyhow!(
+                                        "agent token expired"
+                                    )));
                                 }
 
                                 log_notice(level, &message);
@@ -348,6 +370,15 @@ async fn run_session(
 fn session_error(established_session: bool, source: anyhow::Error) -> SessionError {
     SessionError {
         established_session,
+        token_expired: false,
+        source,
+    }
+}
+
+fn token_expired_error(source: anyhow::Error) -> SessionError {
+    SessionError {
+        established_session: false,
+        token_expired: true,
         source,
     }
 }
