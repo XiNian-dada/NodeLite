@@ -519,7 +519,7 @@ fn save_registry_file_sync(path: &Path, file: &RegistryFile) -> Result<()> {
 
     let payload =
         serde_json::to_string_pretty(file).context("failed to serialize node registry")?;
-    let tmp_path = temporary_registry_path(path);
+    let tmp_path = temporary_registry_path(path)?;
     write_registry_payload(&tmp_path, &payload)
         .with_context(|| format!("failed to write {}", tmp_path.display()))?;
     std::fs::rename(&tmp_path, path)
@@ -554,19 +554,19 @@ where
     .context("registry mutation task failed")?
 }
 
-fn temporary_registry_path(path: &Path) -> PathBuf {
+fn temporary_registry_path(path: &Path) -> Result<PathBuf> {
     let file_name = path
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("server.json");
     // 并发写时固定 tmp 名会互相覆盖;加随机后缀让每个写操作拿到独立临时文件。
     let mut suffix = [0u8; 8];
-    getrandom::fill(&mut suffix).expect("getrandom should succeed");
+    getrandom::fill(&mut suffix).context("failed to generate registry temp-file suffix")?;
     let suffix_hex = suffix
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    path.with_file_name(format!("{file_name}.tmp.{suffix_hex}"))
+    Ok(path.with_file_name(format!("{file_name}.tmp.{suffix_hex}")))
 }
 
 fn write_registry_payload(path: &Path, payload: &str) -> Result<()> {
