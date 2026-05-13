@@ -13,6 +13,7 @@
 
 mod admission;
 mod auth;
+mod cli;
 mod history;
 mod registry;
 mod sanitize;
@@ -22,7 +23,7 @@ mod ui;
 mod ws;
 
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -38,7 +39,7 @@ use axum::response::{AppendHeaders, Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{TimeZone, Utc};
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::net::TcpListener;
@@ -56,52 +57,13 @@ use crate::auth::{
     TWO_FACTOR_PENDING_SECS, TwoFactorSessions, Verify2FAError, Verify2FARequest, auth_cookie,
     cookie_value, expire_cookie, secure_cookies, verify_totp_step,
 };
+use crate::cli::{Cli, Command, install_agent_command, issue_node_command, upgrade_agent_command};
 use crate::history::HistoryStore;
-use crate::registry::{
-    IssueNodeRequest, NodeRegistry, build_install_script_url, default_agent_release_base_url,
-    issue_node, render_agent_config, render_install_command, render_upgrade_command,
-};
+use crate::registry::{NodeRegistry, render_agent_config};
 use crate::snapshot::{load_snapshot, persist_snapshot, spawn_snapshot_persistor};
 use crate::state::SharedState;
 use crate::ui::{UI_I18N_JSON, index_html, node_html};
 use crate::ws::ws_handler;
-
-/// 顶层命令行参数。
-#[derive(Debug, Parser)]
-#[command(name = "ximonitor-server")]
-#[command(about = "XiMonitor central server")]
-struct Cli {
-    /// 配置文件路径,默认 `config/server.toml`。
-    #[arg(long, global = true, default_value = "config/server.toml")]
-    config: PathBuf,
-    /// 可选子命令。不指定时进入"启动 Web 服务"模式。
-    #[command(subcommand)]
-    command: Option<Command>,
-}
-
-#[derive(Debug, Subcommand)]
-enum Command {
-    /// 颁发节点凭证(仅打印,不安装到 Agent 节点上)。
-    IssueNode(NodeCommandArgs),
-    /// 颁发节点凭证并打印 Agent 上的安装命令。
-    InstallAgent(NodeCommandArgs),
-    /// 打印就地升级 Agent 所需的命令。
-    UpgradeAgent,
-}
-
-/// 节点相关命令的共享参数。
-#[derive(Debug, Parser, Clone)]
-struct NodeCommandArgs {
-    #[arg(long)]
-    node_id: String,
-    #[arg(long)]
-    node_label: Option<String>,
-    #[arg(long = "tag")]
-    tags: Vec<String>,
-    /// 是否强制轮换该节点的现有 token。
-    #[arg(long)]
-    rotate_token: bool,
-}
 
 /// 在各处理器之间共享的运行时上下文。
 #[derive(Clone)]
@@ -139,14 +101,6 @@ struct BootstrapResponse {
     public_base_url: String,
     refresh_interval_secs: u64,
     registered_nodes: usize,
-}
-
-/// CLI 中 `issue-node` / `install-agent` 共享的产出结构。
-struct IssuedNodeBundle {
-    issued: crate::registry::IssueNodeResult,
-    install_command: String,
-    install_script_url: String,
-    agent_release_base_url: String,
 }
 
 /// 把 `scripts/install-agent.sh` 在编译期嵌入到二进制内。
@@ -337,89 +291,6 @@ async fn run_server(config_path: &Path) -> Result<()> {
     }
     info!("ximonitor server shutdown complete");
     Ok(())
-}
-
-/// `server issue-node`:创建/更新节点并打印对应的 agent.toml 与安装命令。
-async fn issue_node_command(config_path: &Path, args: NodeCommandArgs) -> Result<()> {
-    let config = load_server_config(config_path).await?;
-    let bundle = issue_node_bundle(&config, &args).await?;
-    let agent_config = render_agent_config(&config.public_base_url, &bundle.issued.node)?;
-    let action = if bundle.issued.created {
-        "created"
-    } else if bundle.issued.rotated_token {
-        "rotated"
-    } else {
-        "reused"
-    };
-
-    println!("node_id: {}", bundle.issued.node.node_id);
-    println!("node_label: {}", bundle.issued.node.node_label);
-    println!("status: {action}");
-    println!("registry_path: {}", config.node_registry_path.display());
-    println!("install_script_url: {}", bundle.install_script_url);
-    println!("agent_release_base_url: {}", bundle.agent_release_base_url);
-    println!(
-        "install_token_expires_at: {}",
-        bundle.issued.install_token_expires_at.to_rfc3339()
-    );
-    println!();
-    println!("# agent.toml");
-    println!("{agent_config}");
-    println!("# install command");
-    println!("{}", bundle.install_command);
-    println!();
-    println!("note: the install command above already embeds a one-time install token.");
-
-    Ok(())
-}
-
-/// `server install-agent`:只打印安装命令,适合管道式使用。
-async fn install_agent_command(config_path: &Path, args: NodeCommandArgs) -> Result<()> {
-    let config = load_server_config(config_path).await?;
-    let bundle = issue_node_bundle(&config, &args).await?;
-    println!("{}", bundle.install_command);
-    Ok(())
-}
-
-/// `server upgrade-agent`:打印就地升级现有 Agent 的命令。
-async fn upgrade_agent_command(config_path: &Path) -> Result<()> {
-    let config = load_server_config(config_path).await?;
-    let agent_release_base_url = default_agent_release_base_url()?;
-    let upgrade_command = render_upgrade_command(&config.public_base_url, &agent_release_base_url)?;
-    println!("{upgrade_command}");
-    Ok(())
-}
-
-/// 同时完成"节点登记"和"安装命令渲染",供两个 CLI 子命令复用。
-async fn issue_node_bundle(
-    config: &ServerConfig,
-    args: &NodeCommandArgs,
-) -> Result<IssuedNodeBundle> {
-    let issued = issue_node(
-        config.node_registry_path.as_path(),
-        IssueNodeRequest {
-            node_id: args.node_id.clone(),
-            node_label: args.node_label.clone(),
-            tags: args.tags.clone(),
-            rotate_token: args.rotate_token,
-        },
-    )
-    .await?;
-
-    let agent_release_base_url = default_agent_release_base_url()?;
-    let install_command = render_install_command(
-        &config.public_base_url,
-        &issued.install_token,
-        &agent_release_base_url,
-    )?;
-    let install_script_url = build_install_script_url(&config.public_base_url)?;
-
-    Ok(IssuedNodeBundle {
-        issued,
-        install_command,
-        install_script_url,
-        agent_release_base_url,
-    })
 }
 
 /// 验证密码强度:至少 8 字符,包含字母和数字。
