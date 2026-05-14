@@ -578,6 +578,11 @@
       .settings-kv span:first-child { color: var(--text-muted); }
       .settings-kv span:last-child { text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
       .settings-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+      .manual-update-form {
+        margin-top: 14px;
+        border-top: 1px solid var(--border-soft);
+        padding-top: 2px;
+      }
       .settings-button {
         border: 1px solid var(--border-strong);
         background: var(--bg-card-soft);
@@ -1503,6 +1508,13 @@
               <button type="button" class="settings-button primary" id="settings-check-update">${escapeHtml(t("settings.version.check_updates"))}</button>
               <a class="settings-button" href="${escapeHtml(settings.updates.latest_release_url)}" target="_blank" rel="noreferrer">${escapeHtml(t("settings.version.open_release"))}</a>
             </div>
+            <form class="settings-form manual-update-form" id="server-update-form">
+              <p class="settings-note">${escapeHtml(t(auth.two_factor_enabled ? "settings.version.manual_update_note_2fa" : "settings.version.manual_update_note_password"))}</p>
+              ${serverUpdateConfirmationField(auth)}
+              <div class="settings-actions">
+                <button type="submit" class="settings-button primary">${escapeHtml(t("settings.version.update_now"))}</button>
+              </div>
+            </form>
             <div id="settings-update-message" class="settings-message"></div>
           </article>
 
@@ -1558,6 +1570,13 @@
 
       function kv(label, value) {
         return `<div><span>${escapeHtml(label)}</span><span>${escapeHtml(value ?? t("common.not_available"))}</span></div>`;
+      }
+
+      function serverUpdateConfirmationField(auth) {
+        if (auth.two_factor_enabled) {
+          return `<label>${escapeHtml(t("settings.security.verification_code"))}<input class="settings-input" type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label>`;
+        }
+        return `<label>${escapeHtml(t("settings.password.current"))}<input class="settings-input" type="password" name="current_password" autocomplete="current-password" required></label>`;
       }
 
       function twoFactorControls(auth) {
@@ -1634,6 +1653,7 @@
           window.location.href = "/logout-and-reauth";
         });
         document.getElementById("settings-check-update")?.addEventListener("click", () => checkForUpdates(settings));
+        document.getElementById("server-update-form")?.addEventListener("submit", submitServerUpdate);
         document.getElementById("totp-start")?.addEventListener("click", startTwoFactorSetup);
         document.getElementById("totp-cancel")?.addEventListener("click", () => {
           pendingTwoFactorSetup = null;
@@ -1665,6 +1685,26 @@
         } catch (error) {
           message.className = "settings-message error";
           message.textContent = t("settings.version.check_failed", { error: error.message });
+        }
+      }
+
+      async function submitServerUpdate(event) {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const message = document.getElementById("settings-update-message");
+        const auth = latestSettings?.auth || {};
+        const payload = auth.two_factor_enabled
+          ? { code: form.code.value }
+          : { current_password: form.current_password.value };
+        message.className = "settings-message";
+        message.textContent = t("settings.version.update_starting");
+        try {
+          await postSettingsJson("/api/settings/update/server", payload);
+          message.className = "settings-message ok";
+          message.textContent = t("settings.version.update_started");
+        } catch (error) {
+          message.className = "settings-message error";
+          message.textContent = t("settings.version.update_failed", { error: error.message });
         }
       }
 
