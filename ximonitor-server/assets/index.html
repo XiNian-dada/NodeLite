@@ -608,6 +608,116 @@
       .settings-message { min-height: 18px; color: var(--text-muted); font-size: 12px; }
       .settings-message.error { color: var(--accent-red); }
       .settings-message.ok { color: var(--accent-green); }
+      .update-console-overlay {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        padding: 22px;
+        background: rgba(3, 7, 18, 0.68);
+        backdrop-filter: blur(14px);
+        z-index: 50;
+      }
+      .update-console-overlay[hidden] { display: none !important; }
+      .update-console {
+        width: min(960px, 100%);
+        max-height: min(80vh, 860px);
+        display: grid;
+        grid-template-rows: auto auto minmax(0, 1fr);
+        gap: 14px;
+        background:
+          radial-gradient(circle at top right, rgba(59,130,246,0.16), transparent 26%),
+          linear-gradient(180deg, rgba(11,18,32,0.98), rgba(7,12,22,0.98));
+        border: 1px solid rgba(148,163,184,0.18);
+        border-radius: 26px;
+        box-shadow: 0 36px 100px rgba(15, 23, 42, 0.55);
+        overflow: hidden;
+      }
+      .update-console-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 18px 20px 0;
+      }
+      .update-console-title {
+        display: grid;
+        gap: 4px;
+      }
+      .update-console-title h3 {
+        margin: 0;
+        font-size: 18px;
+        letter-spacing: -0.01em;
+      }
+      .update-console-title p {
+        margin: 0;
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+      .update-console-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(148,163,184,0.12);
+        border: 1px solid rgba(148,163,184,0.14);
+        color: var(--text-secondary);
+        font-size: 12px;
+      }
+      .update-console-status::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: currentColor;
+        box-shadow: 0 0 12px currentColor;
+      }
+      .update-console-status.running { color: #22c55e; background: rgba(34,197,94,0.12); }
+      .update-console-status.waiting { color: #60a5fa; background: rgba(59,130,246,0.12); }
+      .update-console-status.error { color: #f87171; background: rgba(239,68,68,0.12); }
+      .update-console-status.idle { color: var(--text-secondary); }
+      .update-console-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .update-console-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 0 20px;
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+      .update-console-toolbar span {
+        font-variant-numeric: tabular-nums;
+      }
+      .update-console-body {
+        margin: 0 20px 20px;
+        border-radius: 18px;
+        border: 1px solid rgba(96,165,250,0.18);
+        background:
+          linear-gradient(180deg, rgba(10,15,27,0.98), rgba(5,8,15,0.98)),
+          #05070d;
+        overflow: hidden;
+        min-height: 280px;
+      }
+      .update-console-log {
+        margin: 0;
+        padding: 18px 18px 28px;
+        height: 100%;
+        overflow: auto;
+        color: #d7e3f4;
+        font: 13px/1.65 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        white-space: pre-wrap;
+        word-break: break-word;
+        tab-size: 2;
+      }
+      .update-console-log .muted { color: #7f8ea3; }
+      .update-console-log .error { color: #fda4af; }
+      .update-console-log .ok { color: #86efac; }
       .totp-setup {
         margin-top: 14px;
         display: grid;
@@ -685,6 +795,17 @@
         .page-header { flex-direction: column; align-items: stretch; }
         .settings-grid { grid-template-columns: minmax(0, 1fr); }
         .totp-setup-grid { grid-template-columns: minmax(0, 1fr); }
+        .update-console-overlay { padding: 10px; }
+        .update-console {
+          width: 100%;
+          max-height: min(88vh, 920px);
+          border-radius: 20px;
+        }
+        .update-console-head,
+        .update-console-toolbar { padding-left: 14px; padding-right: 14px; }
+        .update-console-head { align-items: start; }
+        .update-console-actions { flex-wrap: wrap; justify-content: flex-end; }
+        .update-console-body { margin: 0 14px 14px; min-height: 240px; }
       }
     </style>
   </head>
@@ -851,6 +972,29 @@
       </main>
     </div>
 
+    <div id="update-console-overlay" class="update-console-overlay" hidden>
+      <section class="update-console" role="dialog" aria-modal="true" aria-labelledby="update-console-title">
+        <div class="update-console-head">
+          <div class="update-console-title">
+            <h3 id="update-console-title">Server Update Console</h3>
+            <p id="update-console-subtitle">Live installer output from the latest web-triggered server update.</p>
+          </div>
+          <div class="update-console-actions">
+            <span id="update-console-status" class="update-console-status idle">Idle</span>
+            <button type="button" class="settings-button" id="update-console-refresh">Refresh</button>
+            <button type="button" class="settings-button" id="update-console-close">Close</button>
+          </div>
+        </div>
+        <div class="update-console-toolbar">
+          <span id="update-console-meta">No update log loaded yet.</span>
+          <span id="update-console-follow">Following latest output</span>
+        </div>
+        <div class="update-console-body">
+          <pre id="update-console-log" class="update-console-log"></pre>
+        </div>
+      </section>
+    </div>
+
     <script>
       const REFRESH_MS = __REFRESH_MS__;
       const I18N_ASSET_PATH = "__I18N_ASSET_PATH__";
@@ -870,6 +1014,14 @@
       let latestSettings = null;
       let pendingTwoFactorSetup = null;
       const sparkHistory = new Map();
+      const updateConsoleState = {
+        open: false,
+        offset: 0,
+        timer: null,
+        running: false,
+        lastError: "",
+        lastRenderedText: "",
+      };
 
       // 国家区域 -> 大致(经度归一,纬度归一)中心。用于把节点 hint 到地图上。
       // hint 来源:tags 中的 "country:CN"、hostname 后缀、或 node_id 哈希兜底。
@@ -969,6 +1121,23 @@
       }
       function languageLabel(language) {
         return (I18N[language] && I18N[language].__label) || language;
+      }
+      function renderUpdateConsoleChrome() {
+        const title = document.getElementById("update-console-title");
+        const subtitle = document.getElementById("update-console-subtitle");
+        const refresh = document.getElementById("update-console-refresh");
+        const close = document.getElementById("update-console-close");
+        if (title) title.textContent = t("settings.version.console_title");
+        if (subtitle) subtitle.textContent = t("settings.version.console_subtitle");
+        if (refresh) refresh.textContent = t("settings.version.console_refresh");
+        if (close) close.textContent = t("settings.version.console_close");
+        if (!updateConsoleState.open && !updateConsoleState.lastRenderedText) {
+          setUpdateConsoleStatus("idle", t("settings.version.console_status_idle"));
+          setUpdateConsoleMeta(t("settings.version.console_empty"));
+          const { follow, log } = updateConsoleElements();
+          if (follow) follow.textContent = t("settings.version.console_following");
+          if (log && !log.textContent) log.textContent = t("settings.version.console_empty");
+        }
       }
       function storeLanguage(language) {
         try { window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language); } catch (_e) { /* ignore */ }
@@ -1507,6 +1676,7 @@
             </div>
             <div class="settings-actions">
               <button type="button" class="settings-button primary" id="settings-check-update">${escapeHtml(t("settings.version.check_updates"))}</button>
+              <button type="button" class="settings-button" id="settings-view-update-log">${escapeHtml(t("settings.version.view_update_log"))}</button>
               <a class="settings-button" href="${escapeHtml(settings.updates.latest_release_url)}" target="_blank" rel="noreferrer">${escapeHtml(t("settings.version.open_release"))}</a>
             </div>
             <form class="settings-form manual-update-form" id="server-update-form">
@@ -1654,6 +1824,10 @@
           window.location.href = "/logout-and-reauth";
         });
         document.getElementById("settings-check-update")?.addEventListener("click", () => checkForUpdates(settings));
+        document.getElementById("settings-view-update-log")?.addEventListener("click", () => {
+          openUpdateConsole();
+          void fetchUpdateConsoleLog({ reset: true });
+        });
         document.getElementById("server-update-form")?.addEventListener("submit", submitServerUpdate);
         document.getElementById("totp-start")?.addEventListener("click", startTwoFactorSetup);
         document.getElementById("totp-cancel")?.addEventListener("click", () => {
@@ -1699,13 +1873,25 @@
           : { current_password: form.current_password.value };
         message.className = "settings-message";
         message.textContent = t("settings.version.update_starting");
+        openUpdateConsole();
+        resetUpdateConsoleView();
+        setUpdateConsoleStatus("waiting", t("settings.version.console_status_waiting"));
+        setUpdateConsoleMeta(t("settings.version.console_preparing"));
+        setUpdateConsoleText(`[client] ${t("settings.version.update_starting")}`);
         try {
           await postSettingsJson("/api/settings/update/server", payload);
           message.className = "settings-message ok";
           message.textContent = t("settings.version.update_started");
+          appendUpdateConsoleLine(`[client] ${t("settings.version.update_started")}`);
+          setUpdateConsoleStatus("running", t("settings.version.console_status_running"));
+          setUpdateConsoleMeta(t("settings.version.console_connecting"));
+          void fetchUpdateConsoleLog({ reset: true });
         } catch (error) {
           message.className = "settings-message error";
           message.textContent = t("settings.version.update_failed", { error: error.message });
+          appendUpdateConsoleLine(`[client] ${t("settings.version.update_failed", { error: error.message })}`);
+          setUpdateConsoleStatus("error", t("settings.version.console_status_error"));
+          setUpdateConsoleMeta(t("settings.version.console_failed_to_start"));
         }
       }
 
@@ -1718,6 +1904,139 @@
         const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(body.message || `${response.status}`);
         return body;
+      }
+
+      function updateConsoleElements() {
+        return {
+          overlay: document.getElementById("update-console-overlay"),
+          status: document.getElementById("update-console-status"),
+          meta: document.getElementById("update-console-meta"),
+          follow: document.getElementById("update-console-follow"),
+          log: document.getElementById("update-console-log"),
+        };
+      }
+
+      function setUpdateConsoleStatus(kind, text) {
+        const { status } = updateConsoleElements();
+        if (!status) return;
+        status.className = `update-console-status ${kind || "idle"}`;
+        status.textContent = text;
+      }
+
+      function setUpdateConsoleMeta(text) {
+        const { meta } = updateConsoleElements();
+        if (meta) meta.textContent = text;
+      }
+
+      function setUpdateConsoleText(text) {
+        const { log } = updateConsoleElements();
+        if (!log) return;
+        log.textContent = text;
+      }
+
+      function appendUpdateConsoleLine(text) {
+        const { log } = updateConsoleElements();
+        if (!log) return;
+        const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 36;
+        const prefix = log.textContent ? "\n" : "";
+        log.textContent += `${prefix}${text}`;
+        if (nearBottom) {
+          log.scrollTop = log.scrollHeight;
+        }
+      }
+
+      function openUpdateConsole() {
+        const { overlay } = updateConsoleElements();
+        if (!overlay) return;
+        updateConsoleState.open = true;
+        overlay.hidden = false;
+      }
+
+      function closeUpdateConsole() {
+        const { overlay } = updateConsoleElements();
+        if (!overlay) return;
+        updateConsoleState.open = false;
+        if (updateConsoleState.timer != null) {
+          window.clearTimeout(updateConsoleState.timer);
+          updateConsoleState.timer = null;
+        }
+        overlay.hidden = true;
+      }
+
+      function scheduleUpdateConsolePoll(delayMs = 1600) {
+        if (!updateConsoleState.open) return;
+        if (updateConsoleState.timer != null) window.clearTimeout(updateConsoleState.timer);
+        updateConsoleState.timer = window.setTimeout(() => {
+          void fetchUpdateConsoleLog();
+        }, delayMs);
+      }
+
+      function resetUpdateConsoleView() {
+        updateConsoleState.offset = 0;
+        updateConsoleState.lastError = "";
+        updateConsoleState.lastRenderedText = "";
+        setUpdateConsoleText("");
+      }
+
+      async function fetchUpdateConsoleLog(options = {}) {
+        const { reset = false, silent = false } = options;
+        if (!updateConsoleState.open) return;
+        if (reset) {
+          resetUpdateConsoleView();
+        }
+        const { log, follow } = updateConsoleElements();
+        const followBeforeFetch = !log || (log.scrollHeight - log.scrollTop - log.clientHeight < 36);
+        if (follow) {
+          follow.textContent = followBeforeFetch
+            ? t("settings.version.console_following")
+            : t("settings.version.console_paused");
+        }
+        try {
+          const params = new URLSearchParams({ offset: String(updateConsoleState.offset || 0) });
+          const body = await fetchJson(`/api/settings/update/server/log?${params.toString()}`);
+          if (!body.exists) {
+            if (!silent) {
+              setUpdateConsoleStatus("idle", t("settings.version.console_status_idle"));
+              setUpdateConsoleMeta(t("settings.version.console_empty"));
+              if (!updateConsoleState.lastRenderedText) {
+                setUpdateConsoleText(t("settings.version.console_empty"));
+              }
+            }
+            updateConsoleState.running = false;
+            scheduleUpdateConsolePoll(2500);
+            return;
+          }
+
+          const text = String(body.text || "");
+          const resetRequired = reset || Number(body.offset || 0) < Number(updateConsoleState.offset || 0);
+          if (resetRequired) {
+            setUpdateConsoleText(text);
+            updateConsoleState.lastRenderedText = text;
+          } else if (text) {
+            appendUpdateConsoleLine(text);
+            updateConsoleState.lastRenderedText += `${updateConsoleState.lastRenderedText ? "\n" : ""}${text}`;
+          }
+
+          updateConsoleState.offset = Number(body.next_offset || 0);
+          updateConsoleState.lastError = "";
+          updateConsoleState.running = true;
+          setUpdateConsoleStatus("running", t("settings.version.console_status_running"));
+          setUpdateConsoleMeta(t("settings.version.console_loaded", { size: fmtBytes(updateConsoleState.offset) }));
+          if (followBeforeFetch && log) {
+            log.scrollTop = log.scrollHeight;
+          }
+          scheduleUpdateConsolePoll(1500);
+        } catch (error) {
+          updateConsoleState.running = false;
+          setUpdateConsoleStatus("error", t("settings.version.console_status_retrying"));
+          setUpdateConsoleMeta(t("settings.version.console_fetch_failed", { error: error.message }));
+          const line = `[client] ${t("settings.version.console_fetch_failed", { error: error.message })}`;
+          if (line !== updateConsoleState.lastError) {
+            appendUpdateConsoleLine(line);
+            updateConsoleState.lastError = line;
+          }
+          scheduleUpdateConsolePoll(3000);
+        }
       }
 
       async function startTwoFactorSetup() {
@@ -1819,6 +2138,7 @@
         document.querySelectorAll("[data-i18n]").forEach((el) => {
           el.textContent = t(el.dataset.i18n);
         });
+        renderUpdateConsoleChrome();
         const heading = document.querySelector(".page-title h1");
         if (heading) heading.textContent = activeTab === "settings" ? t("settings.heading") : t("index.heading");
         if (activeTab === "settings") {
@@ -1866,6 +2186,17 @@
         applyTheme(loadStoredTheme() || "dark");
         bindThemeToggle();
         bindNavigation();
+        document.getElementById("update-console-close")?.addEventListener("click", closeUpdateConsole);
+        document.getElementById("update-console-refresh")?.addEventListener("click", () => {
+          openUpdateConsole();
+          void fetchUpdateConsoleLog({ reset: true });
+        });
+        document.getElementById("update-console-overlay")?.addEventListener("click", (event) => {
+          if (event.target === event.currentTarget) closeUpdateConsole();
+        });
+        document.addEventListener("keydown", (event) => {
+          if (event.key === "Escape" && updateConsoleState.open) closeUpdateConsole();
+        });
         bindLanguageSelector(() => {
           applyChrome();
           if (latestOverview) { renderStats(latestOverview); renderUpdated(latestOverview); }
