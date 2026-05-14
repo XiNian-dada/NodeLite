@@ -158,7 +158,7 @@ pub(crate) struct HistoryQuery {
 }
 
 /// 首页 HTML:把刷新周期等参数注入模板。
-pub(crate) async fn index(State(state): State<AppState>) -> Html<String> {
+pub(crate) async fn index(State(state): State<AppState>) -> Html<&'static str> {
     Html(index_html(state.shared.config().refresh_interval_secs))
 }
 
