@@ -322,7 +322,6 @@ curl -fsSL https://monitor.example.com/install/install-agent.sh | \
 - 会创建 `ximonitor-agent` 专用系统用户，并以该用户运行 systemd service
 - 会写入 `/etc/ximonitor/agent.toml`，并将目录/文件权限收紧到仅 root 与该服务用户可读
 - 会生成 `ximonitor-agent.service`
-- 默认**不**启用 `ximonitor-agent-auto-update.timer`（opt-in：需要在安装/升级时显式 `--auto-update enable` 或 `XIMONITOR_AGENT_AUTO_UPDATE=enable`）
 - 会执行 `daemon-reload`、`enable` 和 `restart`
 
 ### 子机安装步骤
@@ -364,36 +363,9 @@ curl -fsSL https://monitor.example.com/install/install-agent.sh | \
 - 重写并补齐 systemd service
 - 保留现有 `/etc/ximonitor/agent.toml`
 - 自动修正目录和文件权限
-- 默认保留现有 auto-update timer 的状态(原来开就继续开,原来关就继续关);可用 `--auto-update enable|disable` 显式覆盖
+- 清理旧版本曾经写入的 `ximonitor-agent-auto-update.*` 定时更新单元
 
 如果你在升级时也传了 `--bootstrap-url` 和 install token，它会顺手刷新 agent 配置。
-
-如果你想让 agent 每天自动拉取最新 GitHub Release(默认不启用,opt-in),可以在安装或升级时显式开启:
-
-```bash
-curl -fsSL https://monitor.example.com/install/install-agent.sh | \
-  XIMONITOR_AGENT_AUTO_UPDATE=enable sh -s -- \
-  --bootstrap-url https://monitor.example.com/install/bootstrap \
-  --install-token <one-time-token> \
-  --base-url https://github.com/XiNian-dada/XiMonitor/releases/latest/download
-```
-
-注意:开启后任何 latest 通道的发布都会在 24 小时内推到所有节点;一次有 bug 的发布会快速感染整批,因此默认值是 opt-in。如果将来想关掉:
-
-```bash
-curl -fsSL https://monitor.example.com/install/install-agent.sh | \
-  XIMONITOR_AGENT_AUTO_UPDATE=disable sh -s -- \
-  --bootstrap-url https://monitor.example.com/install/bootstrap \
-  --install-token <one-time-token> \
-  --base-url https://github.com/XiNian-dada/XiMonitor/releases/latest/download
-```
-
-查看自动更新状态：
-
-```bash
-systemctl status ximonitor-agent-auto-update.timer
-systemctl list-timers --all | grep ximonitor-agent-auto-update
-```
 
 如果你已经有精确二进制地址，也可以继续使用自定义下载地址和校验文件：
 

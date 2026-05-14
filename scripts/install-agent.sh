@@ -5,7 +5,7 @@
 #   1. 解析命令行参数与环境变量,确认目标架构与下载源。
 #   2. 创建专用服务用户、目录,并按需调用引导接口拉取 agent.toml。
 #   3. 校验二进制 SHA-256,落盘到 /usr/local/bin,并写入 systemd unit。
-#   4. 可选写入"每日自动升级"的 timer + 一次性服务。
+#   4. 写入 systemd unit 并启动 / 重启 agent 服务。
 #
 # 该脚本设计为可被 `curl ... | sh` 直接执行,所以全部用 POSIX shell 实现,
 # 不依赖 bash 特性。所有失败都通过 `fail` 输出统一前缀并以非零状态退出。
@@ -37,13 +37,6 @@ INSTALL_TOKEN_FILE="${XIMONITOR_AGENT_INSTALL_TOKEN_FILE:-}"
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/ximonitor"
 MODE="${XIMONITOR_AGENT_MODE:-auto}"
-# 默认值用 sentinel 而非真实开关:
-#   - 显式传 enable / disable(env 或 --auto-update)→ 直接生效;
-#   - 未显式指定时,稍后根据 MODE 与现有 timer 文件状态解析:
-#       * 全新安装 → disable(opt-in 默认,不再让 latest 通道自动覆盖整批节点);
-#       * upgrade 且已存在 timer → enable(保留现有节点的选择,
-#         避免自我升级一次就把全队的 auto-update 静默关掉)。
-AUTO_UPDATE="${XIMONITOR_AGENT_AUTO_UPDATE:-default}"
 BASE_URL="${XIMONITOR_AGENT_BASE_URL:-https://github.com/XiNian-dada/XiMonitor/releases/latest/download}"
 CHECKSUMS_URL="${XIMONITOR_AGENT_CHECKSUMS_URL:-}"
 BINARY_URL="${XIMONITOR_AGENT_BINARY_URL:-}"
@@ -55,9 +48,9 @@ STATE_DIR="/var/lib/ximonitor-agent"
 BIN_PATH=""
 CONFIG_PATH=""
 UNIT_PATH="/etc/systemd/system/ximonitor-agent.service"
-AUTO_UPDATE_HELPER_PATH="/usr/local/bin/ximonitor-agent-auto-update"
-AUTO_UPDATE_SERVICE_PATH="/etc/systemd/system/ximonitor-agent-auto-update.service"
-AUTO_UPDATE_TIMER_PATH="/etc/systemd/system/ximonitor-agent-auto-update.timer"
+LEGACY_AUTO_UPDATE_HELPER_PATH="/usr/local/bin/ximonitor-agent-auto-update"
+LEGACY_AUTO_UPDATE_SERVICE_PATH="/etc/systemd/system/ximonitor-agent-auto-update.service"
+LEGACY_AUTO_UPDATE_TIMER_PATH="/etc/systemd/system/ximonitor-agent-auto-update.timer"
 TMP_PATH=""
 BOOTSTRAP_TMP=""
 CURL_AUTH_CONFIG=""
@@ -238,101 +231,14 @@ resolve_release_base_url() {
   esac
 }
 
-# 推导"自动升级时使用的脚本 URL";尽量重用 latest 通道,使自动升级总能拉到新版。
-derive_update_script_url() {
-  case "$UPDATE_BASE_URL" in
-    https://github.com/*/releases/latest/download)
-      printf '%s/install-agent.sh' "$UPDATE_BASE_URL"
-      return 0
-      ;;
-    https://github.com/*/releases/download/*)
-      releases_root="${UPDATE_BASE_URL%/download/*}"
-      printf '%s/latest/download/install-agent.sh' "$releases_root"
-      return 0
-      ;;
-    */latest/download)
-      printf '%s/install-agent.sh' "$UPDATE_BASE_URL"
-      return 0
-      ;;
-  esac
-
-  if [ -n "$BINARY_URL" ]; then
-    fail "auto-update with --binary-url requires a release base URL instead"
-  fi
-
-  printf '%s/install-agent.sh' "${UPDATE_BASE_URL%/}"
-}
-
-# 在 /usr/local/bin 下生成自动升级辅助脚本,内部调用本脚本的 upgrade 模式。
-write_auto_update_helper() {
-  update_script_url="$1"
-
-  {
-    printf '%s\n' '#!/bin/sh'
-    printf '%s\n' 'set -eu'
-    printf 'curl -fsSL %s | \\\n' "$(shell_quote "$update_script_url")"
-    printf "%s\n" "  XIMONITOR_AGENT_MODE=upgrade \\"
-    printf "%s\n" "  sh -s -- \\"
-    printf '  --mode upgrade \\\n'
-    printf '  --install-dir %s \\\n' "$(shell_quote "$INSTALL_DIR")"
-    printf '  --config-dir %s \\\n' "$(shell_quote "$CONFIG_DIR")"
-    printf '  --base-url %s' "$(shell_quote "$UPDATE_BASE_URL")"
-    if [ -n "$CHECKSUMS_URL" ]; then
-      printf ' \\\n  --checksums-url %s' "$(shell_quote "$CHECKSUMS_URL")"
-    fi
-    if [ -n "$BINARY_URL" ]; then
-      printf ' \\\n  --binary-url %s' "$(shell_quote "$BINARY_URL")"
-    fi
-    printf '\n'
-  } >"$AUTO_UPDATE_HELPER_PATH"
-  chmod 0755 "$AUTO_UPDATE_HELPER_PATH"
-}
-
-# 根据 AUTO_UPDATE 开关创建或删除自动升级所需的 systemd unit 与 timer。
-configure_auto_update() {
-  case "$AUTO_UPDATE" in
-    enable)
-      update_script_url="$(derive_update_script_url)"
-      write_auto_update_helper "$update_script_url"
-
-      cat >"$AUTO_UPDATE_SERVICE_PATH" <<EOF
-[Unit]
-Description=XiMonitor Agent Auto Update
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=$AUTO_UPDATE_HELPER_PATH
-User=root
-Group=root
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectHome=true
-ProtectSystem=full
-ReadWritePaths=$INSTALL_DIR $CONFIG_DIR $STATE_DIR /etc/systemd/system
-EOF
-
-      cat >"$AUTO_UPDATE_TIMER_PATH" <<'EOF'
-[Unit]
-Description=Run XiMonitor Agent auto-update daily
-
-[Timer]
-OnCalendar=daily
-RandomizedDelaySec=1h
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-EOF
-      ;;
-    disable)
-      rm -f "$AUTO_UPDATE_HELPER_PATH" "$AUTO_UPDATE_SERVICE_PATH" "$AUTO_UPDATE_TIMER_PATH"
-      ;;
-    *)
-      fail "auto-update must be enable or disable"
-      ;;
-  esac
+# 自动更新支持已移除。升级时顺手清理旧版本曾经写入的 timer / service,
+# 避免无人值守任务继续从 latest 通道自我替换 agent。
+cleanup_legacy_auto_update() {
+  systemctl disable --now ximonitor-agent-auto-update.timer >/dev/null 2>&1 || true
+  systemctl disable ximonitor-agent-auto-update.service >/dev/null 2>&1 || true
+  rm -f "$LEGACY_AUTO_UPDATE_HELPER_PATH" \
+    "$LEGACY_AUTO_UPDATE_SERVICE_PATH" \
+    "$LEGACY_AUTO_UPDATE_TIMER_PATH"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -372,11 +278,6 @@ while [ "$#" -gt 0 ]; do
       BASE_URL="$2"
       shift 2
       ;;
-    --auto-update)
-      [ "$#" -ge 2 ] || fail "--auto-update requires a value"
-      AUTO_UPDATE="$2"
-      shift 2
-      ;;
     --checksums-url)
       [ "$#" -ge 2 ] || fail "--checksums-url requires a value"
       CHECKSUMS_URL="$2"
@@ -410,10 +311,6 @@ Optional:
   --config-dir <dir>
   --mode <install|upgrade|auto>
   --base-url <release-base-url>
-  --auto-update <enable|disable>
-      Default for fresh installs: disable (opt-in). In upgrade mode the
-      existing setting is preserved unless --auto-update / the
-      XIMONITOR_AGENT_AUTO_UPDATE env var is set explicitly.
   --checksums-url <release-checksums-url>
   --binary-url <exact-binary-url>
   --sha256-x86_64 <sha256-override>
@@ -461,8 +358,6 @@ case "$ARCH" in
     ;;
 esac
 
-UPDATE_BASE_URL="$BASE_URL"
-
 if [ -n "$BINARY_URL" ]; then
   DOWNLOAD_URL="$BINARY_URL"
 else
@@ -495,16 +390,6 @@ esac
 
 if [ "$MODE" = "install" ] && [ -z "$BOOTSTRAP_URL" ]; then
   fail "install mode requires --bootstrap-url"
-fi
-
-# 解析 AUTO_UPDATE sentinel:全新安装走 opt-in(disable),
-# 升级模式如果已有 timer 文件则保留 enable,以免现有节点静默丢掉自动更新能力。
-if [ "$AUTO_UPDATE" = "default" ]; then
-  if [ "$MODE" = "upgrade" ] && [ -f "$AUTO_UPDATE_TIMER_PATH" ]; then
-    AUTO_UPDATE="enable"
-  else
-    AUTO_UPDATE="disable"
-  fi
 fi
 
 ensure_service_account
@@ -568,16 +453,9 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-configure_auto_update
+cleanup_legacy_auto_update
 systemctl daemon-reload
 systemctl enable ximonitor-agent.service
-if [ "$AUTO_UPDATE" = "enable" ]; then
-  systemctl enable ximonitor-agent-auto-update.timer
-  systemctl restart ximonitor-agent-auto-update.timer
-else
-  systemctl disable --now ximonitor-agent-auto-update.timer >/dev/null 2>&1 || true
-  systemctl disable ximonitor-agent-auto-update.service >/dev/null 2>&1 || true
-fi
 systemctl restart ximonitor-agent.service
 
 if [ "$MODE" = "upgrade" ]; then
@@ -587,6 +465,3 @@ else
 fi
 printf '%s\n' "Config: $CONFIG_PATH"
 printf '%s\n' "Service: ximonitor-agent.service"
-if [ "$AUTO_UPDATE" = "enable" ]; then
-  printf '%s\n' "Auto-update timer: ximonitor-agent-auto-update.timer"
-fi
