@@ -46,12 +46,13 @@ pub struct ReadonlyRouteAuth {
     pub expected_authorization: Option<String>,
     pub enable_2fa: bool,
     pub totp_secret: Option<Vec<u8>>,
+    pub config: Option<ReadonlyAuthConfig>,
 }
 
 impl ReadonlyRouteAuth {
     /// 根据可选的基本认证配置预先计算"期望的 Authorization 头",免去每次请求都重新编码。
     pub fn from_config(config: Option<ReadonlyAuthConfig>) -> Self {
-        let (expected_authorization, enable_2fa, totp_secret) = match config {
+        let (expected_authorization, enable_2fa, totp_secret) = match config.as_ref() {
             Some(config) => {
                 let credentials = format!("{}:{}", config.username, config.password);
                 let encoded = base64::engine::general_purpose::STANDARD.encode(credentials);
@@ -72,6 +73,7 @@ impl ReadonlyRouteAuth {
             expected_authorization,
             enable_2fa,
             totp_secret,
+            config,
         }
     }
 
@@ -217,6 +219,12 @@ impl TwoFactorSessions {
     pub fn remove_authenticated(&self, token: &str) {
         let mut store = lock_mutex(&self.inner);
         store.authenticated.remove(token);
+    }
+
+    /// 密码轮换后清空已完成 2FA 的浏览器会话,避免旧凭据换出的会话继续可用。
+    pub fn clear_authenticated(&self) {
+        let mut store = lock_mutex(&self.inner);
+        store.authenticated.clear();
     }
 }
 

@@ -7,18 +7,20 @@ use axum::response::{AppendHeaders, Html, IntoResponse, Response};
 use axum::{Json, extract::Request};
 use chrono::{DateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
+use tokio::fs;
 use tracing::error;
 
 use crate::AppState;
 use crate::admission::resolve_client_ip;
 use crate::auth::{
     TWO_FACTOR_AUTH_COOKIE, TWO_FACTOR_AUTH_SECS, TWO_FACTOR_PENDING_COOKIE,
-    TWO_FACTOR_PENDING_SECS, Verify2FAError, Verify2FARequest, auth_cookie, cookie_value,
-    expire_cookie, secure_cookies, verify_totp_step,
+    TWO_FACTOR_PENDING_SECS, Verify2FAError, Verify2FARequest, auth_cookie,
+    constant_time_compare_bytes, cookie_value, expire_cookie, secure_cookies, verify_totp_step,
+    ReadonlyRouteAuth,
 };
 use crate::registry::render_agent_config;
 use crate::ui::{UI_I18N_JSON, index_html, node_html};
-use ximonitor_proto::DEFAULT_HISTORY_RETENTION_HOURS;
+use ximonitor_proto::{DEFAULT_HISTORY_RETENTION_HOURS, ReadonlyAuthConfig, parse_server_config};
 
 /// 把 `scripts/install-agent.sh` 在编译期嵌入到二进制内。
 const INSTALL_AGENT_SCRIPT: &str = include_str!("../../scripts/install-agent.sh");
@@ -87,6 +89,18 @@ pub(crate) struct SettingsAgentToken {
     tags: Vec<String>,
     token_expires_at: Option<DateTime<Utc>>,
     token_expires_in_secs: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ChangePasswordRequest {
+    current_password: String,
+    new_password: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct SettingsActionResponse {
+    ok: bool,
+    message: String,
 }
 
 /// 历史接口查询参数。默认查询最近 24 小时,也可用 start/end 指定 unix 秒级区间。
@@ -417,6 +431,158 @@ pub(crate) async fn settings(State(state): State<AppState>) -> impl IntoResponse
         },
         agents,
     })
+}
+
+/// 修改只读面板密码:需要当前密码,同时更新运行时鉴权与 server.toml。
+pub(crate) async fn change_readonly_password(
+    State(state): State<AppState>,
+    Json(request): Json<ChangePasswordRequest>,
+) -> Response {
+    let current_auth = {
+        let auth = state.readonly_auth.read().await;
+        auth.config.clone()
+    };
+    let Some(current_auth) = current_auth else {
+        return settings_json_error(StatusCode::CONFLICT, "readonly auth is not enabled");
+    };
+    if !constant_time_compare_bytes(
+        current_auth.password.as_bytes(),
+        request.current_password.as_bytes(),
+    ) {
+        return settings_json_error(StatusCode::UNAUTHORIZED, "current password is incorrect");
+    }
+    if let Err(message) = validate_password_for_settings(&request.new_password) {
+        return settings_json_error(StatusCode::BAD_REQUEST, message);
+    }
+
+    let next_auth = ReadonlyAuthConfig {
+        password: request.new_password.clone(),
+        ..current_auth
+    };
+    let config_path = state.config_path.as_path().to_path_buf();
+    if let Err(error) = persist_auth_password_change(&config_path, &next_auth.password).await {
+        error!(error = ?error, path = %config_path.display(), "failed to persist readonly password change");
+        return settings_json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to persist password change",
+        );
+    }
+    {
+        let mut auth = state.readonly_auth.write().await;
+        *auth = ReadonlyRouteAuth::from_config(Some(next_auth));
+    }
+    state.two_factor_sessions.clear_authenticated();
+    let secure = secure_cookies(state.shared.config());
+    (
+        StatusCode::OK,
+        AppendHeaders([
+            expire_cookie(TWO_FACTOR_AUTH_COOKIE, secure),
+            expire_cookie(TWO_FACTOR_PENDING_COOKIE, secure),
+        ]),
+        Json(SettingsActionResponse {
+            ok: true,
+            message: "password changed; please sign in again".to_string(),
+        }),
+    )
+        .into_response()
+}
+
+fn settings_json_error(status: StatusCode, message: impl Into<String>) -> Response {
+    (
+        status,
+        Json(SettingsActionResponse {
+            ok: false,
+            message: message.into(),
+        }),
+    )
+        .into_response()
+}
+
+fn validate_password_for_settings(password: &str) -> Result<(), &'static str> {
+    if password.len() < 8 {
+        return Err("new password must be at least 8 characters");
+    }
+    if !password.chars().any(|c| c.is_alphabetic())
+        || !password.chars().any(|c| c.is_ascii_digit())
+    {
+        return Err("new password must include both letters and digits");
+    }
+    Ok(())
+}
+
+async fn persist_auth_password_change(path: &std::path::Path, password: &str) -> anyhow::Result<()> {
+    let content = fs::read_to_string(path).await?;
+    let updated = replace_auth_password(&content, password)?;
+    parse_server_config(&updated)
+        .map_err(|error| anyhow::anyhow!("updated server config would be invalid: {error}"))?;
+    let metadata = fs::metadata(path).await.ok();
+    let temp_path = path.with_extension("toml.tmp");
+    fs::write(&temp_path, updated).await?;
+    if let Some(metadata) = metadata {
+        fs::set_permissions(&temp_path, metadata.permissions()).await?;
+    }
+    fs::rename(&temp_path, path).await?;
+    Ok(())
+}
+
+fn replace_auth_password(content: &str, password: &str) -> anyhow::Result<String> {
+    let escaped_password = toml_basic_string(password);
+    let mut output = Vec::new();
+    let mut in_auth = false;
+    let mut seen_auth = false;
+    let mut replaced = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            if in_auth && !replaced {
+                output.push(format!("password = \"{escaped_password}\""));
+                replaced = true;
+            }
+            in_auth = trimmed == "[auth]";
+            seen_auth |= in_auth;
+        }
+
+        if in_auth && is_toml_key(trimmed, "password") {
+            let indent = &line[..line.len() - line.trim_start().len()];
+            output.push(format!("{indent}password = \"{escaped_password}\""));
+            replaced = true;
+            continue;
+        }
+        output.push(line.to_string());
+    }
+
+    if !seen_auth {
+        anyhow::bail!("server.toml does not contain an [auth] section");
+    }
+    if in_auth && !replaced {
+        output.push(format!("password = \"{escaped_password}\""));
+    }
+    Ok(format!("{}\n", output.join("\n")))
+}
+
+fn is_toml_key(trimmed: &str, key: &str) -> bool {
+    trimmed
+        .strip_prefix(key)
+        .is_some_and(|rest| rest.trim_start().starts_with('='))
+}
+
+fn toml_basic_string(value: &str) -> String {
+    let mut output = String::new();
+    for ch in value.chars() {
+        match ch {
+            '\\' => output.push_str("\\\\"),
+            '"' => output.push_str("\\\""),
+            '\n' => output.push_str("\\n"),
+            '\r' => output.push_str("\\r"),
+            '\t' => output.push_str("\\t"),
+            ch if ch.is_control() => {
+                output.push_str(&format!("\\u{:04x}", ch as u32));
+            }
+            ch => output.push(ch),
+        }
+    }
+    output
 }
 
 fn server_build_version() -> &'static str {

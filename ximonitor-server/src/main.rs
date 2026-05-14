@@ -47,9 +47,9 @@ use crate::admission::{InstallAdmissionConfig, InstallAdmissionController, WsAdm
 use crate::auth::{ReadonlyRouteAuth, TwoFactorSessions};
 use crate::cli::{Cli, Command, install_agent_command, issue_node_command, upgrade_agent_command};
 use crate::handlers::{
-    bootstrap, healthz, index, install_agent_script, install_bootstrap, logout_and_reauth,
-    node_detail, node_history, node_status, nodes, overview, readyz, require_readonly_auth,
-    settings, ui_i18n_asset, verify_2fa_api, verify_2fa_page,
+    bootstrap, change_readonly_password, healthz, index, install_agent_script, install_bootstrap,
+    logout_and_reauth, node_detail, node_history, node_status, nodes, overview, readyz,
+    require_readonly_auth, settings, ui_i18n_asset, verify_2fa_api, verify_2fa_page,
 };
 use crate::history::HistoryStore;
 use crate::registry::NodeRegistry;
@@ -213,6 +213,7 @@ async fn run_server(config_path: &Path) -> Result<()> {
         .route("/api/nodes/{node_id}", get(node_status))
         .route("/api/nodes/{node_id}/history", get(node_history))
         .route("/api/settings", get(settings))
+        .route("/api/settings/password", post(change_readonly_password))
         .route_layer(from_fn_with_state(state.clone(), require_readonly_auth));
     let app = Router::new()
         .route("/healthz", get(healthz))
