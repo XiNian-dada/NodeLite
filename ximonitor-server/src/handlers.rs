@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use axum::extract::{ConnectInfo, Path as AxumPath, Query, State};
@@ -34,7 +35,6 @@ const DEFAULT_HISTORY_WINDOW_HOURS: u64 = 24;
 const DEFAULT_HISTORY_MAX_POINTS: usize = 480;
 /// 历史接口最多返回的样本点数。
 const MAX_HISTORY_MAX_POINTS: usize = 1440;
-const SERVER_UPDATE_LOG_PATH: &str = "/tmp/ximonitor-server-web-update.log";
 const MAX_UPDATE_LOG_CHUNK_BYTES: u64 = 128 * 1024;
 
 /// `/api/bootstrap` 的响应结构,只读、用于前端启动期获取基本元数据。
@@ -562,8 +562,17 @@ pub(crate) async fn start_server_update(
         return response;
     }
 
-    let command = server_update_shell_command();
-    match Command::new("sh")
+    let log_path = server_update_log_path(state.shared.config());
+    let command = server_update_shell_command(&log_path);
+    let unit_name = format!(
+        "ximonitor-server-web-update-{}",
+        Utc::now().timestamp_millis()
+    );
+    match Command::new("systemd-run")
+        .arg(format!("--unit={unit_name}"))
+        .arg("--collect")
+        .arg("--service-type=exec")
+        .arg("sh")
         .arg("-c")
         .arg(command)
         .stdin(Stdio::null())
@@ -572,7 +581,7 @@ pub(crate) async fn start_server_update(
         .spawn()
     {
         Ok(_) => {
-            info!("manual server update started from settings page");
+            info!(unit = %unit_name, "manual server update started from settings page");
             (
                 StatusCode::ACCEPTED,
                 Json(SettingsActionResponse {
@@ -592,8 +601,12 @@ pub(crate) async fn start_server_update(
     }
 }
 
-pub(crate) async fn server_update_log(Query(query): Query<ServerUpdateLogQuery>) -> Response {
-    let metadata = match fs::metadata(SERVER_UPDATE_LOG_PATH).await {
+pub(crate) async fn server_update_log(
+    State(state): State<AppState>,
+    Query(query): Query<ServerUpdateLogQuery>,
+) -> Response {
+    let log_path = server_update_log_path(state.shared.config());
+    let metadata = match fs::metadata(&log_path).await {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Json(ServerUpdateLogResponse {
@@ -605,7 +618,7 @@ pub(crate) async fn server_update_log(Query(query): Query<ServerUpdateLogQuery>)
             .into_response();
         }
         Err(error) => {
-            error!(error = ?error, path = SERVER_UPDATE_LOG_PATH, "failed to inspect update log");
+            error!(error = ?error, path = %log_path.display(), "failed to inspect update log");
             return settings_json_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "failed to inspect update log",
@@ -616,10 +629,10 @@ pub(crate) async fn server_update_log(Query(query): Query<ServerUpdateLogQuery>)
     let file_len = metadata.len();
     let requested_offset = query.offset.unwrap_or(0).min(file_len);
     let capped_offset = requested_offset.max(file_len.saturating_sub(MAX_UPDATE_LOG_CHUNK_BYTES));
-    let mut file = match fs::File::open(SERVER_UPDATE_LOG_PATH).await {
+    let mut file = match fs::File::open(&log_path).await {
         Ok(file) => file,
         Err(error) => {
-            error!(error = ?error, path = SERVER_UPDATE_LOG_PATH, "failed to open update log");
+            error!(error = ?error, path = %log_path.display(), "failed to open update log");
             return settings_json_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "failed to open update log",
@@ -627,7 +640,7 @@ pub(crate) async fn server_update_log(Query(query): Query<ServerUpdateLogQuery>)
         }
     };
     if let Err(error) = file.seek(SeekFrom::Start(capped_offset)).await {
-        error!(error = ?error, path = SERVER_UPDATE_LOG_PATH, "failed to seek update log");
+        error!(error = ?error, path = %log_path.display(), "failed to seek update log");
         return settings_json_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "failed to read update log",
@@ -635,7 +648,7 @@ pub(crate) async fn server_update_log(Query(query): Query<ServerUpdateLogQuery>)
     }
     let mut bytes = Vec::new();
     if let Err(error) = file.read_to_end(&mut bytes).await {
-        error!(error = ?error, path = SERVER_UPDATE_LOG_PATH, "failed to read update log");
+        error!(error = ?error, path = %log_path.display(), "failed to read update log");
         return settings_json_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "failed to read update log",
@@ -925,14 +938,24 @@ fn validate_password_for_settings(password: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn server_update_shell_command() -> String {
+fn server_update_log_path(config: &ximonitor_proto::ServerConfig) -> PathBuf {
+    let base_dir = config
+        .snapshot_path
+        .parent()
+        .or_else(|| config.history_db_path.parent())
+        .or_else(|| config.node_registry_path.parent())
+        .unwrap_or_else(|| Path::new("/tmp"));
+    base_dir.join("server-web-update.log")
+}
+
+fn server_update_shell_command(log_path: &Path) -> String {
     let installer_url = format!(
         "{}/releases/latest/download/install-server.sh",
         env!("CARGO_PKG_REPOSITORY")
     );
     [
         "set -u".to_string(),
-        format!("log={}", shell_quote(SERVER_UPDATE_LOG_PATH)),
+        format!("log={}", shell_quote(&log_path.display().to_string())),
         "tmp_script=\"$(mktemp /tmp/ximonitor-install-server.XXXXXX)\"".to_string(),
         "trap 'rm -f \"$tmp_script\"' EXIT".to_string(),
         ": >\"$log\"".to_string(),
