@@ -28,6 +28,11 @@ mod snapshot;
 mod state;
 mod ui;
 mod ws;
+#[cfg(test)]
+mod test_support;
+#[cfg(test)]
+#[path = "../tests/integration/mod.rs"]
+mod integration_tests;
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
