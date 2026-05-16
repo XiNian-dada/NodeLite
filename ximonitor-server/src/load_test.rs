@@ -40,8 +40,11 @@ use ximonitor_proto::{
 use crate::AppState;
 use crate::ServerReadiness;
 use crate::admission::{InstallAdmissionConfig, InstallAdmissionController, WsAdmissionController};
+use crate::agent_logs::AgentLogStore;
 use crate::auth::{ReadonlyRouteAuth, TwoFactorSessions};
-use crate::handlers::{node_history, node_status, nodes, overview, require_readonly_auth};
+use crate::handlers::{
+    node_history, node_logs, node_status, nodes, overview, require_readonly_auth,
+};
 use crate::history::HistoryStore;
 use crate::registry::{IssueNodeRequest, NodeRegistry, issue_node};
 use crate::state::SharedState;
@@ -206,6 +209,7 @@ impl TestServer {
         let readiness = ServerReadiness::new(history.is_available());
         let state = AppState {
             history: history.clone(),
+            agent_logs: AgentLogStore::new(),
             install_admission: InstallAdmissionController::new(InstallAdmissionConfig {
                 auth_fail_window_secs: config.ws.auth_fail_window_secs,
                 auth_fail_max_attempts: config.ws.auth_fail_max_attempts,
@@ -233,6 +237,7 @@ impl TestServer {
             .route("/api/nodes", get(nodes))
             .route("/api/nodes/{node_id}", get(node_status))
             .route("/api/nodes/{node_id}/history", get(node_history))
+            .route("/api/nodes/{node_id}/logs", get(node_logs))
             .route_layer(from_fn_with_state(state.clone(), require_readonly_auth));
         let app = Router::new()
             .route("/ws", get(ws_handler))

@@ -12,6 +12,7 @@
 // - 来自 Agent 的所有指标都经过 `sanitize_snapshot` 处理,防止异常值污染统计或图表。
 
 mod admission;
+mod agent_logs;
 mod auth;
 mod cli;
 mod fs_security;
@@ -51,13 +52,14 @@ use url::Url;
 use ximonitor_proto::{ServerConfig, parse_server_config, uses_insecure_remote_url};
 
 use crate::admission::{InstallAdmissionConfig, InstallAdmissionController, WsAdmissionController};
+use crate::agent_logs::AgentLogStore;
 use crate::auth::{ReadonlyRouteAuth, TwoFactorSessions};
 use crate::cli::{Cli, Command, install_agent_command, issue_node_command, upgrade_agent_command};
 use crate::fs_security::log_if_directory_is_not_private;
 use crate::handlers::{
     bootstrap, change_readonly_password, disable_two_factor, enable_two_factor, healthz, index,
     install_agent_script, install_bootstrap, logout_and_reauth, node_detail, node_history,
-    node_status, nodes, overview, readyz, refresh_node_token, require_readonly_auth,
+    node_logs, node_status, nodes, overview, readyz, refresh_node_token, require_readonly_auth,
     server_update_log, settings, start_server_update, start_two_factor_setup, ui_i18n_asset,
     verify_2fa_api, verify_2fa_page,
 };
@@ -71,6 +73,7 @@ use crate::ws::ws_handler;
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) history: HistoryStore,
+    pub(crate) agent_logs: AgentLogStore,
     pub(crate) install_admission: InstallAdmissionController,
     /// `/api/verify-2fa` 的 IP 维度限流器:与 `install_admission` 同型,
     /// 但实例独立,避免安装接口的失败计数误伤 2FA 登录,反之亦然。
@@ -173,12 +176,18 @@ async fn run_server(config_path: &Path) -> Result<()> {
         })?;
     let shared = SharedState::new(Arc::clone(&config));
     let history = HistoryStore::new(config.history_db_path.clone());
+    let agent_logs = AgentLogStore::new();
     history.initialize().await;
     let readiness = ServerReadiness::new(history.is_available());
     readiness.mark_history_available(history.is_available());
     restore_snapshot_if_available(&shared, config.snapshot_path.as_path()).await;
 
-    spawn_registry_reloader(registry.clone(), history.clone(), readiness.clone());
+    spawn_registry_reloader(
+        registry.clone(),
+        history.clone(),
+        agent_logs.clone(),
+        readiness.clone(),
+    );
     spawn_stale_reaper(shared.clone());
     spawn_snapshot_persistor(shared.clone(), config.snapshot_path.clone());
     spawn_insecure_transport_warning(config.public_base_url.clone(), config.listen);
@@ -192,6 +201,7 @@ async fn run_server(config_path: &Path) -> Result<()> {
 
     let state = AppState {
         history,
+        agent_logs,
         install_admission: InstallAdmissionController::new(InstallAdmissionConfig {
             // 复用 ws 子小节里同名的限流配置 —— 站在运维视角它们是同一组
             // "认证失败暴力策略"参数,没必要再多开一组。
@@ -225,6 +235,7 @@ async fn run_server(config_path: &Path) -> Result<()> {
         .route("/api/nodes", get(nodes))
         .route("/api/nodes/{node_id}", get(node_status))
         .route("/api/nodes/{node_id}/history", get(node_history))
+        .route("/api/nodes/{node_id}/logs", get(node_logs))
         .route(
             "/api/nodes/{node_id}/refresh-token",
             post(refresh_node_token),
@@ -400,6 +411,7 @@ fn spawn_stale_reaper(shared: SharedState) {
 fn spawn_registry_reloader(
     registry: NodeRegistry,
     history: HistoryStore,
+    agent_logs: AgentLogStore,
     readiness: ServerReadiness,
 ) {
     tokio::spawn(async move {
@@ -414,10 +426,12 @@ fn spawn_registry_reloader(
                     let enrolled_nodes = registry.count().await;
                     let node_ids = registry.node_ids().await;
                     let cleaned_history_nodes = history.forget_missing(&node_ids).await;
+                    let cleaned_agent_log_nodes = agent_logs.forget_missing(&node_ids).await;
                     info!(
                         registry_path = %registry.path().display(),
                         enrolled_nodes,
                         cleaned_history_nodes,
+                        cleaned_agent_log_nodes,
                         "reloaded node registry",
                     );
                 }
@@ -563,10 +577,11 @@ mod tests {
         InstallAdmissionConfig, InstallAdmissionController, WsAdmissionController,
         WsAdmissionError, resolve_client_ip, sweep_expired_auth_failures,
     };
+    use crate::agent_logs::AgentLogStore;
     use crate::handlers::{
         bootstrap, healthz, index, install_agent_script, install_bootstrap,
-        is_well_formed_install_token, node_detail, node_history, node_status, nodes, overview,
-        readyz, require_readonly_auth, ui_i18n_asset,
+        is_well_formed_install_token, node_detail, node_history, node_logs, node_status, nodes,
+        overview, readyz, require_readonly_auth, ui_i18n_asset,
     };
     use crate::history::HistoryStore;
     use crate::registry::{IssueNodeRequest, NodeRegistry, issue_node};
@@ -616,6 +631,7 @@ mod tests {
         let runtime = Runtime::new().expect("runtime should build");
         let state = AppState {
             history: HistoryStore::new(PathBuf::from("./data/history.sqlite3")),
+            agent_logs: AgentLogStore::new(),
             install_admission: InstallAdmissionController::new(InstallAdmissionConfig {
                 auth_fail_window_secs: 300,
                 auth_fail_max_attempts: 6,
@@ -656,6 +672,7 @@ mod tests {
             .route("/api/nodes", get(nodes))
             .route("/api/nodes/{node_id}", get(node_status))
             .route("/api/nodes/{node_id}/history", get(node_history))
+            .route("/api/nodes/{node_id}/logs", get(node_logs))
             .route("/ws", get(ws_handler))
             .with_state(state)
             .layer(TraceLayer::new_for_http());
@@ -844,6 +861,7 @@ mod tests {
             });
             let state = AppState {
                 history: HistoryStore::new(config.history_db_path.clone()),
+                agent_logs: AgentLogStore::new(),
                 install_admission: InstallAdmissionController::new(InstallAdmissionConfig {
                     auth_fail_window_secs: 300,
                     auth_fail_max_attempts: 6,
@@ -940,6 +958,7 @@ mod tests {
             });
             let state = AppState {
                 history: HistoryStore::new(config.history_db_path.clone()),
+                agent_logs: AgentLogStore::new(),
                 install_admission: InstallAdmissionController::new(InstallAdmissionConfig {
                     auth_fail_window_secs: 300,
                     auth_fail_max_attempts: 6,

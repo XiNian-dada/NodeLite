@@ -17,8 +17,9 @@ pub use config::{
     parse_server_config,
 };
 pub use message::{
-    HelloMessage, MetricsMessage, NoticeLevel, PingMessage, PongMessage,
-    RefreshTokenRequestMessage, RefreshTokenResponseMessage, ServerNoticeMessage, WireMessage,
+    AgentLogEntry, AgentLogsMessage, HelloMessage, MetricsMessage, NoticeLevel, PingMessage,
+    PongMessage, RefreshTokenRequestMessage, RefreshTokenResponseMessage, ServerNoticeMessage,
+    WireMessage,
 };
 pub use model::{
     DiskUsage, HistoryPoint, LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot,

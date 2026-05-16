@@ -25,7 +25,7 @@ use tokio::sync::mpsc;
 use tokio::time::{MissedTickBehavior, interval};
 use tracing::{error, info, warn};
 use ximonitor_proto::{
-    HelloMessage, MetricsMessage, PongMessage, ServerNoticeMessage, WireMessage,
+    AgentLogsMessage, HelloMessage, MetricsMessage, PongMessage, ServerNoticeMessage, WireMessage,
 };
 
 use crate::AppState;
@@ -245,6 +245,16 @@ async fn handle_socket(
                                     break Ok(());
                                 };
                                 state.history.record_status(&status).await;
+                            }
+                            WireMessage::AgentLogs(AgentLogsMessage { entries }) => {
+                                if !state.registry.is_token_current(&node_id, &session_token).await {
+                                    warn!(node_id = %node_id, "disconnecting session after registry token change");
+                                    break Ok(());
+                                }
+                                let accepted = state.agent_logs.record_entries(&node_id, entries).await;
+                                if accepted > 0 {
+                                    info!(node_id = %node_id, accepted, "recorded agent runtime log entries");
+                                }
                             }
                             WireMessage::Pong(PongMessage { nonce }) => {
                                 if !state.registry.is_token_current(&node_id, &session_token).await {

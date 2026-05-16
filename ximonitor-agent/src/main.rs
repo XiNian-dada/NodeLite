@@ -12,10 +12,12 @@
 
 mod collector;
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
+use chrono::Utc;
 use clap::Parser;
 use futures::{SinkExt, StreamExt};
 use getrandom::fill as fill_random;
@@ -26,8 +28,9 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tracing::{info, warn};
 use ximonitor_proto::{
-    AgentConfig, HelloMessage, MetricsMessage, NoticeLevel, PingMessage, PongMessage,
-    ServerNoticeMessage, WireMessage, parse_agent_config, uses_insecure_remote_url,
+    AgentConfig, AgentLogEntry, AgentLogsMessage, HelloMessage, MetricsMessage, NoticeLevel,
+    PingMessage, PongMessage, ServerNoticeMessage, WireMessage, parse_agent_config,
+    uses_insecure_remote_url,
 };
 
 use crate::collector::new_collector;
@@ -42,6 +45,12 @@ const CONNECT_TIMEOUT_SECS: u64 = 20;
 /// 几百字节;这里收紧到 64 KiB,既给协议未来扩展留出余量,又能在被攻陷的
 /// 服务端推送超大帧时由底层库主动断开,而不是让 Agent 在帧拼接阶段 OOM。
 const MAX_INCOMING_MESSAGE_BYTES: usize = 64 * 1024;
+/// Agent 本地最多暂存的待上报日志条数。超出后丢弃最旧项,避免断线期间内存无限增长。
+const MAX_PENDING_AGENT_LOGS: usize = 256;
+/// 单次推送到服务端的最大日志条数,控制消息体积。
+const MAX_AGENT_LOG_BATCH: usize = 32;
+/// 单条日志消息的最大字节数,避免异常长错误串撑爆 WebSocket 消息。
+const MAX_AGENT_LOG_MESSAGE_BYTES: usize = 240;
 
 /// 命令行参数。
 #[derive(Debug, Parser)]
@@ -72,6 +81,53 @@ struct SessionError {
     source: anyhow::Error,
 }
 
+type AgentWsSender = futures::stream::SplitSink<
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    Message,
+>;
+
+#[derive(Default)]
+struct AgentLogBuffer {
+    entries: VecDeque<AgentLogEntry>,
+}
+
+impl AgentLogBuffer {
+    fn push(&mut self, level: NoticeLevel, message: impl Into<String>) {
+        let message = truncate_to_byte_boundary(&message.into(), MAX_AGENT_LOG_MESSAGE_BYTES)
+            .trim()
+            .to_string();
+        if message.is_empty() {
+            return;
+        }
+        if self.entries.len() >= MAX_PENDING_AGENT_LOGS {
+            self.entries.pop_front();
+        }
+        self.entries.push_back(AgentLogEntry {
+            occurred_at: Utc::now().to_rfc3339(),
+            level,
+            message,
+        });
+    }
+
+    fn peek_batch(&self) -> Vec<AgentLogEntry> {
+        self.entries
+            .iter()
+            .take(MAX_AGENT_LOG_BATCH)
+            .cloned()
+            .collect()
+    }
+
+    fn discard_sent(&mut self, count: usize) {
+        for _ in 0..count {
+            self.entries.pop_front();
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
 /// Token 过期后的重连间隔:拉长到 1 小时,既给运维介入留足时间,也避免
 /// Agent 反复连接服务端制造无用的失败日志与 IP 限流压力。
 const TOKEN_EXPIRED_RECONNECT_DELAY: Duration = Duration::from_secs(3600);
@@ -91,6 +147,14 @@ async fn main() -> Result<()> {
         node_label = %identity.node_label,
         "agent configuration loaded"
     );
+    let mut log_buffer = AgentLogBuffer::default();
+    log_buffer.push(
+        NoticeLevel::Info,
+        format!(
+            "agent configuration loaded for {} ({})",
+            identity.node_label, identity.node_id
+        ),
+    );
 
     if cli.sample_once {
         let snapshot = collector.collect_snapshot()?;
@@ -106,7 +170,7 @@ async fn main() -> Result<()> {
     }
 
     spawn_insecure_transport_warning(config.server.clone());
-    run_forever(config, collector, identity, cli.config).await
+    run_forever(config, collector, identity, cli.config, log_buffer).await
 }
 
 /// 安装 rustls 默认的密码套件提供者(ring 后端)。
@@ -185,12 +249,21 @@ async fn run_forever(
     mut collector: crate::collector::HostCollector,
     identity: ximonitor_proto::NodeIdentity,
     config_path: PathBuf,
+    mut log_buffer: AgentLogBuffer,
 ) -> Result<()> {
     let mut attempt = 0_u32;
 
     loop {
         let next = async {
-            match run_session(&mut config, &mut collector, &identity, &config_path).await {
+            match run_session(
+                &mut config,
+                &mut collector,
+                &identity,
+                &config_path,
+                &mut log_buffer,
+            )
+            .await
+            {
                 Ok(()) => {
                     attempt = 0;
                 }
@@ -206,6 +279,22 @@ async fn run_forever(
                     } else {
                         reconnect_delay(attempt)
                     };
+                    let reason = error.source.to_string();
+                    let level = if error.token_expired {
+                        NoticeLevel::Error
+                    } else if error.established_session {
+                        NoticeLevel::Warn
+                    } else {
+                        NoticeLevel::Info
+                    };
+                    log_buffer.push(
+                        level,
+                        format!(
+                            "session ended: {}; retrying in {}s",
+                            reason,
+                            delay.as_secs()
+                        ),
+                    );
                     warn!(
                         server = %config.server,
                         delay_secs = delay.as_secs(),
@@ -240,7 +329,12 @@ async fn run_session(
     collector: &mut crate::collector::HostCollector,
     identity: &ximonitor_proto::NodeIdentity,
     config_path: &Path,
+    log_buffer: &mut AgentLogBuffer,
 ) -> std::result::Result<(), SessionError> {
+    log_buffer.push(
+        NoticeLevel::Info,
+        format!("connecting to {}", config.server),
+    );
     let (socket, _) = timeout(
         Duration::from_secs(CONNECT_TIMEOUT_SECS),
         connect_async_with_config(config.server.as_str(), Some(incoming_ws_config()), false),
@@ -298,6 +392,13 @@ async fn run_session(
                                     && message == "authenticated"
                                 {
                                     authenticated = true;
+                                    log_buffer.push(
+                                        NoticeLevel::Info,
+                                        format!("authenticated with {}", config.server),
+                                    );
+                                    flush_agent_logs(&mut sender, log_buffer)
+                                        .await
+                                        .map_err(|error| session_error(authenticated, error))?;
                                 }
 
                                 // 服务端拒绝过期 token 时会先发一条带 "token expired"
@@ -310,6 +411,10 @@ async fn run_session(
                                 if matches!(level, NoticeLevel::Error)
                                     && message.contains("token expired")
                                 {
+                                    log_buffer.push(
+                                        NoticeLevel::Error,
+                                        "agent token expired; waiting for operator to rotate token",
+                                    );
                                     tracing::error!(
                                         message = %message,
                                         "agent token expired; sleeping until operator rotates token",
@@ -320,22 +425,46 @@ async fn run_session(
                                 }
 
                                 log_notice(level, &message);
+                                if message != "authenticated" {
+                                    log_buffer.push(level, format!("server notice: {message}"));
+                                    if authenticated {
+                                        flush_agent_logs(&mut sender, log_buffer)
+                                            .await
+                                            .map_err(|error| session_error(authenticated, error))?;
+                                    }
+                                }
                             }
                             WireMessage::RefreshTokenResponse(response) => {
                                 info!("received new token, expires at {}", response.expires_at);
+                                log_buffer.push(
+                                    NoticeLevel::Info,
+                                    format!("received refreshed token expiring at {}", response.expires_at),
+                                );
                                 config.token = response.new_token.clone();
 
                                 // 持久化新 token 到配置文件
                                 if let Err(e) = update_token_in_config(config_path, &response.new_token).await {
                                     warn!("failed to persist new token: {}", e);
+                                    log_buffer.push(
+                                        NoticeLevel::Warn,
+                                        format!("failed to persist refreshed token: {e}"),
+                                    );
                                 } else {
                                     info!("successfully persisted new token to config file");
+                                    log_buffer.push(
+                                        NoticeLevel::Info,
+                                        "persisted refreshed token to local config",
+                                    );
                                 }
+                                flush_agent_logs(&mut sender, log_buffer)
+                                    .await
+                                    .map_err(|error| session_error(authenticated, error))?;
                             }
                             WireMessage::Hello(_)
                             | WireMessage::Metrics(_)
                             | WireMessage::Pong(_)
-                            | WireMessage::RefreshTokenRequest(_) => {
+                            | WireMessage::RefreshTokenRequest(_)
+                            | WireMessage::AgentLogs(_) => {
                                 return Err(session_error(
                                     authenticated,
                                     anyhow!("received unexpected websocket message from server"),
@@ -392,12 +521,7 @@ fn incoming_ws_config() -> WebSocketConfig {
 
 /// 采集一次快照并以 `Metrics` 帧发送出去。
 async fn send_metrics(
-    sender: &mut futures::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-        Message,
-    >,
+    sender: &mut AgentWsSender,
     collector: &mut crate::collector::HostCollector,
 ) -> Result<()> {
     let snapshot = collector.collect_snapshot()?;
@@ -405,20 +529,37 @@ async fn send_metrics(
 }
 
 /// 把任意 `WireMessage` 序列化为 JSON 文本帧并发送。
-async fn send_wire_message(
-    sender: &mut futures::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-        Message,
-    >,
-    message: &WireMessage,
-) -> Result<()> {
+async fn send_wire_message(sender: &mut AgentWsSender, message: &WireMessage) -> Result<()> {
     let payload = serde_json::to_string(message).context("serialize websocket message")?;
     sender
         .send(Message::Text(payload.into()))
         .await
         .context("send websocket message")?;
+    Ok(())
+}
+
+/// 尝试把当前积压的 Agent 运行日志批量推给服务端。
+///
+/// 这些日志是 best-effort 的诊断信息,但一旦连接已经认证完成,发送失败通常也
+/// 意味着这条 WebSocket 本身已不可用,所以调用方会把错误提升为会话失败。
+async fn flush_agent_logs(
+    sender: &mut AgentWsSender,
+    log_buffer: &mut AgentLogBuffer,
+) -> Result<()> {
+    while !log_buffer.is_empty() {
+        let batch = log_buffer.peek_batch();
+        if batch.is_empty() {
+            break;
+        }
+        send_wire_message(
+            sender,
+            &WireMessage::AgentLogs(AgentLogsMessage {
+                entries: batch.clone(),
+            }),
+        )
+        .await?;
+        log_buffer.discard_sent(batch.len());
+    }
     Ok(())
 }
 
@@ -631,13 +772,26 @@ fn harden_config_permissions(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn truncate_to_byte_boundary(value: &str, max_bytes: usize) -> &str {
+    if value.len() <= max_bytes {
+        return value;
+    }
+
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
     use std::time::Duration;
 
     use super::{
-        is_token_assignment_line, reconnect_delay, replace_token_line,
+        AgentLogBuffer, MAX_PENDING_AGENT_LOGS, NoticeLevel, is_token_assignment_line,
+        reconnect_delay, replace_token_line, truncate_to_byte_boundary,
         uses_insecure_remote_transport,
     };
 
@@ -742,5 +896,24 @@ mod tests {
                 "attempt {attempt}: 32 samples all identical, jitter not active",
             );
         }
+    }
+
+    #[test]
+    fn agent_log_buffer_keeps_recent_entries() {
+        let mut buffer = AgentLogBuffer::default();
+        for index in 0..(MAX_PENDING_AGENT_LOGS + 4) {
+            buffer.push(NoticeLevel::Info, format!("entry-{index}"));
+        }
+        let batch = buffer.peek_batch();
+        assert_eq!(batch.len(), 32);
+        assert_eq!(
+            buffer.entries.front().map(|entry| entry.message.as_str()),
+            Some("entry-4")
+        );
+    }
+
+    #[test]
+    fn truncate_to_byte_boundary_preserves_utf8() {
+        assert_eq!(truncate_to_byte_boundary("日志abcdef", 4), "日");
     }
 }

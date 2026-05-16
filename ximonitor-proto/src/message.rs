@@ -25,6 +25,8 @@ pub enum WireMessage {
     RefreshTokenRequest(RefreshTokenRequestMessage),
     /// Server 响应 Token 刷新请求,返回新 Token 和过期时间。
     RefreshTokenResponse(RefreshTokenResponseMessage),
+    /// Agent 批量上报自身运行日志,供服务端日志页排障使用。
+    AgentLogs(AgentLogsMessage),
 }
 
 /// Agent 连接 Server 时发送的首个消息。
@@ -79,6 +81,20 @@ pub struct RefreshTokenResponseMessage {
     pub expires_at: String, // ISO 8601 格式
 }
 
+/// Agent 运行时日志中的单条结构化事件。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentLogEntry {
+    pub occurred_at: String, // ISO 8601 格式
+    pub level: NoticeLevel,
+    pub message: String,
+}
+
+/// Agent 批量上传的运行时日志。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentLogsMessage {
+    pub entries: Vec<AgentLogEntry>,
+}
+
 /// 通知级别,与常见的日志等级对应。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -92,7 +108,10 @@ pub enum NoticeLevel {
 mod tests {
     use chrono::{TimeZone, Utc};
 
-    use super::{HelloMessage, NoticeLevel, ServerNoticeMessage, WireMessage};
+    use super::{
+        AgentLogEntry, AgentLogsMessage, HelloMessage, NoticeLevel, ServerNoticeMessage,
+        WireMessage,
+    };
     use crate::model::{LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot};
 
     /// 验证所有 WireMessage 子类型都能完整序列化和反序列化。
@@ -144,8 +163,18 @@ mod tests {
             level: NoticeLevel::Warn,
             message: "careful".to_string(),
         });
+        let agent_logs = WireMessage::AgentLogs(AgentLogsMessage {
+            entries: vec![AgentLogEntry {
+                occurred_at: Utc
+                    .with_ymd_and_hms(2026, 5, 7, 1, 2, 3)
+                    .unwrap()
+                    .to_rfc3339(),
+                level: NoticeLevel::Info,
+                message: "authenticated".to_string(),
+            }],
+        });
 
-        for message in [hello, snapshot, notice] {
+        for message in [hello, snapshot, notice, agent_logs] {
             let encoded = serde_json::to_string(&message).expect("encode");
             let decoded: WireMessage = serde_json::from_str(&encoded).expect("decode");
             assert_eq!(message, decoded);

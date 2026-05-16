@@ -27,7 +27,9 @@ use crate::auth::{
 use crate::qr::qr_svg_for_text;
 use crate::registry::render_agent_config;
 use crate::ui::{UI_I18N_JSON, index_html, node_html};
-use ximonitor_proto::{DEFAULT_HISTORY_RETENTION_HOURS, ReadonlyAuthConfig, parse_server_config};
+use ximonitor_proto::{
+    AgentLogEntry, DEFAULT_HISTORY_RETENTION_HOURS, ReadonlyAuthConfig, parse_server_config,
+};
 
 /// 把 `scripts/install-agent.sh` 在编译期嵌入到二进制内。
 const INSTALL_AGENT_SCRIPT: &str = include_str!("../../scripts/install-agent.sh");
@@ -37,6 +39,10 @@ const DEFAULT_HISTORY_WINDOW_HOURS: u64 = 24;
 const DEFAULT_HISTORY_MAX_POINTS: usize = 480;
 /// 历史接口最多返回的样本点数。
 const MAX_HISTORY_MAX_POINTS: usize = 1440;
+/// 节点日志接口默认返回条数。
+const DEFAULT_NODE_LOG_LIMIT: usize = 120;
+/// 节点日志接口最多返回条数。
+const MAX_NODE_LOG_LIMIT: usize = 200;
 const MAX_UPDATE_LOG_CHUNK_BYTES: u64 = 128 * 1024;
 
 /// `/api/bootstrap` 的响应结构,只读、用于前端启动期获取基本元数据。
@@ -165,6 +171,11 @@ pub(crate) struct HistoryQuery {
     max_points: Option<usize>,
     start: Option<i64>,
     end: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct NodeLogsQuery {
+    limit: Option<usize>,
 }
 
 /// 首页 HTML:把刷新周期等参数注入模板。
@@ -1516,6 +1527,19 @@ pub(crate) async fn node_history(
             (StatusCode::SERVICE_UNAVAILABLE, "history store unavailable").into_response()
         }
     }
+}
+
+/// 节点最近的 Agent 运行日志。用于排查断链、重连、token 续期等偶发问题。
+pub(crate) async fn node_logs(
+    State(state): State<AppState>,
+    AxumPath(node_id): AxumPath<String>,
+    Query(query): Query<NodeLogsQuery>,
+) -> Json<Vec<AgentLogEntry>> {
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_NODE_LOG_LIMIT)
+        .clamp(1, MAX_NODE_LOG_LIMIT);
+    Json(state.agent_logs.list(&node_id, limit).await)
 }
 
 /// 从请求头中解析 `Authorization: Bearer <token>`,缺失或为空时返回 `None`。
