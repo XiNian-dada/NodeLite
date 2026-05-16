@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, TimeZone, Utc};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, Error as SqliteError, ErrorCode, params};
 use tokio::sync::Mutex;
 use tracing::{error, warn};
 use ximonitor_proto::{
@@ -30,6 +30,8 @@ use std::os::unix::fs::PermissionsExt;
 
 /// SQLite 在并发写入冲突时的等待时长。
 const SQLITE_BUSY_TIMEOUT_SECS: u64 = 5;
+const SQLITE_BUSY_MAX_RETRIES: u32 = 3;
+const SQLITE_BUSY_RETRY_BASE_MS: u64 = 50;
 
 /// 对外暴露的历史存储句柄,可被低成本克隆给多个异步任务。
 #[derive(Clone)]
@@ -295,37 +297,41 @@ fn write_history_point(
     prune_before: Option<DateTime<Utc>>,
     artifacts_hardened_after_write: &AtomicBool,
 ) -> Result<()> {
-    connection.execute(
-        r#"
-        INSERT INTO history_points (
-            node_id,
-            recorded_at,
-            cpu_usage_percent,
-            memory_used_percent,
-            rx_bytes_per_sec,
-            tx_bytes_per_sec,
-            latency_ms,
-            disk_used_percent
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-        "#,
-        params![
-            &point.node_id,
-            point.recorded_at.timestamp(),
-            point.cpu_usage_percent,
-            point.memory_used_percent,
-            point.rx_bytes_per_sec,
-            point.tx_bytes_per_sec,
-            point.latency_ms,
-            point.disk_used_percent,
-        ],
-    )?;
-
-    if let Some(cutoff) = prune_before {
+    with_sqlite_busy_retry(|| {
         connection.execute(
-            "DELETE FROM history_points WHERE recorded_at < ?1",
-            params![cutoff.timestamp()],
+            r#"
+            INSERT INTO history_points (
+                node_id,
+                recorded_at,
+                cpu_usage_percent,
+                memory_used_percent,
+                rx_bytes_per_sec,
+                tx_bytes_per_sec,
+                latency_ms,
+                disk_used_percent
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "#,
+            params![
+                &point.node_id,
+                point.recorded_at.timestamp(),
+                point.cpu_usage_percent,
+                point.memory_used_percent,
+                point.rx_bytes_per_sec,
+                point.tx_bytes_per_sec,
+                point.latency_ms,
+                point.disk_used_percent,
+            ],
         )?;
-    }
+
+        if let Some(cutoff) = prune_before {
+            connection.execute(
+                "DELETE FROM history_points WHERE recorded_at < ?1",
+                params![cutoff.timestamp()],
+            )?;
+        }
+
+        Ok(())
+    })?;
     if !artifacts_hardened_after_write.load(Ordering::Relaxed) {
         harden_database_artifacts(db_path)?;
         artifacts_hardened_after_write.store(true, Ordering::Relaxed);
@@ -351,24 +357,35 @@ fn query_history_between(
     until: DateTime<Utc>,
     max_points: usize,
 ) -> Result<Vec<HistoryPoint>> {
+    let max_points = max_points.max(1);
+    let span_seconds = (until.timestamp() - since.timestamp()).max(1);
+    let bucket_seconds = ((span_seconds as usize).div_ceil(max_points)).max(1) as i64;
     let mut statement = connection.prepare(
         r#"
         SELECT
-            node_id,
-            recorded_at,
-            cpu_usage_percent,
-            memory_used_percent,
-            rx_bytes_per_sec,
-            tx_bytes_per_sec,
-            latency_ms,
-            disk_used_percent
+            ?1 AS node_id,
+            MAX(recorded_at) AS recorded_at,
+            AVG(cpu_usage_percent) AS cpu_usage_percent,
+            AVG(memory_used_percent) AS memory_used_percent,
+            AVG(rx_bytes_per_sec) AS rx_bytes_per_sec,
+            AVG(tx_bytes_per_sec) AS tx_bytes_per_sec,
+            AVG(latency_ms) AS latency_ms,
+            AVG(disk_used_percent) AS disk_used_percent
         FROM history_points
         WHERE node_id = ?1 AND recorded_at >= ?2 AND recorded_at <= ?3
+        GROUP BY ((recorded_at - ?2) / ?4)
         ORDER BY recorded_at ASC
+        LIMIT ?5
         "#,
     )?;
     let rows = statement.query_map(
-        params![node_id, since.timestamp(), until.timestamp()],
+        params![
+            node_id,
+            since.timestamp(),
+            until.timestamp(),
+            bucket_seconds,
+            max_points as i64
+        ],
         |row| {
             let recorded_at = row.get::<_, i64>(1)?;
             Ok(HistoryPoint {
@@ -381,7 +398,9 @@ fn query_history_between(
                 memory_used_percent: row.get(3)?,
                 rx_bytes_per_sec: row.get(4)?,
                 tx_bytes_per_sec: row.get(5)?,
-                latency_ms: row.get(6)?,
+                latency_ms: row
+                    .get::<_, Option<f64>>(6)?
+                    .map(|value| value.max(0.0).round() as u64),
                 disk_used_percent: row.get(7)?,
             })
         },
@@ -391,7 +410,7 @@ fn query_history_between(
     for row in rows {
         points.push(row?);
     }
-    Ok(condense_history_points(points, max_points))
+    Ok(points)
 }
 
 /// 打开 SQLite 连接,可选启用 WAL 模式以提升并发写入吞吐。
@@ -473,78 +492,33 @@ fn build_history_point(status: &NodeStatus) -> Option<HistoryPoint> {
     })
 }
 
-/// 把超出 `max_points` 的样本均匀分桶取均值,减小前端渲染开销。
-fn condense_history_points(points: Vec<HistoryPoint>, max_points: usize) -> Vec<HistoryPoint> {
-    let target_points = max_points.max(1);
-    if points.len() <= target_points {
-        return points;
-    }
-
-    let bucket_size = points.len().div_ceil(target_points);
-    let mut condensed = Vec::with_capacity(points.len().div_ceil(bucket_size));
-
-    for chunk in points.chunks(bucket_size) {
-        condensed.push(average_history_chunk(chunk));
-    }
-
-    condensed
-}
-
-/// 对单个分桶内的样本逐字段求平均;时间戳取桶末尾,保持时间序的单调性。
-fn average_history_chunk(chunk: &[HistoryPoint]) -> HistoryPoint {
-    let first = &chunk[0];
-    let recorded_at = chunk
-        .last()
-        .map(|point| point.recorded_at)
-        .unwrap_or(first.recorded_at);
-
-    HistoryPoint {
-        node_id: first.node_id.clone(),
-        recorded_at,
-        cpu_usage_percent: average_f64(chunk.iter().map(|point| point.cpu_usage_percent)),
-        memory_used_percent: average_f64(chunk.iter().map(|point| point.memory_used_percent)),
-        rx_bytes_per_sec: average_optional_f64(chunk.iter().map(|point| point.rx_bytes_per_sec)),
-        tx_bytes_per_sec: average_optional_f64(chunk.iter().map(|point| point.tx_bytes_per_sec)),
-        latency_ms: average_optional_u64(chunk.iter().map(|point| point.latency_ms)),
-        disk_used_percent: average_optional_f64(chunk.iter().map(|point| point.disk_used_percent)),
+fn with_sqlite_busy_retry<F>(mut operation: F) -> Result<()>
+where
+    F: FnMut() -> Result<()>,
+{
+    let mut attempt = 0_u32;
+    loop {
+        match operation() {
+            Ok(()) => return Ok(()),
+            Err(error) if is_sqlite_busy(&error) && attempt < SQLITE_BUSY_MAX_RETRIES => {
+                attempt = attempt.saturating_add(1);
+                std::thread::sleep(Duration::from_millis(
+                    SQLITE_BUSY_RETRY_BASE_MS.saturating_mul(attempt as u64),
+                ));
+            }
+            Err(error) => return Err(error),
+        }
     }
 }
 
-fn average_f64(values: impl Iterator<Item = f64>) -> f64 {
-    let mut total = 0.0;
-    let mut count = 0_u64;
-    for value in values {
-        total += value;
-        count += 1;
-    }
-
-    if count == 0 {
-        0.0
-    } else {
-        total / count as f64
-    }
-}
-
-fn average_optional_f64(values: impl Iterator<Item = Option<f64>>) -> Option<f64> {
-    let mut total = 0.0;
-    let mut count = 0_u64;
-    for value in values.flatten() {
-        total += value;
-        count += 1;
-    }
-
-    (count > 0).then(|| total / count as f64)
-}
-
-fn average_optional_u64(values: impl Iterator<Item = Option<u64>>) -> Option<u64> {
-    let mut total = 0_u128;
-    let mut count = 0_u64;
-    for value in values.flatten() {
-        total += value as u128;
-        count += 1;
-    }
-
-    (count > 0).then(|| (total / count as u128) as u64)
+fn is_sqlite_busy(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<SqliteError>().is_some_and(|error| {
+        matches!(
+            error,
+            SqliteError::SqliteFailure(code, _)
+                if code.code == ErrorCode::DatabaseBusy || code.code == ErrorCode::DatabaseLocked
+        )
+    })
 }
 
 #[cfg(test)]
@@ -560,7 +534,10 @@ mod tests {
         NodeStatus,
     };
 
-    use super::{HistoryStore, build_history_point, initialize_database, write_history_point};
+    use super::{
+        HistoryStore, build_history_point, initialize_database, query_history_between,
+        write_history_point,
+    };
 
     #[test]
     fn history_point_uses_server_last_seen_timestamp() {
@@ -685,6 +662,52 @@ mod tests {
             assert!(guard.contains_key("jp-01"));
             assert!(guard.contains_key("us-01"));
         });
+    }
+
+    #[test]
+    fn query_history_between_buckets_and_limits_results() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic enough")
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("ximonitor-history-query-{unique}"));
+        std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+        let db_path = temp_dir.join("history.sqlite3");
+        let connection = initialize_database(&db_path).expect("database should initialize");
+        let hardened = AtomicBool::new(false);
+        let start = Utc::now() - Duration::hours(6);
+        for index in 0..180 {
+            write_history_point(
+                &db_path,
+                &connection,
+                &HistoryPoint {
+                    node_id: "hk-01".to_string(),
+                    recorded_at: start + Duration::seconds(index * 120),
+                    cpu_usage_percent: index as f64,
+                    memory_used_percent: 50.0,
+                    rx_bytes_per_sec: Some(index as f64),
+                    tx_bytes_per_sec: Some(index as f64 / 2.0),
+                    latency_ms: Some((index % 10) as u64),
+                    disk_used_percent: Some(60.0),
+                },
+                None,
+                &hardened,
+            )
+            .expect("history point should persist");
+        }
+
+        let points = query_history_between(&connection, "hk-01", start, Utc::now(), 24)
+            .expect("history query should succeed");
+        assert!(!points.is_empty());
+        assert!(points.len() <= 24);
+        assert!(
+            points
+                .windows(2)
+                .all(|pair| pair[0].recorded_at <= pair[1].recorded_at)
+        );
+
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_dir(&temp_dir);
     }
 
     #[cfg(unix)]
