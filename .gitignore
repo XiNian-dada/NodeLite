@@ -2,6 +2,7 @@
 *.log
 *.tmp
 /.DS_Store
+.DS_Store
 /data
 /dist
 /docs

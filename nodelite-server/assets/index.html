@@ -46,6 +46,7 @@
     <style>
       :root {
         color-scheme: dark;
+        --brand-logo: url("/assets/brand-logo-dark.png");
         --bg-app: #060912;
         --bg-sidebar: #0a0f1a;
         --bg-card: #0e1422;
@@ -72,6 +73,7 @@
       }
       :root[data-theme="light"] {
         color-scheme: light;
+        --brand-logo: url("/assets/brand-logo-light.png");
         --bg-app: #f4f6fb;
         --bg-sidebar: #ffffff;
         --bg-card: #ffffff;
@@ -123,22 +125,17 @@
         height: 100vh;
       }
       .brand {
-        width: 40px;
-        height: 40px;
-        display: grid;
-        place-items: center;
-        border-radius: 12px;
-        background: linear-gradient(135deg, rgba(59,130,246,0.25), rgba(168,85,247,0.18));
-        color: var(--accent-blue);
-        margin-bottom: 4px;
-      }
-      .brand svg { width: 22px; height: 22px; }
-      .brand-label {
-        font-size: 11px;
-        color: var(--text-muted);
-        margin-top: -6px;
-        margin-bottom: 6px;
-        letter-spacing: 0.04em;
+        width: 64px;
+        height: 64px;
+        display: block;
+        border-radius: 18px;
+        overflow: hidden;
+        background-color: transparent;
+        background-image: var(--brand-logo);
+        background-position: center;
+        background-repeat: no-repeat;
+        background-size: contain;
+        margin-bottom: 8px;
       }
       .nav-button {
         width: 44px;
@@ -790,6 +787,12 @@
           border-right: 0;
           border-bottom: 1px solid var(--border-soft);
         }
+        .brand {
+          width: 52px;
+          height: 52px;
+          margin-bottom: 0;
+          border-radius: 16px;
+        }
         .sidebar-bottom { flex-direction: row; margin-top: 0; }
         .main { padding: 16px; }
         .page-header { flex-direction: column; align-items: stretch; }
@@ -812,12 +815,7 @@
   <body>
     <div class="app">
       <aside class="sidebar" aria-label="primary">
-        <a class="brand" href="/" title="NodeLite">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 12h3l3-7 4 14 3-7h5" />
-          </svg>
-        </a>
-        <div class="brand-label" data-i18n="index.brand">NodeLite</div>
+        <a class="brand" href="/" title="NodeLite" aria-label="NodeLite"></a>
         <button type="button" class="nav-button active" data-tab="overview" title="Overview" aria-label="Overview">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="3" width="7" height="7" rx="1.5" />

@@ -1,3 +1,5 @@
+![NodeLite Banner](images/Banner.png)
+
 # NodeLite
 
 NodeLite 是一个用 Rust 编写的轻量级服务器监控面板，包含：

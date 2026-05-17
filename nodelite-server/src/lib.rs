@@ -63,11 +63,11 @@ use crate::auth::{ReadonlyRouteAuth, TwoFactorSessions};
 use crate::cli::{Cli, Command, install_agent_command, issue_node_command, upgrade_agent_command};
 use crate::fs_security::log_if_directory_is_not_private;
 use crate::handlers::{
-    bootstrap, change_readonly_password, disable_two_factor, enable_two_factor, healthz, index,
-    install_agent_script, install_bootstrap, logout_and_reauth, node_detail, node_history,
-    node_logs, node_status, nodes, overview, readyz, refresh_node_token, require_readonly_auth,
-    server_update_log, settings, start_server_update, start_two_factor_setup, ui_i18n_asset,
-    verify_2fa_api, verify_2fa_page,
+    bootstrap, brand_logo_dark_asset, brand_logo_light_asset, change_readonly_password,
+    disable_two_factor, enable_two_factor, healthz, index, install_agent_script, install_bootstrap,
+    logout_and_reauth, node_detail, node_history, node_logs, node_status, nodes, overview, readyz,
+    refresh_node_token, require_readonly_auth, server_update_log, settings, start_server_update,
+    start_two_factor_setup, ui_i18n_asset, verify_2fa_api, verify_2fa_page,
 };
 use crate::history::HistoryStore;
 use crate::registry::NodeRegistry;
@@ -234,6 +234,8 @@ async fn run_server(config_path: &Path) -> Result<()> {
     let protected_routes = Router::new()
         .route("/", get(index))
         .route("/nodes/{node_id}", get(node_detail))
+        .route("/assets/brand-logo-dark.png", get(brand_logo_dark_asset))
+        .route("/assets/brand-logo-light.png", get(brand_logo_light_asset))
         .route("/assets/ui-i18n.json", get(ui_i18n_asset))
         .route("/api/bootstrap", get(bootstrap))
         .route("/api/overview", get(overview))
@@ -584,9 +586,10 @@ mod tests {
     };
     use crate::agent_logs::AgentLogStore;
     use crate::handlers::{
-        bootstrap, healthz, index, install_agent_script, install_bootstrap,
-        is_well_formed_install_token, node_detail, node_history, node_logs, node_status, nodes,
-        overview, readyz, require_readonly_auth, ui_i18n_asset,
+        bootstrap, brand_logo_dark_asset, brand_logo_light_asset, healthz, index,
+        install_agent_script, install_bootstrap, is_well_formed_install_token, node_detail,
+        node_history, node_logs, node_status, nodes, overview, readyz, require_readonly_auth,
+        ui_i18n_asset,
     };
     use crate::history::HistoryStore;
     use crate::registry::{IssueNodeRequest, NodeRegistry, issue_node};
@@ -667,6 +670,8 @@ mod tests {
         let _app: Router = Router::new()
             .route("/", get(index))
             .route("/nodes/{node_id}", get(node_detail))
+            .route("/assets/brand-logo-dark.png", get(brand_logo_dark_asset))
+            .route("/assets/brand-logo-light.png", get(brand_logo_light_asset))
             .route("/assets/ui-i18n.json", get(ui_i18n_asset))
             .route("/healthz", get(healthz))
             .route("/readyz", get(readyz))
