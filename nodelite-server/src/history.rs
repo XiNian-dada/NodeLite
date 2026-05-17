@@ -30,8 +30,9 @@ use std::os::unix::fs::PermissionsExt;
 
 /// SQLite 在并发写入冲突时的等待时长。
 const SQLITE_BUSY_TIMEOUT_SECS: u64 = 5;
-const SQLITE_BUSY_MAX_RETRIES: u32 = 3;
+const SQLITE_BUSY_MAX_RETRIES: u32 = 10;
 const SQLITE_BUSY_RETRY_BASE_MS: u64 = 50;
+const SQLITE_BUSY_RETRY_MAX_MS: u64 = 1_000;
 const HISTORY_QUERY_SQL: &str = r#"
         SELECT
             ?1 AS node_id,
@@ -511,13 +512,27 @@ where
             Ok(()) => return Ok(()),
             Err(error) if is_sqlite_busy(&error) && attempt < SQLITE_BUSY_MAX_RETRIES => {
                 attempt = attempt.saturating_add(1);
-                std::thread::sleep(Duration::from_millis(
-                    SQLITE_BUSY_RETRY_BASE_MS.saturating_mul(attempt as u64),
-                ));
+                let delay = sqlite_busy_retry_delay(attempt);
+                let delay_ms = delay.as_millis() as u64;
+                warn!(
+                    attempt,
+                    max_retries = SQLITE_BUSY_MAX_RETRIES,
+                    delay_ms,
+                    "sqlite busy while writing history point; retrying"
+                );
+                std::thread::sleep(delay);
             }
             Err(error) => return Err(error),
         }
     }
+}
+
+fn sqlite_busy_retry_delay(attempt: u32) -> Duration {
+    let exponent = attempt.saturating_sub(1).min(5);
+    let delay_ms = SQLITE_BUSY_RETRY_BASE_MS
+        .saturating_mul(1_u64 << exponent)
+        .min(SQLITE_BUSY_RETRY_MAX_MS);
+    Duration::from_millis(delay_ms)
 }
 
 fn is_sqlite_busy(error: &anyhow::Error) -> bool {
@@ -544,8 +559,8 @@ mod tests {
     use tokio::runtime::Runtime;
 
     use super::{
-        HISTORY_QUERY_SQL, HistoryStore, build_history_point, initialize_database,
-        query_history_between, write_history_point,
+        HISTORY_QUERY_SQL, HistoryStore, SQLITE_BUSY_MAX_RETRIES, build_history_point,
+        initialize_database, query_history_between, sqlite_busy_retry_delay, write_history_point,
     };
 
     #[test]
@@ -752,6 +767,16 @@ mod tests {
         drop(connection);
         let _ = std::fs::remove_file(&db_path);
         let _ = std::fs::remove_dir(&temp_dir);
+    }
+
+    #[test]
+    fn sqlite_busy_retry_delay_uses_capped_exponential_backoff() {
+        let delays_ms = (1..=8)
+            .map(|attempt| sqlite_busy_retry_delay(attempt).as_millis())
+            .collect::<Vec<_>>();
+
+        assert_eq!(SQLITE_BUSY_MAX_RETRIES, 10);
+        assert_eq!(delays_ms, vec![50, 100, 200, 400, 800, 1000, 1000, 1000]);
     }
 
     #[cfg(unix)]
