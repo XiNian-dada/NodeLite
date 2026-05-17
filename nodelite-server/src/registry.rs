@@ -31,8 +31,8 @@ use crate::fs_security::{create_private_dir_all, ensure_directory_mode};
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
-/// Agent Token 默认有效期:90 天。
-const DEFAULT_TOKEN_VALIDITY_DAYS: i64 = 90;
+/// Agent Token 默认有效期:30 天。
+const DEFAULT_TOKEN_VALIDITY_DAYS: i64 = 30;
 
 /// 已登记节点的持久化条目。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1092,6 +1092,44 @@ mod tests {
             let _ = std::fs::remove_file(&path);
             let _ = std::fs::remove_dir(&temp_dir);
         });
+    }
+
+    #[tokio::test]
+    async fn issued_tokens_default_to_thirty_day_expiry() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let temp_dir =
+            std::env::temp_dir().join(format!("nodelite-registry-expiry-test-{unique}"));
+        std::fs::create_dir_all(&temp_dir).expect("temp dir");
+        let path = temp_dir.join("server.json");
+
+        let issued = issue_node(
+            &path,
+            IssueNodeRequest {
+                node_id: "hk-01".to_string(),
+                node_label: Some("Hong Kong 01".to_string()),
+                tags: Vec::new(),
+                rotate_token: false,
+            },
+        )
+        .await
+        .expect("node should be issued");
+
+        let expires_at = issued
+            .node
+            .token_expires_at
+            .expect("issued token should carry expiry");
+        let remaining = expires_at - Utc::now();
+        assert!(
+            remaining >= ChronoDuration::days(29)
+                && remaining <= ChronoDuration::days(30) + ChronoDuration::minutes(1),
+            "expected about 30 days of remaining validity, got {remaining:?}",
+        );
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&temp_dir);
     }
 
     #[test]

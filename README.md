@@ -342,10 +342,10 @@ otpauth://totp/NodeLite:viewer?secret=<totp_secret>&issuer=NodeLite
 ### Agent Token 生命周期
 
 - 每个节点都有独立 token，存放在服务端 `server.json` 中。
-- 新签发或轮换的 node token 默认 90 天有效。
+- 新签发或轮换的 node token 默认 30 天有效。
 - 服务端在 WebSocket `hello` 阶段检查 token 是否过期，过期时会先下发一条 `token expired; run install-agent --rotate-token...` 的 Error notice 再关闭连接，方便运维从 Agent 日志直接看到补救步骤。
 - 已认证的长连接会在 token 距离过期不足 7 天时自动刷新；服务端先把刷新帧发出去，确认 send 成功后才把会话内的 token 视为新值，避免"server 内存里是新 token 但 agent 没收到"的不一致状态。Agent 收到后用 fsync + 0o600 原子写回 `agent.toml`，crash 不会留下空文件。
-- 旧版 `server.json` 中没有过期时间的 token 会在节点下一次在线会话里被自动刷新成 90 天 token。
+- 旧版 `server.json` 中没有过期时间的 token 会在节点下一次在线会话里被自动刷新成 30 天 token。
 - 如果某台 Agent 离线超过 token 有效期，它无法再用旧 token 自动刷新；Agent 进入 1 小时间隔的退避，等运维在服务端执行 `install-agent --rotate-token` 并替换该节点的 `agent.toml` 后才能恢复。
 
 ## Nginx 反代示例
