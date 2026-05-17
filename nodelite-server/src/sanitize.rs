@@ -266,9 +266,14 @@ pub(crate) fn truncate_to_byte_boundary(value: &mut String, max_bytes: usize) {
     if value.len() <= max_bytes {
         return;
     }
-    let mut cutoff = max_bytes;
-    while !value.is_char_boundary(cutoff) {
-        cutoff -= 1;
+
+    for cutoff in (max_bytes.saturating_sub(3)..=max_bytes).rev() {
+        if value.is_char_boundary(cutoff) {
+            value.truncate(cutoff);
+            return;
+        }
     }
-    value.truncate(cutoff);
+
+    // UTF-8 code points are at most 4 bytes, so this is only a defensive fallback.
+    value.clear();
 }

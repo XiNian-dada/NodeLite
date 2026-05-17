@@ -1403,6 +1403,25 @@ mod tests {
     }
 
     #[test]
+    fn truncate_to_byte_boundary_handles_utf8_widths_with_bounded_scan() {
+        let cases = [
+            ("aé", 2, "a"),
+            ("ab中", 4, "ab"),
+            ("abc🦀", 6, "abc"),
+            ("🦀", 0, ""),
+        ];
+
+        for (input, max_bytes, expected) in cases {
+            let mut value = input.to_string();
+            truncate_to_byte_boundary(&mut value, max_bytes);
+
+            assert_eq!(value, expected);
+            assert!(value.len() <= max_bytes);
+            assert!(value.is_char_boundary(value.len()));
+        }
+    }
+
+    #[test]
     fn loopback_proxy_peer_uses_forwarded_ip_for_ws_limits() {
         let mut headers = HeaderMap::new();
         headers.insert(
