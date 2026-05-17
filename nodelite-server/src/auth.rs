@@ -37,7 +37,8 @@ pub const TWO_FACTOR_AUTH_SECS: u64 = 24 * 60 * 60;
 /// 的代价压到不可接受的水平。
 pub const TWO_FACTOR_MAX_FAILED_ATTEMPTS: u32 = 5;
 /// 成功消费过的 TOTP `time_step` 在 store 中保留的时长。RFC 6238 §5.2
-/// 要求拒绝同一 step 的重复使用;150 秒覆盖 ±1 漂移窗口,并给调度延迟留出余量。
+/// 要求拒绝同一 step 的重复使用;这里保留足够长的时间覆盖 step 边界附近
+/// 的调度延迟,同时避免条目无界增长。
 pub const TWO_FACTOR_TOTP_REPLAY_RETENTION_SECS: u64 = 150;
 pub const TWO_FACTOR_PENDING_COOKIE: &str = "nodelite_2fa_pending";
 pub const TWO_FACTOR_AUTH_COOKIE: &str = "nodelite_auth";
@@ -107,9 +108,8 @@ struct TwoFactorSessionStore {
     pending: HashMap<String, PendingSession>,
     authenticated: HashMap<String, Instant>,
     /// 最近被成功消费过的 TOTP `time_step`(30 秒一个步长)。一旦某个 step
-    /// 被用过,即便它落在当前 ±1 漂移窗口里也必须拒绝,以阻止攻击者捕获
-    /// 一次 verify 请求后在同窗口内重放。条目在该 step 完全离开漂移窗口
-    /// 后被 prune 清掉,避免无界增长。
+    /// 被用过,同一 step 的后续验证码必须拒绝,以阻止攻击者捕获一次 verify
+    /// 请求后在同窗口内重放。条目会定期 prune,避免无界增长。
     used_totp_steps: HashMap<u64, Instant>,
 }
 
@@ -262,12 +262,19 @@ pub fn decode_totp_secret(value: &str) -> Option<Vec<u8>> {
         .or_else(|| base32::decode(base32::Alphabet::Rfc4648 { padding: true }, &normalized))
 }
 
-/// 验证 TOTP 码并返回匹配到的 30 秒 `time_step`。允许 ±1 个步长的时钟漂移。
+/// 验证 TOTP 码并返回匹配到的当前 30 秒 `time_step`。
 ///
 /// 调用方收到 `Some(step)` 后需要进一步检查该 step 是否已经被消费过
 /// (`TwoFactorSessions::is_totp_step_used`),以满足 RFC 6238 §5.2 的
 /// "同一步骤的代码不允许重复使用"要求。
 pub fn verify_totp_step(totp_secret: Option<&[u8]>, code: &str) -> Option<u64> {
+    // 时钟回拨到 1970 之前 chrono 会返回负值;退化到 0 而不是 panic。
+    let now_secs = Utc::now().timestamp().max(0) as u64;
+    let now_step = now_secs / 30;
+    verify_totp_step_at(totp_secret, code, now_step)
+}
+
+fn verify_totp_step_at(totp_secret: Option<&[u8]>, code: &str, now_step: u64) -> Option<u64> {
     let secret = totp_secret?;
 
     // 验证码必须正好 6 位 ASCII 数字。
@@ -275,24 +282,8 @@ pub fn verify_totp_step(totp_secret: Option<&[u8]>, code: &str) -> Option<u64> {
         return None;
     }
 
-    // 时钟回拨到 1970 之前 chrono 会返回负值;退化到 0 而不是 panic。
-    let now_secs = Utc::now().timestamp().max(0) as u64;
-    let now_step = now_secs / 30;
-
-    for offset in [-1_i64, 0, 1] {
-        let step = if offset < 0 {
-            now_step.checked_sub(offset.unsigned_abs())
-        } else {
-            now_step.checked_add(offset as u64)
-        };
-        let Some(step) = step else { continue };
-        let expected = totp_code_for_step(secret, step);
-        if constant_time_compare_bytes(expected.as_bytes(), code.as_bytes()) {
-            return Some(step);
-        }
-    }
-
-    None
+    let expected = totp_code_for_step(secret, now_step);
+    constant_time_compare_bytes(expected.as_bytes(), code.as_bytes()).then_some(now_step)
 }
 
 fn totp_code_for_step(secret: &[u8], step: u64) -> String {
@@ -365,6 +356,36 @@ mod tests {
         // RFC 6238 Appendix B gives SHA1/8-digit code 94287082 at Unix time
         // 59. With 6 digits the same dynamic truncation becomes 287082.
         assert_eq!(totp_code_for_step(secret, 59 / 30), "287082");
+    }
+
+    #[test]
+    fn verify_totp_step_accepts_only_current_step() {
+        let secret = b"12345678901234567890";
+        let current_step = (1_000_000..1_000_100)
+            .find(|step| {
+                let current = totp_code_for_step(secret, *step);
+                let previous = totp_code_for_step(secret, step - 1);
+                let next = totp_code_for_step(secret, step + 1);
+                current != previous && current != next
+            })
+            .expect("fixture should find non-colliding adjacent TOTP codes");
+
+        let current_code = totp_code_for_step(secret, current_step);
+        let previous_code = totp_code_for_step(secret, current_step - 1);
+        let next_code = totp_code_for_step(secret, current_step + 1);
+
+        assert_eq!(
+            verify_totp_step_at(Some(secret), &current_code, current_step),
+            Some(current_step)
+        );
+        assert_eq!(
+            verify_totp_step_at(Some(secret), &previous_code, current_step),
+            None
+        );
+        assert_eq!(
+            verify_totp_step_at(Some(secret), &next_code, current_step),
+            None
+        );
     }
 
     #[test]
