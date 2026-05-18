@@ -32,5 +32,6 @@ url.workspace = true
 nodelite-proto = { path = "../nodelite-proto" }
 
 [dev-dependencies]
+proptest = "1.4"
 tokio-tungstenite.workspace = true
 tower = "0.5"

@@ -277,3 +277,142 @@ pub(crate) fn truncate_to_byte_boundary(value: &mut String, max_bytes: usize) {
     // UTF-8 code points are at most 4 bytes, so this is only a defensive fallback.
     value.clear();
 }
+
+#[cfg(test)]
+mod tests {
+    use nodelite_proto::{DiskUsage, MemoryUsage};
+    use proptest::prelude::*;
+
+    use super::{
+        MAX_SANITIZED_RATE_BYTES_PER_SEC, MAX_SANITIZED_STRING_BYTES, SanitizationReport,
+        sanitize_disk_usage, sanitize_memory_usage, sanitize_non_negative_f64,
+        sanitize_optional_rate, truncate_to_byte_boundary,
+    };
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn truncate_to_byte_boundary_keeps_valid_prefix(
+            original in ".*",
+            max_bytes in 0usize..512,
+        ) {
+            let mut value = original.clone();
+            truncate_to_byte_boundary(&mut value, max_bytes);
+
+            prop_assert!(value.len() <= max_bytes);
+            prop_assert!(original.starts_with(&value));
+            prop_assert!(value.is_char_boundary(value.len()));
+        }
+
+        #[test]
+        fn sanitize_non_negative_f64_returns_finite_bounded_values(
+            value in any::<f64>(),
+            max in 0.0f64..1_000_000_000_000.0,
+        ) {
+            let sanitized = sanitize_non_negative_f64(value, max);
+
+            prop_assert!(sanitized.is_finite());
+            prop_assert!(sanitized >= 0.0);
+            prop_assert!(sanitized <= max);
+        }
+
+        #[test]
+        fn sanitize_optional_rate_preserves_none_and_bounds_some(
+            value in prop_oneof![Just(None), any::<f64>().prop_map(Some)],
+        ) {
+            let mut counter = 0;
+            let sanitized =
+                sanitize_optional_rate(value, MAX_SANITIZED_RATE_BYTES_PER_SEC, &mut counter);
+
+            prop_assert_eq!(sanitized.is_some(), value.is_some());
+            if let Some(rate) = sanitized {
+                prop_assert!(rate.is_finite());
+                prop_assert!(rate >= 0.0);
+                prop_assert!(rate <= MAX_SANITIZED_RATE_BYTES_PER_SEC);
+            }
+            if value.is_none() {
+                prop_assert_eq!(counter, 0);
+            }
+        }
+
+        #[test]
+        fn sanitize_memory_usage_produces_self_consistent_fields(
+            total_bytes in 0_u64..1_000_000_000,
+            used_bytes in 0_u64..1_000_000_000,
+            available_bytes in 0_u64..1_000_000_000,
+            swap_total_bytes in 0_u64..1_000_000_000,
+            swap_used_bytes in 0_u64..1_000_000_000,
+        ) {
+            let mut report = SanitizationReport::default();
+            let sanitized = sanitize_memory_usage(
+                MemoryUsage {
+                    total_bytes,
+                    used_bytes,
+                    available_bytes,
+                    swap_total_bytes,
+                    swap_used_bytes,
+                },
+                &mut report,
+            );
+
+            prop_assert!(sanitized.used_bytes <= sanitized.total_bytes);
+            prop_assert!(sanitized.available_bytes <= sanitized.total_bytes);
+            prop_assert!(
+                sanitized
+                    .used_bytes
+                    .saturating_add(sanitized.available_bytes)
+                    <= sanitized.total_bytes
+            );
+            prop_assert!(sanitized.swap_used_bytes <= sanitized.swap_total_bytes);
+        }
+
+        #[test]
+        fn sanitize_disk_usage_keeps_non_empty_utf8_and_consistent_capacity(
+            device in ".{1,400}",
+            mount_point in ".{1,400}",
+            fs_type in ".{1,80}",
+            total_bytes in 1_u64..1_000_000_000,
+            used_bytes in 0_u64..1_000_000_000,
+            available_bytes in 0_u64..1_000_000_000,
+            used_percent in any::<f64>(),
+        ) {
+            prop_assume!(!device.trim().is_empty());
+            prop_assume!(!mount_point.trim().is_empty());
+            prop_assume!(!fs_type.trim().is_empty());
+
+            let mut report = SanitizationReport::default();
+            let sanitized = sanitize_disk_usage(
+                DiskUsage {
+                    device,
+                    mount_point,
+                    fs_type,
+                    total_bytes,
+                    available_bytes,
+                    used_bytes,
+                    used_percent,
+                },
+                &mut report,
+            )
+            .expect("non-empty trimmed fields should survive sanitization");
+
+            prop_assert!(!sanitized.device.is_empty());
+            prop_assert!(!sanitized.mount_point.is_empty());
+            prop_assert!(!sanitized.fs_type.is_empty());
+            prop_assert!(sanitized.device.len() <= MAX_SANITIZED_STRING_BYTES);
+            prop_assert!(sanitized.mount_point.len() <= MAX_SANITIZED_STRING_BYTES);
+            prop_assert!(sanitized.fs_type.len() <= MAX_SANITIZED_STRING_BYTES);
+            prop_assert!(sanitized.used_bytes <= sanitized.total_bytes);
+            prop_assert!(sanitized.available_bytes <= sanitized.total_bytes);
+            prop_assert!(
+                sanitized
+                    .used_bytes
+                    .saturating_add(sanitized.available_bytes)
+                    <= sanitized.total_bytes
+            );
+            prop_assert!(sanitized.used_percent.is_finite());
+            prop_assert!(sanitized.used_percent >= 0.0);
+            prop_assert!(sanitized.used_percent <= 100.0);
+        }
+    }
+}

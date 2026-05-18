@@ -199,6 +199,13 @@ HTML 报告输出到 `target/tarpaulin/tarpaulin-report.html`,可用浏览器打
 
 重点覆盖模块:auth、admission、sanitize、registry(安全关键路径)。
 
+如需单独跑新增的属性测试，可直接使用：
+
+```bash
+cargo test -p nodelite-server sanitize::tests
+cargo test -p nodelite-server registry::tests
+```
+
 ## 交叉编译 Linux x86_64 / aarch64
 
 仓库内已经包含 musl 目标的 `lld` 链接配置，可以直接构建静态 Linux 二进制：

@@ -937,6 +937,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use chrono::{Duration as ChronoDuration, Utc};
+    use proptest::prelude::*;
     use tokio::runtime::Runtime;
 
     use super::{
@@ -1144,6 +1145,45 @@ mod tests {
         let _ = std::fs::remove_dir(&temp_dir);
     }
 
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(48))]
+
+        #[test]
+        fn normalize_string_list_returns_sorted_trimmed_deduped_values(
+            values in proptest::collection::vec(".*", 0..32),
+        ) {
+            let normalized = super::normalize_string_list(values.clone());
+
+            for value in &normalized {
+                prop_assert!(!value.is_empty());
+                prop_assert_eq!(value.trim(), value);
+            }
+
+            let mut sorted = normalized.clone();
+            sorted.sort();
+            prop_assert_eq!(normalized.as_slice(), sorted.as_slice());
+
+            let mut deduped = normalized.clone();
+            deduped.dedup();
+            prop_assert_eq!(normalized.as_slice(), deduped.as_slice());
+
+            for value in &normalized {
+                prop_assert!(values.iter().any(|original| original.trim() == value));
+            }
+        }
+
+        #[test]
+        fn generate_token_always_returns_lowercase_hex(_case in any::<u8>()) {
+            let token = super::generate_token().expect("token generation should succeed");
+            prop_assert_eq!(token.len(), 64);
+            prop_assert!(
+                token
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            );
+        }
+    }
+
     #[test]
     fn registry_lock_drop_cleanup_swallows_panics_and_runs_both_steps() {
         use std::sync::Arc;
@@ -1166,7 +1206,10 @@ mod tests {
             );
         }));
 
-        assert!(result.is_ok(), "cleanup helper should swallow internal panics");
+        assert!(
+            result.is_ok(),
+            "cleanup helper should swallow internal panics"
+        );
         assert_eq!(cleanup_steps.load(Ordering::SeqCst), 0b11);
     }
 
