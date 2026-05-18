@@ -845,9 +845,22 @@ struct RegistryFileLock {
 
 impl Drop for RegistryFileLock {
     fn drop(&mut self) {
-        unlock_file(&self.file);
-        let _ = harden_registry_permissions(&self.lock_path);
+        release_registry_lock_with(
+            || unlock_file(&self.file),
+            || {
+                let _ = harden_registry_permissions(&self.lock_path);
+            },
+        );
     }
+}
+
+fn release_registry_lock_with<U, H>(unlock: U, harden: H)
+where
+    U: FnOnce(),
+    H: FnOnce(),
+{
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(unlock));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(harden));
 }
 
 fn validate_runtime_identity(identity: &NodeIdentity) -> Result<()> {
@@ -1129,6 +1142,32 @@ mod tests {
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&temp_dir);
+    }
+
+    #[test]
+    fn registry_lock_drop_cleanup_swallows_panics_and_runs_both_steps() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let cleanup_steps = Arc::new(AtomicUsize::new(0));
+        let unlock_steps = Arc::clone(&cleanup_steps);
+        let harden_steps = Arc::clone(&cleanup_steps);
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            super::release_registry_lock_with(
+                move || {
+                    unlock_steps.fetch_or(0b01, Ordering::SeqCst);
+                    panic!("unlock panic");
+                },
+                move || {
+                    harden_steps.fetch_or(0b10, Ordering::SeqCst);
+                    panic!("harden panic");
+                },
+            );
+        }));
+
+        assert!(result.is_ok(), "cleanup helper should swallow internal panics");
+        assert_eq!(cleanup_steps.load(Ordering::SeqCst), 0b11);
     }
 
     #[test]
