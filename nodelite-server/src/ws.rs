@@ -464,12 +464,23 @@ async fn handle_agent_logs_message(
     {
         return Ok(LoopAction::Break);
     }
-    let accepted = state
+    let result = state
         .agent_logs
         .record_entries(&session.node_id, entries)
         .await;
-    if accepted > 0 {
-        info!(node_id = %session.node_id, accepted, "recorded agent runtime log entries");
+    if result.accepted > 0 {
+        info!(node_id = %session.node_id, accepted = result.accepted, "recorded agent runtime log entries");
+    }
+    if result.total_dropped() > 0 {
+        // #89: 限流截断或脏数据丢弃必须可观测,否则 agent 重连后的 backlog
+        // 上半截会永远在前端排障视图里看不到。
+        warn!(
+            node_id = %session.node_id,
+            accepted = result.accepted,
+            dropped_batch_cap = result.dropped_batch_cap,
+            dropped_sanitize = result.dropped_sanitize,
+            "dropped some agent log entries during ingestion"
+        );
     }
     Ok(LoopAction::Continue)
 }

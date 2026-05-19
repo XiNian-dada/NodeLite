@@ -9,6 +9,27 @@ const MAX_LOGS_PER_NODE: usize = 200;
 const MAX_BATCH_ENTRIES: usize = 64;
 const MAX_LOG_MESSAGE_BYTES: usize = 512;
 
+/// `record_entries` 的结构化结果, 让调用方既能知道"接受了多少",
+/// 也能知道"丢弃了多少 + 因为什么"。
+///
+/// 丢弃来源:
+/// - `dropped_batch_cap`: 单批次超过 `MAX_BATCH_ENTRIES` 上限被截断的部分;
+/// - `dropped_sanitize`: 内容(message/timestamp)不合规被 `sanitize_entry` 拒掉。
+///
+/// 任一项非零都会触发 `tracing::warn!`,以便运维在仪表盘看到日志丢失趋势。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RecordResult {
+    pub accepted: usize,
+    pub dropped_batch_cap: usize,
+    pub dropped_sanitize: usize,
+}
+
+impl RecordResult {
+    pub fn total_dropped(&self) -> usize {
+        self.dropped_batch_cap.saturating_add(self.dropped_sanitize)
+    }
+}
+
 /// 最近 Agent 运行日志的内存缓冲。
 ///
 /// 这些日志只用于只读排障视图,不参与持久化。设计目标是:
@@ -25,14 +46,23 @@ impl AgentLogStore {
         Self::default()
     }
 
-    /// 记录某节点上传的一批日志,返回实际接收的条数。
-    pub async fn record_entries(&self, node_id: &str, entries: Vec<AgentLogEntry>) -> usize {
+    /// 记录某节点上传的一批日志, 返回结构化的接收 / 丢弃统计。
+    ///
+    /// 限流上限仍然是 `MAX_BATCH_ENTRIES = 64`, 超出部分会被丢弃,
+    /// 但与 #89 之前不同的是: 丢弃数量现在会回传给调用方, 并触发
+    /// `tracing::warn!` 让丢弃可被运维监控感知, 不再是黑洞。
+    pub async fn record_entries(&self, node_id: &str, entries: Vec<AgentLogEntry>) -> RecordResult {
+        let total = entries.len();
+        let dropped_batch_cap = total.saturating_sub(MAX_BATCH_ENTRIES);
+
         let mut guard = self.inner.write().await;
         let buffer = guard.entry(node_id.to_string()).or_default();
         let mut accepted = 0;
+        let mut dropped_sanitize = 0;
 
         for entry in entries.into_iter().take(MAX_BATCH_ENTRIES) {
             let Some(entry) = sanitize_entry(entry) else {
+                dropped_sanitize += 1;
                 continue;
             };
             if buffer.len() >= MAX_LOGS_PER_NODE {
@@ -42,7 +72,11 @@ impl AgentLogStore {
             accepted += 1;
         }
 
-        accepted
+        RecordResult {
+            accepted,
+            dropped_batch_cap,
+            dropped_sanitize,
+        }
     }
 
     /// 返回某节点最近的若干条日志,按发生时间升序保留。
@@ -97,12 +131,16 @@ mod tests {
     use chrono::Utc;
     use nodelite_proto::NoticeLevel;
 
-    use super::{AgentLogEntry, AgentLogStore, MAX_LOGS_PER_NODE, truncate_to_byte_boundary};
+    use super::{
+        AgentLogEntry, AgentLogStore, MAX_BATCH_ENTRIES, MAX_LOGS_PER_NODE,
+        truncate_to_byte_boundary,
+    };
 
     #[tokio::test]
-    async fn record_entries_caps_per_node_and_sanitizes_payloads() {
+    async fn record_entries_caps_per_node_and_surfaces_drops() {
         let store = AgentLogStore::new();
-        let entries = (0..(MAX_LOGS_PER_NODE + 10))
+        let total = MAX_LOGS_PER_NODE + 10;
+        let entries = (0..total)
             .map(|index| AgentLogEntry {
                 occurred_at: "invalid".to_string(),
                 level: NoticeLevel::Info,
@@ -110,16 +148,45 @@ mod tests {
             })
             .collect();
 
-        let accepted = store.record_entries("hk-01", entries).await;
-        assert_eq!(accepted, 64);
+        let result = store.record_entries("hk-01", entries).await;
+        // #89: 接受恰好 MAX_BATCH_ENTRIES 条 (sanitize 都通过, 因为 message 都非空),
+        // 多出来的部分由 dropped_batch_cap 报出 —— 不再像旧版那样静默丢失。
+        assert_eq!(result.accepted, MAX_BATCH_ENTRIES);
+        assert_eq!(result.dropped_batch_cap, total - MAX_BATCH_ENTRIES);
+        assert_eq!(result.dropped_sanitize, 0);
+        assert_eq!(result.total_dropped(), total - MAX_BATCH_ENTRIES);
 
         let logs = store.list("hk-01", MAX_LOGS_PER_NODE).await;
-        assert_eq!(logs.len(), 64);
+        assert_eq!(logs.len(), MAX_BATCH_ENTRIES);
         assert!(logs.iter().all(|entry| !entry.message.is_empty()));
         assert!(
             logs.iter()
                 .all(|entry| chrono::DateTime::parse_from_rfc3339(&entry.occurred_at).is_ok())
         );
+    }
+
+    #[tokio::test]
+    async fn record_entries_counts_sanitize_drops() {
+        // sanitize_entry 拒掉空消息与纯空白消息,这些应当计入 dropped_sanitize
+        // 而不是 accepted。
+        let store = AgentLogStore::new();
+        let entries = vec![
+            AgentLogEntry {
+                occurred_at: Utc::now().to_rfc3339(),
+                level: NoticeLevel::Info,
+                message: "  ".to_string(), // sanitize_entry returns None
+            },
+            AgentLogEntry {
+                occurred_at: Utc::now().to_rfc3339(),
+                level: NoticeLevel::Info,
+                message: "real entry".to_string(),
+            },
+        ];
+
+        let result = store.record_entries("hk-01", entries).await;
+        assert_eq!(result.accepted, 1);
+        assert_eq!(result.dropped_batch_cap, 0);
+        assert_eq!(result.dropped_sanitize, 1);
     }
 
     #[tokio::test]
