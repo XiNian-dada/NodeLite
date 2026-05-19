@@ -41,7 +41,9 @@ use crate::state::SharedState;
 use crate::ws::ws_handler;
 
 pub(crate) const PROTECTED_CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; \
-     img-src 'self' data:; connect-src 'self' https://raw.githubusercontent.com https://api.github.com; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
+     img-src 'self' data:; connect-src 'self' https://raw.githubusercontent.com https://api.github.com; \
+     font-src 'self'; object-src 'none'; media-src 'none'; worker-src 'none'; \
+     base-uri 'none'; frame-ancestors 'none'; form-action 'self'; upgrade-insecure-requests";
 pub(crate) const PROTECTED_CACHE_CONTROL: &str = "no-store, no-cache, must-revalidate";
 
 /// 启动 Web 服务:加载配置 → 初始化各子系统 → 注册路由 → 监听端口。
