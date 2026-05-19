@@ -27,7 +27,11 @@ use crate::auth::{
     expire_cookie, secure_cookies, verify_totp_step,
 };
 use crate::registry::render_agent_config;
-use crate::ui::{UI_I18N_JSON, index_html, node_html};
+use crate::startup::PROTECTED_CACHE_CONTROL;
+use crate::ui::{
+    UI_I18N_JSON, index_html, index_page_csp, node_html, node_page_csp, verify_2fa_html,
+    verify_2fa_page_csp,
+};
 use nodelite_proto::AgentLogEntry;
 
 mod metrics_exporter;
@@ -82,19 +86,22 @@ pub(crate) struct NodeLogsQuery {
 }
 
 /// 首页 HTML:把刷新周期等参数注入模板。
-pub(crate) async fn index(State(state): State<AppState>) -> Html<&'static str> {
-    Html(index_html(state.shared.config().refresh_interval_secs))
+pub(crate) async fn index(State(state): State<AppState>) -> Response {
+    html_page_response(
+        index_page_csp(),
+        index_html(state.shared.config().refresh_interval_secs),
+    )
 }
 
 /// 节点详情页 HTML。
 pub(crate) async fn node_detail(
     State(state): State<AppState>,
     AxumPath(node_id): AxumPath<String>,
-) -> Html<String> {
-    Html(node_html(
-        &node_id,
-        state.shared.config().refresh_interval_secs,
-    ))
+) -> Response {
+    html_page_response(
+        node_page_csp(),
+        node_html(&node_id, state.shared.config().refresh_interval_secs),
+    )
 }
 
 /// 把前端 i18n 字典作为静态 JSON 文件提供。
@@ -115,8 +122,8 @@ pub(crate) async fn brand_logo_dark_asset() -> Response {
 }
 
 /// 2FA 验证页面。
-pub(crate) async fn verify_2fa_page() -> Html<&'static str> {
-    Html(include_str!("../assets/verify-2fa.html"))
+pub(crate) async fn verify_2fa_page() -> Response {
+    html_page_response(verify_2fa_page_csp(), verify_2fa_html())
 }
 
 fn webp_asset(bytes: &'static [u8]) -> Response {
@@ -126,6 +133,23 @@ fn webp_asset(bytes: &'static [u8]) -> Response {
             (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
         ],
         bytes,
+    )
+        .into_response()
+}
+
+fn html_page_response<T>(csp: &'static str, body: T) -> Response
+where
+    Html<T>: IntoResponse,
+{
+    (
+        AppendHeaders([
+            (header::CONTENT_SECURITY_POLICY, csp),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            (header::REFERRER_POLICY, "strict-origin-when-cross-origin"),
+            (header::CACHE_CONTROL, PROTECTED_CACHE_CONTROL),
+            (header::PRAGMA, "no-cache"),
+        ]),
+        Html(body),
     )
         .into_response()
 }
@@ -493,33 +517,22 @@ fn install_blocked_response(retry_after_secs: u64) -> Response {
 }
 
 const INSTALL_TOKEN_HEX_LEN: usize = 64;
-const INSTALL_TOKEN_MIN_UNIQUE_NIBBLES: u32 = 10;
 
 /// install token 在 [registry.rs](../registry.rs) 中由 `generate_token` 生成,
 /// 固定为 32 字节随机数的 lowercase hex。这里的廉价检查会在文件锁前拒绝
-/// 明显无效或低熵的输入。
+/// 明显无效的输入。
 pub(crate) fn is_well_formed_install_token(token: &str) -> bool {
     if token.len() != INSTALL_TOKEN_HEX_LEN {
         return false;
     }
 
-    let mut seen_nibbles = 0_u16;
     for byte in token.bytes() {
-        let Some(nibble) = lowercase_hex_nibble(byte) else {
+        if !byte.is_ascii_hexdigit() || byte.is_ascii_uppercase() {
             return false;
-        };
-        seen_nibbles |= 1 << nibble;
+        }
     }
 
-    seen_nibbles.count_ones() >= INSTALL_TOKEN_MIN_UNIQUE_NIBBLES
-}
-
-fn lowercase_hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        _ => None,
-    }
+    true
 }
 
 /// 仪表盘顶部的总览数据。

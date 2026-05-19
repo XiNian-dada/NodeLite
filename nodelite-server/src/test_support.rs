@@ -196,7 +196,6 @@ impl TestServer {
                 node_id: node_id.to_string(),
                 node_label: Some(node_label.to_string()),
                 tags: vec!["integration-test".to_string()],
-                rotate_token: false,
             },
         )
         .await

@@ -159,7 +159,6 @@ fn issue_node_persists_registry_and_renders_install_command() {
                 node_id: "hk-01".to_string(),
                 node_label: Some("Hong Kong 01".to_string()),
                 tags: vec!["edge".to_string(), "apac".to_string()],
-                rotate_token: false,
             },
         )
         .await
@@ -216,7 +215,6 @@ fn registry_reload_picks_up_rotated_tokens() {
                 node_id: "hk-01".to_string(),
                 node_label: Some("Hong Kong 01".to_string()),
                 tags: Vec::new(),
-                rotate_token: false,
             },
         )
         .await
@@ -242,7 +240,6 @@ fn registry_reload_picks_up_rotated_tokens() {
                 node_id: "hk-01".to_string(),
                 node_label: Some("Hong Kong 01".to_string()),
                 tags: Vec::new(),
-                rotate_token: true,
             },
         )
         .await
@@ -284,12 +281,11 @@ async fn issued_tokens_default_to_thirty_day_expiry() {
 
     let issued = issue_node(
         &path,
-        IssueNodeRequest {
-            node_id: "hk-01".to_string(),
-            node_label: Some("Hong Kong 01".to_string()),
-            tags: Vec::new(),
-            rotate_token: false,
-        },
+            IssueNodeRequest {
+                node_id: "hk-01".to_string(),
+                node_label: Some("Hong Kong 01".to_string()),
+                tags: Vec::new(),
+            },
     )
     .await
     .expect("node should be issued");
@@ -395,7 +391,6 @@ fn install_tokens_are_one_time_use() {
                 node_id: "hk-01".to_string(),
                 node_label: Some("Hong Kong 01".to_string()),
                 tags: Vec::new(),
-                rotate_token: false,
             },
         )
         .await
@@ -592,7 +587,6 @@ fn issued_registry_file_is_mode_600() {
                 node_id: "hk-01".to_string(),
                 node_label: Some("Hong Kong 01".to_string()),
                 tags: Vec::new(),
-                rotate_token: false,
             },
         )
         .await
@@ -671,7 +665,6 @@ async fn issue_node_rejects_excessive_tags() {
             node_id: "hk-01".to_string(),
             node_label: Some("Hong Kong 01".to_string()),
             tags: (0..1000).map(|index| format!("tag-{index}")).collect(),
-            rotate_token: false,
         },
     )
     .await
@@ -702,7 +695,6 @@ async fn concurrent_issue_node_preserves_all_nodes() {
                     node_id: format!("node-{i:02}"),
                     node_label: Some(format!("Node {i:02}")),
                     tags: Vec::new(),
-                    rotate_token: false,
                 },
             )
             .await

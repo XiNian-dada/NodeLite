@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-refresh-ms="__REFRESH_MS__" data-i18n-asset-path="__I18N_ASSET_PATH__">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -994,8 +994,9 @@
     </div>
 
     <script>
-      const REFRESH_MS = __REFRESH_MS__;
-      const I18N_ASSET_PATH = "__I18N_ASSET_PATH__";
+      const PAGE_CONFIG = document.documentElement.dataset;
+      const REFRESH_MS = Number.parseInt(PAGE_CONFIG.refreshMs || "5000", 10) || 5000;
+      const I18N_ASSET_PATH = PAGE_CONFIG.i18nAssetPath || "/assets/ui-i18n.json";
       const LANGUAGE_STORAGE_KEY = "nodelite.ui.language";
       const THEME_STORAGE_KEY = "nodelite.ui.theme";
       const LATENCY_WARN_MS = 200;

@@ -42,9 +42,6 @@ pub(crate) struct NodeCommandArgs {
     node_label: Option<String>,
     #[arg(long = "tag")]
     tags: Vec<String>,
-    /// 是否强制轮换该节点的现有 token。
-    #[arg(long)]
-    rotate_token: bool,
 }
 
 struct IssuedNodeBundle {
@@ -120,7 +117,6 @@ async fn issue_node_bundle(
             node_id: args.node_id.clone(),
             node_label: args.node_label.clone(),
             tags: args.tags.clone(),
-            rotate_token: args.rotate_token,
         },
     )
     .await?;

@@ -64,7 +64,6 @@ impl TestServer {
                     node_id: node_id.clone(),
                     node_label: Some(node_label.clone()),
                     tags: vec!["load-test".to_string()],
-                    rotate_token: false,
                 },
             )
             .await

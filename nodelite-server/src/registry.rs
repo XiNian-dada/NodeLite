@@ -150,7 +150,6 @@ pub struct IssueNodeRequest {
     pub node_id: String,
     pub node_label: Option<String>,
     pub tags: Vec<String>,
-    pub rotate_token: bool,
 }
 
 /// `IssueNodeRequest` 的结果集:同时返回节点凭证与一次性安装令牌。
@@ -366,32 +365,13 @@ pub async fn issue_node(path: &Path, request: IssueNodeRequest) -> Result<IssueN
             if !request.tags.is_empty() {
                 file.nodes[index].tags = normalized_tags.clone();
             }
-            // 不论是否轮换 token, install_session 必须带上当时有效的明文 token
-            // 给本次 install 流程使用; #56 改造之后 disk 上不再有明文,因此唯一
-            // 能把明文传给 agent 的位置就是这里。
-            let session_plaintext = if request.rotate_token {
-                // 真的生成新明文并入库哈希。
+            // install_session 必须带上当时有效的明文 token 给本次 install 流程使用;
+            // #56 改造之后 disk 上不再有明文,因此唯一能把明文传给 agent 的位置就是这里。
+            // 每次 issue_node 都强制轮换 token,确保一次 install 流程对应一次 token 颁发。
+            let session_plaintext = {
                 let new_token = generate_token()?;
                 file.nodes[index].token_hash =
-                    hash_token(&new_token).context("failed to hash rotated token")?;
-                file.nodes[index].token_generation =
-                    file.nodes[index].token_generation.saturating_add(1);
-                file.nodes[index].token_expires_at =
-                    Some(now + ChronoDuration::days(DEFAULT_TOKEN_VALIDITY_DAYS));
-                file.nodes[index].token.clear();
-                rotated_token = true;
-                new_token
-            } else {
-                // 不轮换的情况:install_session 必须能给到一个**该节点目前持有的**
-                // 明文。Disk 上只有哈希,无法逆推,所以这里强制轮换一次 ——
-                // 这与历史行为有差异:历史上 `issue-node` 在节点已存在时不会
-                // 强制换 token,但磁盘上存的就是明文,所以 install_session 可以
-                // 直接 clone 它。改用哈希后,我们要么轮换、要么拒绝 install。
-                // 选轮换:更安全,且 #56 验收里也写"一次 install 流程对应一次
-                // token 颁发"是合理的语义。
-                let new_token = generate_token()?;
-                file.nodes[index].token_hash =
-                    hash_token(&new_token).context("failed to hash re-issued token")?;
+                    hash_token(&new_token).context("failed to hash token")?;
                 file.nodes[index].token_generation =
                     file.nodes[index].token_generation.saturating_add(1);
                 file.nodes[index].token_expires_at =

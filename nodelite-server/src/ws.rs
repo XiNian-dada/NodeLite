@@ -22,7 +22,7 @@ use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use futures::{SinkExt, StreamExt};
 use nodelite_proto::{
-    AgentLogsMessage, HelloMessage, MetricsMessage, PongMessage, ServerNoticeMessage,
+    AgentLogsMessage, HelloMessage, MetricsMessage, PingMessage, PongMessage, ServerNoticeMessage,
     WIRE_PROTOCOL_VERSION, WireMessage,
 };
 use tokio::sync::mpsc;
@@ -812,10 +812,9 @@ fn prune_outstanding_pings(
     }
 }
 
-/// Ping 是高频热路径,协议结构又极其固定,这里直接拼接 JSON 文本以避免
-/// 每个心跳都走一次 `serde_json::to_string`。
 fn encode_ping_message(nonce: u64) -> String {
-    format!(r#"{{"type":"ping","nonce":{nonce}}}"#)
+    serde_json::to_string(&WireMessage::Ping(PingMessage { nonce }))
+        .expect("ping serialization should not fail")
 }
 
 #[cfg(test)]

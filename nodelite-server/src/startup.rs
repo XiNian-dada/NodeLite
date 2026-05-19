@@ -40,8 +40,10 @@ use crate::snapshot::{load_snapshot, persist_snapshot, spawn_snapshot_persistor}
 use crate::state::SharedState;
 use crate::ws::ws_handler;
 
-pub(crate) const PROTECTED_CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; \
-     img-src 'self' data:; connect-src 'self' https://raw.githubusercontent.com https://api.github.com; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
+pub(crate) const PROTECTED_CONTENT_SECURITY_POLICY: &str = "default-src 'self'; img-src 'self' data:; \
+     connect-src 'self' https://raw.githubusercontent.com https://api.github.com; font-src 'self'; \
+     object-src 'none'; media-src 'none'; worker-src 'none'; base-uri 'none'; frame-ancestors 'none'; \
+     form-action 'self'";
 pub(crate) const PROTECTED_CACHE_CONTROL: &str = "no-store, no-cache, must-revalidate";
 
 /// 启动 Web 服务:加载配置 → 初始化各子系统 → 注册路由 → 监听端口。
@@ -240,23 +242,31 @@ pub(crate) async fn run_server(config_path: &Path) -> Result<()> {
 pub(crate) async fn set_protected_response_headers(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
-    headers.insert(
-        header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(PROTECTED_CONTENT_SECURITY_POLICY),
-    );
-    headers.insert(
-        header::X_CONTENT_TYPE_OPTIONS,
-        HeaderValue::from_static("nosniff"),
-    );
-    headers.insert(
-        header::REFERRER_POLICY,
-        HeaderValue::from_static("strict-origin-when-cross-origin"),
-    );
-    headers.insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static(PROTECTED_CACHE_CONTROL),
-    );
-    headers.insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
+    if !headers.contains_key(header::CONTENT_SECURITY_POLICY) {
+        headers.insert(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(PROTECTED_CONTENT_SECURITY_POLICY),
+        );
+    }
+    if !headers.contains_key(header::X_CONTENT_TYPE_OPTIONS) {
+        headers.insert(
+            header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        );
+    }
+    if !headers.contains_key(header::REFERRER_POLICY) {
+        headers.insert(
+            header::REFERRER_POLICY,
+            HeaderValue::from_static("strict-origin-when-cross-origin"),
+        );
+    }
+    if !headers.contains_key(header::CACHE_CONTROL) {
+        headers.insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static(PROTECTED_CACHE_CONTROL),
+        );
+        headers.insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
+    }
     response
 }
 

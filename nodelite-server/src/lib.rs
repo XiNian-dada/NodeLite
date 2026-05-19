@@ -49,7 +49,7 @@ pub(crate) use app_state::{AppState, ServerReadiness};
 #[cfg(test)]
 pub(crate) use background::uses_insecure_remote_public_base_url;
 #[cfg(test)]
-pub(crate) use startup::{PROTECTED_CACHE_CONTROL, PROTECTED_CONTENT_SECURITY_POLICY};
+pub(crate) use startup::PROTECTED_CACHE_CONTROL;
 #[allow(unused_imports)]
 pub(crate) use startup::{load_server_config, set_protected_response_headers};
 
