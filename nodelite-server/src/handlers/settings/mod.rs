@@ -26,7 +26,8 @@ const MAX_UPDATE_LOG_CHUNK_BYTES: u64 = 128 * 1024;
 mod helpers;
 use helpers::{
     generate_totp_secret, otpauth_uri, persist_auth_2fa_change, persist_auth_password_change,
-    server_build_version, server_update_log_path, server_update_shell_command, settings_json_error,
+    server_build_version, server_update_cache_dir, server_update_log_path,
+    server_update_shell_command, server_update_writable_paths, settings_json_error,
     validate_password_for_settings,
 };
 
@@ -287,19 +288,25 @@ pub(crate) async fn start_server_update(
     }
 
     let log_path = server_update_log_path(state.shared.config());
-    let command = server_update_shell_command(&log_path);
+    let cache_dir = server_update_cache_dir(state.shared.config());
+    let command = server_update_shell_command(&log_path, &cache_dir);
     let unit_name = format!(
         "nodelite-server-web-update-{}",
         Utc::now().timestamp_millis()
     );
-    match Command::new("systemd-run")
+    let mut systemd_run = Command::new("systemd-run");
+    systemd_run
         .arg(format!("--unit={unit_name}"))
         .arg("--collect")
         .arg("--service-type=exec")
-        .arg("--property=ProtectSystem=no")
-        .arg("--property=ProtectHome=no")
-        .arg("--property=PrivateTmp=no")
-        .arg("--property=NoNewPrivileges=no")
+        .arg("--property=ProtectSystem=full")
+        .arg("--property=ProtectHome=yes")
+        .arg("--property=PrivateTmp=yes")
+        .arg("--property=NoNewPrivileges=yes");
+    for path in server_update_writable_paths(state.shared.config()) {
+        systemd_run.arg(format!("--property=ReadWritePaths={}", path.display()));
+    }
+    match systemd_run
         .arg("sh")
         .arg("-c")
         .arg(command)

@@ -197,7 +197,38 @@ pub(super) fn server_update_log_path(config: &nodelite_proto::ServerConfig) -> P
     base_dir.join("server-web-update.log")
 }
 
-pub(super) fn server_update_shell_command(log_path: &Path) -> String {
+pub(super) fn server_update_cache_dir(config: &nodelite_proto::ServerConfig) -> PathBuf {
+    let base_dir = server_update_log_path(config)
+        .parent()
+        .unwrap_or_else(|| Path::new("/tmp"))
+        .to_path_buf();
+    base_dir.join(".server-update-cache")
+}
+
+pub(super) fn server_update_writable_paths(config: &nodelite_proto::ServerConfig) -> Vec<PathBuf> {
+    let install_root = server_update_install_root(config);
+    let log_dir = server_update_log_path(config)
+        .parent()
+        .unwrap_or_else(|| Path::new("/tmp"))
+        .to_path_buf();
+    let cache_dir = server_update_cache_dir(config);
+
+    let mut paths = Vec::new();
+    for candidate in [
+        install_root,
+        log_dir,
+        cache_dir,
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/etc/systemd/system"),
+    ] {
+        if !paths.iter().any(|existing| existing == &candidate) {
+            paths.push(candidate);
+        }
+    }
+    paths
+}
+
+pub(super) fn server_update_shell_command(log_path: &Path, cache_dir: &Path) -> String {
     let installer_url = format!(
         "{}/releases/latest/download/install-server.sh",
         env!("CARGO_PKG_REPOSITORY")
@@ -206,7 +237,10 @@ pub(super) fn server_update_shell_command(log_path: &Path) -> String {
         "set -u".to_string(),
         "umask 077".to_string(),
         format!("log={}", shell_quote(&log_path.display().to_string())),
-        "cache_dir=\"${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/nodelite\"".to_string(),
+        format!(
+            "cache_dir={}",
+            shell_quote(&cache_dir.display().to_string())
+        ),
         "mkdir -p \"$cache_dir\"".to_string(),
         "chmod 0700 \"$cache_dir\" >>\"$log\" 2>&1 || true".to_string(),
         "tmp_script=\"$(mktemp \"$cache_dir/install-server.XXXXXX\")\"".to_string(),
@@ -234,6 +268,29 @@ pub(super) fn server_update_shell_command(log_path: &Path) -> String {
         ),
     ]
     .join("\n")
+}
+
+fn server_update_install_root(config: &nodelite_proto::ServerConfig) -> PathBuf {
+    let all_paths: Vec<&Path> = [
+        config.node_registry_path.parent(),
+        config.history_db_path.parent(),
+        config.snapshot_path.parent(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let mut current = all_paths
+        .first()
+        .copied()
+        .unwrap_or_else(|| Path::new("/tmp"))
+        .to_path_buf();
+    while !all_paths.iter().all(|path| path.starts_with(&current)) {
+        let Some(parent) = current.parent() else {
+            return PathBuf::from("/tmp");
+        };
+        current = parent.to_path_buf();
+    }
+    current
 }
 
 pub(super) async fn persist_auth_password_change(
@@ -459,11 +516,14 @@ fn toml_basic_string(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+    use std::path::{Path, PathBuf};
 
     use super::{
-        otpauth_uri, replace_auth_2fa, server_update_shell_command, validate_password_for_settings,
+        otpauth_uri, replace_auth_2fa, server_update_cache_dir, server_update_shell_command,
+        server_update_writable_paths, validate_password_for_settings,
     };
+    use nodelite_proto::{ServerConfig, WsConfig};
 
     #[test]
     fn replace_auth_2fa_enables_and_preserves_auth_section() {
@@ -589,13 +649,63 @@ totp_secret = "JBSWY3DPEHPK3PXP"
     }
 
     #[test]
+    fn server_update_paths_stay_under_install_root_plus_required_system_dirs() {
+        let config = sample_server_config();
+        let paths = server_update_writable_paths(&config);
+
+        assert!(paths.contains(&PathBuf::from("/opt/nodelite")));
+        assert!(paths.contains(&PathBuf::from("/opt/nodelite/data")));
+        assert!(paths.contains(&PathBuf::from("/opt/nodelite/data/.server-update-cache")));
+        assert!(paths.contains(&PathBuf::from("/usr/local/bin")));
+        assert!(paths.contains(&PathBuf::from("/etc/systemd/system")));
+    }
+
+    #[test]
     fn server_update_shell_command_uses_private_cache_dir_for_temp_script() {
-        let command = server_update_shell_command(Path::new("/tmp/nodelite-update.log"));
+        let config = sample_server_config();
+        let log_path = Path::new("/tmp/nodelite-update.log");
+        let cache_dir = server_update_cache_dir(&config);
+        let command = server_update_shell_command(log_path, &cache_dir);
 
         assert!(command.contains("umask 077"));
-        assert!(command.contains("cache_dir=\"${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/nodelite\""));
+        assert!(command.contains("cache_dir='/opt/nodelite/data/.server-update-cache'"));
         assert!(command.contains("mkdir -p \"$cache_dir\""));
         assert!(command.contains("tmp_script=\"$(mktemp \"$cache_dir/install-server.XXXXXX\")\""));
         assert!(command.contains("chmod 0600 \"$tmp_script\""));
+        assert!(!command.contains("${HOME:-/tmp}/.cache"));
+    }
+
+    fn sample_server_config() -> ServerConfig {
+        ServerConfig {
+            listen: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8080)),
+            public_base_url: "https://example.com".to_string(),
+            insecure_allow_http: false,
+            readonly_auth: None,
+            ws: WsConfig {
+                max_total_connections: 32,
+                max_connections_per_ip: 32,
+                auth_fail_window_secs: 300,
+                auth_fail_max_attempts: 8,
+                auth_block_secs: 900,
+            },
+            node_registry_path: PathBuf::from("/opt/nodelite/config/server.json"),
+            history_db_path: PathBuf::from("/opt/nodelite/data/history.sqlite3"),
+            snapshot_path: PathBuf::from("/opt/nodelite/data/snapshot.json"),
+            stale_after_secs: 15,
+            ping_interval_secs: 60,
+            max_message_bytes: 64 * 1024,
+            refresh_interval_secs: 5,
+            ignored_filesystems: Vec::new(),
+            agent_release_base_url: None,
+            agent_release_sha256_x86_64: None,
+            agent_release_sha256_aarch64: None,
+            hello_timeout_secs: 10,
+            max_outstanding_pings: 32,
+            insecure_transport_warn_interval_secs: 900,
+            max_sanitized_disks: 64,
+            max_sanitized_string_bytes: 256,
+            metric_anomaly_session_limit: 5,
+            sqlite_busy_timeout_secs: 5,
+        }
     }
 }
