@@ -125,6 +125,22 @@ jobs:
       - name: Install cross
         uses: taiki-e/install-action@cross
 
+      - name: Warm cross image with retries
+        # GHCR 偶发超时会让 cross 首次拉镜像失败;先显式重试拉取,减少 release 偶发红灯。
+        run: |
+          cross_version="$(cross --version | awk 'NR==1 {print $2}')"
+          image="ghcr.io/cross-rs/${{ matrix.target }}:${cross_version}"
+          for attempt in 1 2 3; do
+            if docker pull "$image"; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "failed to pull $image after $attempt attempts" >&2
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
+
       - name: Disable local linker overrides for CI cross build
         # 与 CI 工作流相同:暂时挪开本地的 linker 配置,避免与 cross 容器冲突。
         run: |
