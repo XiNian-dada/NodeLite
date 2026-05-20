@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use getrandom::fill as fill_random;
 use nodelite_proto::{AgentConfig, parse_agent_config};
 use tokio::fs;
+use toml_edit::{DocumentMut, Item, Value};
 
 /// 从磁盘读取并解析 Agent 配置文件。
 pub(crate) async fn load_agent_config(path: &Path) -> Result<AgentConfig> {
@@ -43,47 +44,26 @@ fn persist_token_sync(config_path: &Path, new_token: &str) -> Result<()> {
 }
 
 fn replace_token_line(content: &str, new_token: &str) -> Result<String> {
-    let mut updated_lines: Vec<String> = Vec::with_capacity(content.lines().count() + 1);
-    let mut token_updated = false;
-    for line in content.lines() {
-        if !token_updated && is_token_assignment_line(line) {
-            let indent_len = line.len() - line.trim_start().len();
-            let indent = &line[..indent_len];
-            updated_lines.push(format!(
-                "{indent}token = \"{}\"",
-                escape_toml_string(new_token)
-            ));
-            token_updated = true;
-        } else {
-            updated_lines.push(line.to_string());
-        }
-    }
+    let mut document = content
+        .parse::<DocumentMut>()
+        .map_err(|error| anyhow::anyhow!("failed to parse agent config as TOML: {error}"))?;
+    let agent = document
+        .get_mut("agent")
+        .and_then(Item::as_table_mut)
+        .ok_or_else(|| anyhow::anyhow!("agent section not found in config file"))?;
 
-    if !token_updated {
+    if let Some(item) = agent.get_mut("token") {
+        let Some(existing_value) = item.as_value_mut() else {
+            anyhow::bail!("agent.token is not a value");
+        };
+        let decor = existing_value.decor().clone();
+        *existing_value = Value::from(new_token);
+        *existing_value.decor_mut() = decor;
+    } else {
         anyhow::bail!("token field not found in config file");
     }
 
-    let mut result = updated_lines.join("\n");
-    result.push('\n');
-    Ok(result)
-}
-
-/// 判定某一行是不是 `token = "..."` 的赋值行。匹配规则:跳过注释行,
-/// 必须以 `token` 开头,紧随其后只能是空白 + `=`。
-fn is_token_assignment_line(line: &str) -> bool {
-    let trimmed = line.trim_start();
-    if trimmed.starts_with('#') {
-        return false;
-    }
-    let Some(rest) = trimmed.strip_prefix("token") else {
-        return false;
-    };
-    let rest = rest.trim_start_matches([' ', '\t']);
-    rest.starts_with('=')
-}
-
-fn escape_toml_string(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
+    Ok(document.to_string())
 }
 
 fn temporary_config_path(path: &Path) -> PathBuf {
@@ -145,46 +125,58 @@ fn harden_config_permissions(path: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_token_assignment_line, replace_token_line};
+    use toml_edit::DocumentMut;
 
-    #[test]
-    fn token_assignment_line_matches_exact_token_field_only() {
-        assert!(is_token_assignment_line("token = \"abc\""));
-        assert!(is_token_assignment_line("  token = \"abc\""));
-        assert!(is_token_assignment_line("\ttoken=\"abc\""));
-        assert!(is_token_assignment_line("token=\"abc\""));
+    use nodelite_proto::parse_agent_config;
 
-        assert!(!is_token_assignment_line("tokenization = true"));
-        assert!(!is_token_assignment_line("token_secret = \"xyz\""));
-        assert!(!is_token_assignment_line("# token = \"old\""));
-        assert!(!is_token_assignment_line("not_token = \"x\""));
-    }
+    use super::replace_token_line;
 
     #[test]
     fn replace_token_line_preserves_comments_and_indent() {
-        let input = "[agent]\nnode_id = \"hk-01\"\n# token = \"old\"\n token = \"old\"\n";
+        let input = "[agent]\nnode_id = \"hk-01\"\nnode_label = \"Hong Kong 01\"\nserver = \"ws://127.0.0.1:8080/ws\"\n# token = \"old\"\n token = \"old\" # keep this\n";
         let result = replace_token_line(input, "newvalue").expect("should replace");
         assert!(result.contains("# token = \"old\""));
-        assert!(result.contains(" token = \"newvalue\""));
+        assert!(result.contains(" token = \"newvalue\" # keep this"));
         assert_eq!(
             result.matches("token = \"old\"").count(),
             1,
             "only the comment line keeps the old value"
         );
+        let parsed = parse_agent_config(&result).expect("updated config should stay valid");
+        assert_eq!(parsed.token, "newvalue");
     }
 
     #[test]
-    fn replace_token_line_only_replaces_first_occurrence() {
-        let input = "token = \"a\"\ntoken = \"b\"\n";
-        let result = replace_token_line(input, "c").expect("should replace first");
-        assert_eq!(result, "token = \"c\"\ntoken = \"b\"\n");
+    fn replace_token_line_preserves_multiline_neighbors() {
+        let input = r#"[agent]
+node_id = "hk-01"
+node_label = "Hong Kong 01"
+server = "ws://127.0.0.1:8080/ws"
+token = "old"
+
+[notes]
+description = """
+line1
+line2
+"""
+"#;
+        let result = replace_token_line(input, "newvalue").expect("should replace token");
+        assert!(result.contains("description = \"\"\"\nline1\nline2\n\"\"\""));
+        assert!(result.contains("token = \"newvalue\""));
+        result
+            .parse::<DocumentMut>()
+            .expect("updated config should stay valid TOML");
     }
 
     #[test]
     fn replace_token_line_escapes_special_chars() {
-        let result =
-            replace_token_line("token = \"x\"\n", "with\"quote\\and-backslash").expect("ok");
-        assert!(result.contains("\"with\\\"quote\\\\and-backslash\""));
+        let result = replace_token_line(
+            "[agent]\nnode_id = \"hk-01\"\nnode_label = \"Hong Kong 01\"\nserver = \"ws://127.0.0.1:8080/ws\"\ntoken = \"x\"\n",
+            "with\"quote\\and-backslash",
+        )
+        .expect("ok");
+        let parsed = parse_agent_config(&result).expect("updated config should stay valid");
+        assert_eq!(parsed.token, "with\"quote\\and-backslash");
     }
 
     #[test]
