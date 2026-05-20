@@ -835,10 +835,133 @@ fn encode_ping_message(nonce: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::encode_ping_message;
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+
+    use axum::extract::ws::Message;
+    use nodelite_proto::{HelloMessage, NodeIdentity, WIRE_PROTOCOL_VERSION, WireMessage};
+
+    use super::{
+        ParsedFrame, ProtocolError, encode_ping_message, parse_wire_message,
+        prune_outstanding_pings,
+    };
+
+    fn hello_text_frame() -> Message {
+        let hello = WireMessage::Hello(HelloMessage {
+            protocol_version: WIRE_PROTOCOL_VERSION,
+            identity: NodeIdentity {
+                node_id: "hk-01".to_string(),
+                node_label: "Hong Kong 01".to_string(),
+                hostname: "hk-01.internal".to_string(),
+                os: "Linux".to_string(),
+                kernel_version: None,
+                cpu_model: None,
+                cpu_cores: 2,
+                agent_version: "0.1.0".to_string(),
+                boot_time: None,
+                tags: vec!["edge".to_string()],
+            },
+            token: "secret".to_string(),
+        });
+        Message::Text(
+            serde_json::to_string(&hello)
+                .expect("hello should serialize")
+                .into(),
+        )
+    }
 
     #[test]
     fn encode_ping_message_matches_wire_protocol_shape() {
         assert_eq!(encode_ping_message(42), r#"{"type":"ping","nonce":42}"#);
+    }
+
+    #[test]
+    fn parse_wire_message_decodes_text_frames() {
+        let parsed = parse_wire_message(hello_text_frame()).expect("hello should parse");
+        assert!(matches!(parsed, ParsedFrame::Wire(_)));
+    }
+
+    #[test]
+    fn parse_wire_message_rejects_invalid_json() {
+        let error = parse_wire_message(Message::Text("{not-json}".into()))
+            .expect_err("invalid json should be rejected");
+        assert!(
+            matches!(error, ProtocolError::Client(message) if message.contains("invalid websocket json"))
+        );
+    }
+
+    #[test]
+    fn parse_wire_message_rejects_binary_frames() {
+        let error = parse_wire_message(Message::Binary(vec![1, 2, 3].into()))
+            .expect_err("binary frames should be rejected");
+        assert!(
+            matches!(error, ProtocolError::Client(message) if message == "binary websocket messages are not supported")
+        );
+    }
+
+    #[test]
+    fn parse_wire_message_treats_ping_as_control() {
+        let parsed =
+            parse_wire_message(Message::Ping(vec![1, 2, 3].into())).expect("ping should parse");
+        assert!(matches!(parsed, ParsedFrame::Control));
+    }
+
+    #[test]
+    fn parse_wire_message_treats_pong_as_control() {
+        let parsed =
+            parse_wire_message(Message::Pong(vec![4, 5, 6].into())).expect("pong should parse");
+        assert!(matches!(parsed, ParsedFrame::Control));
+    }
+
+    #[test]
+    fn parse_wire_message_treats_close_as_close() {
+        let parsed = parse_wire_message(Message::Close(None)).expect("close should parse");
+        assert!(matches!(parsed, ParsedFrame::Close));
+    }
+
+    #[test]
+    fn prune_outstanding_pings_removes_expired_entries() {
+        let now = Instant::now();
+        let mut outstanding = HashMap::from([
+            (1_u64, now - Duration::from_secs(30)),
+            (2_u64, now - Duration::from_secs(2)),
+        ]);
+
+        prune_outstanding_pings(&mut outstanding, Duration::from_secs(5), 8);
+
+        assert_eq!(outstanding.len(), 1);
+        assert!(outstanding.contains_key(&2));
+    }
+
+    #[test]
+    fn prune_outstanding_pings_keeps_fresh_entries_below_capacity() {
+        let now = Instant::now();
+        let mut outstanding = HashMap::from([
+            (1_u64, now - Duration::from_secs(1)),
+            (2_u64, now - Duration::from_secs(2)),
+        ]);
+
+        prune_outstanding_pings(&mut outstanding, Duration::from_secs(10), 3);
+
+        assert_eq!(outstanding.len(), 2);
+        assert!(outstanding.contains_key(&1));
+        assert!(outstanding.contains_key(&2));
+    }
+
+    #[test]
+    fn prune_outstanding_pings_drops_oldest_entry_at_capacity() {
+        let now = Instant::now();
+        let mut outstanding = HashMap::from([
+            (1_u64, now - Duration::from_secs(1)),
+            (2_u64, now - Duration::from_secs(4)),
+            (3_u64, now - Duration::from_secs(2)),
+        ]);
+
+        prune_outstanding_pings(&mut outstanding, Duration::from_secs(10), 3);
+
+        assert_eq!(outstanding.len(), 2);
+        assert!(!outstanding.contains_key(&2));
+        assert!(outstanding.contains_key(&1));
+        assert!(outstanding.contains_key(&3));
     }
 }

@@ -19,6 +19,5 @@ output-dir = "target/tarpaulin"
 # 超时(秒):集成测试可能较慢
 timeout = "300"
 
-# 初始覆盖率阈值(低于此值 CI 失败)
-# 建议:首次运行后根据实际基线调整
-fail-under = 60
+# 关键模块补完覆盖后,把全仓最低门槛抬到 75%,避免后续回归。
+fail-under = 75
