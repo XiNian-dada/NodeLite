@@ -34,9 +34,8 @@ use crate::ui::{
 };
 use nodelite_proto::AgentLogEntry;
 
-mod metrics_exporter;
+pub(crate) mod metrics_exporter;
 mod settings;
-use metrics_exporter::render_prometheus_metrics;
 pub(crate) use settings::{
     change_readonly_password, disable_two_factor, enable_two_factor, refresh_node_token,
     server_update_log, settings, start_server_update, start_two_factor_setup,
@@ -571,8 +570,7 @@ pub(crate) async fn nodes(State(state): State<AppState>) -> Response {
 
 /// Prometheus 指标导出,供外部监控抓取全局概览与节点在线状态。
 pub(crate) async fn metrics(State(state): State<AppState>) -> Response {
-    let (statuses, overview) = state.shared.statuses_and_overview().await;
-    let body = render_prometheus_metrics(&state.readiness, &statuses, &overview);
+    let body = state.shared.metrics_text(&state.readiness).await;
     (
         [
             (header::CONTENT_TYPE, PROMETHEUS_CONTENT_TYPE),
