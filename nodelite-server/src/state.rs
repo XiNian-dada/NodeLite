@@ -11,12 +11,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
 use chrono::{DateTime, Utc};
 use nodelite_proto::{NodeIdentity, NodeSnapshot, NodeStatus, OverviewData, ServerConfig};
 use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
+
+use crate::ServerReadiness;
+use crate::handlers::metrics_exporter::render_prometheus_metrics;
 
 /// 运行中的 WebSocket 会话可接收的控制命令。
 pub(crate) enum SessionCommand {
@@ -56,7 +59,11 @@ pub struct SharedState {
     registry: Arc<RwLock<Registry>>,
     next_session_id: Arc<AtomicU64>,
     view_revision: Arc<AtomicU64>,
-    api_cache: Arc<Mutex<ApiCache>>,
+    view_cache: Arc<Mutex<ViewCache>>,
+    #[cfg(test)]
+    api_cache_builds: Arc<AtomicU64>,
+    #[cfg(test)]
+    metrics_cache_builds: Arc<AtomicU64>,
 }
 
 impl SharedState {
@@ -66,7 +73,11 @@ impl SharedState {
             registry: Arc::new(RwLock::new(Registry::default())),
             next_session_id: Arc::new(AtomicU64::new(1)),
             view_revision: Arc::new(AtomicU64::new(1)),
-            api_cache: Arc::new(Mutex::new(ApiCache::default())),
+            view_cache: Arc::new(Mutex::new(ViewCache::default())),
+            #[cfg(test)]
+            api_cache_builds: Arc::new(AtomicU64::new(0)),
+            #[cfg(test)]
+            metrics_cache_builds: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -191,6 +202,31 @@ impl SharedState {
         self.cached_api_json_bytes(ApiBodyKind::Nodes).await
     }
 
+    /// 返回缓存后的 `/metrics` 响应体。
+    /// 缓存键由节点视图 revision、服务 readiness 摘要与最大存活时间共同决定。
+    pub async fn metrics_text(&self, readiness: &ServerReadiness) -> Bytes {
+        let revision = self.view_revision.load(Ordering::Acquire);
+        let readiness_snapshot = ReadinessSnapshot::capture(readiness);
+        let max_age = Duration::from_secs(self.config.refresh_interval_secs.max(1));
+
+        let mut cache = self.view_cache.lock().await;
+        if let Some(body) = cache.metrics_body(revision, readiness_snapshot, max_age) {
+            return body;
+        }
+
+        #[cfg(test)]
+        self.metrics_cache_builds.fetch_add(1, Ordering::Relaxed);
+
+        let (statuses, overview) = self.statuses_and_overview().await;
+        let body = Bytes::from(render_prometheus_metrics(readiness, &statuses, &overview));
+
+        if self.view_revision.load(Ordering::Acquire) == revision {
+            cache.store_metrics_body(revision, readiness_snapshot, body.clone());
+        }
+
+        body
+    }
+
     /// 返回当前对外视图需要的节点状态与聚合概览。
     pub async fn statuses_and_overview(&self) -> (Vec<NodeStatus>, OverviewData) {
         let registry = self.registry.read().await;
@@ -207,20 +243,21 @@ impl SharedState {
     }
 
     fn bump_view_revision(&self) {
-        self.view_revision.fetch_add(1, Ordering::Relaxed);
+        self.view_revision.fetch_add(1, Ordering::AcqRel);
     }
 
     async fn cached_api_json_bytes(&self, kind: ApiBodyKind) -> Result<Bytes, serde_json::Error> {
-        let revision = self.view_revision.load(Ordering::Relaxed);
-        {
-            let cache = self.api_cache.lock().await;
-            if cache.revision == revision
-                && let Some(body) = cache.body(kind)
-            {
-                return Ok(body);
-            }
+        let revision = self.view_revision.load(Ordering::Acquire);
+        let mut cache = self.view_cache.lock().await;
+        if let Some(body) = cache.api_body(revision, kind) {
+            return Ok(body);
         }
 
+        #[cfg(test)]
+        self.api_cache_builds.fetch_add(1, Ordering::Relaxed);
+
+        // 故意在缓存锁持有期间完成 clone + serialize,这样同一 revision 下的
+        // 并发 miss 只能有一个任务做昂贵工作,其余请求直接等待命中的结果。
         let (statuses, overview) = self.statuses_and_overview().await;
         let nodes_body = Bytes::from(serde_json::to_vec(&statuses)?);
         let overview_body = Bytes::from(serde_json::to_vec(&overview)?);
@@ -230,36 +267,80 @@ impl SharedState {
             ApiBodyKind::Overview => overview_body.clone(),
         };
 
-        if self.view_revision.load(Ordering::Relaxed) == revision {
-            let mut cache = self.api_cache.lock().await;
-            *cache = ApiCache::with_bodies(revision, nodes_body, overview_body);
+        if self.view_revision.load(Ordering::Acquire) == revision {
+            cache.store_api_bodies(revision, nodes_body, overview_body);
         }
 
         Ok(selected)
     }
+
+    #[cfg(test)]
+    fn api_cache_build_count(&self) -> u64 {
+        self.api_cache_builds.load(Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    fn metrics_cache_build_count(&self) -> u64 {
+        self.metrics_cache_builds.load(Ordering::Relaxed)
+    }
 }
 
 #[derive(Debug, Default)]
-struct ApiCache {
+struct ViewCache {
     revision: u64,
     nodes_json: Option<Bytes>,
     overview_json: Option<Bytes>,
+    metrics_revision: u64,
+    metrics_readiness: Option<ReadinessSnapshot>,
+    metrics_cached_at: Option<Instant>,
+    metrics_text: Option<Bytes>,
 }
 
-impl ApiCache {
-    fn with_bodies(revision: u64, nodes_json: Bytes, overview_json: Bytes) -> Self {
-        Self {
-            revision,
-            nodes_json: Some(nodes_json),
-            overview_json: Some(overview_json),
+impl ViewCache {
+    fn api_body(&self, revision: u64, kind: ApiBodyKind) -> Option<Bytes> {
+        if self.revision != revision {
+            return None;
         }
-    }
 
-    fn body(&self, kind: ApiBodyKind) -> Option<Bytes> {
         match kind {
             ApiBodyKind::Nodes => self.nodes_json.clone(),
             ApiBodyKind::Overview => self.overview_json.clone(),
         }
+    }
+
+    fn store_api_bodies(&mut self, revision: u64, nodes_json: Bytes, overview_json: Bytes) {
+        self.revision = revision;
+        self.nodes_json = Some(nodes_json);
+        self.overview_json = Some(overview_json);
+    }
+
+    fn metrics_body(
+        &self,
+        revision: u64,
+        readiness: ReadinessSnapshot,
+        max_age: Duration,
+    ) -> Option<Bytes> {
+        if self.metrics_revision != revision {
+            return None;
+        }
+        if self.metrics_readiness != Some(readiness) {
+            return None;
+        }
+        if self
+            .metrics_cached_at
+            .is_none_or(|cached_at| cached_at.elapsed() > max_age)
+        {
+            return None;
+        }
+
+        self.metrics_text.clone()
+    }
+
+    fn store_metrics_body(&mut self, revision: u64, readiness: ReadinessSnapshot, body: Bytes) {
+        self.metrics_revision = revision;
+        self.metrics_readiness = Some(readiness);
+        self.metrics_cached_at = Some(Instant::now());
+        self.metrics_text = Some(body);
     }
 }
 
@@ -267,6 +348,23 @@ impl ApiCache {
 enum ApiBodyKind {
     Nodes,
     Overview,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ReadinessSnapshot {
+    ready: bool,
+    history_available: bool,
+    registry_reload_healthy: bool,
+}
+
+impl ReadinessSnapshot {
+    fn capture(readiness: &ServerReadiness) -> Self {
+        Self {
+            ready: readiness.is_ready(),
+            history_available: readiness.history_available(),
+            registry_reload_healthy: readiness.registry_reload_healthy(),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -738,6 +836,83 @@ mod tests {
                 .expect("utf8")
                 .contains("\"online\":false")
         );
+    }
+
+    #[tokio::test]
+    async fn concurrent_api_cache_miss_serializes_once() {
+        let shared = SharedState::new(Arc::new(sample_config()));
+        shared
+            .register_node(sample_identity(), Some("198.51.100.10".to_string()))
+            .await;
+
+        let mut tasks = Vec::new();
+        for _ in 0..10 {
+            let shared = shared.clone();
+            tasks.push(tokio::spawn(async move {
+                shared.nodes_json_bytes().await.expect("nodes json")
+            }));
+        }
+
+        let mut first = None;
+        for task in tasks {
+            let body = task.await.expect("task join");
+            if let Some(previous) = first.as_ref() {
+                assert_eq!(previous, &body);
+            } else {
+                first = Some(body);
+            }
+        }
+
+        assert_eq!(shared.api_cache_build_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn metrics_cache_reuses_and_invalidates_cleanly() {
+        let shared = SharedState::new(Arc::new(sample_config()));
+        let readiness = crate::ServerReadiness::new(true);
+        let session_id = shared
+            .register_node(sample_identity(), Some("198.51.100.10".to_string()))
+            .await;
+        assert!(
+            shared
+                .update_snapshot("hk-01", session_id, sample_snapshot(Utc::now()))
+                .await
+                .is_some()
+        );
+
+        let mut tasks = Vec::new();
+        for _ in 0..10 {
+            let shared = shared.clone();
+            let readiness = readiness.clone();
+            tasks.push(tokio::spawn(async move {
+                shared.metrics_text(&readiness).await
+            }));
+        }
+
+        let mut first = None;
+        for task in tasks {
+            let body = task.await.expect("task join");
+            if let Some(previous) = first.as_ref() {
+                assert_eq!(previous, &body);
+            } else {
+                first = Some(body);
+            }
+        }
+        assert_eq!(shared.metrics_cache_build_count(), 1);
+
+        let cached = shared.metrics_text(&readiness).await;
+        assert_eq!(shared.metrics_cache_build_count(), 1);
+        assert_eq!(first.expect("first metrics body"), cached);
+
+        shared.mark_disconnected("hk-01", session_id).await;
+        let after_disconnect = shared.metrics_text(&readiness).await;
+        assert_eq!(shared.metrics_cache_build_count(), 2);
+        assert_ne!(cached, after_disconnect);
+
+        readiness.mark_history_available(false);
+        let after_readiness = shared.metrics_text(&readiness).await;
+        assert_eq!(shared.metrics_cache_build_count(), 3);
+        assert_ne!(after_disconnect, after_readiness);
     }
 
     fn sample_identity() -> NodeIdentity {

@@ -4,7 +4,7 @@ use std::fmt::Write;
 use crate::ServerReadiness;
 use nodelite_proto::{NodeSnapshot, NodeStatus, OverviewData};
 
-pub(super) fn render_prometheus_metrics(
+pub(crate) fn render_prometheus_metrics(
     readiness: &ServerReadiness,
     statuses: &[NodeStatus],
     overview: &OverviewData,
