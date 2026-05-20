@@ -756,7 +756,10 @@ async fn concurrent_issue_node_preserves_all_nodes() {
         10,
         "all 10 nodes should be present in registry"
     );
-    assert_eq!(parsed.version, 10, "each successful mutation should advance version");
+    assert_eq!(
+        parsed.version, 10,
+        "each successful mutation should advance version"
+    );
 
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_dir(&temp_dir);

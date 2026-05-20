@@ -176,8 +176,9 @@ fn ensure_registry_parent_dir(path: &Path) -> RegistryResult<()> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
-        create_private_dir_all(parent)
-            .map_err(|error| RegistryError::internal("failed to create registry directory", error))?;
+        create_private_dir_all(parent).map_err(|error| {
+            RegistryError::internal("failed to create registry directory", error)
+        })?;
     }
     Ok(())
 }
