@@ -53,6 +53,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y shellcheck
 
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
+
       - name: Check formatting
         run: cargo fmt --all --check
 
@@ -64,6 +70,12 @@ jobs:
 
       - name: Shellcheck installers
         run: shellcheck scripts/install-server.sh scripts/install-agent.sh
+
+      - name: Audit dependency advisories
+        run: cargo audit --deny warnings
+
+      - name: Check dependency policy
+        run: cargo deny check advisories
 
   build:
     # 针对 x86_64 / aarch64 两个 musl 目标分别构建。

@@ -37,6 +37,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y shellcheck
 
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
+
       - name: Check formatting
         # 严格校验 cargo fmt 的格式约定,任何差异都会失败。
         run: cargo fmt --all --check
@@ -50,6 +56,14 @@ jobs:
 
       - name: Shellcheck installers
         run: shellcheck scripts/install-server.sh scripts/install-agent.sh
+
+      - name: Audit dependency advisories
+        # 发布前之外,日常 CI 也要尽早暴露已知 RUSTSEC / yanked 依赖问题。
+        run: cargo audit --deny warnings
+
+      - name: Check dependency policy
+        # 目前先聚焦 advisories,后续如需 license/source/bans 规则可在 deny.toml 继续扩展。
+        run: cargo deny check advisories
 
   cross-build:
     # 跨平台构建:确保发布前 musl 目标都能编译通过。
