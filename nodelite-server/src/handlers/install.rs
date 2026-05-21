@@ -3,10 +3,12 @@ use std::net::SocketAddr;
 use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use serde_json::json;
 use tracing::error;
 
 use crate::AppState;
 use crate::admission::resolve_client_ip;
+use crate::audit::{AuditEventType, NewAuditEvent};
 use crate::registry::render_agent_config;
 
 const INSTALL_AGENT_SCRIPT: &str = include_str!("../../../scripts/install-agent.sh");
@@ -34,16 +36,56 @@ pub(crate) async fn install_bootstrap(
 ) -> Response {
     let client_ip = resolve_client_ip(state.shared.config().listen, peer_addr, &headers);
     if let Err(retry_after_secs) = state.install_admission.check(client_ip) {
+        let mut event = NewAuditEvent::now(
+            AuditEventType::RateLimitExceeded,
+            client_ip.to_string(),
+            false,
+        );
+        event.user_agent = request
+            .headers()
+            .get(header::USER_AGENT)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        event.details = json!({
+            "endpoint": "/install/bootstrap",
+            "retry_after_secs": retry_after_secs,
+            "reason": "install_auth_block",
+        });
+        state.audit_log.record_best_effort(event).await;
         return install_blocked_response(retry_after_secs);
     }
 
     let Some(token) = bearer_token_from_request(&request) else {
         state.install_admission.record_auth_failure(client_ip);
+        let mut event =
+            NewAuditEvent::now(AuditEventType::TokenInvalid, client_ip.to_string(), false);
+        event.user_agent = request
+            .headers()
+            .get(header::USER_AGENT)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        event.details = json!({
+            "endpoint": "/install/bootstrap",
+            "reason": "missing_install_token",
+        });
+        state.audit_log.record_best_effort(event).await;
         return install_unauthorized_response("missing install token");
     };
 
     if !is_well_formed_install_token(token) {
         state.install_admission.record_auth_failure(client_ip);
+        let mut event =
+            NewAuditEvent::now(AuditEventType::TokenInvalid, client_ip.to_string(), false);
+        event.user_agent = request
+            .headers()
+            .get(header::USER_AGENT)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        event.details = json!({
+            "endpoint": "/install/bootstrap",
+            "reason": "malformed_install_token",
+        });
+        state.audit_log.record_best_effort(event).await;
         return install_unauthorized_response("invalid install token");
     }
 
@@ -51,6 +93,18 @@ pub(crate) async fn install_bootstrap(
         Ok(Some(consumed)) => consumed,
         Ok(None) => {
             state.install_admission.record_auth_failure(client_ip);
+            let mut event =
+                NewAuditEvent::now(AuditEventType::TokenInvalid, client_ip.to_string(), false);
+            event.user_agent = request
+                .headers()
+                .get(header::USER_AGENT)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string);
+            event.details = json!({
+                "endpoint": "/install/bootstrap",
+                "reason": "unknown_install_token",
+            });
+            state.audit_log.record_best_effort(event).await;
             return install_unauthorized_response("invalid install token");
         }
         Err(error) => {

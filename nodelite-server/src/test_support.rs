@@ -25,8 +25,8 @@ use crate::set_protected_response_headers;
 use crate::state::{SessionRefreshReply, SharedState};
 use crate::ws::ws_handler;
 use nodelite_proto::{
-    DiskUsage, HelloMessage, HistoryPoint, LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity,
-    NodeSnapshot, NodeStatus, NoticeLevel, OverviewData, ReadonlyAuthConfig,
+    AuditConfig, DiskUsage, HelloMessage, HistoryPoint, LoadAverage, MemoryUsage, NetworkCounters,
+    NodeIdentity, NodeSnapshot, NodeStatus, NoticeLevel, OverviewData, ReadonlyAuthConfig,
     RefreshTokenResponseMessage, ServerConfig, WireMessage, WsConfig,
 };
 
@@ -67,6 +67,15 @@ pub(crate) fn test_server_config(
             totp_secret: None,
         }),
         ws: test_ws_config(128, 128),
+        audit: AuditConfig {
+            enabled: true,
+            db_path: history_path.with_file_name("audit.sqlite3"),
+            retention_days: 90,
+            log_successful_auth: true,
+            log_failed_auth: true,
+            log_token_events: true,
+            log_rate_limit: true,
+        },
         node_registry_path: registry_path,
         history_db_path: history_path,
         snapshot_path,

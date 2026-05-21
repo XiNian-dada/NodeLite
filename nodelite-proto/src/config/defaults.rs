@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use super::{
-    DEFAULT_CONNECT_TIMEOUT_SECS, DEFAULT_HELLO_TIMEOUT_SECS,
+    DEFAULT_AUDIT_RETENTION_DAYS, DEFAULT_CONNECT_TIMEOUT_SECS, DEFAULT_HELLO_TIMEOUT_SECS,
     DEFAULT_INSECURE_TRANSPORT_WARN_INTERVAL_SECS, DEFAULT_MAX_INCOMING_MESSAGE_BYTES,
     DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_MAX_OUTSTANDING_PINGS, DEFAULT_MAX_SANITIZED_DISKS,
     DEFAULT_MAX_SANITIZED_STRING_BYTES, DEFAULT_METRIC_ANOMALY_SESSION_LIMIT,
@@ -21,6 +21,10 @@ pub(super) fn default_node_registry_path() -> PathBuf {
 
 pub(super) fn default_snapshot_path() -> PathBuf {
     PathBuf::from("./data/snapshot.json")
+}
+
+pub(super) fn default_audit_db_path() -> PathBuf {
+    PathBuf::from("./data/audit.sqlite3")
 }
 
 pub(super) fn default_stale_after_secs() -> u64 {
@@ -89,6 +93,30 @@ pub(super) fn default_metric_anomaly_session_limit() -> usize {
 
 pub(super) fn default_sqlite_busy_timeout_secs() -> u64 {
     DEFAULT_SQLITE_BUSY_TIMEOUT_SECS
+}
+
+pub(super) fn default_audit_enabled() -> bool {
+    true
+}
+
+pub(super) fn default_audit_retention_days() -> u64 {
+    DEFAULT_AUDIT_RETENTION_DAYS
+}
+
+pub(super) fn default_audit_log_successful_auth() -> bool {
+    true
+}
+
+pub(super) fn default_audit_log_failed_auth() -> bool {
+    true
+}
+
+pub(super) fn default_audit_log_token_events() -> bool {
+    true
+}
+
+pub(super) fn default_audit_log_rate_limit() -> bool {
+    true
 }
 
 pub(super) fn default_connect_timeout_secs() -> u64 {

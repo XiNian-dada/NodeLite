@@ -4,11 +4,12 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Router;
-use axum::body::Body;
+use axum::body::{Body, to_bytes};
 use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, Request, StatusCode, header};
 use axum::middleware::{from_fn, from_fn_with_state};
 use chrono::Utc;
+use serde_json::json;
 use tokio::runtime::Runtime;
 use tower::util::ServiceExt;
 
@@ -20,11 +21,13 @@ use crate::admission::{
     InstallAdmissionConfig, InstallAdmissionController, WsAdmissionController, WsAdmissionError,
     resolve_client_ip, sweep_expired_auth_failures,
 };
+use crate::audit::{AuditEvent, AuditEventType, NewAuditEvent};
 use crate::auth::{ReadonlyRouteAuth, TwoFactorSessions};
 use crate::handlers::{
-    bootstrap, brand_logo_dark_asset, brand_logo_light_asset, healthz, index, install_agent_script,
-    install_bootstrap, is_well_formed_install_token, node_detail, node_history, node_logs,
-    node_status, nodes, overview, readyz, require_readonly_auth, ui_i18n_asset,
+    audit_log, bootstrap, brand_logo_dark_asset, brand_logo_light_asset, healthz, index,
+    install_agent_script, install_bootstrap, is_well_formed_install_token, node_detail,
+    node_history, node_logs, node_status, nodes, overview, readyz, require_readonly_auth,
+    ui_i18n_asset,
 };
 use crate::registry::{IssueNodeRequest, issue_node};
 use crate::sanitize::{
@@ -81,6 +84,7 @@ fn router_builds_with_v08_path_syntax() {
         .route("/api/bootstrap", get(bootstrap))
         .route("/api/overview", get(overview))
         .route("/api/nodes", get(nodes))
+        .route("/api/audit-log", get(audit_log))
         .route("/api/nodes/{node_id}", get(node_status))
         .route("/api/nodes/{node_id}/history", get(node_history))
         .route("/api/nodes/{node_id}/logs", get(node_logs))
@@ -365,6 +369,123 @@ fn protected_routes_attach_security_headers() {
 }
 
 #[test]
+fn audit_log_route_returns_recent_filtered_events() {
+    let runtime = Runtime::new().expect("runtime should build");
+    runtime.block_on(async {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic enough")
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("nodelite-audit-route-test-{unique}"));
+        std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+        let registry_path = temp_dir.join("server.json");
+        let mut config = test_server_config(
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8080)),
+            "https://monitor.example.com".to_string(),
+            registry_path,
+            temp_dir.join("history.sqlite3"),
+            temp_dir.join("snapshot.json"),
+        );
+        config.readonly_auth = None;
+        config.ws = test_ws_config(32, 8);
+        config.stale_after_secs = 20;
+        config.ping_interval_secs = 10;
+        config.ignored_filesystems = Vec::new();
+        let state = AppState::test_fixture(config.into(), Arc::new(temp_dir.join("server.toml")))
+            .await
+            .expect("state fixture should build");
+        let mut event = NewAuditEvent::now(
+            AuditEventType::LoginFailure,
+            IpAddr::V4(Ipv4Addr::LOCALHOST).to_string(),
+            false,
+        );
+        event.user = Some("viewer".to_string());
+        event.details = json!({
+            "reason": "invalid_credentials",
+            "method": "basic_auth",
+        });
+        state
+            .audit_log
+            .record(event)
+            .await
+            .expect("audit event should persist");
+        let app: Router = Router::new()
+            .route("/api/audit-log", get(audit_log))
+            .route_layer(from_fn_with_state(state.clone(), require_readonly_auth))
+            .with_state(state);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/audit-log?event_type=login_failure&success=false&limit=1")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("response should be produced");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should be readable");
+        let events: Vec<AuditEvent> =
+            serde_json::from_slice(&body).expect("audit payload should be json");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, AuditEventType::LoginFailure);
+        assert_eq!(events[0].user.as_deref(), Some("viewer"));
+        assert!(!events[0].success);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    });
+}
+
+#[test]
+fn audit_log_route_rejects_unknown_event_type() {
+    let runtime = Runtime::new().expect("runtime should build");
+    runtime.block_on(async {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic enough")
+            .as_nanos();
+        let temp_dir =
+            std::env::temp_dir().join(format!("nodelite-audit-route-invalid-test-{unique}"));
+        std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+        let registry_path = temp_dir.join("server.json");
+        let mut config = test_server_config(
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8080)),
+            "https://monitor.example.com".to_string(),
+            registry_path,
+            temp_dir.join("history.sqlite3"),
+            temp_dir.join("snapshot.json"),
+        );
+        config.readonly_auth = None;
+        config.ws = test_ws_config(32, 8);
+        config.stale_after_secs = 20;
+        config.ping_interval_secs = 10;
+        config.ignored_filesystems = Vec::new();
+        let state = AppState::test_fixture(config.into(), Arc::new(temp_dir.join("server.toml")))
+            .await
+            .expect("state fixture should build");
+        let app: Router = Router::new()
+            .route("/api/audit-log", get(audit_log))
+            .route_layer(from_fn_with_state(state.clone(), require_readonly_auth))
+            .with_state(state);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/audit-log?event_type=nope")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("response should be produced");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    });
+}
+
+#[test]
 fn sanitize_snapshot_clamps_invalid_metrics() {
     let config = ServerConfig {
         listen: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8080)),
@@ -377,6 +498,15 @@ fn sanitize_snapshot_clamps_invalid_metrics() {
             auth_fail_window_secs: 300,
             auth_fail_max_attempts: 6,
             auth_block_secs: 600,
+        },
+        audit: nodelite_proto::AuditConfig {
+            enabled: true,
+            db_path: PathBuf::from("./data/audit.sqlite3"),
+            retention_days: 90,
+            log_successful_auth: true,
+            log_failed_auth: true,
+            log_token_events: true,
+            log_rate_limit: true,
         },
         node_registry_path: PathBuf::from("./data/server.json"),
         history_db_path: PathBuf::from("./data/history.sqlite3"),
@@ -491,6 +621,15 @@ fn sanitize_caps_disk_field_string_length() {
             auth_fail_max_attempts: 6,
             auth_block_secs: 600,
         },
+        audit: nodelite_proto::AuditConfig {
+            enabled: true,
+            db_path: PathBuf::from("./data/audit.sqlite3"),
+            retention_days: 90,
+            log_successful_auth: true,
+            log_failed_auth: true,
+            log_token_events: true,
+            log_rate_limit: true,
+        },
         node_registry_path: PathBuf::from("./data/server.json"),
         history_db_path: PathBuf::from("./data/history.sqlite3"),
         snapshot_path: PathBuf::from("./data/snapshot.json"),
@@ -566,6 +705,15 @@ fn sanitize_snapshot_caps_disk_count_and_tracks_clean_reports() {
             auth_fail_window_secs: 300,
             auth_fail_max_attempts: 6,
             auth_block_secs: 600,
+        },
+        audit: nodelite_proto::AuditConfig {
+            enabled: true,
+            db_path: PathBuf::from("./data/audit.sqlite3"),
+            retention_days: 90,
+            log_successful_auth: true,
+            log_failed_auth: true,
+            log_token_events: true,
+            log_rate_limit: true,
         },
         node_registry_path: PathBuf::from("./data/server.json"),
         history_db_path: PathBuf::from("./data/history.sqlite3"),
@@ -659,6 +807,15 @@ fn sanitize_snapshot_deduplicates_repeated_disk_devices() {
             auth_fail_window_secs: 300,
             auth_fail_max_attempts: 6,
             auth_block_secs: 600,
+        },
+        audit: nodelite_proto::AuditConfig {
+            enabled: true,
+            db_path: PathBuf::from("./data/audit.sqlite3"),
+            retention_days: 90,
+            log_successful_auth: true,
+            log_failed_auth: true,
+            log_token_events: true,
+            log_rate_limit: true,
         },
         node_registry_path: PathBuf::from("./data/server.json"),
         history_db_path: PathBuf::from("./data/history.sqlite3"),

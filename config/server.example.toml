@@ -45,6 +45,22 @@ enable_2fa = false
 # 可选:TOTP base32 secret。仅在 enable_2fa = true 时必须配置。
 # totp_secret = "JBSWY3DPEHPK3PXP"
 
+[audit]
+# 安全审计日志开关。关闭后不再写入 /api/audit-log 也会返回 503。
+enabled = true
+# 审计日志 SQLite 文件。
+db_path = "./data/audit.sqlite3"
+# 仅保留最近 N 天的安全事件。
+retention_days = 90
+# 是否记录成功认证/握手事件。
+log_successful_auth = true
+# 是否记录失败认证/TOTP 失败事件。
+log_failed_auth = true
+# 是否记录 token 误用或失效事件。
+log_token_events = true
+# 是否记录安装/登录等路径触发的限流事件。
+log_rate_limit = true
+
 [ws]
 # 全局并发 WebSocket 连接上限。
 max_total_connections = 1024

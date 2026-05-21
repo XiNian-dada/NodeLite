@@ -68,6 +68,8 @@ pub const DEFAULT_MAX_SANITIZED_STRING_BYTES: usize = 256;
 pub const DEFAULT_METRIC_ANOMALY_SESSION_LIMIT: usize = 5;
 /// SQLite 忙等待超时(秒)。
 pub const DEFAULT_SQLITE_BUSY_TIMEOUT_SECS: u64 = 5;
+/// 审计日志默认保留天数。
+pub const DEFAULT_AUDIT_RETENTION_DAYS: u64 = 90;
 /// Agent 连接超时(秒)。
 pub const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 20;
 /// Agent 最大接收消息字节数。
@@ -109,6 +111,7 @@ pub struct ServerConfig {
     pub insecure_allow_http: bool,
     pub readonly_auth: Option<ReadonlyAuthConfig>,
     pub ws: WsConfig,
+    pub audit: AuditConfig,
     pub node_registry_path: PathBuf,
     pub history_db_path: PathBuf,
     pub snapshot_path: PathBuf,
@@ -162,6 +165,18 @@ pub struct WsConfig {
     pub auth_fail_window_secs: u64,
     pub auth_fail_max_attempts: usize,
     pub auth_block_secs: u64,
+}
+
+/// 审计日志存储与记录策略。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AuditConfig {
+    pub enabled: bool,
+    pub db_path: PathBuf,
+    pub retention_days: u64,
+    pub log_successful_auth: bool,
+    pub log_failed_auth: bool,
+    pub log_token_events: bool,
+    pub log_rate_limit: bool,
 }
 
 /// Agent 启动需要的全部配置。

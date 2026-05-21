@@ -303,6 +303,15 @@ password = "change-this-password"
 enable_2fa = false
 # totp_secret = "JBSWY3DPEHPK3PXP"
 
+[audit]
+enabled = true
+db_path = "/opt/nodelite/data/audit.sqlite3"
+retention_days = 90
+log_successful_auth = true
+log_failed_auth = true
+log_token_events = true
+log_rate_limit = true
+
 [ws]
 max_total_connections = 1024
 max_connections_per_ip = 32
@@ -379,6 +388,18 @@ otpauth://totp/NodeLite:viewer?secret=<totp_secret>&issuer=NodeLite
 - 已认证的长连接会在 token 距离过期不足 7 天时自动刷新；服务端先把刷新帧发出去，确认 send 成功后才把会话内的 token 视为新值，避免"server 内存里是新 token 但 agent 没收到"的不一致状态。Agent 收到后用 fsync + 0o600 原子写回 `agent.toml`，crash 不会留下空文件。
 - 旧版 `server.json` 中没有过期时间的 token 会在节点下一次在线会话里被自动刷新成 30 天 token。
 - 如果某台 Agent 离线超过 token 有效期，它无法再用旧 token 自动刷新；Agent 进入 1 小时间隔的退避，等运维在服务端执行 `install-agent --rotate-token` 并替换该节点的 `agent.toml` 后才能恢复。
+
+### 审计日志
+
+- 服务端会把认证失败、TOTP 校验结果、无效 install token / node token、限流封禁和成功的节点握手写入独立的 `audit.sqlite3`。
+- `[audit]` 段可以控制审计是否启用、保留天数以及不同类型事件是否记录；默认保留 90 天。
+- `/api/audit-log` 走和其它 `/api/*` 一样的只读认证保护，支持 `start`、`end`、`event_type`、`success`、`limit` 这些查询参数。
+
+例如只看最近 100 条失败认证：
+
+```text
+/api/audit-log?event_type=login_failure&success=false&limit=100
+```
 
 ## Nginx 反代示例
 

@@ -4,21 +4,24 @@ use std::path::PathBuf;
 use serde::Deserialize;
 
 use super::defaults::{
-    default_connect_timeout_secs, default_hello_timeout_secs, default_history_db_path,
-    default_ignored_filesystems, default_insecure_transport_warn_interval_secs,
-    default_max_incoming_message_bytes, default_max_message_bytes, default_max_outstanding_pings,
-    default_max_sanitized_disks, default_max_sanitized_string_bytes,
-    default_metric_anomaly_session_limit, default_node_registry_path, default_ping_interval_secs,
-    default_refresh_interval_secs, default_report_interval_secs, default_snapshot_path,
-    default_sqlite_busy_timeout_secs, default_stale_after_secs, default_ws_auth_block_secs,
-    default_ws_auth_fail_max_attempts, default_ws_auth_fail_window_secs,
-    default_ws_max_connections_per_ip, default_ws_max_total_connections,
+    default_audit_db_path, default_audit_enabled, default_audit_log_failed_auth,
+    default_audit_log_rate_limit, default_audit_log_successful_auth,
+    default_audit_log_token_events, default_audit_retention_days, default_connect_timeout_secs,
+    default_hello_timeout_secs, default_history_db_path, default_ignored_filesystems,
+    default_insecure_transport_warn_interval_secs, default_max_incoming_message_bytes,
+    default_max_message_bytes, default_max_outstanding_pings, default_max_sanitized_disks,
+    default_max_sanitized_string_bytes, default_metric_anomaly_session_limit,
+    default_node_registry_path, default_ping_interval_secs, default_refresh_interval_secs,
+    default_report_interval_secs, default_snapshot_path, default_sqlite_busy_timeout_secs,
+    default_stale_after_secs, default_ws_auth_block_secs, default_ws_auth_fail_max_attempts,
+    default_ws_auth_fail_window_secs, default_ws_max_connections_per_ip,
+    default_ws_max_total_connections,
 };
 use super::helpers::{
     normalize_tags, normalize_totp_secret, uses_insecure_remote_public_base_url, validate_sha256,
     validate_totp_secret, validate_url,
 };
-use super::{AgentConfig, ConfigError, ReadonlyAuthConfig, ServerConfig, WsConfig};
+use super::{AgentConfig, AuditConfig, ConfigError, ReadonlyAuthConfig, ServerConfig, WsConfig};
 use crate::validation::{
     ValidationError, normalize_string_list, validate_identifier, validate_non_empty,
 };
@@ -37,6 +40,8 @@ pub(super) struct RawServerConfigFile {
     auth: RawAuthSection,
     #[serde(default)]
     ws: RawWsSection,
+    #[serde(default)]
+    audit: RawAuditSection,
     #[serde(default)]
     ui: RawUiSection,
     #[serde(default)]
@@ -102,6 +107,25 @@ struct RawWsSection {
     auth_block_secs: u64,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawAuditSection {
+    #[serde(default = "default_audit_enabled")]
+    enabled: bool,
+    #[serde(default = "default_audit_db_path")]
+    db_path: PathBuf,
+    #[serde(default = "default_audit_retention_days")]
+    retention_days: u64,
+    #[serde(default = "default_audit_log_successful_auth")]
+    log_successful_auth: bool,
+    #[serde(default = "default_audit_log_failed_auth")]
+    log_failed_auth: bool,
+    #[serde(default = "default_audit_log_token_events")]
+    log_token_events: bool,
+    #[serde(default = "default_audit_log_rate_limit")]
+    log_rate_limit: bool,
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct RawAuthSection {
@@ -128,6 +152,20 @@ impl Default for RawWsSection {
             auth_fail_window_secs: default_ws_auth_fail_window_secs(),
             auth_fail_max_attempts: default_ws_auth_fail_max_attempts(),
             auth_block_secs: default_ws_auth_block_secs(),
+        }
+    }
+}
+
+impl Default for RawAuditSection {
+    fn default() -> Self {
+        Self {
+            enabled: default_audit_enabled(),
+            db_path: default_audit_db_path(),
+            retention_days: default_audit_retention_days(),
+            log_successful_auth: default_audit_log_successful_auth(),
+            log_failed_auth: default_audit_log_failed_auth(),
+            log_token_events: default_audit_log_token_events(),
+            log_rate_limit: default_audit_log_rate_limit(),
         }
     }
 }
@@ -194,6 +232,7 @@ impl RawServerConfigFile {
         self.validate_public_base_url()?;
         let install = self.validate_install()?;
         let readonly_auth = self.validate_auth(&listen)?;
+        let audit = self.validate_audit()?;
         self.validate_server_limits()?;
         self.validate_ws_limits()?;
         self.validate_ui_limits()?;
@@ -210,6 +249,7 @@ impl RawServerConfigFile {
                 auth_fail_max_attempts: self.ws.auth_fail_max_attempts,
                 auth_block_secs: self.ws.auth_block_secs,
             },
+            audit,
             node_registry_path: self.server.node_registry_path,
             history_db_path: self.server.history_db_path,
             snapshot_path: self.server.snapshot_path,
@@ -295,6 +335,24 @@ impl RawServerConfigFile {
             agent_release_base_url: self.install.agent_release_base_url.clone(),
             agent_release_sha256_x86_64,
             agent_release_sha256_aarch64,
+        })
+    }
+
+    fn validate_audit(&self) -> Result<AuditConfig, ConfigError> {
+        if self.audit.retention_days == 0 {
+            return Err(ConfigError::new(
+                "audit.retention_days must be greater than 0",
+            ));
+        }
+
+        Ok(AuditConfig {
+            enabled: self.audit.enabled,
+            db_path: self.audit.db_path.clone(),
+            retention_days: self.audit.retention_days,
+            log_successful_auth: self.audit.log_successful_auth,
+            log_failed_auth: self.audit.log_failed_auth,
+            log_token_events: self.audit.log_token_events,
+            log_rate_limit: self.audit.log_rate_limit,
         })
     }
 

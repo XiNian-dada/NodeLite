@@ -14,7 +14,9 @@ pub(crate) mod metrics_exporter;
 mod pages;
 mod settings;
 
-pub(crate) use api::{bootstrap, metrics, node_history, node_logs, node_status, nodes, overview};
+pub(crate) use api::{
+    audit_log, bootstrap, metrics, node_history, node_logs, node_status, nodes, overview,
+};
 pub(crate) use auth_routes::{
     healthz, logout_and_reauth, readyz, require_readonly_auth, verify_2fa_api,
 };

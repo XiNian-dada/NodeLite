@@ -5,10 +5,12 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{AppendHeaders, IntoResponse, Response};
 use axum::{Json, extract::Request};
+use serde_json::json;
 use tracing::error;
 
 use crate::AppState;
 use crate::admission::resolve_client_ip;
+use crate::audit::{AuditEventType, NewAuditEvent};
 use crate::auth::{
     TWO_FACTOR_AUTH_COOKIE, TWO_FACTOR_AUTH_SECS, TWO_FACTOR_PENDING_COOKIE,
     TWO_FACTOR_PENDING_SECS, Verify2FAError, Verify2FARequest, auth_cookie, cookie_value,
@@ -24,6 +26,18 @@ pub(crate) async fn verify_2fa_api(
 ) -> Result<impl IntoResponse, (StatusCode, Json<Verify2FAError>)> {
     let client_ip = resolve_client_ip(state.shared.config().listen, peer_addr, &headers);
     if let Err(retry_after_secs) = state.verify_2fa_admission.check(client_ip) {
+        let mut event = NewAuditEvent::now(
+            AuditEventType::RateLimitExceeded,
+            client_ip.to_string(),
+            false,
+        );
+        event.user_agent = user_agent(&headers);
+        event.details = json!({
+            "endpoint": "/api/verify-2fa",
+            "retry_after_secs": retry_after_secs,
+            "reason": "verify_2fa_block",
+        });
+        state.audit_log.record_best_effort(event).await;
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
             Json(Verify2FAError {
@@ -34,6 +48,16 @@ pub(crate) async fn verify_2fa_api(
 
     let Some(pending_token) = cookie_value(&headers, TWO_FACTOR_PENDING_COOKIE) else {
         state.verify_2fa_admission.record_auth_failure(client_ip);
+        let mut event = NewAuditEvent::now(
+            AuditEventType::TotpVerifyFailure,
+            client_ip.to_string(),
+            false,
+        );
+        event.user_agent = user_agent(&headers);
+        event.details = json!({
+            "reason": "missing_pending_token",
+        });
+        state.audit_log.record_best_effort(event).await;
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(Verify2FAError {
@@ -44,6 +68,16 @@ pub(crate) async fn verify_2fa_api(
 
     if !state.two_factor_sessions.pending_exists(&pending_token) {
         state.verify_2fa_admission.record_auth_failure(client_ip);
+        let mut event = NewAuditEvent::now(
+            AuditEventType::TotpVerifyFailure,
+            client_ip.to_string(),
+            false,
+        );
+        event.user_agent = user_agent(&headers);
+        event.details = json!({
+            "reason": "unknown_pending_token",
+        });
+        state.audit_log.record_best_effort(event).await;
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(Verify2FAError {
@@ -63,6 +97,17 @@ pub(crate) async fn verify_2fa_api(
             .two_factor_sessions
             .record_failed_attempt(&pending_token);
         state.verify_2fa_admission.record_auth_failure(client_ip);
+        let mut event = NewAuditEvent::now(
+            AuditEventType::TotpVerifyFailure,
+            client_ip.to_string(),
+            false,
+        );
+        event.user_agent = user_agent(&headers);
+        event.details = json!({
+            "reason": "invalid_or_replayed_totp",
+            "pending_invalidated": pending_invalidated,
+        });
+        state.audit_log.record_best_effort(event).await;
         let secure = secure_cookies(state.shared.config());
         let body = Json(Verify2FAError {
             error: "Verification failed".to_string(),
@@ -81,6 +126,10 @@ pub(crate) async fn verify_2fa_api(
     };
     state.two_factor_sessions.mark_totp_step_used(totp_step);
 
+    let audit_user = {
+        let auth = state.readonly_auth.read().await;
+        auth.config.as_ref().map(|config| config.username.clone())
+    };
     let auth_token = state
         .two_factor_sessions
         .create_authenticated()
@@ -94,6 +143,17 @@ pub(crate) async fn verify_2fa_api(
         })?;
     state.two_factor_sessions.consume_pending(&pending_token);
     state.verify_2fa_admission.clear_auth_failures(client_ip);
+    let mut event = NewAuditEvent::now(
+        AuditEventType::TotpVerifySuccess,
+        client_ip.to_string(),
+        true,
+    );
+    event.user = audit_user;
+    event.user_agent = user_agent(&headers);
+    event.details = json!({
+        "endpoint": "/api/verify-2fa",
+    });
+    state.audit_log.record_best_effort(event).await;
     let secure = secure_cookies(state.shared.config());
 
     Ok((
@@ -157,6 +217,9 @@ pub(crate) async fn require_readonly_auth(
     request: Request,
     next: Next,
 ) -> Response {
+    let audit_ip =
+        request_client_ip(&state, &headers, &request).unwrap_or_else(|| "unknown".to_string());
+    let audit_user_agent = user_agent(&headers);
     let auth = state.readonly_auth.read().await;
 
     if auth.expected_authorization.is_none() {
@@ -204,10 +267,41 @@ pub(crate) async fn require_readonly_auth(
         return next.run(request).await;
     }
 
+    let two_factor_enabled = auth.enable_2fa;
+    drop(auth);
+    let mut event = NewAuditEvent::now(AuditEventType::LoginFailure, audit_ip, false);
+    event.user_agent = audit_user_agent;
+    event.details = json!({
+        "path": request.uri().path(),
+        "reason": if headers.contains_key(header::AUTHORIZATION) {
+            "invalid_basic_auth"
+        } else {
+            "missing_basic_auth"
+        },
+        "two_factor_enabled": two_factor_enabled,
+    });
+    state.audit_log.record_best_effort(event).await;
+
     (
         StatusCode::UNAUTHORIZED,
         [(header::WWW_AUTHENTICATE, "Basic realm=\"NodeLite\"")],
         "authentication required",
     )
         .into_response()
+}
+
+fn user_agent(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+}
+
+fn request_client_ip(state: &AppState, headers: &HeaderMap, request: &Request) -> Option<String> {
+    request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|connect_info| {
+            resolve_client_ip(state.shared.config().listen, connect_info.0, headers).to_string()
+        })
 }

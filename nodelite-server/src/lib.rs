@@ -14,6 +14,7 @@
 mod admission;
 mod agent_logs;
 mod app_state;
+mod audit;
 mod auth;
 mod background;
 mod cli;

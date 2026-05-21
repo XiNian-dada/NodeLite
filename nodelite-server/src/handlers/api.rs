@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use tracing::error;
 
 use crate::AppState;
+use crate::audit::{AuditEventType, AuditLogError, AuditQuery};
 use nodelite_proto::AgentLogEntry;
 
 const DEFAULT_HISTORY_WINDOW_HOURS: u64 = 24;
@@ -37,6 +38,15 @@ pub(crate) struct HistoryQuery {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct NodeLogsQuery {
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct AuditLogQuery {
+    start: Option<i64>,
+    end: Option<i64>,
+    event_type: Option<String>,
+    success: Option<bool>,
     limit: Option<usize>,
 }
 
@@ -99,6 +109,70 @@ pub(crate) async fn metrics(State(state): State<AppState>) -> Response {
         body,
     )
         .into_response()
+}
+
+/// 审计日志查询接口。默认按时间倒序返回最近 100 条。
+pub(crate) async fn audit_log(
+    State(state): State<AppState>,
+    Query(query): Query<AuditLogQuery>,
+) -> Response {
+    let limit = query.limit.unwrap_or(100).clamp(1, 500);
+    let start = match query.start {
+        Some(start) => match Utc.timestamp_opt(start, 0).single() {
+            Some(value) => Some(value),
+            None => {
+                return (StatusCode::BAD_REQUEST, "invalid audit start timestamp").into_response();
+            }
+        },
+        None => None,
+    };
+    let end = match query.end {
+        Some(end) => match Utc.timestamp_opt(end, 0).single() {
+            Some(value) => Some(value),
+            None => {
+                return (StatusCode::BAD_REQUEST, "invalid audit end timestamp").into_response();
+            }
+        },
+        None => None,
+    };
+    if end.zip(start).is_some_and(|(end, start)| end < start) {
+        return (StatusCode::BAD_REQUEST, "audit end must be after start").into_response();
+    }
+
+    let event_type = match query.event_type.as_deref() {
+        Some(raw) => match AuditEventType::parse(raw) {
+            Some(value) => Some(value),
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    format!("invalid audit event type: {raw}"),
+                )
+                    .into_response();
+            }
+        },
+        None => None,
+    };
+
+    match state
+        .audit_log
+        .query(AuditQuery {
+            start,
+            end,
+            event_type,
+            success: query.success,
+            limit,
+        })
+        .await
+    {
+        Ok(events) => Json(events).into_response(),
+        Err(AuditLogError::Disabled) => {
+            (StatusCode::SERVICE_UNAVAILABLE, "audit log is disabled").into_response()
+        }
+        Err(AuditLogError::Query(error)) => {
+            error!(error = ?error, "failed to query audit log");
+            (StatusCode::SERVICE_UNAVAILABLE, "audit log unavailable").into_response()
+        }
+    }
 }
 
 /// 单个节点的最新状态;不存在时返回 404。

@@ -1,9 +1,10 @@
 use std::path::PathBuf;
 
 use super::{
-    DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_WS_AUTH_BLOCK_SECS, DEFAULT_WS_AUTH_FAIL_MAX_ATTEMPTS,
-    DEFAULT_WS_AUTH_FAIL_WINDOW_SECS, DEFAULT_WS_MAX_CONNECTIONS_PER_IP,
-    DEFAULT_WS_MAX_TOTAL_CONNECTIONS, MAX_NODE_TAG_BYTES, parse_agent_config, parse_server_config,
+    DEFAULT_AUDIT_RETENTION_DAYS, DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_WS_AUTH_BLOCK_SECS,
+    DEFAULT_WS_AUTH_FAIL_MAX_ATTEMPTS, DEFAULT_WS_AUTH_FAIL_WINDOW_SECS,
+    DEFAULT_WS_MAX_CONNECTIONS_PER_IP, DEFAULT_WS_MAX_TOTAL_CONNECTIONS, MAX_NODE_TAG_BYTES,
+    parse_agent_config, parse_server_config,
 };
 
 #[test]
@@ -46,6 +47,13 @@ fn parses_server_config_with_defaults() {
         config.ignored_filesystems,
         vec!["devtmpfs", "overlay", "tmpfs"]
     );
+    assert!(config.audit.enabled);
+    assert_eq!(config.audit.db_path, PathBuf::from("./data/audit.sqlite3"));
+    assert_eq!(config.audit.retention_days, DEFAULT_AUDIT_RETENTION_DAYS);
+    assert!(config.audit.log_successful_auth);
+    assert!(config.audit.log_failed_auth);
+    assert!(config.audit.log_token_events);
+    assert!(config.audit.log_rate_limit);
 }
 
 #[test]
@@ -182,6 +190,55 @@ fn parses_server_config_with_install() {
         config.agent_release_sha256_aarch64.as_deref(),
         Some("abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789")
     );
+}
+
+#[test]
+fn parses_server_config_with_audit_overrides() {
+    let config = parse_server_config(
+        r#"
+        [server]
+        listen = "127.0.0.1:8080"
+        public_base_url = "https://monitor.example.com"
+
+        [audit]
+        enabled = true
+        db_path = "/var/lib/nodelite/audit.sqlite3"
+        retention_days = 30
+        log_successful_auth = false
+        log_failed_auth = true
+        log_token_events = true
+        log_rate_limit = false
+        "#,
+    )
+    .expect("audit config should parse");
+
+    assert!(config.audit.enabled);
+    assert_eq!(
+        config.audit.db_path,
+        PathBuf::from("/var/lib/nodelite/audit.sqlite3")
+    );
+    assert_eq!(config.audit.retention_days, 30);
+    assert!(!config.audit.log_successful_auth);
+    assert!(config.audit.log_failed_auth);
+    assert!(config.audit.log_token_events);
+    assert!(!config.audit.log_rate_limit);
+}
+
+#[test]
+fn rejects_zero_audit_retention_days() {
+    let error = parse_server_config(
+        r#"
+        [server]
+        listen = "127.0.0.1:8080"
+        public_base_url = "https://monitor.example.com"
+
+        [audit]
+        retention_days = 0
+        "#,
+    )
+    .expect_err("zero retention should fail");
+
+    assert!(error.to_string().contains("audit.retention_days"));
 }
 
 #[test]

@@ -22,13 +22,14 @@ use tracing::{info, warn};
 use crate::admission::{InstallAdmissionConfig, InstallAdmissionController, WsAdmissionController};
 use crate::agent_logs::AgentLogStore;
 use crate::app_state::{AppState, ServerReadiness};
+use crate::audit::AuditLog;
 use crate::auth::{ReadonlyRouteAuth, TwoFactorSessions};
 use crate::background::{
     spawn_insecure_transport_warning, spawn_registry_reloader, spawn_stale_reaper,
 };
 use crate::fs_security::log_if_directory_is_not_private;
 use crate::handlers::{
-    bootstrap, brand_logo_dark_asset, brand_logo_light_asset, change_readonly_password,
+    audit_log, bootstrap, brand_logo_dark_asset, brand_logo_light_asset, change_readonly_password,
     disable_two_factor, enable_two_factor, healthz, index, install_agent_script, install_bootstrap,
     logout_and_reauth, metrics, node_detail, node_history, node_logs, node_status, nodes, overview,
     readyz, refresh_node_token, require_readonly_auth, server_update_log, settings,
@@ -73,7 +74,9 @@ pub(crate) async fn run_server(config_path: &Path) -> Result<()> {
         config.sqlite_busy_timeout_secs,
     );
     let agent_logs = AgentLogStore::new();
+    let audit_store = AuditLog::new(config.audit.clone(), config.sqlite_busy_timeout_secs);
     history.initialize().await;
+    audit_store.initialize().await?;
     let readiness = ServerReadiness::new(history.is_available());
     readiness.mark_history_available(history.is_available());
     restore_snapshot_if_available(&shared, config.snapshot_path.as_path()).await;
@@ -113,6 +116,7 @@ pub(crate) async fn run_server(config_path: &Path) -> Result<()> {
     let state = AppState {
         history,
         agent_logs,
+        audit_log: audit_store,
         install_admission: InstallAdmissionController::new(InstallAdmissionConfig {
             // 复用 ws 子小节里同名的限流配置 —— 站在运维视角它们是同一组
             // "认证失败暴力策略"参数,没必要再多开一组。
@@ -152,6 +156,7 @@ pub(crate) async fn run_server(config_path: &Path) -> Result<()> {
         .route("/api/nodes/{node_id}", get(node_status))
         .route("/api/nodes/{node_id}/history", get(node_history))
         .route("/api/nodes/{node_id}/logs", get(node_logs))
+        .route("/api/audit-log", get(audit_log))
         .route(
             "/api/nodes/{node_id}/refresh-token",
             post(refresh_node_token),
@@ -307,6 +312,19 @@ pub(crate) async fn load_server_config(path: &Path) -> Result<ServerConfig> {
         && parent.exists()
     {
         log_if_directory_is_not_private(parent, "node_registry_path.parent");
+    }
+    if config.audit.enabled
+        && let Some(parent) = config.audit.db_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        if !parent.exists() {
+            warn!(
+                audit_dir = %parent.display(),
+                "audit directory does not exist yet; it will be created later",
+            );
+        } else {
+            log_if_directory_is_not_private(parent, "audit.db_path.parent");
+        }
     }
 
     Ok(config)
