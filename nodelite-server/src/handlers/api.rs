@@ -8,6 +8,7 @@ use tracing::error;
 
 use crate::AppState;
 use crate::audit::{AuditEventType, AuditLogError, AuditQuery};
+use crate::handlers::metrics_exporter::{WriterMetrics, render_writer_metrics};
 use crate::history::HistoryError;
 use nodelite_proto::AgentLogEntry;
 
@@ -100,7 +101,13 @@ pub(crate) async fn nodes(State(state): State<AppState>) -> Response {
 
 /// Prometheus 指标导出,供外部监控抓取全局概览与节点在线状态。
 pub(crate) async fn metrics(State(state): State<AppState>) -> Response {
-    let body = state.shared.metrics_text(&state.readiness).await;
+    let mut body = state.shared.metrics_text(&state.readiness).await.to_vec();
+    let writer_metrics = render_writer_metrics(WriterMetrics {
+        history_dropped_writes: state.history.dropped_writes(),
+        audit_dropped_writes: state.audit_log.dropped_writes(),
+        audit_write_failures: state.audit_log.write_failures(),
+    });
+    body.extend_from_slice(writer_metrics.as_bytes());
     (
         [
             (header::CONTENT_TYPE, PROMETHEUS_CONTENT_TYPE),

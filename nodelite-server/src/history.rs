@@ -182,10 +182,6 @@ impl HistoryStore {
 
     /// 统计有多少次 record_status 因为 channel 满而被静默丢弃。
     /// 监控接入后,这个计数应当长期保持在 0;持续非零表示 batch 速率跟不上上报速率。
-    ///
-    /// 目前仅在 unit test 内使用。一旦 #91 (Prometheus exporter 改造) 落地,
-    /// 这个值会作为 `nodelite_history_dropped_writes_total` 暴露出去。
-    #[allow(dead_code)]
     pub fn dropped_writes(&self) -> u64 {
         self.dropped_writes.load(Ordering::Relaxed)
     }
@@ -203,34 +199,35 @@ impl HistoryStore {
             return;
         };
 
-        // 节流:同一节点两次写入至少间隔 N 秒。
-        // 这里乐观更新 last_written_at —— 即便后面 channel 满了导致这条样本被丢弃,
-        // 节流窗口也仍然按"已经写过"算,避免下一周期 burst 重试。
-        {
-            let mut throttle = self.last_written_at.lock().await;
-            if let Some(previous) = throttle.get(&point.node_id) {
-                let Ok(elapsed) = point
-                    .recorded_at
-                    .signed_duration_since(previous.to_owned())
-                    .to_std()
-                else {
-                    return;
-                };
-                if elapsed < Duration::from_secs(DEFAULT_HISTORY_WRITE_INTERVAL_SECS) {
-                    return;
-                }
-            }
-            throttle.insert(point.node_id.clone(), point.recorded_at);
-        }
-
         // 把样本推给 writer task。try_send 在 channel 满时立即失败,这里宁可丢一条样本
         // 也不要让 WS 处理路径被反压;丢弃由 dropped_writes 计数提示运维。
-        let guard = self.writer_tx.read().await;
-        let Some(tx) = guard.as_ref() else {
+        let tx = {
+            let guard = self.writer_tx.read().await;
+            guard.as_ref().cloned()
+        };
+        let Some(tx) = tx else {
             return;
         };
+
+        let node_id = point.node_id.clone();
+        let recorded_at = point.recorded_at;
+        let mut throttle = self.last_written_at.lock().await;
+        if let Some(previous) = throttle.get(&node_id) {
+            let Ok(elapsed) = recorded_at
+                .signed_duration_since(previous.to_owned())
+                .to_std()
+            else {
+                return;
+            };
+            if elapsed < Duration::from_secs(DEFAULT_HISTORY_WRITE_INTERVAL_SECS) {
+                return;
+            }
+        }
+
         match tx.try_send(point) {
-            Ok(()) => {}
+            Ok(()) => {
+                throttle.insert(node_id, recorded_at);
+            }
             Err(mpsc::error::TrySendError::Full(_)) => {
                 self.dropped_writes.fetch_add(1, Ordering::Relaxed);
                 warn!(
@@ -364,9 +361,9 @@ mod tests {
     use tokio::runtime::Runtime;
 
     use super::{
-        HISTORY_QUERY_SQL, HistoryError, HistoryStore, SQLITE_BUSY_MAX_RETRIES,
-        build_history_point, initialize_database, query_history_between, sqlite_busy_retry_delay,
-        write_history_point,
+        HISTORY_CHANNEL_CAPACITY, HISTORY_QUERY_SQL, HistoryError, HistoryStore,
+        SQLITE_BUSY_MAX_RETRIES, build_history_point, initialize_database, query_history_between,
+        sqlite_busy_retry_delay, write_history_point,
     };
 
     #[test]
@@ -699,6 +696,46 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM history_points", [], |row| row.get(0))
             .expect("count query");
         assert_eq!(count, 5);
+
+        let _ = std::fs::remove_file(&db_path);
+        if let Some(parent) = db_path.parent() {
+            let _ = std::fs::remove_dir(parent);
+        }
+    }
+
+    #[tokio::test]
+    async fn record_status_does_not_throttle_after_queue_full_drop() {
+        let db_path = temp_history_db_path("queue-full-throttle");
+        let store = HistoryStore::new(db_path.clone(), 5);
+        store.available.store(true, Ordering::Relaxed);
+        let (tx, _rx) = tokio::sync::mpsc::channel::<HistoryPoint>(HISTORY_CHANNEL_CAPACITY);
+        for index in 0..HISTORY_CHANNEL_CAPACITY {
+            tx.try_send(HistoryPoint {
+                node_id: format!("queued-{index}"),
+                recorded_at: Utc::now(),
+                cpu_usage_percent: 1.0,
+                memory_used_percent: 2.0,
+                rx_bytes_per_sec: Some(3.0),
+                tx_bytes_per_sec: Some(4.0),
+                latency_ms: Some(5),
+                disk_used_percent: Some(6.0),
+            })
+            .expect("test channel should accept prefilled point");
+        }
+        {
+            let mut guard = store.writer_tx.write().await;
+            *guard = Some(tx);
+        }
+
+        let status = fake_status_for("hk-01", Utc::now());
+        store.record_status(&status).await;
+
+        assert_eq!(store.dropped_writes(), 1);
+        let guard = store.last_written_at.lock().await;
+        assert!(
+            !guard.contains_key("hk-01"),
+            "dropped writes must not advance the throttle window"
+        );
 
         let _ = std::fs::remove_file(&db_path);
         if let Some(parent) = db_path.parent() {

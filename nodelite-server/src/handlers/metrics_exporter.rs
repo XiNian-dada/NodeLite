@@ -18,6 +18,36 @@ pub(crate) fn render_prometheus_metrics(
     emitter.finish()
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct WriterMetrics {
+    pub(crate) history_dropped_writes: u64,
+    pub(crate) audit_dropped_writes: u64,
+    pub(crate) audit_write_failures: u64,
+}
+
+pub(crate) fn render_writer_metrics(metrics: WriterMetrics) -> String {
+    let mut emitter = MetricEmitter::default();
+    emitter.counter(
+        "nodelite_history_dropped_writes_total",
+        "Number of history samples dropped because the writer queue was full.",
+        &[],
+        metrics.history_dropped_writes,
+    );
+    emitter.counter(
+        "nodelite_audit_dropped_writes_total",
+        "Number of audit events dropped because the writer queue was full.",
+        &[],
+        metrics.audit_dropped_writes,
+    );
+    emitter.counter(
+        "nodelite_audit_write_failures_total",
+        "Number of audit writer failures while enqueueing or persisting events.",
+        &[],
+        metrics.audit_write_failures,
+    );
+    emitter.finish()
+}
+
 fn render_server_metrics(emitter: &mut MetricEmitter, readiness: &ServerReadiness) {
     emitter.gauge(
         "nodelite_server_ready",
@@ -333,7 +363,7 @@ fn escape_prometheus_label_value(value: &str) -> String {
 mod tests {
     use chrono::Utc;
 
-    use super::render_prometheus_metrics;
+    use super::{WriterMetrics, render_prometheus_metrics, render_writer_metrics};
     use crate::ServerReadiness;
     use nodelite_proto::{
         DiskUsage, LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot,
@@ -400,6 +430,22 @@ mod tests {
         assert!(body.contains(
             "nodelite_node_network_bytes_total{node_id=\"node-1\",direction=\"rx\"} 1500"
         ));
+    }
+
+    #[test]
+    fn exporter_exposes_writer_counters() {
+        let body = render_writer_metrics(WriterMetrics {
+            history_dropped_writes: 3,
+            audit_dropped_writes: 5,
+            audit_write_failures: 7,
+        });
+
+        assert!(body.contains("# TYPE nodelite_history_dropped_writes_total counter"));
+        assert!(body.contains("nodelite_history_dropped_writes_total 3"));
+        assert!(body.contains("# TYPE nodelite_audit_dropped_writes_total counter"));
+        assert!(body.contains("nodelite_audit_dropped_writes_total 5"));
+        assert!(body.contains("# TYPE nodelite_audit_write_failures_total counter"));
+        assert!(body.contains("nodelite_audit_write_failures_total 7"));
     }
 
     fn sample_statuses() -> Vec<NodeStatus> {

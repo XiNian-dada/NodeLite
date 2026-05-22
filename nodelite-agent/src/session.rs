@@ -55,14 +55,12 @@ impl AgentLogBuffer {
         if message.is_empty() {
             return;
         }
-        if self.entries.len() >= MAX_PENDING_AGENT_LOGS {
-            self.entries.pop_front();
-        }
         self.entries.push_back(AgentLogEntry {
             occurred_at: Utc::now().to_rfc3339(),
             level,
             message,
         });
+        self.trim_overflow();
     }
 
     fn peek_batch(&self) -> Vec<AgentLogEntry> {
@@ -81,6 +79,13 @@ impl AgentLogBuffer {
 
     fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    fn trim_overflow(&mut self) {
+        let overflow = self.entries.len().saturating_sub(MAX_PENDING_AGENT_LOGS);
+        if overflow > 0 {
+            self.entries.drain(..overflow);
+        }
     }
 }
 
@@ -465,6 +470,30 @@ mod tests {
         assert_eq!(
             buffer.entries.front().map(|entry| entry.message.as_str()),
             Some("entry-4")
+        );
+    }
+
+    #[test]
+    fn agent_log_buffer_trims_existing_overflow_in_one_pass() {
+        let mut buffer = AgentLogBuffer::default();
+        for index in 0..(MAX_PENDING_AGENT_LOGS * 4) {
+            buffer.entries.push_back(nodelite_proto::AgentLogEntry {
+                occurred_at: "2026-05-23T00:00:00Z".to_string(),
+                level: NoticeLevel::Info,
+                message: format!("entry-{index}"),
+            });
+        }
+
+        buffer.push(NoticeLevel::Warn, "after-overflow");
+
+        assert_eq!(buffer.entries.len(), MAX_PENDING_AGENT_LOGS);
+        assert_eq!(
+            buffer.entries.front().map(|entry| entry.message.as_str()),
+            Some("entry-769")
+        );
+        assert_eq!(
+            buffer.entries.back().map(|entry| entry.message.as_str()),
+            Some("after-overflow")
         );
     }
 

@@ -4,20 +4,30 @@
 //! - 查询接口返回结构化事件,供排障或后续接前端/告警系统;
 //! - 所有写入都走 best-effort 路径:审计失败只记日志,不反向拖慢主流程。
 
+mod query;
+mod writer;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
-use chrono::{DateTime, Duration as ChronoDuration, TimeZone, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use nodelite_proto::AuditConfig;
-use rusqlite::{Connection, params, params_from_iter};
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::Mutex;
-use tracing::warn;
+use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
+use tokio::task::JoinHandle;
+use tokio::time::{MissedTickBehavior, interval};
+use tokio_util::sync::CancellationToken;
+use tracing::{info, warn};
 
 use crate::fs_security::{create_private_dir_all, ensure_directory_mode};
+
+use self::query::query_events;
+use self::writer::{AuditWriterCommand, AuditWriterContext, run_audit_writer};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -38,6 +48,9 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
 CREATE INDEX IF NOT EXISTS idx_audit_log_event_type ON audit_log(event_type);
 CREATE INDEX IF NOT EXISTS idx_audit_log_ip_address ON audit_log(ip_address);
 "#;
+
+const AUDIT_CHANNEL_CAPACITY: usize = 4096;
+const AUDIT_PRUNE_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -152,9 +165,12 @@ impl std::error::Error for AuditLogError {
 pub struct AuditLog {
     config: Arc<AuditConfig>,
     sqlite_busy_timeout_secs: u64,
-    /// SQLite 本身支持并发读,但这里显式串行化写入/清理,避免多个请求同时打开
-    /// 独立连接把低频审计路径放大成锁竞争热点。
-    write_gate: Arc<Mutex<()>>,
+    /// 持久化 SQLite 连接。审计写入属于安全 hot path,不能在每次认证失败时反复 open/prune/chmod。
+    connection: Arc<Mutex<Option<Connection>>>,
+    writer_tx: Arc<RwLock<Option<mpsc::Sender<AuditWriterCommand>>>>,
+    writer_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
+    dropped_writes: Arc<AtomicU64>,
+    write_failures: Arc<AtomicU64>,
 }
 
 impl AuditLog {
@@ -162,7 +178,11 @@ impl AuditLog {
         Self {
             config: Arc::new(config),
             sqlite_busy_timeout_secs,
-            write_gate: Arc::new(Mutex::new(())),
+            connection: Arc::new(Mutex::new(None)),
+            writer_tx: Arc::new(RwLock::new(None)),
+            writer_handle: Arc::new(Mutex::new(None)),
+            dropped_writes: Arc::new(AtomicU64::new(0)),
+            write_failures: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -173,15 +193,35 @@ impl AuditLog {
 
         let config = Arc::clone(&self.config);
         let sqlite_busy_timeout_secs = self.sqlite_busy_timeout_secs;
-        tokio::task::spawn_blocking(move || {
+        let connection = tokio::task::spawn_blocking(move || {
             let connection = open_audit_connection(&config.db_path, sqlite_busy_timeout_secs)?;
             prune_expired_records(&connection, config.retention_days)?;
-            harden_audit_artifacts(&config.db_path)?;
-            Ok::<(), anyhow::Error>(())
+            Ok::<Connection, anyhow::Error>(connection)
         })
         .await
         .context("audit log initialization task failed")??;
+
+        let mut guard = self.connection.lock().await;
+        *guard = Some(connection);
+        drop(guard);
+        self.spawn_writer_task().await;
         Ok(())
+    }
+
+    async fn spawn_writer_task(&self) {
+        let (tx, rx) = mpsc::channel::<AuditWriterCommand>(AUDIT_CHANNEL_CAPACITY);
+        {
+            let mut guard = self.writer_tx.write().await;
+            *guard = Some(tx);
+        }
+
+        let context = AuditWriterContext {
+            connection: Arc::clone(&self.connection),
+            write_failures: Arc::clone(&self.write_failures),
+        };
+        let handle = tokio::spawn(run_audit_writer(rx, context));
+        let mut guard = self.writer_handle.lock().await;
+        *guard = Some(handle);
     }
 
     pub async fn record(&self, event: NewAuditEvent) -> Result<()> {
@@ -189,19 +229,26 @@ impl AuditLog {
             return Ok(());
         }
 
-        let _guard = self.write_gate.lock().await;
-        let config = Arc::clone(&self.config);
-        let sqlite_busy_timeout_secs = self.sqlite_busy_timeout_secs;
-        tokio::task::spawn_blocking(move || {
-            let connection = open_audit_connection(&config.db_path, sqlite_busy_timeout_secs)?;
-            prune_expired_records(&connection, config.retention_days)?;
-            insert_event(&connection, &event)?;
-            harden_audit_artifacts(&config.db_path)?;
-            Ok::<(), anyhow::Error>(())
-        })
-        .await
-        .context("audit log record task failed")??;
-        Ok(())
+        let guard = self.writer_tx.read().await;
+        let Some(tx) = guard.as_ref() else {
+            anyhow::bail!("audit writer is not initialized");
+        };
+        match tx.try_send(AuditWriterCommand::Event(event)) {
+            Ok(()) => Ok(()),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.dropped_writes.fetch_add(1, Ordering::Relaxed);
+                warn!(
+                    capacity = AUDIT_CHANNEL_CAPACITY,
+                    dropped_total = self.dropped_writes.load(Ordering::Relaxed),
+                    "audit writer queue full; dropping event"
+                );
+                Ok(())
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                self.write_failures.fetch_add(1, Ordering::Relaxed);
+                anyhow::bail!("audit writer is closed");
+            }
+        }
     }
 
     pub async fn record_best_effort(&self, event: NewAuditEvent) {
@@ -211,19 +258,108 @@ impl AuditLog {
         }
     }
 
+    pub(crate) fn dropped_writes(&self) -> u64 {
+        self.dropped_writes.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn write_failures(&self) -> u64 {
+        self.write_failures.load(Ordering::Relaxed)
+    }
+
     pub async fn query(&self, query: AuditQuery) -> Result<Vec<AuditEvent>, AuditLogError> {
         if !self.config.enabled {
             return Err(AuditLogError::Disabled);
         }
-        let config = Arc::clone(&self.config);
-        let sqlite_busy_timeout_secs = self.sqlite_busy_timeout_secs;
+        self.flush_pending().await.map_err(AuditLogError::Query)?;
+        let connection = Arc::clone(&self.connection);
         tokio::task::spawn_blocking(move || {
-            let connection = open_audit_connection(&config.db_path, sqlite_busy_timeout_secs)
-                .map_err(AuditLogError::Query)?;
-            query_events(&connection, &query)
+            let guard = connection.blocking_lock();
+            let Some(ref connection) = *guard else {
+                return Err(AuditLogError::Query(anyhow!(
+                    "audit connection not initialized"
+                )));
+            };
+            query_events(connection, &query)
         })
         .await
         .map_err(|error| AuditLogError::Query(anyhow!("audit log query task failed: {error}")))?
+    }
+
+    async fn flush_pending(&self) -> Result<()> {
+        let tx = {
+            let guard = self.writer_tx.read().await;
+            guard.as_ref().cloned()
+        };
+        let Some(tx) = tx else {
+            return Ok(());
+        };
+
+        let (ack_tx, ack_rx) = oneshot::channel();
+        tx.send(AuditWriterCommand::Flush(ack_tx))
+            .await
+            .context("audit writer is closed")?;
+        ack_rx.await.context("audit writer flush was cancelled")
+    }
+
+    pub(crate) fn spawn_pruner(&self, shutdown: CancellationToken) -> JoinHandle<()> {
+        let audit_log = self.clone();
+        tokio::spawn(async move {
+            let mut ticker = interval(AUDIT_PRUNE_INTERVAL);
+            ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+            loop {
+                tokio::select! {
+                    _ = shutdown.cancelled() => break,
+                    _ = ticker.tick() => {
+                        match audit_log.prune_expired().await {
+                            Ok(pruned) => {
+                                if pruned > 0 {
+                                    info!(pruned, "pruned expired audit records");
+                                }
+                            }
+                            Err(error) => {
+                                warn!(error = ?error, "failed to prune expired audit records");
+                            }
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    pub(crate) async fn prune_expired(&self) -> Result<usize> {
+        if !self.config.enabled {
+            return Ok(0);
+        }
+
+        let retention_days = self.config.retention_days;
+        let connection = Arc::clone(&self.connection);
+        tokio::task::spawn_blocking(move || {
+            let guard = connection.blocking_lock();
+            let Some(ref connection) = *guard else {
+                anyhow::bail!("audit connection not initialized");
+            };
+            prune_expired_records(connection, retention_days)
+        })
+        .await
+        .context("audit log prune task failed")?
+    }
+
+    pub(crate) async fn shutdown(&self) {
+        let sender = {
+            let mut guard = self.writer_tx.write().await;
+            guard.take()
+        };
+        drop(sender);
+
+        let handle = {
+            let mut guard = self.writer_handle.lock().await;
+            guard.take()
+        };
+        if let Some(handle) = handle
+            && let Err(error) = handle.await
+        {
+            warn!(error = ?error, "audit writer task join failed during shutdown");
+        }
     }
 
     fn should_record(&self, event_type: AuditEventType) -> bool {
@@ -261,111 +397,6 @@ fn open_audit_connection(path: &Path, sqlite_busy_timeout_secs: u64) -> Result<C
         .with_context(|| format!("failed to initialize audit schema {}", path.display()))?;
     harden_audit_artifacts(path)?;
     Ok(connection)
-}
-
-fn insert_event(connection: &Connection, event: &NewAuditEvent) -> Result<()> {
-    let details =
-        serde_json::to_string(&event.details).context("failed to serialize audit details")?;
-    connection
-        .execute(
-            "INSERT INTO audit_log
-             (timestamp, event_type, user, node_id, ip_address, user_agent, success, details)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![
-                event.timestamp.timestamp(),
-                event.event_type.as_str(),
-                event.user,
-                event.node_id,
-                event.ip_address,
-                event.user_agent,
-                event.success as i64,
-                details,
-            ],
-        )
-        .context("failed to insert audit event")?;
-    Ok(())
-}
-
-fn query_events(
-    connection: &Connection,
-    query: &AuditQuery,
-) -> Result<Vec<AuditEvent>, AuditLogError> {
-    let mut sql = String::from(
-        "SELECT id, timestamp, event_type, user, node_id, ip_address, user_agent, success, details
-         FROM audit_log WHERE 1=1",
-    );
-    let mut values = Vec::<rusqlite::types::Value>::new();
-
-    if let Some(start) = query.start {
-        sql.push_str(" AND timestamp >= ?");
-        values.push(rusqlite::types::Value::Integer(start.timestamp()));
-    }
-    if let Some(end) = query.end {
-        sql.push_str(" AND timestamp <= ?");
-        values.push(rusqlite::types::Value::Integer(end.timestamp()));
-    }
-    if let Some(event_type) = query.event_type {
-        sql.push_str(" AND event_type = ?");
-        values.push(rusqlite::types::Value::Text(
-            event_type.as_str().to_string(),
-        ));
-    }
-    if let Some(success) = query.success {
-        sql.push_str(" AND success = ?");
-        values.push(rusqlite::types::Value::Integer(success as i64));
-    }
-
-    sql.push_str(" ORDER BY timestamp DESC, id DESC LIMIT ?");
-    values.push(rusqlite::types::Value::Integer(query.limit as i64));
-
-    let mut statement = connection
-        .prepare(&sql)
-        .map_err(|error| AuditLogError::Query(anyhow!("failed to prepare audit query: {error}")))?;
-    let rows = statement
-        .query_map(params_from_iter(values), |row| {
-            let event_type = row.get::<_, String>(2)?;
-            let details = row.get::<_, String>(8)?;
-            let timestamp = row.get::<_, i64>(1)?;
-            let event_type = AuditEventType::parse(&event_type).ok_or_else(|| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    2,
-                    rusqlite::types::Type::Text,
-                    Box::new(std::io::Error::other(format!(
-                        "unknown audit event type {event_type}"
-                    ))),
-                )
-            })?;
-            let details = serde_json::from_str::<Value>(&details).map_err(|error| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    7,
-                    rusqlite::types::Type::Text,
-                    Box::new(error),
-                )
-            })?;
-            Ok(AuditEvent {
-                id: row.get(0)?,
-                timestamp: Utc.timestamp_opt(timestamp, 0).single().ok_or_else(|| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        1,
-                        rusqlite::types::Type::Integer,
-                        Box::new(std::io::Error::other(format!(
-                            "invalid audit timestamp {timestamp}"
-                        ))),
-                    )
-                })?,
-                event_type,
-                user: row.get(3)?,
-                node_id: row.get(4)?,
-                ip_address: row.get(5)?,
-                user_agent: row.get(6)?,
-                success: row.get::<_, i64>(7)? != 0,
-                details,
-            })
-        })
-        .map_err(|error| AuditLogError::Query(anyhow!("failed to execute audit query: {error}")))?;
-
-    rows.collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(|error| AuditLogError::Query(anyhow!("failed to decode audit rows: {error}")))
 }
 
 fn prune_expired_records(connection: &Connection, retention_days: u64) -> Result<usize> {
@@ -470,6 +501,7 @@ mod tests {
                 .record(token)
                 .await
                 .expect("token event should persist");
+            audit.shutdown().await;
 
             let all = audit
                 .query(AuditQuery {
@@ -497,6 +529,80 @@ mod tests {
             assert_eq!(filtered[0].event_type, AuditEventType::LoginFailure);
             assert_eq!(filtered[0].user.as_deref(), Some("viewer"));
 
+            let _ = std::fs::remove_file(&db_path);
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        });
+    }
+
+    #[test]
+    fn audit_log_query_combines_optional_filters() {
+        let runtime = Runtime::new().expect("runtime should build");
+        runtime.block_on(async {
+            let temp_dir = unique_temp_dir("nodelite-audit-filter-combo");
+            std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+            let db_path = temp_dir.join("audit.sqlite3");
+            let audit = AuditLog::new(sample_config(db_path.clone()), 5);
+            audit.initialize().await.expect("audit should initialize");
+            let base = Utc::now();
+
+            let stale_failure = NewAuditEvent {
+                timestamp: base - ChronoDuration::hours(2),
+                event_type: AuditEventType::LoginFailure,
+                user: Some("viewer".to_string()),
+                node_id: None,
+                ip_address: "198.51.100.30".to_string(),
+                user_agent: None,
+                success: false,
+                details: json!({"case":"stale"}),
+            };
+            let matching_failure = NewAuditEvent {
+                timestamp: base,
+                event_type: AuditEventType::LoginFailure,
+                user: Some("viewer".to_string()),
+                node_id: None,
+                ip_address: "198.51.100.31".to_string(),
+                user_agent: None,
+                success: false,
+                details: json!({"case":"matching"}),
+            };
+            let successful_totp = NewAuditEvent {
+                timestamp: base,
+                event_type: AuditEventType::TotpVerifySuccess,
+                user: Some("viewer".to_string()),
+                node_id: None,
+                ip_address: "198.51.100.32".to_string(),
+                user_agent: None,
+                success: true,
+                details: json!({"case":"success"}),
+            };
+            audit
+                .record(stale_failure)
+                .await
+                .expect("stale event should enqueue");
+            audit
+                .record(matching_failure)
+                .await
+                .expect("matching event should enqueue");
+            audit
+                .record(successful_totp)
+                .await
+                .expect("success event should enqueue");
+
+            let events = audit
+                .query(AuditQuery {
+                    start: Some(base - ChronoDuration::minutes(5)),
+                    end: Some(base + ChronoDuration::minutes(5)),
+                    event_type: Some(AuditEventType::LoginFailure),
+                    success: Some(false),
+                    limit: 10,
+                })
+                .await
+                .expect("combined audit query should succeed");
+
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].details["case"], "matching");
+
+            audit.shutdown().await;
             let _ = std::fs::remove_file(&db_path);
             let _ = std::fs::remove_dir_all(&temp_dir);
         });
@@ -536,6 +642,8 @@ mod tests {
                 ))
                 .await
                 .expect("fresh event should write");
+            audit.shutdown().await;
+            assert_eq!(audit.prune_expired().await.expect("prune should run"), 1);
 
             let events = audit
                 .query(AuditQuery {
@@ -549,6 +657,48 @@ mod tests {
                 .expect("audit query should succeed");
             assert_eq!(events.len(), 1);
             assert_eq!(events[0].event_type, AuditEventType::TotpVerifyFailure);
+
+            let _ = std::fs::remove_file(&db_path);
+            let _ = std::fs::remove_dir_all(&temp_dir);
+        });
+    }
+
+    #[test]
+    fn audit_log_drains_burst_writes_through_writer_task() {
+        let runtime = Runtime::new().expect("runtime should build");
+        runtime.block_on(async {
+            let temp_dir = unique_temp_dir("nodelite-audit-burst");
+            std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+            let db_path = temp_dir.join("audit.sqlite3");
+            let audit = AuditLog::new(sample_config(db_path.clone()), 5);
+            audit.initialize().await.expect("audit should initialize");
+
+            for index in 0..1000 {
+                let mut event = NewAuditEvent::now(
+                    AuditEventType::RateLimitExceeded,
+                    format!("198.51.100.{}", index % 255),
+                    false,
+                );
+                event.details = json!({"attempt": index});
+                audit
+                    .record(event)
+                    .await
+                    .expect("burst audit event should enqueue");
+            }
+
+            audit.shutdown().await;
+            let events = audit
+                .query(AuditQuery {
+                    start: None,
+                    end: None,
+                    event_type: Some(AuditEventType::RateLimitExceeded),
+                    success: Some(false),
+                    limit: 1000,
+                })
+                .await
+                .expect("audit query should succeed");
+
+            assert_eq!(events.len(), 1000);
 
             let _ = std::fs::remove_file(&db_path);
             let _ = std::fs::remove_dir_all(&temp_dir);
@@ -573,6 +723,7 @@ mod tests {
                 ))
                 .await
                 .expect("audit event should persist");
+            audit.shutdown().await;
 
             let data_dir_mode = std::fs::metadata(&temp_dir)
                 .expect("temp dir metadata")

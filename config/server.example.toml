@@ -14,6 +14,8 @@ trusted_proxies = []
 # 节点凭证文件;Server 与 CLI 都会读写它。
 node_registry_path = "./config/server.json"
 # 历史数据 SQLite 文件,缺失时会在启动时自动创建。
+# 历史图是按写入间隔采样的趋势数据,不是完整 metrics 归档;队列满时会优先实时视图并丢弃历史点。
+# 如果 /metrics 中 nodelite_history_dropped_writes_total 持续增长,说明历史写入跟不上上报速率或磁盘 I/O。
 history_db_path = "./data/history.sqlite3"
 # 运行态快照文件,用于 Server 重启后秒级恢复最近视图。
 snapshot_path = "./data/snapshot.json"
