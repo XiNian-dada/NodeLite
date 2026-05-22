@@ -105,6 +105,11 @@ impl std::error::Error for ConfigError {}
 /// / `serde_json::to_string(&config)`),任何一处疏忽就会让明文凭证泄露到响应、
 /// 日志或调试输出。需要对外暴露字段时,请在 handler 内手工构造一个不带敏感字段
 /// 的视图类型(参考 `handlers/settings/mod.rs::SettingsResponse`)。
+///
+/// ```compile_fail
+/// fn assert_serializable<T: serde::Serialize>() {}
+/// assert_serializable::<nodelite_proto::ServerConfig>();
+/// ```
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ServerConfig {
     pub listen: SocketAddr,
