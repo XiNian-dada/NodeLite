@@ -17,7 +17,7 @@ use nodelite_proto::AuditConfig;
 use rusqlite::{Connection, params, params_from_iter};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::{MissedTickBehavior, interval};
 use tokio_util::sync::CancellationToken;
@@ -25,7 +25,7 @@ use tracing::{info, warn};
 
 use crate::fs_security::{create_private_dir_all, ensure_directory_mode};
 
-use self::writer::{AuditWriterContext, run_audit_writer};
+use self::writer::{AuditWriterCommand, AuditWriterContext, run_audit_writer};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -165,7 +165,7 @@ pub struct AuditLog {
     sqlite_busy_timeout_secs: u64,
     /// 持久化 SQLite 连接。审计写入属于安全 hot path,不能在每次认证失败时反复 open/prune/chmod。
     connection: Arc<Mutex<Option<Connection>>>,
-    writer_tx: Arc<RwLock<Option<mpsc::Sender<NewAuditEvent>>>>,
+    writer_tx: Arc<RwLock<Option<mpsc::Sender<AuditWriterCommand>>>>,
     writer_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     dropped_writes: Arc<AtomicU64>,
     write_failures: Arc<AtomicU64>,
@@ -207,7 +207,7 @@ impl AuditLog {
     }
 
     async fn spawn_writer_task(&self) {
-        let (tx, rx) = mpsc::channel::<NewAuditEvent>(AUDIT_CHANNEL_CAPACITY);
+        let (tx, rx) = mpsc::channel::<AuditWriterCommand>(AUDIT_CHANNEL_CAPACITY);
         {
             let mut guard = self.writer_tx.write().await;
             *guard = Some(tx);
@@ -231,7 +231,7 @@ impl AuditLog {
         let Some(tx) = guard.as_ref() else {
             anyhow::bail!("audit writer is not initialized");
         };
-        match tx.try_send(event) {
+        match tx.try_send(AuditWriterCommand::Event(event)) {
             Ok(()) => Ok(()),
             Err(mpsc::error::TrySendError::Full(_)) => {
                 self.dropped_writes.fetch_add(1, Ordering::Relaxed);
@@ -268,6 +268,7 @@ impl AuditLog {
         if !self.config.enabled {
             return Err(AuditLogError::Disabled);
         }
+        self.flush_pending().await.map_err(AuditLogError::Query)?;
         let connection = Arc::clone(&self.connection);
         tokio::task::spawn_blocking(move || {
             let guard = connection.blocking_lock();
@@ -280,6 +281,22 @@ impl AuditLog {
         })
         .await
         .map_err(|error| AuditLogError::Query(anyhow!("audit log query task failed: {error}")))?
+    }
+
+    async fn flush_pending(&self) -> Result<()> {
+        let tx = {
+            let guard = self.writer_tx.read().await;
+            guard.as_ref().cloned()
+        };
+        let Some(tx) = tx else {
+            return Ok(());
+        };
+
+        let (ack_tx, ack_rx) = oneshot::channel();
+        tx.send(AuditWriterCommand::Flush(ack_tx))
+            .await
+            .context("audit writer is closed")?;
+        ack_rx.await.context("audit writer flush was cancelled")
     }
 
     pub(crate) fn spawn_pruner(&self, shutdown: CancellationToken) -> JoinHandle<()> {

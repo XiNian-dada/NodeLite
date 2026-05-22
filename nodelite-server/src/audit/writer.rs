@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::time::MissedTickBehavior;
 use tracing::{debug, warn};
 
@@ -20,8 +20,13 @@ pub(super) struct AuditWriterContext {
     pub(super) write_failures: Arc<AtomicU64>,
 }
 
+pub(super) enum AuditWriterCommand {
+    Event(NewAuditEvent),
+    Flush(oneshot::Sender<()>),
+}
+
 pub(super) async fn run_audit_writer(
-    mut rx: mpsc::Receiver<NewAuditEvent>,
+    mut rx: mpsc::Receiver<AuditWriterCommand>,
     context: AuditWriterContext,
 ) {
     let mut batch = Vec::with_capacity(AUDIT_BATCH_MAX);
@@ -33,11 +38,17 @@ pub(super) async fn run_audit_writer(
         tokio::select! {
             biased;
             received = rx.recv() => match received {
-                Some(event) => {
+                Some(AuditWriterCommand::Event(event)) => {
                     batch.push(event);
                     if batch.len() >= AUDIT_BATCH_MAX {
                         flush_audit_batch(&mut batch, &context).await;
                     }
+                }
+                Some(AuditWriterCommand::Flush(ack)) => {
+                    if !batch.is_empty() {
+                        flush_audit_batch(&mut batch, &context).await;
+                    }
+                    let _ = ack.send(());
                 }
                 None => break,
             },
@@ -49,10 +60,20 @@ pub(super) async fn run_audit_writer(
         }
     }
 
-    while let Ok(event) = rx.try_recv() {
-        batch.push(event);
-        if batch.len() >= AUDIT_BATCH_MAX {
-            flush_audit_batch(&mut batch, &context).await;
+    while let Ok(command) = rx.try_recv() {
+        match command {
+            AuditWriterCommand::Event(event) => {
+                batch.push(event);
+                if batch.len() >= AUDIT_BATCH_MAX {
+                    flush_audit_batch(&mut batch, &context).await;
+                }
+            }
+            AuditWriterCommand::Flush(ack) => {
+                if !batch.is_empty() {
+                    flush_audit_batch(&mut batch, &context).await;
+                }
+                let _ = ack.send(());
+            }
         }
     }
     if !batch.is_empty() {
