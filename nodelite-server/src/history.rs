@@ -195,6 +195,16 @@ impl HistoryStore {
         self.dropped_writes.load(Ordering::Relaxed)
     }
 
+    pub(crate) async fn writer_queue_metrics(&self) -> (u64, u64) {
+        let guard = self.writer_tx.read().await;
+        let Some(tx) = guard.as_ref() else {
+            return (0, 0);
+        };
+        let capacity = tx.max_capacity();
+        let depth = capacity.saturating_sub(tx.capacity());
+        (depth as u64, capacity as u64)
+    }
+
     /// 尝试把一次节点状态记录到历史表。
     ///
     /// 节流通过 + channel 有空闲槽位时立即返回;否则静默 drop 并自增计数。
