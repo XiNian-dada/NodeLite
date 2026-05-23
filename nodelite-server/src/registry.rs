@@ -35,9 +35,14 @@ pub use self::render::{
     build_install_script_url, default_agent_release_base_url, render_agent_config,
     render_install_command, render_upgrade_command,
 };
+use self::storage::{
+    load_registry_state, load_registry_state_with_fingerprint, mutate_registry_file,
+    registry_file_fingerprint,
+};
 #[cfg(test)]
-use self::storage::release_registry_lock_with;
-use self::storage::{load_registry_state, mutate_registry_file};
+use self::storage::{
+    registry_file_read_count, release_registry_lock_with, reset_registry_file_read_count,
+};
 use self::token::{
     authorize_identity, constant_time_eq, generate_token, hash_token,
     is_token_current as is_token_generation_current, mint_install_session,
@@ -137,6 +142,12 @@ pub struct InstallSession {
 pub struct NodeRegistry {
     path: Arc<PathBuf>,
     state: Arc<RwLock<RegistryState>>,
+    reload_checkpoint: Arc<RwLock<RegistryReloadCheckpoint>>,
+}
+
+#[derive(Debug)]
+struct RegistryReloadCheckpoint {
+    fingerprint: Option<storage::RegistryFileFingerprint>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -181,11 +192,14 @@ const INSTALL_TOKEN_TTL_MINUTES: i64 = 15;
 impl NodeRegistry {
     /// 从磁盘加载注册表;文件不存在时返回空注册表(首次部署的合理状态)。
     pub async fn load(path: &Path) -> RegistryResult<Self> {
-        let state = load_registry_state(path).await?;
+        let (state, fingerprint) = load_registry_state_with_fingerprint(path).await?;
 
         Ok(Self {
             path: Arc::new(path.to_path_buf()),
             state: Arc::new(RwLock::new(state)),
+            reload_checkpoint: Arc::new(RwLock::new(RegistryReloadCheckpoint {
+                fingerprint: Some(fingerprint),
+            })),
         })
     }
 
@@ -262,14 +276,37 @@ impl NodeRegistry {
 
     /// 从磁盘重新加载注册表。返回 `Ok(true)` 表示发现了变化。
     pub async fn reload(&self) -> RegistryResult<bool> {
-        let next_state = load_registry_state(self.path.as_path()).await?;
-        let mut state = self.state.write().await;
-        if *state == next_state {
-            return Ok(false);
+        let fingerprint = registry_file_fingerprint(self.path.as_path()).await?;
+        self.reload_from_disk(fingerprint).await
+    }
+
+    pub(crate) async fn reload_if_file_changed(&self) -> RegistryResult<bool> {
+        let fingerprint = registry_file_fingerprint(self.path.as_path()).await?;
+        {
+            let checkpoint = self.reload_checkpoint.read().await;
+            if checkpoint.fingerprint == Some(fingerprint) {
+                return Ok(false);
+            }
         }
 
-        *state = next_state;
-        Ok(true)
+        self.reload_from_disk(fingerprint).await
+    }
+
+    async fn reload_from_disk(
+        &self,
+        fingerprint: storage::RegistryFileFingerprint,
+    ) -> RegistryResult<bool> {
+        let next_state = load_registry_state(self.path.as_path()).await?;
+        let mut state = self.state.write().await;
+        let changed = *state != next_state;
+        if changed {
+            *state = next_state;
+        }
+        drop(state);
+
+        let mut checkpoint = self.reload_checkpoint.write().await;
+        checkpoint.fingerprint = Some(fingerprint);
+        Ok(changed)
     }
 
     /// 已登记的节点数量。

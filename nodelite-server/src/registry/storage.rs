@@ -1,8 +1,8 @@
-use std::fs::{File, OpenOptions};
+use std::fs::{File, Metadata, OpenOptions};
 use std::io::Write;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use chrono::Utc;
 use tokio::fs;
@@ -14,9 +14,68 @@ use super::validate::validate_registry_file;
 use super::{RegistryError, RegistryFile, RegistryResult, RegistryState};
 
 #[cfg(unix)]
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 
 const MAX_REGISTRY_WRITE_RETRIES: usize = 32;
+
+#[cfg(test)]
+static REGISTRY_FILE_READS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(test)]
+pub(super) fn reset_registry_file_read_count() {
+    REGISTRY_FILE_READS.store(0, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[cfg(test)]
+pub(super) fn registry_file_read_count() -> u64 {
+    REGISTRY_FILE_READS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RegistryFileFingerprint {
+    Missing,
+    Present {
+        len: u64,
+        modified: Option<SystemTime>,
+        #[cfg(unix)]
+        dev: u64,
+        #[cfg(unix)]
+        ino: u64,
+    },
+}
+
+pub(super) async fn registry_file_fingerprint(
+    path: &Path,
+) -> RegistryResult<RegistryFileFingerprint> {
+    match fs::metadata(path).await {
+        Ok(metadata) => Ok(RegistryFileFingerprint::from_metadata(&metadata)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(RegistryFileFingerprint::Missing)
+        }
+        Err(error) => Err(RegistryError::io("stat-ing", path, error)),
+    }
+}
+
+pub(super) async fn load_registry_state_with_fingerprint(
+    path: &Path,
+) -> RegistryResult<(RegistryState, RegistryFileFingerprint)> {
+    let fingerprint = registry_file_fingerprint(path).await?;
+    let state = load_registry_state(path).await?;
+    Ok((state, fingerprint))
+}
+
+impl RegistryFileFingerprint {
+    fn from_metadata(metadata: &Metadata) -> Self {
+        Self::Present {
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+            #[cfg(unix)]
+            dev: metadata.dev(),
+            #[cfg(unix)]
+            ino: metadata.ino(),
+        }
+    }
+}
 
 pub(super) async fn load_registry_state(path: &Path) -> RegistryResult<RegistryState> {
     let mut file = load_registry_file(path).await?;
@@ -38,6 +97,9 @@ pub(super) async fn load_registry_state(path: &Path) -> RegistryResult<RegistryS
 }
 
 async fn load_registry_file(path: &Path) -> RegistryResult<RegistryFile> {
+    #[cfg(test)]
+    REGISTRY_FILE_READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
     let content = match fs::read_to_string(path).await {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {

@@ -54,7 +54,7 @@ pub(crate) fn spawn_registry_reloader(
             tokio::select! {
                 _ = shutdown.cancelled() => break,
                 _ = ticker.tick() => {
-                    match registry.reload().await {
+                    match registry.reload_if_file_changed().await {
                         Ok(true) => {
                             readiness.mark_registry_reload_healthy(true);
                             let enrolled_nodes = registry.count().await;
