@@ -15,7 +15,7 @@ use crate::support::{agent_build_version, init_tracing, install_rustls_crypto_pr
 /// 命令行参数。
 #[derive(Debug, Parser)]
 #[command(name = "nodelite-agent")]
-#[command(about = "NodeLite Linux agent")]
+#[command(about = "NodeLite agent for Linux and macOS")]
 struct Cli {
     /// 配置文件路径,默认 `config/agent.toml`。
     #[arg(long, default_value = "config/agent.toml")]
