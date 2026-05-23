@@ -818,6 +818,23 @@
       .arch-svg .small-center { font-size: 12px; fill: var(--text-muted); }
       .arch-svg .tiny-center { font-size: 11px; fill: var(--text-muted); }
       .arch-svg .boundary { fill: rgba(255, 255, 255, 0.64); stroke: rgba(15, 23, 42, 0.18); stroke-width: 1.5; stroke-dasharray: 8 6; }
+      .arch-svg .edge-chip {
+        fill: rgba(255, 255, 255, 0.94);
+        stroke: rgba(148, 163, 184, 0.42);
+        stroke-width: 1;
+      }
+      .arch-svg .edge-chip-soft {
+        fill: rgba(248, 250, 252, 0.94);
+        stroke: rgba(148, 163, 184, 0.32);
+        stroke-width: 1;
+      }
+      .arch-svg .edge-text {
+        font-size: 11px;
+        font-weight: 600;
+        fill: #64748b;
+        text-anchor: middle;
+        letter-spacing: 0.01em;
+      }
       .arch-svg .box-blue { fill: #eaf2ff; stroke: #9cc5ff; stroke-width: 1.4; }
       .arch-svg .box-green { fill: #e9f9ef; stroke: #94e2ad; stroke-width: 1.4; }
       .arch-svg .box-purple { fill: #f2e8ff; stroke: #d8b4fe; stroke-width: 1.4; }
@@ -1673,31 +1690,40 @@ curl -u viewer:secret 'https://monitor.example.com/api/audit-log?event_type=logi
                 <text class="small" x="978" y="202">HTTPS / WSS 终结</text>
                 <rect class="box-blue" x="956" y="250" width="176" height="76" rx="12"></rect>
                 <text class="label" x="978" y="280">Web UI / API</text>
-                <text class="small" x="978" y="304">/ /api/* /metrics</text>
+                <text class="small" x="978" y="304">/ · /api/* · /metrics</text>
                 <rect class="box-yellow" x="956" y="352" width="176" height="102" rx="12"></rect>
                 <text class="label" x="978" y="382">本地持久化</text>
                 <text class="small" x="978" y="406">server.json</text>
                 <text class="small" x="978" y="428">history/audit.sqlite3</text>
 
                 <path class="arrow-green" marker-end="url(#arrow-green)" d="M262 422 C320 422 350 156 428 156"></path>
-                <text class="tiny-center" x="338" y="278">wss / WireMessage</text>
+                <rect class="edge-chip-soft" x="284" y="260" width="110" height="24" rx="12"></rect>
+                <text class="edge-text" x="339" y="276">wss / WireMessage</text>
                 <path class="arrow" marker-end="url(#arrow-main)" d="M592 156 H642"></path>
-                <text class="tiny-center" x="617" y="144">authorize</text>
+                <rect class="edge-chip" x="580" y="128" width="74" height="22" rx="11"></rect>
+                <text class="edge-text" x="617" y="143">authorize</text>
                 <path class="arrow-blue" marker-end="url(#arrow-blue)" d="M523 194 V232"></path>
-                <text class="tiny-center" x="560" y="218">authenticated</text>
+                <rect class="edge-chip" x="507" y="203" width="106" height="22" rx="11"></rect>
+                <text class="edge-text" x="560" y="218">authenticated</text>
                 <path class="arrow-blue" marker-end="url(#arrow-blue)" d="M618 284 H668"></path>
-                <text class="tiny-center" x="642" y="272">update</text>
+                <rect class="edge-chip" x="613" y="257" width="58" height="22" rx="11"></rect>
+                <text class="edge-text" x="642" y="272">update</text>
                 <path class="arrow" marker-end="url(#arrow-main)" d="M750 336 V378"></path>
-                <text class="tiny-center" x="792" y="362">logs / audit</text>
+                <rect class="edge-chip" x="737" y="347" width="110" height="22" rx="11"></rect>
+                <text class="edge-text" x="792" y="362">logs / audit</text>
                 <path class="arrow" marker-end="url(#arrow-main)" d="M523 336 V378"></path>
-                <text class="tiny-center" x="560" y="362">history point</text>
+                <rect class="edge-chip" x="502" y="347" width="116" height="22" rx="11"></rect>
+                <text class="edge-text" x="560" y="362">history point</text>
                 <path class="arrow-blue" marker-end="url(#arrow-blue)" d="M832 284 C878 284 900 288 956 288"></path>
-                <text class="tiny-center" x="894" y="270">read cached view</text>
+                <rect class="edge-chip-soft" x="836" y="255" width="116" height="22" rx="11"></rect>
+                <text class="edge-text" x="894" y="270">read cached view</text>
                 <path class="arrow-blue" marker-end="url(#arrow-blue)" d="M1044 250 V224"></path>
                 <path class="arrow-blue" marker-end="url(#arrow-blue)" d="M956 186 C910 186 900 156 832 156"></path>
-                <text class="tiny-center" x="896" y="134">proxy /ws</text>
+                <rect class="edge-chip-soft" x="854" y="118" width="84" height="22" rx="11"></rect>
+                <text class="edge-text" x="896" y="133">proxy /ws</text>
                 <path class="arrow" marker-end="url(#arrow-main)" d="M737 194 V232"></path>
-                <text class="tiny-center" x="760" y="218">generation</text>
+                <rect class="edge-chip" x="712" y="203" width="96" height="22" rx="11"></rect>
+                <text class="edge-text" x="760" y="218">generation</text>
                 <path class="arrow" marker-end="url(#arrow-main)" d="M592 420 H642"></path>
               </svg>
             </div>
@@ -1772,14 +1798,19 @@ curl -u viewer:secret 'https://monitor.example.com/api/audit-log?event_type=logi
                 <path class="arrow" marker-end="url(#arrow-server)" d="M344 444 H290"></path>
                 <path class="arrow dashed" marker-end="url(#arrow-server)" d="M982 388 C982 352 716 350 716 326"></path>
                 <path class="arrow dashed" marker-end="url(#arrow-server)" d="M982 500 C982 540 716 540 716 500"></path>
-                <text class="tiny-center" x="318" y="196">
+                <rect class="edge-chip-soft" x="264" y="166" width="108" height="34" rx="14"></rect>
+                <text class="edge-text" x="318" y="182">
                   <tspan x="318" dy="0">protected routes</tspan>
                   <tspan x="318" dy="12">read / write</tspan>
                 </text>
-                <text class="tiny-center" x="584" y="196">sanitized status</text>
-                <text class="tiny-center" x="450" y="356">record_status</text>
-                <text class="tiny-center" x="842" y="356">logs / events</text>
-                <text class="tiny-center" x="846" y="542">
+                <rect class="edge-chip" x="530" y="174" width="108" height="22" rx="11"></rect>
+                <text class="edge-text" x="584" y="189">sanitized status</text>
+                <rect class="edge-chip" x="401" y="343" width="98" height="22" rx="11"></rect>
+                <text class="edge-text" x="450" y="358">record_status</text>
+                <rect class="edge-chip" x="787" y="343" width="110" height="22" rx="11"></rect>
+                <text class="edge-text" x="842" y="358">logs / events</text>
+                <rect class="edge-chip-soft" x="786" y="520" width="120" height="34" rx="14"></rect>
+                <text class="edge-text" x="846" y="536">
                   <tspan x="846" dy="0">cleanup missing</tspan>
                   <tspan x="846" dy="12">nodes</tspan>
                 </text>
