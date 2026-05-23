@@ -82,7 +82,9 @@ curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/inst
 
 ## 性能表现
 
-在 4 个被控端的实际运行环境下，以 `v2.1.2` 的实测为例：
+### 运行时占用观察
+
+在 4 个被控端的实际运行环境下，`v2.1.2` 的长期观测值大致如下：
 
 - **服务端内存占用**：4-10 MB
 - **Agent 冷启动内存占用**：约 800 KB
@@ -91,31 +93,58 @@ curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/inst
 
 这些数字是观测值，不是固定上限。当前版本的 Agent 常驻内存会随着运行时长增加而缓慢上升，因此 `800-1000 KB` 更适合被理解为冷启动基线，而不是长时间运行后的稳定占用。
 
-服务端整体仍然很轻，压测吞吐和延迟表现也保持在较低水平，但如果你对 Agent 的长期常驻内存敏感，建议在自己的环境中持续观察 RSS 变化并预留余量。
+如果你对 Agent 的长期常驻内存敏感，建议在自己的环境中持续观察 RSS 变化并预留余量。
 
-### 压测基线
+### 2026-05-23 release 压测基线
 
-下面这组数据来自仓库内置的真实 loopback 压测：
+下面这组数据来自 2026-05-23 对当前版本执行的仓库内置 loopback 压测，使用 release 构建直接实测：
 
 ```bash
-cargo test -p nodelite-server load_test_scaling_scores -- --ignored --nocapture
+cargo test -p nodelite-server --release load_test_scaling_scores -- --ignored --nocapture
+cargo test -p nodelite-server --release load_test_api_surface_scores -- --ignored --nocapture
+cargo test -p nodelite-server --release load_test_reconnect_storm_scores -- --ignored --nocapture
 ```
 
-测试机为 `Apple M1 Pro / 32 GB`，通过真实 WebSocket 建链、真实 `metrics` 上报和真实 `/api/overview` 轮询得到以下基线成绩：
+测试机：`Apple M1 Pro / 32 GB / macOS 26.5`
+
+这组基线走的是真实 WebSocket 建链、真实 `metrics` 上报和真实只读 API 轮询，但仍然是单机 loopback，不包含反向代理、TLS 终结和跨机网络抖动。
+
+#### 吞吐与总览延迟
 
 | 节点数 | 全部接入耗时 | 收敛耗时 | 总 metrics 数 | metrics 吞吐 | overview p50 | overview p95 | overview max |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 20 | 4.4 ms | 20.9 ms | 240 | 11461.3/s | 0.70 ms | 1.20 ms | 1.74 ms |
-| 50 | 14.3 ms | 43.3 ms | 600 | 13860.1/s | 1.22 ms | 1.73 ms | 4.50 ms |
-| 100 | 9.8 ms | 88.1 ms | 1200 | 13617.9/s | 0.94 ms | 6.77 ms | 7.77 ms |
-| 200 | 36.9 ms | 128.5 ms | 2400 | 18677.0/s | 1.02 ms | 3.81 ms | 12.17 ms |
+| 20 | 78.0 ms | 21.0 ms | 240 | 11406.7/s | 0.52 ms | 0.89 ms | 1.18 ms |
+| 50 | 162.1 ms | 22.2 ms | 600 | 26980.0/s | 0.46 ms | 0.91 ms | 1.53 ms |
+| 100 | 280.6 ms | 21.6 ms | 1200 | 55458.6/s | 0.63 ms | 5.28 ms | 6.53 ms |
+| 200 | 545.9 ms | 22.2 ms | 2400 | 107925.6/s | 0.54 ms | 4.10 ms | 4.37 ms |
+
+#### 200 节点读接口延迟
+
+`load_test_api_surface_scores` 在 steady-state 下持续上报 `3600` 条 metrics，同时对只读 API 做 20 轮采样；其中历史接口返回的是一个节点 `360` 个种子历史点对应的精确时间区间。
+
+| 接口 | p50 | p95 | max |
+| --- | ---: | ---: | ---: |
+| `/api/overview` | 0.59 ms | 2.27 ms | 2.92 ms |
+| `/api/nodes` | 1.05 ms | 4.02 ms | 10.05 ms |
+| `/api/nodes/{node_id}` | 0.59 ms | 2.93 ms | 3.63 ms |
+| `/api/nodes/{node_id}/history` | 1.35 ms | 3.29 ms | 3.62 ms |
+
+#### 200 节点重连风暴
+
+`load_test_reconnect_storm_scores` 会把 `200` 个节点连续拉起和断开 `4` 轮，共计 `800` 次会话建立。当前版本在这组压力下的关键指标如下：
+
+- **批量接入 p95**：875.34 ms
+- **最后一轮指标恢复 p95**：66.62 ms
+- **批量断开完成 p95**：22.47 ms
+- **风暴期间 `/api/overview` p95**：2.77 ms
+- **风暴期间 `/api/nodes` p95**：3.10 ms
 
 说明：
 
 - 这里的“接入耗时”指批量节点建立 WebSocket 并完成认证的时间。
-- “收敛耗时”指最后一轮指标上报与面板总览 API 延迟稳定下来的时间。
-- 这组成绩主要用于公开展示项目的量级感，不等同于生产 SLA。
-- 实际表现会受到构建模式、反向代理、SQLite I/O、历史保留时长和宿主机网络条件影响。
+- “收敛耗时”指最后一轮指标上报完成、服务端状态更新到位的时间。
+- 这组成绩主要用于展示当前版本的大致量级感，不等同于生产 SLA。
+- 实际表现会受到构建模式、反向代理、SQLite I/O、历史保留时长、TLS 和宿主机网络条件影响。
 
 ## 当前能力
 
