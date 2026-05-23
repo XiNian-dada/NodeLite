@@ -210,17 +210,20 @@ fn parse_cpu_sample(content: &str) -> Result<CpuSample> {
         .lines()
         .find(|line| line.starts_with("cpu "))
         .ok_or_else(|| anyhow!("missing aggregate cpu line"))?;
-    let values: Vec<u64> = line
-        .split_whitespace()
-        .skip(1)
-        .map(|value| value.parse::<u64>())
-        .collect::<Result<Vec<_>, _>>()
-        .context("invalid cpu counter")?;
-    if values.len() < 5 {
+    let mut total = 0_u64;
+    let mut idle = 0_u64;
+    let mut counter_count = 0_usize;
+    for (index, raw_value) in line.split_whitespace().skip(1).enumerate() {
+        let value = raw_value.parse::<u64>().context("invalid cpu counter")?;
+        total = total.saturating_add(value);
+        if index == 3 || index == 4 {
+            idle = idle.saturating_add(value);
+        }
+        counter_count += 1;
+    }
+    if counter_count < 5 {
         return Err(anyhow!("expected at least 5 cpu counters"));
     }
-    let total = values.iter().copied().sum();
-    let idle = values[3] + values.get(4).copied().unwrap_or(0);
     Ok(CpuSample { total, idle })
 }
 
@@ -237,60 +240,85 @@ fn compute_cpu_usage(previous: CpuSample, current: CpuSample) -> f64 {
 
 /// 解析 `/proc/loadavg` 的前三个字段(1/5/15 分钟平均负载)。
 fn parse_load_average(content: &str) -> Result<LoadAverage> {
-    let values: Vec<f64> = content
-        .split_whitespace()
-        .take(3)
-        .map(|value| value.parse::<f64>())
-        .collect::<Result<Vec<_>, _>>()
-        .context("invalid load average")?;
-    if values.len() != 3 {
-        return Err(anyhow!("expected 3 load average values"));
-    }
-    Ok(LoadAverage {
-        one: values[0],
-        five: values[1],
-        fifteen: values[2],
-    })
+    let mut fields = content.split_whitespace();
+    let one = parse_next_load_field(&mut fields, "1m")?;
+    let five = parse_next_load_field(&mut fields, "5m")?;
+    let fifteen = parse_next_load_field(&mut fields, "15m")?;
+    Ok(LoadAverage { one, five, fifteen })
+}
+
+fn parse_next_load_field<'a>(
+    fields: &mut impl Iterator<Item = &'a str>,
+    label: &str,
+) -> Result<f64> {
+    fields
+        .next()
+        .ok_or_else(|| anyhow!("expected 3 load average values"))?
+        .parse::<f64>()
+        .with_context(|| format!("invalid {label} load average"))
 }
 
 /// 解析 `/proc/meminfo`,把字段单位从 KB 转换为字节。
 ///
 /// `MemAvailable` 若缺失(老内核),则用 `MemFree + Buffers + Cached` 兜底。
 fn parse_memory_usage(content: &str) -> Result<MemoryUsage> {
-    let mut values = std::collections::HashMap::new();
+    let mut mem_total_bytes = None;
+    let mut mem_available_bytes = None;
+    let mut mem_free_bytes = None;
+    let mut buffers_bytes = None;
+    let mut cached_bytes = None;
+    let mut swap_total_bytes = None;
+    let mut swap_free_bytes = None;
+
     for line in content.lines() {
-        let mut parts = line.split(':');
-        let Some(key) = parts.next() else {
+        let Some((key, raw_value)) = line.split_once(':') else {
             continue;
         };
-        let Some(raw_value) = parts.next() else {
+        if !matches!(
+            key,
+            "MemTotal"
+                | "MemAvailable"
+                | "MemFree"
+                | "Buffers"
+                | "Cached"
+                | "SwapTotal"
+                | "SwapFree"
+        ) {
             continue;
-        };
+        }
         let kilobytes = raw_value
             .split_whitespace()
             .next()
             .ok_or_else(|| anyhow!("missing meminfo value for {key}"))?
             .parse::<u64>()
             .with_context(|| format!("invalid meminfo value for {key}"))?;
-        values.insert(key.to_string(), kilobytes * 1024);
+        let bytes = kilobytes.saturating_mul(1024);
+        match key {
+            "MemTotal" => mem_total_bytes = Some(bytes),
+            "MemAvailable" => mem_available_bytes = Some(bytes),
+            "MemFree" => mem_free_bytes = Some(bytes),
+            "Buffers" => buffers_bytes = Some(bytes),
+            "Cached" => cached_bytes = Some(bytes),
+            "SwapTotal" => swap_total_bytes = Some(bytes),
+            "SwapFree" => swap_free_bytes = Some(bytes),
+            _ => {}
+        }
     }
 
-    let total_bytes = *values
-        .get("MemTotal")
-        .ok_or_else(|| anyhow!("MemTotal missing from /proc/meminfo"))?;
-    let available_bytes = values
-        .get("MemAvailable")
-        .copied()
+    let total_bytes =
+        mem_total_bytes.ok_or_else(|| anyhow!("MemTotal missing from /proc/meminfo"))?;
+    let available_bytes = mem_available_bytes
         .or_else(|| {
-            let free = values.get("MemFree")?;
-            let buffers = values.get("Buffers").copied().unwrap_or(0);
-            let cached = values.get("Cached").copied().unwrap_or(0);
-            Some(free + buffers + cached)
+            Some(
+                mem_free_bytes?
+                    .saturating_add(buffers_bytes.unwrap_or(0))
+                    .saturating_add(cached_bytes.unwrap_or(0)),
+            )
         })
         .ok_or_else(|| anyhow!("unable to infer available memory"))?;
     let used_bytes = total_bytes.saturating_sub(available_bytes);
-    let swap_total_bytes = values.get("SwapTotal").copied().unwrap_or(0);
-    let swap_free_bytes = values.get("SwapFree").copied().unwrap_or(0);
+    let swap_total_bytes = swap_total_bytes.unwrap_or(0);
+    let swap_free_bytes = swap_free_bytes.unwrap_or(0);
 
     Ok(MemoryUsage {
         total_bytes,
@@ -314,22 +342,38 @@ fn parse_network_totals(content: &str) -> Result<NetworkTotals> {
         if iface.trim() == "lo" {
             continue;
         }
-        let fields: Vec<u64> = counters
-            .split_whitespace()
-            .map(|value| value.parse::<u64>())
-            .collect::<Result<Vec<_>, _>>()
-            .context("invalid network counter")?;
-        if fields.len() < 16 {
-            return Err(anyhow!(
-                "expected 16 network counters for interface {}",
-                iface.trim()
-            ));
-        }
-        rx_bytes = rx_bytes.saturating_add(fields[0]);
-        tx_bytes = tx_bytes.saturating_add(fields[8]);
+        let (iface_rx_bytes, iface_tx_bytes) = parse_network_line_counters(counters, iface.trim())?;
+        rx_bytes = rx_bytes.saturating_add(iface_rx_bytes);
+        tx_bytes = tx_bytes.saturating_add(iface_tx_bytes);
     }
 
     Ok(NetworkTotals { rx_bytes, tx_bytes })
+}
+
+fn parse_network_line_counters(counters: &str, iface: &str) -> Result<(u64, u64)> {
+    let mut rx_bytes = None;
+    let mut tx_bytes = None;
+    let mut counter_count = 0_usize;
+
+    for (index, raw_value) in counters.split_whitespace().enumerate() {
+        let value = raw_value
+            .parse::<u64>()
+            .context("invalid network counter")?;
+        if index == 0 {
+            rx_bytes = Some(value);
+        } else if index == 8 {
+            tx_bytes = Some(value);
+        }
+        counter_count += 1;
+    }
+
+    if counter_count < 16 {
+        return Err(anyhow!(
+            "expected 16 network counters for interface {iface}"
+        ));
+    }
+
+    Ok((rx_bytes.unwrap_or(0), tx_bytes.unwrap_or(0)))
 }
 
 /// 用两次采样的时间差与累计字节差,折算成每秒速率;
@@ -362,13 +406,19 @@ fn collect_disks(mounts_path: &str) -> Result<Vec<DiskUsage>> {
     let mut disks = Vec::new();
 
     for line in content.lines() {
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        if fields.len() < 3 {
+        let mut fields = line.split_whitespace();
+        let Some(raw_device) = fields.next() else {
             continue;
-        }
-        let device = unescape_mount_field(fields[0]);
-        let mount_point = unescape_mount_field(fields[1]);
-        let fs_type = fields[2].to_string();
+        };
+        let Some(raw_mount_point) = fields.next() else {
+            continue;
+        };
+        let Some(raw_fs_type) = fields.next() else {
+            continue;
+        };
+        let device = unescape_mount_field(raw_device);
+        let mount_point = unescape_mount_field(raw_mount_point);
+        let fs_type = raw_fs_type.to_string();
 
         if ignored_filesystems().contains(&fs_type.as_str())
             || !seen_mounts.insert(mount_point.clone())
