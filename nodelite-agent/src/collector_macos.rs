@@ -21,6 +21,7 @@ use tracing::warn;
 pub struct HostCollector {
     previous_cpu: Option<CpuSample>,
     previous_network: Option<NetworkSample>,
+    network_interfaces: NetworkInterfaceCache,
 }
 
 /// 一次 CPU 采样的总 tick 与 idle tick。
@@ -45,6 +46,14 @@ struct NetworkTotals {
     tx_bytes: u64,
 }
 
+/// macOS 的完整接口列表来自 `NET_RT_IFLIST2`,返回体会随 VPN/虚拟网卡变化。
+/// 稳态下只保留 up/non-loopback 的 index,后续每轮用 `IFMIB_IFDATA` 轻量读取计数。
+#[derive(Debug, Default)]
+struct NetworkInterfaceCache {
+    list_len: Option<usize>,
+    indices: Vec<u16>,
+}
+
 #[repr(C)]
 struct IfMibData {
     ifmd_name: [libc::c_char; libc::IFNAMSIZ],
@@ -65,6 +74,7 @@ pub fn new_collector() -> HostCollector {
     HostCollector {
         previous_cpu: None,
         previous_network: None,
+        network_interfaces: NetworkInterfaceCache::default(),
     }
 }
 
@@ -104,7 +114,7 @@ impl HostCollector {
             .map(|previous| compute_cpu_usage(previous, cpu_sample));
         self.previous_cpu = Some(cpu_sample);
 
-        let network_totals = match collect_network_totals() {
+        let network_totals = match collect_network_totals(&mut self.network_interfaces) {
             Ok(totals) => totals,
             Err(error) => {
                 warn!(error = ?error, "failed to collect macOS network counters; using zeros");
@@ -486,18 +496,20 @@ fn ignored_mount_point(mount_point: &str) -> bool {
     )
 }
 
-fn collect_network_totals() -> Result<NetworkTotals> {
-    collect_network_totals_via_sysctl().or_else(|error| {
+fn collect_network_totals(cache: &mut NetworkInterfaceCache) -> Result<NetworkTotals> {
+    collect_network_totals_via_sysctl(cache).or_else(|error| {
         warn!(
             error = ?error,
             "failed to read macOS network counters via sysctl; falling back to getifaddrs",
         );
+        cache.clear();
         collect_network_totals_via_ifaddrs()
     })
 }
 
-/// 优先用 `NET_RT_IFLIST2` + `IFMIB_IFDATA` 读取 64-bit 网卡计数。
-fn collect_network_totals_via_sysctl() -> Result<NetworkTotals> {
+/// 优先用缓存接口 index + `IFMIB_IFDATA` 读取 64-bit 网卡计数。
+/// 接口列表长度变化时再重读完整 `NET_RT_IFLIST2` buffer,刷新缓存。
+fn collect_network_totals_via_sysctl(cache: &mut NetworkInterfaceCache) -> Result<NetworkTotals> {
     let mut mib = [libc::CTL_NET, libc::PF_ROUTE, 0, 0, libc::NET_RT_IFLIST2, 0];
     let mut len = 0_usize;
     let size_result = unsafe {
@@ -514,6 +526,29 @@ fn collect_network_totals_via_sysctl() -> Result<NetworkTotals> {
         return Err(anyhow!("sysctl NET_RT_IFLIST2 size query failed"));
     }
 
+    if cache.can_sample_cached_indices(len) {
+        match collect_cached_network_totals(cache) {
+            Ok(totals) => return Ok(totals),
+            Err(error) => {
+                warn!(
+                    error = ?error,
+                    "failed to read cached macOS interface counters; refreshing interface list",
+                );
+                cache.clear();
+            }
+        }
+    }
+
+    let (totals, indices) = collect_network_totals_and_indices_via_iflist2(&mut mib, len)?;
+    cache.list_len = Some(len);
+    cache.indices = indices;
+    Ok(totals)
+}
+
+fn collect_network_totals_and_indices_via_iflist2(
+    mib: &mut [libc::c_int; 6],
+    mut len: usize,
+) -> Result<(NetworkTotals, Vec<u16>)> {
     let mut buffer = vec![0_u8; len];
     let read_result = unsafe {
         libc::sysctl(
@@ -529,15 +564,8 @@ fn collect_network_totals_via_sysctl() -> Result<NetworkTotals> {
         return Err(anyhow!("sysctl NET_RT_IFLIST2 read failed"));
     }
 
-    let mut mib_data = [
-        libc::CTL_NET,
-        libc::PF_LINK,
-        NETLINK_GENERIC,
-        IFMIB_IFDATA,
-        0,
-        IFDATA_GENERAL,
-    ];
     let mut seen_indices = HashSet::new();
+    let mut indices = Vec::new();
     let mut rx_bytes = 0_u64;
     let mut tx_bytes = 0_u64;
     let mut next = buffer.as_ptr();
@@ -558,36 +586,72 @@ fn collect_network_totals_via_sysctl() -> Result<NetworkTotals> {
                 && flags & libc::IFF_UP != 0
                 && seen_indices.insert(index)
             {
-                mib_data[4] = index as _;
-                let mut if_data = MaybeUninit::<IfMibData>::uninit();
-                let mut size = mem::size_of::<IfMibData>();
-                let result = unsafe {
-                    libc::sysctl(
-                        mib_data.as_mut_ptr(),
-                        mib_data.len() as _,
-                        if_data.as_mut_ptr().cast(),
-                        &mut size,
-                        ptr::null_mut(),
-                        0,
-                    )
-                };
-
-                if result == 0 && size >= mem::size_of::<IfMibData>() {
-                    let if_data = unsafe { if_data.assume_init() };
-                    rx_bytes = rx_bytes.saturating_add(if_data.ifmd_data.ifi_ibytes);
-                    tx_bytes = tx_bytes.saturating_add(if_data.ifmd_data.ifi_obytes);
-                } else {
-                    let data = unsafe { &(*ifm2).ifm_data };
-                    rx_bytes = rx_bytes.saturating_add(data.ifi_ibytes);
-                    tx_bytes = tx_bytes.saturating_add(data.ifi_obytes);
-                }
+                indices.push(index);
+                let data = unsafe { &(*ifm2).ifm_data };
+                rx_bytes = rx_bytes.saturating_add(data.ifi_ibytes);
+                tx_bytes = tx_bytes.saturating_add(data.ifi_obytes);
             }
         }
 
         next = unsafe { next.add(message_len) };
     }
 
+    Ok((NetworkTotals { rx_bytes, tx_bytes }, indices))
+}
+
+fn collect_cached_network_totals(cache: &NetworkInterfaceCache) -> Result<NetworkTotals> {
+    let mut rx_bytes = 0_u64;
+    let mut tx_bytes = 0_u64;
+    for index in &cache.indices {
+        let data = collect_interface_data(*index)?;
+        if data.ifmd_flags & libc::IFF_LOOPBACK as libc::c_uint != 0
+            || data.ifmd_flags & libc::IFF_UP as libc::c_uint == 0
+        {
+            return Err(anyhow!("cached interface {index} changed flags"));
+        }
+        rx_bytes = rx_bytes.saturating_add(data.ifmd_data.ifi_ibytes);
+        tx_bytes = tx_bytes.saturating_add(data.ifmd_data.ifi_obytes);
+    }
     Ok(NetworkTotals { rx_bytes, tx_bytes })
+}
+
+fn collect_interface_data(index: u16) -> Result<IfMibData> {
+    let mut mib_data = [
+        libc::CTL_NET,
+        libc::PF_LINK,
+        NETLINK_GENERIC,
+        IFMIB_IFDATA,
+        index as libc::c_int,
+        IFDATA_GENERAL,
+    ];
+    let mut if_data = MaybeUninit::<IfMibData>::uninit();
+    let mut size = mem::size_of::<IfMibData>();
+    let result = unsafe {
+        libc::sysctl(
+            mib_data.as_mut_ptr(),
+            mib_data.len() as _,
+            if_data.as_mut_ptr().cast(),
+            &mut size,
+            ptr::null_mut(),
+            0,
+        )
+    };
+
+    if result != 0 || size < mem::size_of::<IfMibData>() {
+        return Err(anyhow!("sysctl IFMIB_IFDATA failed for interface {index}"));
+    }
+    Ok(unsafe { if_data.assume_init() })
+}
+
+impl NetworkInterfaceCache {
+    fn can_sample_cached_indices(&self, current_list_len: usize) -> bool {
+        self.list_len == Some(current_list_len) && !self.indices.is_empty()
+    }
+
+    fn clear(&mut self) {
+        self.list_len = None;
+        self.indices.clear();
+    }
 }
 
 fn collect_network_totals_via_ifaddrs() -> Result<NetworkTotals> {
@@ -656,7 +720,10 @@ fn compute_network_rates(
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_available_memory_bytes, compute_network_rates, extract_plist_value};
+    use super::{
+        NetworkInterfaceCache, compute_available_memory_bytes, compute_network_rates,
+        extract_plist_value,
+    };
     use std::time::{Duration, Instant};
 
     #[test]
@@ -695,6 +762,21 @@ mod tests {
         let (rx_rate, tx_rate) = compute_network_rates(previous, Instant::now(), current);
         assert!(rx_rate.unwrap() > 50.0);
         assert!(tx_rate.unwrap() > 20.0);
+    }
+
+    #[test]
+    fn network_interface_cache_only_matches_same_non_empty_list() {
+        let mut cache = NetworkInterfaceCache {
+            list_len: Some(4096),
+            indices: vec![4, 5],
+        };
+
+        assert!(cache.can_sample_cached_indices(4096));
+        assert!(!cache.can_sample_cached_indices(4097));
+
+        cache.clear();
+        assert!(!cache.can_sample_cached_indices(4096));
+        assert!(cache.indices.is_empty());
     }
 
     #[test]
