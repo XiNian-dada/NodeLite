@@ -10,7 +10,7 @@ NodeLite 是一个用 Rust 编写的轻量级服务器监控面板，包含：
 - `nodelite-server`
   中心服务，提供 WebSocket 接入、只读页面、只读 JSON API、SQLite 短期历史和快照恢复。
 - `nodelite-agent`
-  Linux agent，采集 CPU、负载、内存、磁盘、网络总流量、实时速率和 WebSocket RTT。
+  Linux / macOS agent，采集 CPU、负载、内存、磁盘、网络总流量、实时速率和 WebSocket RTT。
 - `nodelite-proto`
   服务端与 agent 共用的配置、协议和数据模型。
 
@@ -56,7 +56,7 @@ curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/inst
 - `nodelite-server`
   推荐部署在 Linux（systemd 环境），官方发布产物提供 `x86_64-unknown-linux-musl` 与 `aarch64-unknown-linux-musl`
 - `nodelite-agent`
-  当前仅支持 Linux
+  支持 Linux 与 macOS；其中一键安装脚本和官方发布二进制当前仍仅覆盖 Linux，macOS 建议源码运行
 - 反向代理
   推荐使用 Nginx 或 Caddy 终结 HTTPS / WSS
 
@@ -638,7 +638,7 @@ sh scripts/install-agent.sh \
 
 ## 手工 Agent 启动
 
-如果你暂时不想用安装脚本，也可以手工部署 agent。
+如果你暂时不想用安装脚本，也可以手工部署 agent。macOS 当前推荐走这一种方式。
 
 1. 复制配置：
 
@@ -653,6 +653,8 @@ cp config/agent.example.toml config/agent.toml
 ```bash
 cargo run -p nodelite-agent -- --config config/agent.toml --sample-once
 ```
+
+这一步现在同时适用于 Linux 和 macOS；首次采样时 CPU 百分比与网络速率会因为没有上一轮基线而显示为 `0` / `null`，属于正常现象。
 
 4. 正常运行：
 
