@@ -40,6 +40,8 @@ pub(super) async fn handle_socket(
             .await,
         session_token: hello.token,
         session_generation: authorized.generation,
+        token_expires_at: authorized.token_expires_at,
+        registry_revision: authorized.registry_revision,
     };
 
     info!(
