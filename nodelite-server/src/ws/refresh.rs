@@ -51,6 +51,8 @@ pub(crate) async fn handle_refresh_request(
                 .map_err(|error| anyhow!("failed to send refresh response: {error}"))?;
             session.session_token = new_token;
             session.session_generation = new_generation;
+            session.token_expires_at = Some(expires_at);
+            session.registry_revision = state.registry.registry_revision();
             info!(node_id = %session.node_id, "token refreshed successfully");
         }
         Err(error) => {
@@ -73,28 +75,53 @@ pub(crate) async fn handle_refresh_request(
 
 pub(crate) async fn ensure_current_token(
     state: &AppState,
-    session: &ActiveSession,
+    session: &mut ActiveSession,
     log_message: &str,
 ) -> bool {
-    if state
-        .registry
-        .is_token_current(&session.node_id, session.session_generation)
-        .await
+    if session.registry_revision == state.registry.registry_revision()
+        && session
+            .token_expires_at
+            .is_none_or(|expires_at| Utc::now() < expires_at)
     {
         return true;
     }
+
+    let Some(status) = state.registry.token_status(&session.node_id).await else {
+        warn!(node_id = %session.node_id, "{log_message}");
+        return false;
+    };
+    if status.generation == session.session_generation {
+        session.token_expires_at = status.token_expires_at;
+        session.registry_revision = status.registry_revision;
+        return true;
+    }
+
     warn!(node_id = %session.node_id, "{log_message}");
     false
 }
 
 pub(crate) async fn should_refresh_agent_token(
     registry: &NodeRegistry,
-    node_id: &str,
+    session: &mut ActiveSession,
 ) -> Result<bool> {
     let refresh_after = Utc::now() + ChronoDuration::days(AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS);
-    Ok(registry
-        .token_expires_at(node_id)
-        .await
+    if session.registry_revision == registry.registry_revision() {
+        return Ok(session
+            .token_expires_at
+            .is_none_or(|expires_at| expires_at <= refresh_after));
+    }
+
+    let Some(status) = registry.token_status(&session.node_id).await else {
+        return Ok(true);
+    };
+    if status.generation != session.session_generation {
+        return Ok(false);
+    }
+
+    session.token_expires_at = status.token_expires_at;
+    session.registry_revision = status.registry_revision;
+    Ok(session
+        .token_expires_at
         .is_none_or(|expires_at| expires_at <= refresh_after))
 }
 
@@ -109,14 +136,13 @@ pub(crate) async fn should_refresh_agent_token(
 pub(crate) async fn refresh_session_token(
     sender: &mut futures::stream::SplitSink<WebSocket, Message>,
     registry: &NodeRegistry,
-    node_id: &str,
-    session_token: &mut String,
-    session_generation: &mut u64,
+    session: &mut ActiveSession,
     trigger: &str,
 ) -> Result<DateTime<Utc>> {
-    let (new_token, expires_at, new_generation) = registry.refresh_token(node_id).await?;
+    let node_id = session.node_id.clone();
+    let (new_token, expires_at, new_generation) = registry.refresh_token(&node_id).await?;
     info!(
-        node_id = %node_id,
+        node_id = %session.node_id,
         trigger,
         expires_at = %expires_at.to_rfc3339(),
         generation = new_generation,
@@ -134,7 +160,9 @@ pub(crate) async fn refresh_session_token(
         .send(Message::Text(payload.into()))
         .await
         .map_err(|error| anyhow!("failed to send token refresh response: {error}"))?;
-    *session_token = new_token;
-    *session_generation = new_generation;
+    session.session_token = new_token;
+    session.session_generation = new_generation;
+    session.token_expires_at = Some(expires_at);
+    session.registry_revision = registry.registry_revision();
     Ok(expires_at)
 }

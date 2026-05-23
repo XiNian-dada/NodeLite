@@ -186,7 +186,7 @@ async fn handle_wire_message(
 async fn handle_metrics_message(
     state: &AppState,
     shared: &crate::state::SharedState,
-    session: &ActiveSession,
+    session: &mut ActiveSession,
     loop_state: &mut SessionLoopState,
     snapshot: nodelite_proto::NodeSnapshot,
 ) -> Result<LoopAction, super::ProtocolError> {
@@ -241,7 +241,7 @@ async fn handle_metrics_message(
 
 async fn handle_agent_logs_message(
     state: &AppState,
-    session: &ActiveSession,
+    session: &mut ActiveSession,
     entries: Vec<nodelite_proto::AgentLogEntry>,
 ) -> Result<LoopAction, super::ProtocolError> {
     if !ensure_current_token(
@@ -276,7 +276,7 @@ async fn handle_agent_logs_message(
 async fn handle_pong_message(
     shared: &crate::state::SharedState,
     state: &AppState,
-    session: &ActiveSession,
+    session: &mut ActiveSession,
     loop_state: &mut SessionLoopState,
     nonce: u64,
 ) -> Result<LoopAction, super::ProtocolError> {
@@ -317,30 +317,19 @@ async fn handle_session_command(
         SessionCommand::RefreshToken {
             response,
             refresh_permit: _refresh_permit,
-        } => {
-            match refresh_session_token(
-                sender,
-                &state.registry,
-                &session.node_id,
-                &mut session.session_token,
-                &mut session.session_generation,
-                "manual",
-            )
-            .await
-            {
-                Ok(expires_at) => {
-                    let _ = response.send(Ok(SessionRefreshReply {
-                        token_expires_at: expires_at,
-                    }));
-                    Ok(LoopAction::Continue)
-                }
-                Err(error) => {
-                    let message = error.to_string();
-                    let _ = response.send(Err(message));
-                    Err(super::ProtocolError::Server(error))
-                }
+        } => match refresh_session_token(sender, &state.registry, session, "manual").await {
+            Ok(expires_at) => {
+                let _ = response.send(Ok(SessionRefreshReply {
+                    token_expires_at: expires_at,
+                }));
+                Ok(LoopAction::Continue)
             }
-        }
+            Err(error) => {
+                let message = error.to_string();
+                let _ = response.send(Err(message));
+                Err(super::ProtocolError::Server(error))
+            }
+        },
     }
 }
 
@@ -371,16 +360,8 @@ async fn handle_ping_tick(
     {
         return Ok(LoopAction::Break);
     }
-    if should_refresh_agent_token(&state.registry, &session.node_id).await? {
-        refresh_session_token(
-            sender,
-            &state.registry,
-            &session.node_id,
-            &mut session.session_token,
-            &mut session.session_generation,
-            "pre-expiry",
-        )
-        .await?;
+    if should_refresh_agent_token(&state.registry, session).await? {
+        refresh_session_token(sender, &state.registry, session, "pre-expiry").await?;
     }
 
     prune_outstanding_pings(

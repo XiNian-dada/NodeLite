@@ -20,6 +20,7 @@ use std::net::{IpAddr, SocketAddr};
 use axum::extract::{ConnectInfo, State, WebSocketUpgrade};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
+use chrono::{DateTime, Utc};
 use serde_json::json;
 use tracing::{error, warn};
 
@@ -40,6 +41,8 @@ struct ActiveSession {
     session_id: u64,
     session_token: String,
     session_generation: u64,
+    token_expires_at: Option<DateTime<Utc>>,
+    registry_revision: u64,
 }
 
 enum LoopAction {
@@ -122,15 +125,22 @@ fn header_user_agent(headers: &HeaderMap) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     use axum::extract::ws::Message;
+    use chrono::Utc;
     use nodelite_proto::{HelloMessage, NodeIdentity, WIRE_PROTOCOL_VERSION, WireMessage};
+    use tokio::sync::oneshot;
 
+    use super::refresh::ensure_current_token;
     use super::{
-        ParsedFrame, ProtocolError, encode_ping_message, parse_wire_message,
+        ActiveSession, ParsedFrame, ProtocolError, encode_ping_message, parse_wire_message,
         prune_outstanding_pings,
     };
+    use crate::registry::{IssueNodeRequest, issue_node};
+    use crate::test_support::test_server_config;
 
     fn hello_text_frame() -> Message {
         let hello = WireMessage::Hello(HelloMessage {
@@ -154,6 +164,132 @@ mod tests {
                 .expect("hello should serialize")
                 .into(),
         )
+    }
+
+    #[tokio::test]
+    async fn token_check_fast_path_does_not_wait_for_registry_lock() {
+        let (state, mut session, temp_dir) = session_fixture("token-fast-path")
+            .await
+            .expect("session fixture should build");
+        let (acquired_tx, acquired_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        let registry = state.registry.clone();
+        let lock_task = tokio::spawn(async move {
+            registry
+                .hold_state_write_lock_for_test(acquired_tx, release_rx)
+                .await;
+        });
+        acquired_rx
+            .await
+            .expect("registry write lock should be held");
+
+        let current = tokio::time::timeout(
+            Duration::from_millis(200),
+            ensure_current_token(&state, &mut session, "token should remain current"),
+        )
+        .await
+        .expect("token check should stay on the lock-free fast path");
+        assert!(current);
+
+        let _ = release_tx.send(());
+        lock_task.await.expect("lock task should finish");
+        let _ = tokio::fs::remove_dir_all(temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn token_check_revalidates_after_registry_revision_changes() {
+        let (state, mut session, temp_dir) = session_fixture("token-revision")
+            .await
+            .expect("session fixture should build");
+
+        issue_node(
+            state.registry.path(),
+            IssueNodeRequest {
+                node_id: session.node_id.clone(),
+                node_label: Some(session.node_label.clone()),
+                tags: Vec::new(),
+            },
+        )
+        .await
+        .expect("node token should rotate");
+        assert!(
+            state
+                .registry
+                .reload()
+                .await
+                .expect("reload should detect rotation")
+        );
+
+        let current =
+            ensure_current_token(&state, &mut session, "token should be stale after rotation")
+                .await;
+        assert!(!current);
+
+        let _ = tokio::fs::remove_dir_all(temp_dir).await;
+    }
+
+    async fn session_fixture(
+        test_name: &str,
+    ) -> anyhow::Result<(crate::AppState, ActiveSession, PathBuf)> {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("nodelite-ws-{test_name}-{unique}"));
+        tokio::fs::create_dir_all(&temp_dir).await?;
+        let registry_path = temp_dir.join("server.json");
+        let history_path = temp_dir.join("history.sqlite3");
+        let snapshot_path = temp_dir.join("snapshot.json");
+        let config = Arc::new(test_server_config(
+            "127.0.0.1:0".parse()?,
+            "http://127.0.0.1:0".to_string(),
+            registry_path.clone(),
+            history_path,
+            snapshot_path,
+        ));
+
+        let issued = issue_node(
+            &registry_path,
+            IssueNodeRequest {
+                node_id: "hk-01".to_string(),
+                node_label: Some("Hong Kong 01".to_string()),
+                tags: Vec::new(),
+            },
+        )
+        .await?;
+        let state =
+            crate::AppState::test_fixture(config, Arc::new(temp_dir.join("server.toml"))).await?;
+        let identity = NodeIdentity {
+            node_id: issued.node.node_id.clone(),
+            node_label: issued.node.node_label.clone(),
+            hostname: "hk-01.example.internal".to_string(),
+            os: "Linux".to_string(),
+            kernel_version: None,
+            cpu_model: None,
+            cpu_cores: 2,
+            agent_version: "0.1.0-test".to_string(),
+            boot_time: None,
+            tags: Vec::new(),
+        };
+        let authorized = state
+            .registry
+            .authorize(&identity, &issued.node_session_token)
+            .await?;
+        let session = ActiveSession {
+            node_id: authorized.identity.node_id.clone(),
+            node_label: authorized.identity.node_label.clone(),
+            session_id: state
+                .shared
+                .register_node(authorized.identity, Some("127.0.0.1".to_string()))
+                .await,
+            session_token: issued.node_session_token,
+            session_generation: authorized.generation,
+            token_expires_at: authorized
+                .token_expires_at
+                .or(Some(Utc::now() + chrono::Duration::days(30))),
+            registry_revision: authorized.registry_revision,
+        };
+
+        Ok((state, session, temp_dir))
     }
 
     #[test]

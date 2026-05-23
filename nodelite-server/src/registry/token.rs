@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use anyhow::anyhow;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::{Algorithm, Argon2, Params, Version};
@@ -42,19 +40,6 @@ pub(super) fn mint_install_session(
     Ok(session)
 }
 
-pub(super) fn is_token_current(
-    entries: &HashMap<String, RegisteredNode>,
-    node_id: &str,
-    session_generation: u64,
-) -> bool {
-    if let Some(entry) = entries.get(node_id) {
-        return entry.token_generation == session_generation
-            && token_is_unexpired(entry, Utc::now());
-    }
-
-    false
-}
-
 pub(super) fn token_is_unexpired(entry: &RegisteredNode, now: DateTime<Utc>) -> bool {
     entry
         .token_expires_at
@@ -64,6 +49,7 @@ pub(super) fn token_is_unexpired(entry: &RegisteredNode, now: DateTime<Utc>) -> 
 pub(super) fn authorized_node_from_entry(
     identity: &NodeIdentity,
     entry: &RegisteredNode,
+    registry_revision: u64,
 ) -> RegistryResult<AuthorizedNode> {
     if !token_is_unexpired(entry, Utc::now()) {
         return Err(RegistryError::TokenExpired {
@@ -78,6 +64,8 @@ pub(super) fn authorized_node_from_entry(
     Ok(AuthorizedNode {
         identity,
         generation: entry.token_generation,
+        token_expires_at: entry.token_expires_at,
+        registry_revision,
     })
 }
 
