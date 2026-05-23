@@ -8,7 +8,7 @@ use tokio::time::timeout;
 
 use super::fake_agent::{
     run_fake_agent, run_fake_agent_session, seed_history_points, wait_for_all_offline,
-    wait_for_final_snapshots,
+    wait_for_final_snapshots, wait_for_seeded_history_points,
 };
 use super::probes::{
     probe_node_history_latencies, probe_node_status_latencies, probe_nodes_latencies,
@@ -197,9 +197,16 @@ async fn run_api_surface_scenario(node_count: usize) -> Result<ApiScenarioResult
         .first()
         .cloned()
         .context("missing representative node credential")?;
-    seed_history_points(
+    let seeded_history = seed_history_points(
         server.history.clone(),
         &representative,
+        LOAD_TEST_HISTORY_POINTS,
+    )
+    .await?;
+    wait_for_seeded_history_points(
+        server.history.clone(),
+        &representative.node_id,
+        seeded_history,
         LOAD_TEST_HISTORY_POINTS,
     )
     .await?;
@@ -248,7 +255,9 @@ async fn run_api_surface_scenario(node_count: usize) -> Result<ApiScenarioResult
         server.addr,
         representative_node_id,
         LOAD_TEST_READ_PROBES,
-        LOAD_TEST_HISTORY_POINTS / 2,
+        LOAD_TEST_HISTORY_POINTS.saturating_sub(8),
+        seeded_history.start_at.timestamp(),
+        seeded_history.end_at.timestamp(),
     ));
 
     let settle_started = Instant::now();

@@ -59,9 +59,13 @@ pub(super) async fn probe_node_history_latencies(
     node_id: String,
     samples: usize,
     min_points: usize,
+    start_at: i64,
+    end_at: i64,
 ) -> Result<Vec<Duration>> {
     let mut latencies = Vec::with_capacity(samples);
-    let path = format!("/api/nodes/{node_id}/history?window_hours=24&max_points=480");
+    // Use the seeded exact range so the benchmark measures a full history payload
+    // instead of a heavily bucketed 24h window.
+    let path = format!("/api/nodes/{node_id}/history?start={start_at}&end={end_at}&max_points=480");
     for _ in 0..samples {
         let (latency, body) = fetch_http_latency(addr, &path).await?;
         validate_history_body(&body, &node_id, min_points)?;

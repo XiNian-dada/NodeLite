@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use futures::SinkExt;
 use tokio::sync::{Barrier, mpsc, watch};
 use tokio::time::sleep;
@@ -16,8 +16,15 @@ use crate::history::HistoryStore;
 use crate::state::SharedState;
 use crate::test_support::{fake_snapshot_at, synthetic_identity, wait_for_authenticated_notice};
 use nodelite_proto::{
-    HelloMessage, MetricsMessage, NodeIdentity, NodeSnapshot, NodeStatus, WireMessage,
+    DEFAULT_HISTORY_WRITE_INTERVAL_SECS, HelloMessage, MetricsMessage, NodeIdentity, NodeSnapshot,
+    NodeStatus, WireMessage,
 };
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct SeededHistoryRange {
+    pub(super) start_at: DateTime<Utc>,
+    pub(super) end_at: DateTime<Utc>,
+}
 
 pub(super) async fn run_fake_agent(
     addr: SocketAddr,
@@ -165,12 +172,14 @@ pub(super) async fn seed_history_points(
     history: HistoryStore,
     credential: &AgentCredential,
     points: usize,
-) -> Result<()> {
+) -> Result<SeededHistoryRange> {
     let now = Utc::now();
     let spacing_secs = nodelite_proto::DEFAULT_HISTORY_WRITE_INTERVAL_SECS as i64;
     let first_point_at = now - chrono::Duration::seconds((points as i64 - 1).max(0) * spacing_secs);
+    let mut last_point_at = first_point_at;
     for index in 0..points {
         let recorded_at = first_point_at + chrono::Duration::seconds(index as i64 * spacing_secs);
+        last_point_at = recorded_at;
         let status = NodeStatus {
             identity: fake_identity(credential),
             remote_ip: Some("127.0.0.1".to_string()),
@@ -181,7 +190,39 @@ pub(super) async fn seed_history_points(
         };
         history.record_status(&status).await;
     }
-    Ok(())
+    Ok(SeededHistoryRange {
+        start_at: first_point_at,
+        end_at: last_point_at,
+    })
+}
+
+pub(super) async fn wait_for_seeded_history_points(
+    history: HistoryStore,
+    node_id: &str,
+    range: SeededHistoryRange,
+    expected_points: usize,
+) -> Result<()> {
+    let started = Instant::now();
+    let max_points = ((range.end_at.timestamp() - range.start_at.timestamp()).max(1) as usize)
+        + DEFAULT_HISTORY_WRITE_INTERVAL_SECS as usize;
+
+    loop {
+        let points = history
+            .query_history_range(node_id, range.start_at, range.end_at, max_points)
+            .await
+            .with_context(|| format!("query seeded history for {node_id}"))?;
+        if points.len() >= expected_points {
+            return Ok(());
+        }
+        if started.elapsed() > Duration::from_secs(LOAD_TEST_TIMEOUT_SECS) {
+            bail!(
+                "timed out waiting for seeded history points for {node_id}: got {} / {}",
+                points.len(),
+                expected_points
+            );
+        }
+        sleep(Duration::from_millis(20)).await;
+    }
 }
 
 async fn connect_authenticated_fake_agent(
