@@ -21,6 +21,9 @@ use nodelite_proto::WsConfig;
 /// 一次性失败时,本表只在攻击侧累积代价,稳态体积可控。
 const WS_AUTH_FAILURE_TABLE_SOFT_LIMIT: usize = 1024;
 const INSTALL_AUTH_FAILURE_TABLE_SOFT_LIMIT: usize = 1024;
+/// 硬上限:即便攻击者持续制造仍在窗口内的失败 IP,失败表也不能无界增长。
+const WS_AUTH_FAILURE_TABLE_HARD_LIMIT: usize = 4096;
+const INSTALL_AUTH_FAILURE_TABLE_HARD_LIMIT: usize = 4096;
 
 /// 单个 IP 的认证失败历史。
 #[derive(Debug, Default)]
@@ -138,9 +141,13 @@ impl WsAdmissionController {
         // `try_acquire` / `prune_auth_failure_state` 主动清理 —— 在长跑实例里
         // 这是一条慢速内存泄漏。表过大时顺手做一次全表扫描,把已过期且未封禁
         // 的条目删掉;代价 O(N) 但摊销到攻击侧,稳态查询路径仍然 O(1)。
-        if state.auth_failures.len() > WS_AUTH_FAILURE_TABLE_SOFT_LIMIT {
-            sweep_expired_auth_failures(&mut state.auth_failures, now, failure_window);
-        }
+        trim_auth_failure_table(
+            &mut state.auth_failures,
+            now,
+            failure_window,
+            WS_AUTH_FAILURE_TABLE_SOFT_LIMIT,
+            WS_AUTH_FAILURE_TABLE_HARD_LIMIT,
+        );
     }
 
     /// 认证成功后清理该 IP 的失败历史。
@@ -173,6 +180,10 @@ impl WsAdmissionController {
                 failure_state.blocked_until.is_some_and(|until| until > now)
                     || !failure_state.recent_failures.is_empty()
             });
+            enforce_auth_failure_hard_cap(
+                &mut guard.auth_failures,
+                WS_AUTH_FAILURE_TABLE_HARD_LIMIT,
+            );
             reconcile_ws_connection_counters(&mut guard, &self.config);
             self.state.clear_poison();
             guard
@@ -260,9 +271,13 @@ impl InstallAdmissionController {
                 Some(now + Duration::from_secs(self.config.auth_block_secs));
             failure_state.recent_failures.clear();
         }
-        if state.auth_failures.len() > INSTALL_AUTH_FAILURE_TABLE_SOFT_LIMIT {
-            sweep_expired_auth_failures(&mut state.auth_failures, now, failure_window);
-        }
+        trim_auth_failure_table(
+            &mut state.auth_failures,
+            now,
+            failure_window,
+            INSTALL_AUTH_FAILURE_TABLE_SOFT_LIMIT,
+            INSTALL_AUTH_FAILURE_TABLE_HARD_LIMIT,
+        );
     }
 
     pub fn clear_auth_failures(&self, client_ip: IpAddr) {
@@ -281,6 +296,10 @@ impl InstallAdmissionController {
                 failure_state.blocked_until.is_some_and(|until| until > now)
                     || !failure_state.recent_failures.is_empty()
             });
+            enforce_auth_failure_hard_cap(
+                &mut guard.auth_failures,
+                INSTALL_AUTH_FAILURE_TABLE_HARD_LIMIT,
+            );
             self.state.clear_poison();
             guard
         })
@@ -387,6 +406,44 @@ pub fn sweep_expired_auth_failures(
     });
 }
 
+fn trim_auth_failure_table(
+    auth_failures: &mut HashMap<IpAddr, AuthFailureState>,
+    now: Instant,
+    failure_window: Duration,
+    soft_limit: usize,
+    hard_limit: usize,
+) {
+    if auth_failures.len() > soft_limit {
+        sweep_expired_auth_failures(auth_failures, now, failure_window);
+    }
+    enforce_auth_failure_hard_cap(auth_failures, hard_limit);
+}
+
+fn enforce_auth_failure_hard_cap(
+    auth_failures: &mut HashMap<IpAddr, AuthFailureState>,
+    hard_limit: usize,
+) {
+    if auth_failures.len() <= hard_limit {
+        return;
+    }
+
+    let remove_count = auth_failures.len() - hard_limit;
+    let mut eviction_candidates: Vec<_> = auth_failures
+        .iter()
+        .map(|(ip, failure_state)| (*ip, auth_failure_activity_key(failure_state)))
+        .collect();
+    eviction_candidates.sort_by_key(|(ip, activity_key)| (*activity_key, *ip));
+    for (ip, _) in eviction_candidates.into_iter().take(remove_count) {
+        auth_failures.remove(&ip);
+    }
+}
+
+fn auth_failure_activity_key(failure_state: &AuthFailureState) -> Option<Instant> {
+    failure_state
+        .blocked_until
+        .or_else(|| failure_state.recent_failures.back().copied())
+}
+
 /// 把准入控制错误映射成对应的 HTTP 响应。
 pub fn ws_admission_error_response(error: WsAdmissionError) -> Response {
     match error {
@@ -411,6 +468,7 @@ pub fn ws_admission_error_response(error: WsAdmissionError) -> Response {
 
 #[cfg(test)]
 mod tests {
+    use std::net::Ipv4Addr;
     use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::str::FromStr;
 
@@ -432,6 +490,75 @@ mod tests {
             auth_fail_max_attempts: 2,
             auth_block_secs: 60,
         }
+    }
+
+    fn indexed_ip(index: usize) -> IpAddr {
+        IpAddr::V4(Ipv4Addr::new(
+            10,
+            ((index >> 16) & 0xff) as u8,
+            ((index >> 8) & 0xff) as u8,
+            (index & 0xff) as u8,
+        ))
+    }
+
+    #[test]
+    fn websocket_auth_failure_table_respects_hard_cap() {
+        let controller = WsAdmissionController::new(&test_ws_config());
+
+        for index in 0..=WS_AUTH_FAILURE_TABLE_HARD_LIMIT {
+            controller.record_auth_failure(indexed_ip(index));
+        }
+
+        let state = controller.state.lock().expect("lock state");
+        assert_eq!(state.auth_failures.len(), WS_AUTH_FAILURE_TABLE_HARD_LIMIT);
+        assert!(!state.auth_failures.contains_key(&indexed_ip(0)));
+        assert!(
+            state
+                .auth_failures
+                .contains_key(&indexed_ip(WS_AUTH_FAILURE_TABLE_HARD_LIMIT))
+        );
+    }
+
+    #[test]
+    fn install_auth_failure_table_respects_hard_cap() {
+        let controller = InstallAdmissionController::new(test_install_config());
+
+        for index in 0..=INSTALL_AUTH_FAILURE_TABLE_HARD_LIMIT {
+            controller.record_auth_failure(indexed_ip(index));
+        }
+
+        let state = controller.state.lock().expect("lock state");
+        assert_eq!(
+            state.auth_failures.len(),
+            INSTALL_AUTH_FAILURE_TABLE_HARD_LIMIT
+        );
+        assert!(!state.auth_failures.contains_key(&indexed_ip(0)));
+        assert!(
+            state
+                .auth_failures
+                .contains_key(&indexed_ip(INSTALL_AUTH_FAILURE_TABLE_HARD_LIMIT))
+        );
+    }
+
+    #[test]
+    fn hard_cap_preserves_single_ip_block_semantics() {
+        let ws_controller = WsAdmissionController::new(&test_ws_config());
+        let install_controller = InstallAdmissionController::new(test_install_config());
+        let client_ip = indexed_ip(42);
+
+        ws_controller.record_auth_failure(client_ip);
+        ws_controller.record_auth_failure(client_ip);
+        assert!(matches!(
+            ws_controller.try_acquire(client_ip),
+            Err(WsAdmissionError::Blocked { retry_after_secs }) if retry_after_secs > 0
+        ));
+
+        install_controller.record_auth_failure(client_ip);
+        install_controller.record_auth_failure(client_ip);
+        assert!(matches!(
+            install_controller.check(client_ip),
+            Err(retry_after_secs) if retry_after_secs > 0
+        ));
     }
 
     #[test]
