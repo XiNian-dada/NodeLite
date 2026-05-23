@@ -1415,6 +1415,8 @@
       const OVERVIEW_HISTORY_MAX_POINTS = 1440;
       const DETAIL_HISTORY_MAX_POINTS = 720;
       const MIN_SELECTION_MS = 30 * 60 * 1000;
+      const NODE_HISTORY_REFRESH_MS = Math.max(15 * 1000, REFRESH_MS * 3);
+      const NODE_LOGS_REFRESH_MS = Math.max(10 * 1000, REFRESH_MS * 2);
       const CUSTOM_PRESET_KEY = "custom";
       const PRESET_WINDOWS = [
         { key: "last_3h", hours: 3 },
@@ -1431,6 +1433,17 @@
       let latestHistory = [];
       let latestAgentLogs = [];
       let nodeLogsError = "";
+      let overviewHistoryFetchedAt = 0;
+      let overviewHistoryLoaded = false;
+      let overviewHistoryInFlight = null;
+      let detailHistoryFetchedAt = 0;
+      let detailHistoryCacheKey = "";
+      let detailHistoryLoaded = false;
+      let detailHistoryInFlight = null;
+      let detailHistoryInFlightKey = "";
+      let agentLogsFetchedAt = 0;
+      let agentLogsLoaded = false;
+      let agentLogsInFlight = null;
       let latestSettings = null;
       let latestNodeTokenRefresh = null;
       let nodeSettingsNotice = null;
@@ -1640,6 +1653,7 @@
       function setActiveTab(name, options = {}) {
         const validTabs = new Set(["overview", "monitor", "network", "hardware", "logs", "settings"]);
         if (!validTabs.has(name)) name = "overview";
+        const previousTab = activeTab;
         activeTab = name;
         document.querySelectorAll("[data-tab]").forEach((btn) => {
           btn.classList.toggle("active", btn.dataset.tab === name);
@@ -1655,10 +1669,14 @@
         if (name === "network") {
           renderOverviewCharts(displayedHistory());
         }
+        if (name === "logs") {
+          renderAgentLogs();
+        }
         if (name === "settings") {
           if (latestSettings) renderNodeSettings();
           else void refreshNodeSettings();
         }
+        if (name !== previousTab) void refreshTabData({ force: true });
       }
 
       function bindTabs() {
@@ -2568,6 +2586,7 @@
         overlay.hidden = false;
         document.body.style.overflow = "hidden";
         renderChartModal();
+        void refreshTabData({ force: true });
         window.requestAnimationFrame(() => {
           if (chartModalState.key === key) renderChartModal();
         });
@@ -2738,6 +2757,15 @@
         if (Array.isArray(latestHistory) && latestHistory.length > 0) return latestHistory;
         return filterHistoryBySelection(overviewHistory);
       }
+      function historyTabNeedsData() {
+        return activeTab === "overview" || activeTab === "monitor" || activeTab === "network" || chartModalState.key != null;
+      }
+      function detailHistoryNeedsData() {
+        return activeTab === "monitor" || chartModalState.key != null;
+      }
+      function logsTabNeedsData() {
+        return activeTab === "logs";
+      }
       function xToHistoryMs(clientX) {
         const bounds = historyBounds(overviewHistory);
         if (!bounds) return null;
@@ -2767,7 +2795,7 @@
           latestHistory = filterHistoryBySelection(overviewHistory);
         }
         if (shouldFetch) rerenderNode();
-        if (shouldFetch) void fetchDetailHistory();
+        if (shouldFetch && detailHistoryNeedsData()) void fetchDetailHistory({ force: true });
       }
       function ensureSelectionState() {
         const bounds = historyBounds(overviewHistory);
@@ -2797,6 +2825,25 @@
         const shouldRender = options.render !== false;
         if (!sel) {
           latestHistory = [];
+          detailHistoryCacheKey = "";
+          detailHistoryFetchedAt = 0;
+          detailHistoryLoaded = false;
+          if (shouldRender) rerenderNode();
+          return;
+        }
+        const cacheKey = `${Math.floor(sel.startMs / 1000)}:${Math.ceil(sel.endMs / 1000)}:${DETAIL_HISTORY_MAX_POINTS}`;
+        const now = Date.now();
+        if (
+          options.force !== true &&
+          detailHistoryCacheKey === cacheKey &&
+          detailHistoryLoaded &&
+          detailHistoryFetchedAt + NODE_HISTORY_REFRESH_MS > now
+        ) {
+          if (shouldRender) rerenderNode();
+          return;
+        }
+        if (detailHistoryInFlight && detailHistoryInFlightKey === cacheKey) {
+          await detailHistoryInFlight;
           if (shouldRender) rerenderNode();
           return;
         }
@@ -2806,16 +2853,115 @@
           end: String(Math.ceil(sel.endMs / 1000)),
           max_points: String(DETAIL_HISTORY_MAX_POINTS)
         });
-        try {
-          const history = normalizeHistory(await fetchJson(`/api/nodes/${encodeURIComponent(NODE_ID)}/history?${params.toString()}`));
-          if (requestVersion !== detailRequestVersion) return;
-          latestHistory = history.length > 0 ? history : filterHistoryBySelection(overviewHistory);
-        } catch (e) {
-          console.warn("failed to refresh selected history; using overview samples", e);
-          if (requestVersion !== detailRequestVersion) return;
-          latestHistory = filterHistoryBySelection(overviewHistory);
-        }
+        detailHistoryInFlightKey = cacheKey;
+        detailHistoryInFlight = (async () => {
+          try {
+            const history = normalizeHistory(await fetchJson(`/api/nodes/${encodeURIComponent(NODE_ID)}/history?${params.toString()}`));
+            if (requestVersion !== detailRequestVersion) return;
+            latestHistory = history.length > 0 ? history : filterHistoryBySelection(overviewHistory);
+            detailHistoryCacheKey = cacheKey;
+            detailHistoryLoaded = true;
+            detailHistoryFetchedAt = Date.now();
+          } catch (e) {
+            console.warn("failed to refresh selected history; using overview samples", e);
+            if (requestVersion !== detailRequestVersion) return;
+            latestHistory = filterHistoryBySelection(overviewHistory);
+            detailHistoryCacheKey = cacheKey;
+            detailHistoryLoaded = true;
+            detailHistoryFetchedAt = Date.now();
+          } finally {
+            if (detailHistoryInFlightKey === cacheKey) {
+              detailHistoryInFlight = null;
+              detailHistoryInFlightKey = "";
+            }
+          }
+        })();
+        await detailHistoryInFlight;
         if (shouldRender) rerenderNode();
+      }
+
+      async function fetchOverviewHistory(options = {}) {
+        const now = Date.now();
+        if (
+          options.force !== true &&
+          overviewHistoryLoaded &&
+          overviewHistoryFetchedAt + NODE_HISTORY_REFRESH_MS > now
+        ) {
+          return;
+        }
+        if (overviewHistoryInFlight) {
+          await overviewHistoryInFlight;
+          return;
+        }
+        const params = new URLSearchParams({
+          window_hours: String(RETENTION_WINDOW_HOURS),
+          max_points: String(OVERVIEW_HISTORY_MAX_POINTS)
+        });
+        overviewHistoryInFlight = (async () => {
+          try {
+            overviewHistory = normalizeHistory(await fetchJson(`/api/nodes/${encodeURIComponent(NODE_ID)}/history?${params.toString()}`));
+            overviewHistoryLoaded = true;
+            overviewHistoryFetchedAt = Date.now();
+          } catch (e) {
+            console.warn("failed to refresh overview history", e);
+            if (overviewHistory.length === 0) latestHistory = [];
+            overviewHistoryLoaded = true;
+            overviewHistoryFetchedAt = Date.now();
+          } finally {
+            overviewHistoryInFlight = null;
+          }
+        })();
+        await overviewHistoryInFlight;
+      }
+
+      async function fetchAgentLogs(options = {}) {
+        const now = Date.now();
+        if (
+          options.force !== true &&
+          agentLogsFetchedAt + NODE_LOGS_REFRESH_MS > now &&
+          agentLogsLoaded
+        ) {
+          return;
+        }
+        if (agentLogsInFlight) {
+          await agentLogsInFlight;
+          return;
+        }
+        agentLogsInFlight = (async () => {
+          try {
+            latestAgentLogs = await fetchJson(`/api/nodes/${encodeURIComponent(NODE_ID)}/logs?limit=200`);
+            nodeLogsError = "";
+            agentLogsLoaded = true;
+            agentLogsFetchedAt = Date.now();
+          } catch (e) {
+            console.warn("failed to refresh agent logs", e);
+            if (latestAgentLogs.length === 0) latestAgentLogs = [];
+            nodeLogsError = e.message || String(e);
+            agentLogsLoaded = true;
+            agentLogsFetchedAt = Date.now();
+          } finally {
+            agentLogsInFlight = null;
+          }
+        })();
+        await agentLogsInFlight;
+      }
+
+      async function refreshTabData(options = {}) {
+        const tasks = [];
+        if (historyTabNeedsData()) {
+          tasks.push((async () => {
+            await fetchOverviewHistory(options);
+            ensureSelectionState();
+            if (detailHistoryNeedsData()) {
+              await fetchDetailHistory({ force: options.force, render: false });
+            }
+          })());
+        }
+        if (logsTabNeedsData()) {
+          tasks.push(fetchAgentLogs(options));
+        }
+        await Promise.all(tasks);
+        if (options.render !== false) rerenderNode();
       }
       function beginBrushDrag(mode, event) {
         const bounds = historyBounds(overviewHistory);
@@ -2943,24 +3089,7 @@
           return;
         }
         latestNode = node;
-        try {
-          const params = new URLSearchParams({ window_hours: String(RETENTION_WINDOW_HOURS), max_points: String(OVERVIEW_HISTORY_MAX_POINTS) });
-          overviewHistory = normalizeHistory(await fetchJson(`/api/nodes/${encodeURIComponent(NODE_ID)}/history?${params.toString()}`));
-        } catch (e) {
-          console.warn("failed to refresh overview history", e);
-          overviewHistory = [];
-          latestHistory = [];
-        }
-        try {
-          latestAgentLogs = await fetchJson(`/api/nodes/${encodeURIComponent(NODE_ID)}/logs?limit=200`);
-          nodeLogsError = "";
-        } catch (e) {
-          console.warn("failed to refresh agent logs", e);
-          latestAgentLogs = [];
-          nodeLogsError = e.message || String(e);
-        }
-        ensureSelectionState();
-        await fetchDetailHistory({ render: false });
+        await refreshTabData({ render: false });
         rerenderNode();
         scheduleRefresh();
       }

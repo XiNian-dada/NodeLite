@@ -1004,6 +1004,9 @@
       const HOME_SPARK_MAX_POINTS = 180;
       const HOME_SPARK_NODE_LIMIT = 48;
       const HOME_SPARK_BUCKET_MS = 60 * 1000;
+      const HOME_SPARK_REFRESH_MS = Math.max(60 * 1000, REFRESH_MS * 12);
+      const HOME_SPARK_RETRY_MS = Math.max(15 * 1000, REFRESH_MS * 3);
+      const HOME_SPARK_CONCURRENCY = 3;
       let I18N = { en: { __label: "English" } };
       let currentLanguage = "en";
       let latestOverview = null;
@@ -1015,6 +1018,9 @@
       let latestSettings = null;
       let pendingTwoFactorSetup = null;
       const sparkHistory = new Map();
+      const sparkHistoryFetchedAt = new Map();
+      const sparkHistoryRetryAfter = new Map();
+      const sparkHistoryInFlight = new Map();
       const updateConsoleState = {
         open: false,
         offset: 0,
@@ -1207,6 +1213,7 @@
         document.getElementById("overview-view").hidden = activeTab !== "overview";
         document.getElementById("settings-view").hidden = activeTab !== "settings";
         applyChrome();
+        if (activeTab === "overview" && latestNodes.length > 0) scheduleSparkHistoryRefresh(latestNodes);
         if (activeTab === "settings") void loadSettings();
       }
       function fmtBytes(bytes) {
@@ -1497,30 +1504,65 @@
         const liveNodeIds = new Set(
           nodes.slice(0, HOME_SPARK_NODE_LIMIT).map((node) => node.identity.node_id)
         );
-        for (const nodeId of sparkHistory.keys()) {
-          if (!liveNodeIds.has(nodeId)) sparkHistory.delete(nodeId);
+        const knownNodeIds = new Set([
+          ...sparkHistory.keys(),
+          ...sparkHistoryFetchedAt.keys(),
+          ...sparkHistoryRetryAfter.keys(),
+          ...sparkHistoryInFlight.keys()
+        ]);
+        for (const nodeId of knownNodeIds) {
+          if (liveNodeIds.has(nodeId)) continue;
+          sparkHistory.delete(nodeId);
+          sparkHistoryFetchedAt.delete(nodeId);
+          sparkHistoryRetryAfter.delete(nodeId);
+          sparkHistoryInFlight.delete(nodeId);
         }
       }
 
+      function sparkHistoryIsFresh(nodeId, now) {
+        return sparkHistory.has(nodeId) && (sparkHistoryFetchedAt.get(nodeId) || 0) + HOME_SPARK_REFRESH_MS > now;
+      }
+
+      function sparkHistoryFetchPromise(nodeId) {
+        const existing = sparkHistoryInFlight.get(nodeId);
+        if (existing) return existing;
+        const params = new URLSearchParams({
+          window_hours: String(HOME_SPARK_WINDOW_HOURS),
+          max_points: String(HOME_SPARK_MAX_POINTS)
+        });
+        const promise = fetchJson(`/api/nodes/${encodeURIComponent(nodeId)}/history?${params.toString()}`)
+          .then((body) => {
+            sparkHistory.set(nodeId, normalizeHistory(body));
+            sparkHistoryFetchedAt.set(nodeId, Date.now());
+            sparkHistoryRetryAfter.delete(nodeId);
+          })
+          .catch((error) => {
+            sparkHistoryRetryAfter.set(nodeId, Date.now() + HOME_SPARK_RETRY_MS);
+            console.warn("failed to refresh node spark history", nodeId, error);
+          })
+          .finally(() => {
+            if (sparkHistoryInFlight.get(nodeId) === promise) sparkHistoryInFlight.delete(nodeId);
+          });
+        sparkHistoryInFlight.set(nodeId, promise);
+        return promise;
+      }
+
       async function refreshSparkHistories(nodes, token) {
-        const limited = nodes.slice(0, HOME_SPARK_NODE_LIMIT);
-        const workerCount = Math.min(6, limited.length);
+        const now = Date.now();
+        const limited = nodes
+          .slice(0, HOME_SPARK_NODE_LIMIT)
+          .filter((node) => {
+            const nodeId = node.identity.node_id;
+            if (sparkHistoryIsFresh(nodeId, now)) return false;
+            return (sparkHistoryRetryAfter.get(nodeId) || 0) <= now;
+          });
+        const workerCount = Math.min(HOME_SPARK_CONCURRENCY, limited.length);
         let nextIndex = 0;
         const workers = Array.from({ length: workerCount }, async () => {
           while (nextIndex < limited.length) {
             const node = limited[nextIndex++];
             const nodeId = node.identity.node_id;
-            const params = new URLSearchParams({
-              window_hours: String(HOME_SPARK_WINDOW_HOURS),
-              max_points: String(HOME_SPARK_MAX_POINTS)
-            });
-            try {
-              const history = normalizeHistory(await fetchJson(`/api/nodes/${encodeURIComponent(nodeId)}/history?${params.toString()}`));
-              if (token !== sparkHistoryRefreshToken) return;
-              sparkHistory.set(nodeId, history);
-            } catch (error) {
-              console.warn("failed to refresh node spark history", nodeId, error);
-            }
+            await sparkHistoryFetchPromise(nodeId);
           }
         });
         await Promise.all(workers);
@@ -1528,6 +1570,7 @@
 
       function scheduleSparkHistoryRefresh(nodes) {
         pruneSparkHistory(nodes);
+        if (document.hidden || activeTab !== "overview") return;
         const token = ++sparkHistoryRefreshToken;
         const task = async () => {
           await refreshSparkHistories(nodes, token);
