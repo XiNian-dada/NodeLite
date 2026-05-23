@@ -5,10 +5,9 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use nodelite_proto::{NodeIdentity, NodeSnapshot, NodeStatus, OverviewData};
-use tokio::sync::mpsc;
 
-use super::SessionCommand;
 use super::overview::{build_overview, build_overview_from_iter};
+use super::session_control::SessionControlHandle;
 
 #[derive(Debug, Default)]
 pub(super) struct Registry {
@@ -20,7 +19,7 @@ pub(super) struct Registry {
 struct NodeEntry {
     status: NodeStatus,
     active_session_id: Option<u64>,
-    control_tx: Option<mpsc::UnboundedSender<SessionCommand>>,
+    control: Option<SessionControlHandle>,
 }
 
 impl Registry {
@@ -42,7 +41,7 @@ impl Registry {
                 online: true,
             },
             active_session_id: Some(session_id),
-            control_tx: None,
+            control: None,
         });
 
         entry.status.identity = identity;
@@ -51,7 +50,7 @@ impl Registry {
         entry.status.last_seen = Some(now);
         entry.status.latency_ms = None;
         entry.active_session_id = Some(session_id);
-        entry.control_tx = None;
+        entry.control = None;
     }
 
     pub(super) fn update_snapshot(
@@ -99,7 +98,7 @@ impl Registry {
         if entry.active_session_id == Some(session_id) {
             entry.active_session_id = None;
             entry.status.online = false;
-            entry.control_tx = None;
+            entry.control = None;
             return true;
         }
         false
@@ -109,7 +108,7 @@ impl Registry {
         &mut self,
         node_id: &str,
         session_id: u64,
-        control_tx: mpsc::UnboundedSender<SessionCommand>,
+        control: SessionControlHandle,
     ) -> bool {
         let Some(entry) = self.nodes.get_mut(node_id) else {
             return false;
@@ -118,7 +117,7 @@ impl Registry {
             return false;
         }
 
-        entry.control_tx = Some(control_tx);
+        entry.control = Some(control);
         true
     }
 
@@ -135,7 +134,7 @@ impl Registry {
             if elapsed >= threshold && entry.status.online {
                 entry.status.online = false;
                 entry.active_session_id = None;
-                entry.control_tx = None;
+                entry.control = None;
                 marked += 1;
             }
         }
@@ -169,15 +168,12 @@ impl Registry {
         self.nodes.get(node_id).map(|entry| entry.status.clone())
     }
 
-    pub(super) fn session_control(
-        &self,
-        node_id: &str,
-    ) -> Option<mpsc::UnboundedSender<SessionCommand>> {
+    pub(super) fn session_control(&self, node_id: &str) -> Option<SessionControlHandle> {
         let entry = self.nodes.get(node_id)?;
         if entry.active_session_id.is_none() || !entry.status.online {
             return None;
         }
-        entry.control_tx.clone()
+        entry.control.clone()
     }
 
     pub(super) fn overview(&self) -> OverviewData {
@@ -198,7 +194,7 @@ impl Registry {
                 NodeEntry {
                     status,
                     active_session_id: None,
-                    control_tx: None,
+                    control: None,
                 },
             );
         }

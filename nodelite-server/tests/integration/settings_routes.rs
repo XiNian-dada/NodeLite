@@ -12,7 +12,6 @@ use axum::routing::post;
 use base64::Engine;
 use chrono::Utc;
 use serde_json::{Value, json};
-use tokio::sync::mpsc;
 use tokio::time::sleep;
 use totp_lite::{Sha1, totp_custom};
 use tower::ServiceExt;
@@ -24,7 +23,7 @@ use crate::handlers::{
     require_readonly_auth, start_server_update, start_two_factor_setup,
 };
 use crate::set_protected_response_headers;
-use crate::state::{SessionCommand, SessionRefreshReply};
+use crate::state::{SessionCommand, SessionControlHandle, SessionRefreshReply};
 use crate::test_support::{fake_snapshot, synthetic_identity, test_server_config};
 use nodelite_proto::{ReadonlyAuthConfig, parse_server_config};
 
@@ -307,16 +306,20 @@ async fn settings_node_token_refresh_covers_success_offline_and_timeout_paths() 
         .shared
         .update_snapshot("online-refresh-01", online_session, fake_snapshot(1))
         .await;
-    let (control_tx, mut control_rx) = mpsc::unbounded_channel();
+    let (control, mut control_rx) = SessionControlHandle::channel();
     assert!(
         harness
             .state
             .shared
-            .attach_session_control("online-refresh-01", online_session, control_tx)
+            .attach_session_control("online-refresh-01", online_session, control)
             .await
     );
     let refresh_task = tokio::spawn(async move {
-        let Some(SessionCommand::RefreshToken { response }) = control_rx.recv().await else {
+        let Some(SessionCommand::RefreshToken {
+            response,
+            refresh_permit: _refresh_permit,
+        }) = control_rx.recv().await
+        else {
             return;
         };
         let _ = response.send(Ok(SessionRefreshReply {
@@ -382,12 +385,12 @@ async fn settings_node_token_refresh_covers_success_offline_and_timeout_paths() 
             None,
         )
         .await;
-    let (timeout_tx, _timeout_rx) = mpsc::unbounded_channel();
+    let (timeout_control, _timeout_rx) = SessionControlHandle::channel();
     assert!(
         harness
             .state
             .shared
-            .attach_session_control("timeout-refresh-01", timeout_session, timeout_tx)
+            .attach_session_control("timeout-refresh-01", timeout_session, timeout_control)
             .await
     );
     let timed_out = harness

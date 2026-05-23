@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::fmt::Write;
 
 use crate::ServerReadiness;
+use crate::agent_logs::AgentLogStats;
 use nodelite_proto::{NodeSnapshot, NodeStatus, OverviewData};
 
 pub(crate) fn render_prometheus_metrics(
@@ -23,6 +24,7 @@ pub(crate) struct WriterMetrics {
     pub(crate) history_dropped_writes: u64,
     pub(crate) audit_dropped_writes: u64,
     pub(crate) audit_write_failures: u64,
+    pub(crate) session_control_queue_full_total: u64,
 }
 
 pub(crate) fn render_writer_metrics(metrics: WriterMetrics) -> String {
@@ -44,6 +46,35 @@ pub(crate) fn render_writer_metrics(metrics: WriterMetrics) -> String {
         "Number of audit writer failures while enqueueing or persisting events.",
         &[],
         metrics.audit_write_failures,
+    );
+    emitter.counter(
+        "nodelite_session_control_queue_full_total",
+        "Number of session control commands rejected because a bounded queue was full.",
+        &[],
+        metrics.session_control_queue_full_total,
+    );
+    emitter.finish()
+}
+
+pub(crate) fn render_agent_log_metrics(stats: AgentLogStats) -> String {
+    let mut emitter = MetricEmitter::default();
+    emitter.gauge(
+        "nodelite_agent_log_nodes",
+        "Number of nodes currently holding in-memory agent logs.",
+        &[],
+        stats.nodes,
+    );
+    emitter.gauge(
+        "nodelite_agent_log_entries",
+        "Number of in-memory agent log entries currently retained.",
+        &[],
+        stats.entries,
+    );
+    emitter.gauge(
+        "nodelite_agent_log_estimated_bytes",
+        "Estimated bytes currently retained by the in-memory agent log store.",
+        &[],
+        stats.estimated_bytes,
     );
     emitter.finish()
 }
@@ -414,10 +445,11 @@ mod tests {
     use chrono::Utc;
 
     use super::{
-        ApiCacheMetrics, WriterMetrics, render_api_cache_metrics, render_prometheus_metrics,
-        render_writer_metrics,
+        ApiCacheMetrics, WriterMetrics, render_agent_log_metrics, render_api_cache_metrics,
+        render_prometheus_metrics, render_writer_metrics,
     };
     use crate::ServerReadiness;
+    use crate::agent_logs::AgentLogStats;
     use nodelite_proto::{
         DiskUsage, LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot,
         NodeStatus, OverviewData,
@@ -514,6 +546,7 @@ mod tests {
             history_dropped_writes: 3,
             audit_dropped_writes: 5,
             audit_write_failures: 7,
+            session_control_queue_full_total: 11,
         });
 
         assert!(body.contains("# TYPE nodelite_history_dropped_writes_total counter"));
@@ -522,6 +555,26 @@ mod tests {
         assert!(body.contains("nodelite_audit_dropped_writes_total 5"));
         assert!(body.contains("# TYPE nodelite_audit_write_failures_total counter"));
         assert!(body.contains("nodelite_audit_write_failures_total 7"));
+        assert!(body.contains("# TYPE nodelite_session_control_queue_full_total counter"));
+        assert!(body.contains("nodelite_session_control_queue_full_total 11"));
+    }
+
+    #[test]
+    fn exporter_exposes_agent_log_store_gauges() {
+        let body = render_agent_log_metrics(AgentLogStats {
+            nodes: 2,
+            entries: 37,
+            estimated_bytes: 4096,
+            max_entries: 10_000,
+            max_estimated_bytes: 8 * 1024 * 1024,
+        });
+
+        assert!(body.contains("# TYPE nodelite_agent_log_nodes gauge"));
+        assert!(body.contains("nodelite_agent_log_nodes 2"));
+        assert!(body.contains("# TYPE nodelite_agent_log_entries gauge"));
+        assert!(body.contains("nodelite_agent_log_entries 37"));
+        assert!(body.contains("# TYPE nodelite_agent_log_estimated_bytes gauge"));
+        assert!(body.contains("nodelite_agent_log_estimated_bytes 4096"));
     }
 
     #[test]

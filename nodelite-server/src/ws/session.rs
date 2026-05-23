@@ -9,7 +9,6 @@ use futures::{SinkExt, StreamExt};
 use nodelite_proto::{
     AgentLogsMessage, MetricsMessage, PongMessage, ServerNoticeMessage, WireMessage,
 };
-use tokio::sync::mpsc;
 use tokio::time::{MissedTickBehavior, interval};
 use tracing::{info, warn};
 
@@ -58,9 +57,9 @@ pub(crate) async fn run_authenticated_session(
 ) -> Result<(), super::ProtocolError> {
     let shared = state.shared.clone();
     let (mut sender, mut receiver) = socket.split();
-    let (session_control_tx, mut session_control_rx) = mpsc::unbounded_channel();
+    let (session_control, mut session_control_rx) = crate::state::SessionControlHandle::channel();
     if !shared
-        .attach_session_control(&session.node_id, session.session_id, session_control_tx)
+        .attach_session_control(&session.node_id, session.session_id, session_control)
         .await
     {
         warn!(
@@ -267,6 +266,7 @@ async fn handle_agent_logs_message(
             accepted = result.accepted,
             dropped_batch_cap = result.dropped_batch_cap,
             dropped_sanitize = result.dropped_sanitize,
+            evicted_global_budget = result.evicted_global_budget,
             "dropped some agent log entries during ingestion"
         );
     }
@@ -314,7 +314,10 @@ async fn handle_session_command(
     command: SessionCommand,
 ) -> Result<LoopAction, super::ProtocolError> {
     match command {
-        SessionCommand::RefreshToken { response } => {
+        SessionCommand::RefreshToken {
+            response,
+            refresh_permit: _refresh_permit,
+        } => {
             match refresh_session_token(
                 sender,
                 &state.registry,
