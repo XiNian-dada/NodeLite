@@ -133,3 +133,167 @@ pub(crate) fn uses_insecure_remote_public_base_url(
 
     uses_insecure_remote_url(public_base_url, "http")
 }
+
+#[cfg(test)]
+mod tests {
+    use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use tokio::time::{Duration, timeout};
+    use tokio_util::sync::CancellationToken;
+
+    use super::{
+        spawn_insecure_transport_warning, spawn_registry_reloader,
+        uses_insecure_remote_public_base_url,
+    };
+    use crate::AppState;
+    use crate::test_support::test_server_config;
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic enough")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nodelite-background-{label}-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir should exist");
+        dir
+    }
+
+    async fn background_state_fixture(label: &str) -> (AppState, PathBuf) {
+        let temp_dir = temp_dir(label);
+        let registry_path = temp_dir.join("server.json");
+        let config = test_server_config(
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8080)),
+            "https://monitor.example.com".to_string(),
+            registry_path,
+            temp_dir.join("history.sqlite3"),
+            temp_dir.join("snapshot.json"),
+        );
+        let state = AppState::test_fixture(config.into(), Arc::new(temp_dir.join("server.toml")))
+            .await
+            .expect("state fixture should build");
+        (state, temp_dir)
+    }
+
+    #[test]
+    fn insecure_public_base_url_handles_invalid_urls_and_listener_scope() {
+        assert!(!uses_insecure_remote_public_base_url(
+            "not a url",
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 8080)),
+        ));
+        assert!(uses_insecure_remote_public_base_url(
+            "http://monitor.example.com",
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 8080)),
+        ));
+        assert!(!uses_insecure_remote_public_base_url(
+            "http://127.0.0.1:8080",
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8080)),
+        ));
+    }
+
+    #[tokio::test]
+    async fn insecure_transport_warning_only_spawns_for_remote_plaintext_urls() {
+        let shutdown = CancellationToken::new();
+        assert!(
+            spawn_insecure_transport_warning(
+                "https://monitor.example.com".to_string(),
+                SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 8080)),
+                1,
+                shutdown.clone(),
+            )
+            .is_none()
+        );
+        assert!(
+            spawn_insecure_transport_warning(
+                "http://127.0.0.1:8080".to_string(),
+                SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8080)),
+                1,
+                shutdown.clone(),
+            )
+            .is_none()
+        );
+
+        let handle = spawn_insecure_transport_warning(
+            "http://monitor.example.com".to_string(),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 8080)),
+            1,
+            shutdown.clone(),
+        )
+        .expect("remote plaintext urls should spawn warning task");
+
+        shutdown.cancel();
+        timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("warning task should stop promptly")
+            .expect("warning task should shut down cleanly");
+    }
+
+    #[tokio::test]
+    async fn registry_reloader_marks_readiness_healthy_when_registry_is_unchanged() {
+        let (state, temp_dir) = background_state_fixture("registry-unchanged").await;
+        state.readiness.mark_registry_reload_healthy(false);
+        let shutdown = CancellationToken::new();
+        let handle = spawn_registry_reloader(
+            state.registry.clone(),
+            state.history.clone(),
+            state.agent_logs.clone(),
+            state.readiness.clone(),
+            shutdown.clone(),
+        );
+
+        timeout(Duration::from_secs(1), async {
+            loop {
+                if state.readiness.registry_reload_healthy() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("registry reload should restore readiness");
+
+        shutdown.cancel();
+        timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("registry reloader should stop promptly")
+            .expect("registry reloader should stop cleanly");
+        let _ = tokio::fs::remove_dir_all(temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn registry_reloader_marks_readiness_unhealthy_after_reload_error() {
+        let (state, temp_dir) = background_state_fixture("registry-error").await;
+        tokio::fs::create_dir_all(state.registry.path())
+            .await
+            .expect("registry path should be replaceable with a directory");
+
+        let shutdown = CancellationToken::new();
+        let handle = spawn_registry_reloader(
+            state.registry.clone(),
+            state.history.clone(),
+            state.agent_logs.clone(),
+            state.readiness.clone(),
+            shutdown.clone(),
+        );
+
+        timeout(Duration::from_secs(1), async {
+            loop {
+                if !state.readiness.registry_reload_healthy() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("registry reload failure should degrade readiness");
+
+        shutdown.cancel();
+        timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("registry reloader should stop promptly")
+            .expect("registry reloader should stop cleanly");
+        let _ = tokio::fs::remove_dir_all(temp_dir).await;
+    }
+}
