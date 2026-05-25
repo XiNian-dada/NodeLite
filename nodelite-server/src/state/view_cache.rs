@@ -103,3 +103,29 @@ impl MetricsViewSlot {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_view_slot_misses_when_revision_changes() {
+        let mut slot = JsonViewSlot::default();
+        slot.store(7, Bytes::from_static(b"body"));
+        assert_eq!(slot.get(7, None).as_deref(), Some(b"body".as_ref()));
+        assert!(slot.get(8, None).is_none());
+    }
+
+    #[test]
+    fn json_view_slot_expires_after_max_age() {
+        let mut slot = JsonViewSlot::default();
+        slot.store(1, Bytes::from_static(b"body"));
+        // Fresh body within TTL hits.
+        assert!(slot.get(1, Some(Duration::from_secs(60))).is_some());
+        // After waiting past the TTL, the cache should miss.
+        std::thread::sleep(Duration::from_millis(20));
+        assert!(slot.get(1, Some(Duration::from_millis(5))).is_none());
+        // Pure revision check still hits.
+        assert!(slot.get(1, None).is_some());
+    }
+}
+

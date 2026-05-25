@@ -842,6 +842,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn snapshot_update_only_invalidates_nodes_view() {
+        let shared = SharedState::new(Arc::new(sample_config()));
+        let readiness = crate::ServerReadiness::new(true);
+        let session_id = shared
+            .register_node(sample_identity(), Some("198.51.100.10".to_string()))
+            .await;
+
+        // Prime每个视图各一次。
+        let _ = shared.overview_json_bytes().await.expect("overview json");
+        let _ = shared.nodes_json_bytes().await.expect("nodes json");
+        let _ = shared.metrics_text(&readiness).await;
+        assert_eq!(shared.api_overview_cache_build_count(), 1);
+        assert_eq!(shared.api_nodes_cache_build_count(), 1);
+        assert_eq!(shared.metrics_cache_build_count(), 1);
+
+        // 单纯的 snapshot 更新只让 nodes 视图失效;overview/metrics 仍命中缓存。
+        assert!(
+            shared
+                .update_snapshot("hk-01", session_id, sample_snapshot(Utc::now()))
+                .await
+                .is_some()
+        );
+        let _ = shared.overview_json_bytes().await.expect("overview cached");
+        let _ = shared.metrics_text(&readiness).await;
+        assert_eq!(shared.api_overview_cache_build_count(), 1);
+        assert_eq!(shared.metrics_cache_build_count(), 1);
+
+        let _ = shared.nodes_json_bytes().await.expect("nodes rebuilds");
+        assert_eq!(shared.api_nodes_cache_build_count(), 2);
+
+        // latency 更新同样只触达 nodes。
+        assert!(shared.update_latency("hk-01", session_id, 42).await);
+        let _ = shared.overview_json_bytes().await.expect("overview cached");
+        let _ = shared.metrics_text(&readiness).await;
+        assert_eq!(shared.api_overview_cache_build_count(), 1);
+        assert_eq!(shared.metrics_cache_build_count(), 1);
+        let _ = shared.nodes_json_bytes().await.expect("nodes rebuilds again");
+        assert_eq!(shared.api_nodes_cache_build_count(), 3);
+
+        // 真正的结构性变更仍然连带使三视图失效。
+        shared.mark_disconnected("hk-01", session_id).await;
+        let _ = shared.overview_json_bytes().await.expect("overview rebuilds");
+        let _ = shared.metrics_text(&readiness).await;
+        let _ = shared.nodes_json_bytes().await.expect("nodes rebuilds");
+        assert_eq!(shared.api_overview_cache_build_count(), 2);
+        assert_eq!(shared.metrics_cache_build_count(), 2);
+        assert_eq!(shared.api_nodes_cache_build_count(), 4);
+    }
+
+    #[tokio::test]
     async fn metrics_cache_reuses_and_invalidates_cleanly() {
         let shared = SharedState::new(Arc::new(sample_config()));
         let readiness = crate::ServerReadiness::new(true);
