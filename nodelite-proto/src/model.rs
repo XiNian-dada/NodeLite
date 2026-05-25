@@ -22,12 +22,28 @@ pub struct NodeIdentity {
     pub tags: Vec<String>,
 }
 
+/// 首页列表需要的节点身份字段,避免把详情页不需要的静态字段一起下发。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NodeListIdentity {
+    pub node_id: String,
+    pub node_label: String,
+    pub hostname: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
 /// Linux 三档平均负载,与 `uptime` / `/proc/loadavg` 输出一致。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LoadAverage {
     pub one: f64,
     pub five: f64,
     pub fifteen: f64,
+}
+
+/// 首页列表矩阵只需要 1 分钟负载。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NodeListLoadAverage {
+    pub one: f64,
 }
 
 /// 内存使用情况,所有字段以字节为单位。
@@ -40,6 +56,13 @@ pub struct MemoryUsage {
     pub available_bytes: u64,
     pub swap_total_bytes: u64,
     pub swap_used_bytes: u64,
+}
+
+/// 首页列表矩阵只需要总内存与已用内存。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NodeListMemoryUsage {
+    pub total_bytes: u64,
+    pub used_bytes: u64,
 }
 
 /// 单个挂载点的磁盘使用情况。
@@ -80,6 +103,15 @@ pub struct NodeSnapshot {
     pub network: NetworkCounters,
 }
 
+/// 首页列表卡片需要的最小快照字段。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NodeListSnapshot {
+    #[serde(default)]
+    pub cpu_usage_percent: Option<f64>,
+    pub load: NodeListLoadAverage,
+    pub memory: NodeListMemoryUsage,
+}
+
 /// Server 端维护的节点运行态:身份 + 最新快照 + 在线状态。
 ///
 /// `snapshot` 在 Hello 之后、首次 Metrics 之前可能为 `None`。
@@ -90,6 +122,15 @@ pub struct NodeStatus {
     pub remote_ip: Option<String>,
     pub snapshot: Option<NodeSnapshot>,
     pub last_seen: Option<DateTime<Utc>>,
+    pub latency_ms: Option<u64>,
+    pub online: bool,
+}
+
+/// `/api/nodes` 的轻量列表项,避免把详情字段放进首页全量刷新响应。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NodeListItem {
+    pub identity: NodeListIdentity,
+    pub snapshot: Option<NodeListSnapshot>,
     pub latency_ms: Option<u64>,
     pub online: bool,
 }
@@ -132,6 +173,53 @@ impl MemoryUsage {
     /// 交换分区使用百分比;若主机未启用 swap,则返回 `None`。
     pub fn swap_used_percent(&self) -> Option<f64> {
         (self.swap_total_bytes > 0).then(|| percentage(self.swap_used_bytes, self.swap_total_bytes))
+    }
+}
+
+impl From<&NodeIdentity> for NodeListIdentity {
+    fn from(identity: &NodeIdentity) -> Self {
+        Self {
+            node_id: identity.node_id.clone(),
+            node_label: identity.node_label.clone(),
+            hostname: identity.hostname.clone(),
+            tags: identity.tags.clone(),
+        }
+    }
+}
+
+impl From<&LoadAverage> for NodeListLoadAverage {
+    fn from(load: &LoadAverage) -> Self {
+        Self { one: load.one }
+    }
+}
+
+impl From<&MemoryUsage> for NodeListMemoryUsage {
+    fn from(memory: &MemoryUsage) -> Self {
+        Self {
+            total_bytes: memory.total_bytes,
+            used_bytes: memory.used_bytes,
+        }
+    }
+}
+
+impl From<&NodeSnapshot> for NodeListSnapshot {
+    fn from(snapshot: &NodeSnapshot) -> Self {
+        Self {
+            cpu_usage_percent: snapshot.cpu_usage_percent,
+            load: NodeListLoadAverage::from(&snapshot.load),
+            memory: NodeListMemoryUsage::from(&snapshot.memory),
+        }
+    }
+}
+
+impl From<&NodeStatus> for NodeListItem {
+    fn from(status: &NodeStatus) -> Self {
+        Self {
+            identity: NodeListIdentity::from(&status.identity),
+            snapshot: status.snapshot.as_ref().map(NodeListSnapshot::from),
+            latency_ms: status.latency_ms,
+            online: status.online,
+        }
     }
 }
 

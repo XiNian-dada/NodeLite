@@ -239,7 +239,7 @@ impl TestServer {
         self.fetch_json("/api/overview").await
     }
 
-    pub async fn nodes(&self) -> Result<Vec<NodeStatus>> {
+    pub async fn nodes(&self) -> Result<Vec<nodelite_proto::NodeListItem>> {
         self.fetch_json("/api/nodes").await
     }
 

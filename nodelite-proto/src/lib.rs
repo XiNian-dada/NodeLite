@@ -25,8 +25,9 @@ pub use message::{
     RefreshTokenResponseMessage, ServerNoticeMessage, WIRE_PROTOCOL_VERSION, WireMessage,
 };
 pub use model::{
-    DiskUsage, HistoryPoint, LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot,
-    NodeStatus, OverviewData, percentage,
+    DiskUsage, HistoryPoint, LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity,
+    NodeListIdentity, NodeListItem, NodeListLoadAverage, NodeListMemoryUsage, NodeListSnapshot,
+    NodeSnapshot, NodeStatus, OverviewData, percentage,
 };
 pub use netutil::{host_is_local, uses_insecure_remote_url};
 pub use text::{truncate_string_to_byte_boundary, truncate_to_byte_boundary};

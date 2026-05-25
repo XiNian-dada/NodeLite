@@ -7,7 +7,7 @@ use tokio::net::TcpStream;
 use tokio::time::sleep;
 
 use super::{LOAD_TEST_BASIC_AUTH, LatencySummary};
-use nodelite_proto::NodeStatus;
+use nodelite_proto::{NodeListItem, NodeStatus};
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct HttpProbeSample {
@@ -327,7 +327,7 @@ fn validate_metrics_body(body: &str) -> Result<()> {
 }
 
 fn validate_nodes_body(body: &str, expected_nodes: usize) -> Result<()> {
-    let statuses: Vec<NodeStatus> = serde_json::from_str(body).context("decode nodes body")?;
+    let statuses: Vec<NodeListItem> = serde_json::from_str(body).context("decode nodes body")?;
     if statuses.len() != expected_nodes {
         bail!(
             "nodes endpoint returned {} nodes, expected {expected_nodes}",

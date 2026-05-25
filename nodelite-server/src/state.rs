@@ -20,7 +20,9 @@ use std::time::Duration;
 
 use axum::body::Bytes;
 use chrono::Utc;
-use nodelite_proto::{NodeIdentity, NodeSnapshot, NodeStatus, OverviewData, ServerConfig};
+use nodelite_proto::{
+    NodeIdentity, NodeListItem, NodeSnapshot, NodeStatus, OverviewData, ServerConfig,
+};
 use tokio::sync::{Mutex, RwLock, oneshot};
 
 use self::registry::Registry;
@@ -436,7 +438,8 @@ impl SharedState {
         let body = match kind {
             ApiBodyKind::Nodes => {
                 let statuses = self.list_statuses().await;
-                Bytes::from(serde_json::to_vec(&statuses)?)
+                let summaries: Vec<NodeListItem> = statuses.iter().map(NodeListItem::from).collect();
+                Bytes::from(serde_json::to_vec(&summaries)?)
             }
             ApiBodyKind::Overview => {
                 let overview = self.overview_data().await;
