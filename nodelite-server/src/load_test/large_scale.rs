@@ -7,7 +7,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use tokio::sync::{Barrier, mpsc, watch};
 use tokio::time::{sleep, timeout};
 
-use super::diagnostics::ResourceSnapshot;
+use super::diagnostics::{ResourceSnapshot, ViewCacheCounters};
 use super::fake_agent::{
     SeededHistoryRange, run_fake_agent, seed_history_points, wait_for_final_snapshots,
     wait_for_seeded_history_points,
@@ -75,7 +75,7 @@ pub(super) async fn run_large_fleet_load_test() -> Result<()> {
         let metrics = summarize_probe_samples(&join_probe_task(metrics_task, "metrics").await?)?;
         let resources = ResourceSnapshot::capture(&server).await?;
         println!(
-            "LARGE_FLEET_RESULT nodes={} connect_ms={:.1} settle_ms={:.1} metrics_total={} metrics_per_sec={:.1} overview_p95_ms={:.2} nodes_p95_ms={:.2} metrics_p95_ms={:.2} overview_body_bytes={} nodes_body_bytes={} metrics_body_bytes={} rss_bytes={} history_queue_depth={} history_dropped_writes={} db_bytes={} wal_bytes={} shm_bytes={}",
+            "LARGE_FLEET_RESULT nodes={} connect_ms={:.1} settle_ms={:.1} metrics_total={} metrics_per_sec={:.1} overview_p95_ms={:.2} nodes_p95_ms={:.2} metrics_p95_ms={:.2} overview_body_bytes={} nodes_body_bytes={} metrics_body_bytes={} rss_bytes={} history_queue_depth={} history_dropped_writes={} db_bytes={} wal_bytes={} shm_bytes={} {}",
             node_count,
             run.connect_ms,
             run.settle_ms,
@@ -93,6 +93,7 @@ pub(super) async fn run_large_fleet_load_test() -> Result<()> {
             resources.history_artifacts.db,
             resources.history_artifacts.wal,
             resources.history_artifacts.shm,
+            view_cache_summary(resources.view_cache),
         );
         server.shutdown().await?;
     }
@@ -145,7 +146,7 @@ pub(super) async fn run_dashboard_fanout_load_test() -> Result<()> {
     let metrics = summarize_probe_samples(&join_probe_task(metrics_task, "metrics").await?)?;
     let resources = ResourceSnapshot::capture(&server).await?;
     println!(
-        "DASHBOARD_FANOUT_RESULT nodes={} dashboard_readers={} refreshes_total={} connect_ms={:.1} settle_ms={:.1} metrics_total={} metrics_per_sec={:.1} overview_p95_ms={:.2} nodes_p95_ms={:.2} metrics_p95_ms={:.2} overview_body_bytes={} nodes_body_bytes={} metrics_body_bytes={} rss_bytes={} history_queue_depth={} history_dropped_writes={} db_bytes={} wal_bytes={} shm_bytes={}",
+        "DASHBOARD_FANOUT_RESULT nodes={} dashboard_readers={} refreshes_total={} connect_ms={:.1} settle_ms={:.1} metrics_total={} metrics_per_sec={:.1} overview_p95_ms={:.2} nodes_p95_ms={:.2} metrics_p95_ms={:.2} overview_body_bytes={} nodes_body_bytes={} metrics_body_bytes={} rss_bytes={} history_queue_depth={} history_dropped_writes={} db_bytes={} wal_bytes={} shm_bytes={} {}",
         DASHBOARD_NODE_COUNT,
         DASHBOARD_READERS,
         DASHBOARD_READERS * DASHBOARD_REFRESHES_PER_READER,
@@ -165,6 +166,7 @@ pub(super) async fn run_dashboard_fanout_load_test() -> Result<()> {
         resources.history_artifacts.db,
         resources.history_artifacts.wal,
         resources.history_artifacts.shm,
+        view_cache_summary(resources.view_cache),
     );
     server.shutdown().await?;
     Ok(())
@@ -209,7 +211,7 @@ pub(super) async fn run_history_pressure_load_test() -> Result<()> {
     let history = summarize_probe_samples(&history_samples)?;
     let resources = ResourceSnapshot::capture(&server).await?;
     println!(
-        "HISTORY_PRESSURE_RESULT nodes={} history_readers={} history_points_per_node={} connect_ms={:.1} settle_ms={:.1} metrics_total={} metrics_per_sec={:.1} history_p95_ms={:.2} history_body_bytes={} rss_bytes={} history_queue_depth={} history_dropped_writes={} db_bytes={} wal_bytes={} shm_bytes={}",
+        "HISTORY_PRESSURE_RESULT nodes={} history_readers={} history_points_per_node={} connect_ms={:.1} settle_ms={:.1} metrics_total={} metrics_per_sec={:.1} history_p95_ms={:.2} history_body_bytes={} rss_bytes={} history_queue_depth={} history_dropped_writes={} db_bytes={} wal_bytes={} shm_bytes={} {}",
         HISTORY_NODE_COUNT,
         HISTORY_READERS,
         HISTORY_POINTS_PER_NODE,
@@ -225,6 +227,7 @@ pub(super) async fn run_history_pressure_load_test() -> Result<()> {
         resources.history_artifacts.db,
         resources.history_artifacts.wal,
         resources.history_artifacts.shm,
+        view_cache_summary(resources.view_cache),
     );
     server.shutdown().await?;
     Ok(())
@@ -254,7 +257,7 @@ pub(super) async fn run_payload_size_load_test() -> Result<()> {
     let metrics = summarize_probe_samples(&join_probe_task(metrics_task, "metrics").await?)?;
     let resources = ResourceSnapshot::capture(&server).await?;
     println!(
-        "PAYLOAD_SIZE_RESULT nodes={} disk_entries_per_node={} connect_ms={:.1} settle_ms={:.1} metrics_total={} metrics_per_sec={:.1} nodes_p95_ms={:.2} metrics_p95_ms={:.2} nodes_body_bytes={} metrics_body_bytes={} rss_bytes={} history_queue_depth={} history_dropped_writes={} db_bytes={} wal_bytes={} shm_bytes={}",
+        "PAYLOAD_SIZE_RESULT nodes={} disk_entries_per_node={} connect_ms={:.1} settle_ms={:.1} metrics_total={} metrics_per_sec={:.1} nodes_p95_ms={:.2} metrics_p95_ms={:.2} nodes_body_bytes={} metrics_body_bytes={} rss_bytes={} history_queue_depth={} history_dropped_writes={} db_bytes={} wal_bytes={} shm_bytes={} {}",
         PAYLOAD_NODE_COUNT,
         PAYLOAD_DISK_ENTRIES,
         run.connect_ms,
@@ -271,6 +274,7 @@ pub(super) async fn run_payload_size_load_test() -> Result<()> {
         resources.history_artifacts.db,
         resources.history_artifacts.wal,
         resources.history_artifacts.shm,
+        view_cache_summary(resources.view_cache),
     );
     server.shutdown().await?;
     Ok(())
@@ -278,6 +282,18 @@ pub(super) async fn run_payload_size_load_test() -> Result<()> {
 
 fn body_bytes_triplet(summary: BodySizeSummary) -> String {
     format!("{}/{}/{}", summary.p50, summary.p95, summary.max)
+}
+
+fn view_cache_summary(counters: ViewCacheCounters) -> String {
+    format!(
+        "overview_hits={} overview_misses={} nodes_hits={} nodes_misses={} metrics_hits={} metrics_misses={}",
+        counters.overview_hits,
+        counters.overview_misses,
+        counters.nodes_hits,
+        counters.nodes_misses,
+        counters.metrics_hits,
+        counters.metrics_misses,
+    )
 }
 
 async fn drive_agent_workload(
