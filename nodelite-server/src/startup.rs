@@ -78,7 +78,8 @@ pub(crate) async fn run_server(config_path: &Path) -> Result<()> {
         validate_password_strength(&auth_config.password)?;
     }
 
-    let runtime = initialize_server_runtime(config_path, Arc::clone(&config), readonly_route_auth).await?;
+    let runtime =
+        initialize_server_runtime(config_path, Arc::clone(&config), readonly_route_auth).await?;
     let shutdown = runtime.state.shutdown.clone();
     let app = build_router(runtime.state);
 
@@ -101,7 +102,12 @@ pub(crate) async fn run_server(config_path: &Path) -> Result<()> {
     .await
     .context("server exited unexpectedly")?;
 
-    drain_server_shutdown(shutdown, runtime.background_tasks, runtime.shutdown_artifacts).await;
+    drain_server_shutdown(
+        shutdown,
+        runtime.background_tasks,
+        runtime.shutdown_artifacts,
+    )
+    .await;
     Ok(())
 }
 
@@ -112,9 +118,17 @@ async fn initialize_server_runtime(
 ) -> Result<ServerRuntime> {
     let registry = NodeRegistry::load(config.node_registry_path.as_path())
         .await
-        .with_context(|| format!("failed to load node registry {}", config.node_registry_path.display()))?;
+        .with_context(|| {
+            format!(
+                "failed to load node registry {}",
+                config.node_registry_path.display()
+            )
+        })?;
     let shared = SharedState::new(Arc::clone(&config));
-    let history = HistoryStore::new(config.history_db_path.clone(), config.sqlite_busy_timeout_secs);
+    let history = HistoryStore::new(
+        config.history_db_path.clone(),
+        config.sqlite_busy_timeout_secs,
+    );
     let agent_logs = AgentLogStore::new();
     let audit_log = AuditLog::new(config.audit.clone(), config.sqlite_busy_timeout_secs);
     history.initialize().await;
@@ -128,10 +142,18 @@ async fn initialize_server_runtime(
         history,
         agent_logs,
         audit_log,
-        install_admission: InstallAdmissionController::new(auth_failure_admission_config(&config.ws)),
-        verify_2fa_admission: InstallAdmissionController::new(auth_failure_admission_config(&config.ws)),
-        readonly_auth_admission: InstallAdmissionController::new(auth_failure_admission_config(&config.ws)),
-        sensitive_readonly_auth_admission: InstallAdmissionController::new(sensitive_auth_failure_admission_config(&config.ws)),
+        install_admission: InstallAdmissionController::new(auth_failure_admission_config(
+            &config.ws,
+        )),
+        verify_2fa_admission: InstallAdmissionController::new(auth_failure_admission_config(
+            &config.ws,
+        )),
+        readonly_auth_admission: InstallAdmissionController::new(auth_failure_admission_config(
+            &config.ws,
+        )),
+        sensitive_readonly_auth_admission: InstallAdmissionController::new(
+            sensitive_auth_failure_admission_config(&config.ws),
+        ),
         readiness,
         registry,
         shared,
@@ -198,7 +220,6 @@ async fn drain_server_shutdown(
     background_tasks: Vec<JoinHandle<()>>,
     shutdown_artifacts: ShutdownArtifacts,
 ) {
-
     // axum 的 graceful shutdown 只 drain HTTP 请求,不会通知 WebSocket 会话或
     // 后台任务。这里在 HTTP 端 drain 完成后, cancel 全局 token, 让:
     //   - 每个 spawn_* 后台任务从各自的 select! 跳出, 结束 loop;
@@ -227,7 +248,9 @@ async fn drain_server_shutdown(
     // 还没刷到磁盘。这里同步再落一次,确保 systemd restart 后看到的就是退出前最新视图。
     info!("flushing final snapshot before shutdown");
     let final_statuses = shutdown_artifacts.shared.list_statuses().await;
-    if let Err(error) = persist_snapshot(shutdown_artifacts.snapshot_path.as_path(), &final_statuses).await {
+    if let Err(error) =
+        persist_snapshot(shutdown_artifacts.snapshot_path.as_path(), &final_statuses).await
+    {
         warn!(error = ?error, path = %shutdown_artifacts.snapshot_path.display(), "failed to flush final snapshot");
     }
 

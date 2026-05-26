@@ -23,7 +23,11 @@ fn exporter_emits_help_and_type_once_per_family() {
 
     assert_eq!(body.matches("# HELP nodelite_node_online ").count(), 1);
     assert_eq!(body.matches("# TYPE nodelite_node_online gauge").count(), 1);
-    assert_eq!(body.matches("# HELP nodelite_node_cpu_usage_ratio ").count(), 1);
+    assert_eq!(
+        body.matches("# HELP nodelite_node_cpu_usage_ratio ")
+            .count(),
+        1
+    );
     assert_eq!(
         body.matches("# TYPE nodelite_node_network_bytes_total counter")
             .count(),
@@ -64,9 +68,11 @@ fn exporter_exposes_snapshot_resource_metrics_for_each_node() {
     );
     assert!(!body.contains("nodelite_node_disk_bytes{"));
     assert!(body.contains("nodelite_node_load_average{node_id=\"node-2\",window=\"15m\"} 0.75"));
-    assert!(body.contains(
-        "nodelite_node_network_bytes_total{node_id=\"node-1\",direction=\"rx\"} 1500"
-    ));
+    assert!(
+        body.contains(
+            "nodelite_node_network_bytes_total{node_id=\"node-1\",direction=\"rx\"} 1500"
+        )
+    );
 }
 
 #[test]
@@ -229,9 +235,11 @@ fn exporter_exposes_runtime_observability_metrics() {
     assert!(body.contains("# TYPE nodelite_sqlite_wal_checkpoint_busy gauge"));
     assert!(body.contains("nodelite_sqlite_wal_checkpoint_busy{database=\"audit\"} 1"));
     assert!(body.contains("# TYPE nodelite_sqlite_wal_checkpoint_pages gauge"));
-    assert!(body.contains(
-        "nodelite_sqlite_wal_checkpoint_pages{database=\"history\",state=\"log\"} 24"
-    ));
+    assert!(
+        body.contains(
+            "nodelite_sqlite_wal_checkpoint_pages{database=\"history\",state=\"log\"} 24"
+        )
+    );
     assert!(body.contains(
         "nodelite_sqlite_wal_checkpoint_pages{database=\"history\",state=\"backlog\"} 4"
     ));

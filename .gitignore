@@ -6,6 +6,10 @@ target/tarpaulin/
 .DS_Store
 /data
 /dist
+/report
+/nodelite-server/data/
+/structure/
+shit-mountain-report.md
 AGENTS.md
 
 .claude/

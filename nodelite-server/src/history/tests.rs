@@ -6,8 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{Duration, Utc};
 use nodelite_proto::{
-    HistoryPoint, LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot,
-    NodeStatus,
+    HistoryPoint, LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot, NodeStatus,
 };
 use tokio::runtime::Runtime;
 
@@ -420,7 +419,11 @@ async fn record_status_flushes_through_writer_task_to_sqlite() {
 
     // 触发 shutdown; writer 会把已经入队但还没 flush 的样本 drain 出来。
     store.shutdown().await;
-    assert_eq!(store.dropped_writes(), 0, "no writes should have been dropped");
+    assert_eq!(
+        store.dropped_writes(),
+        0,
+        "no writes should have been dropped"
+    );
 
     // 验证 5 条样本都成功落库。
     let connection = initialize_database(&db_path, 5).expect("re-open database");

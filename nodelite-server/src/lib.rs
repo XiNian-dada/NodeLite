@@ -44,6 +44,7 @@ mod tests;
 
 use clap::Parser;
 
+pub use crate::cli::CliError;
 #[allow(unused_imports)]
 pub(crate) use app_state::{AppState, ServerReadiness};
 #[cfg(test)]
@@ -52,7 +53,6 @@ pub(crate) use background::uses_insecure_remote_public_base_url;
 pub(crate) use startup::PROTECTED_CACHE_CONTROL;
 #[allow(unused_imports)]
 pub(crate) use startup::{load_server_config, set_protected_response_headers};
-pub use crate::cli::CliError;
 
 use crate::cli::{Cli, Command, install_agent_command, issue_node_command, upgrade_agent_command};
 

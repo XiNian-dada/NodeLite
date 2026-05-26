@@ -78,7 +78,9 @@ fn argon2_instance() -> RegistryResult<Argon2<'static>> {
         ARGON2_PARALLELISM,
         None,
     )
-    .map_err(|error| RegistryError::internal("failed to build argon2 parameters", anyhow!(error)))?;
+    .map_err(|error| {
+        RegistryError::internal("failed to build argon2 parameters", anyhow!(error))
+    })?;
     Ok(Argon2::new(Algorithm::Argon2id, Version::V0x13, params))
 }
 
@@ -106,7 +108,9 @@ pub(super) fn verify_token(candidate: &str, phc: &str) -> bool {
     let Ok(argon2) = argon2_instance() else {
         return false;
     };
-    argon2.verify_password(candidate.as_bytes(), &parsed).is_ok()
+    argon2
+        .verify_password(candidate.as_bytes(), &parsed)
+        .is_ok()
 }
 
 /// 把还在用明文 `token` 字段的旧 registry 条目迁移到 `token_hash`。

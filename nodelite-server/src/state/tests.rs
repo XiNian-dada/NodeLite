@@ -418,7 +418,9 @@ async fn metrics_cache_reuses_and_invalidates_cleanly() {
     for _ in 0..10 {
         let shared = shared.clone();
         let readiness = readiness.clone();
-        tasks.push(tokio::spawn(async move { shared.metrics_text(&readiness).await }));
+        tasks.push(tokio::spawn(async move {
+            shared.metrics_text(&readiness).await
+        }));
     }
 
     let mut first = None;

@@ -42,8 +42,13 @@ pub(crate) async fn install_bootstrap(
     }
 
     let Some(token) = bearer_token_from_request(&request) else {
-        record_install_token_failure(&state, client_ip, &audit_user_agent, "missing_install_token")
-            .await;
+        record_install_token_failure(
+            &state,
+            client_ip,
+            &audit_user_agent,
+            "missing_install_token",
+        )
+        .await;
         return install_unauthorized_response("missing install token");
     };
 

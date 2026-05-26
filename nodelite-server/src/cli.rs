@@ -128,9 +128,7 @@ pub(crate) async fn install_agent_command(
 }
 
 /// `server upgrade-agent`:打印就地升级现有 Agent 的命令。
-pub(crate) async fn upgrade_agent_command(
-    config_path: &Path,
-) -> std::result::Result<(), CliError> {
+pub(crate) async fn upgrade_agent_command(config_path: &Path) -> std::result::Result<(), CliError> {
     let config = load_server_config(config_path)
         .await
         .map_err(|source| CliError::LoadConfig { source })?;
