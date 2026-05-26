@@ -132,18 +132,18 @@ async fn record_install_block(
     audit_user_agent: &Option<String>,
     retry_after_secs: u64,
 ) {
-    let mut event = NewAuditEvent::now(
+    record_audit_event(
+        state,
         AuditEventType::RateLimitExceeded,
         client_ip.to_string(),
-        false,
-    );
-    event.user_agent = audit_user_agent.clone();
-    event.details = json!({
-        "endpoint": "/install/bootstrap",
-        "retry_after_secs": retry_after_secs,
-        "reason": "install_auth_block",
-    });
-    state.audit_log.record_best_effort(event).await;
+        audit_user_agent.clone(),
+        json!({
+            "endpoint": "/install/bootstrap",
+            "retry_after_secs": retry_after_secs,
+            "reason": "install_auth_block",
+        }),
+    )
+    .await;
 }
 
 async fn record_install_token_failure(
@@ -153,12 +153,29 @@ async fn record_install_token_failure(
     reason: &'static str,
 ) {
     state.install_admission.record_auth_failure(client_ip);
-    let mut event = NewAuditEvent::now(AuditEventType::TokenInvalid, client_ip.to_string(), false);
-    event.user_agent = audit_user_agent.clone();
-    event.details = json!({
-        "endpoint": "/install/bootstrap",
-        "reason": reason,
-    });
+    record_audit_event(
+        state,
+        AuditEventType::TokenInvalid,
+        client_ip.to_string(),
+        audit_user_agent.clone(),
+        json!({
+            "endpoint": "/install/bootstrap",
+            "reason": reason,
+        }),
+    )
+    .await;
+}
+
+async fn record_audit_event(
+    state: &AppState,
+    event_type: AuditEventType,
+    client_ip: String,
+    audit_user_agent: Option<String>,
+    details: serde_json::Value,
+) {
+    let mut event = NewAuditEvent::now(event_type, client_ip, false);
+    event.user_agent = audit_user_agent;
+    event.details = details;
     state.audit_log.record_best_effort(event).await;
 }
 

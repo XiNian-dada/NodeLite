@@ -133,18 +133,19 @@ async fn ensure_verify_2fa_not_blocked(
     let Err(retry_after_secs) = state.verify_2fa_admission.check(client_ip) else {
         return Ok(());
     };
-    let mut event = NewAuditEvent::now(
+    record_audit_event(
+        state,
         AuditEventType::RateLimitExceeded,
         client_ip.to_string(),
         false,
-    );
-    event.user_agent = user_agent(headers);
-    event.details = json!({
-        "endpoint": "/api/verify-2fa",
-        "retry_after_secs": retry_after_secs,
-        "reason": "verify_2fa_block",
-    });
-    state.audit_log.record_best_effort(event).await;
+        user_agent(headers),
+        json!({
+            "endpoint": "/api/verify-2fa",
+            "retry_after_secs": retry_after_secs,
+            "reason": "verify_2fa_block",
+        }),
+    )
+    .await;
     Err((
         StatusCode::TOO_MANY_REQUESTS,
         Json(Verify2FAError {
@@ -232,14 +233,15 @@ async fn record_totp_failure(
     details: serde_json::Value,
 ) {
     state.verify_2fa_admission.record_auth_failure(client_ip);
-    let mut event = NewAuditEvent::now(
+    record_audit_event(
+        state,
         AuditEventType::TotpVerifyFailure,
         client_ip.to_string(),
         false,
-    );
-    event.user_agent = user_agent(headers);
-    event.details = details;
-    state.audit_log.record_best_effort(event).await;
+        user_agent(headers),
+        details,
+    )
+    .await;
 }
 
 async fn readonly_auth_username(state: &AppState) -> Option<String> {
@@ -267,11 +269,7 @@ async fn record_totp_success(
     client_ip: std::net::IpAddr,
     audit_user: Option<String>,
 ) {
-    let mut event = NewAuditEvent::now(
-        AuditEventType::TotpVerifySuccess,
-        client_ip.to_string(),
-        true,
-    );
+    let mut event = NewAuditEvent::now(AuditEventType::TotpVerifySuccess, client_ip.to_string(), true);
     event.user = audit_user;
     event.user_agent = user_agent(headers);
     event.details = json!({
@@ -427,19 +425,24 @@ async fn record_readonly_login_failure(
             .sensitive_readonly_auth_admission
             .record_auth_failure(meta.client_ip);
     }
-    let mut event = NewAuditEvent::now(AuditEventType::LoginFailure, meta.audit_ip.clone(), false);
-    event.user_agent = meta.audit_user_agent.clone();
-    event.details = json!({
-        "path": meta.request_path,
-        "reason": if has_authorization_header {
-            "invalid_basic_auth"
-        } else {
-            "missing_basic_auth"
-        },
-        "two_factor_enabled": two_factor_enabled,
-        "sensitive_path": meta.sensitive_path,
-    });
-    state.audit_log.record_best_effort(event).await;
+    record_audit_event(
+        state,
+        AuditEventType::LoginFailure,
+        meta.audit_ip.clone(),
+        false,
+        meta.audit_user_agent.clone(),
+        json!({
+            "path": meta.request_path,
+            "reason": if has_authorization_header {
+                "invalid_basic_auth"
+            } else {
+                "missing_basic_auth"
+            },
+            "two_factor_enabled": two_factor_enabled,
+            "sensitive_path": meta.sensitive_path,
+        }),
+    )
+    .await;
 }
 
 fn readonly_auth_unauthorized_response() -> Response {
@@ -463,18 +466,33 @@ async fn record_readonly_auth_block(
     sensitive_path: bool,
     retry_after_secs: u64,
 ) {
-    let mut event = NewAuditEvent::now(
+    record_audit_event(
+        state,
         AuditEventType::RateLimitExceeded,
         audit_ip.to_string(),
         false,
-    );
-    event.user_agent = audit_user_agent.clone();
-    event.details = json!({
-        "path": request_path,
-        "reason": "readonly_auth_block",
-        "retry_after_secs": retry_after_secs,
-        "sensitive_path": sensitive_path,
-    });
+        audit_user_agent.clone(),
+        json!({
+            "path": request_path,
+            "reason": "readonly_auth_block",
+            "retry_after_secs": retry_after_secs,
+            "sensitive_path": sensitive_path,
+        }),
+    )
+    .await;
+}
+
+async fn record_audit_event(
+    state: &AppState,
+    event_type: AuditEventType,
+    client_ip: String,
+    success: bool,
+    audit_user_agent: Option<String>,
+    details: serde_json::Value,
+) {
+    let mut event = NewAuditEvent::now(event_type, client_ip, success);
+    event.user_agent = audit_user_agent;
+    event.details = details;
     state.audit_log.record_best_effort(event).await;
 }
 
