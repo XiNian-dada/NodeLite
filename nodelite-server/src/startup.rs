@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -52,6 +52,19 @@ pub(crate) const PROTECTED_CONTENT_SECURITY_POLICY: &str = "default-src 'self'; 
 pub(crate) const PROTECTED_CACHE_CONTROL: &str = "no-store, no-cache, must-revalidate";
 pub(crate) const JSON_WRITE_BODY_LIMIT_BYTES: usize = 16 * 1024;
 
+struct ServerRuntime {
+    state: AppState,
+    background_tasks: Vec<JoinHandle<()>>,
+    shutdown_artifacts: ShutdownArtifacts,
+}
+
+struct ShutdownArtifacts {
+    shared: SharedState,
+    history: HistoryStore,
+    audit_log: AuditLog,
+    snapshot_path: PathBuf,
+}
+
 /// 启动 Web 服务:加载配置 → 初始化各子系统 → 注册路由 → 监听端口。
 pub(crate) async fn run_server(config_path: &Path) -> Result<()> {
     let config = Arc::new(load_server_config(config_path).await?);
@@ -65,90 +78,9 @@ pub(crate) async fn run_server(config_path: &Path) -> Result<()> {
         validate_password_strength(&auth_config.password)?;
     }
 
-    let registry = NodeRegistry::load(config.node_registry_path.as_path())
-        .await
-        .with_context(|| {
-            format!(
-                "failed to load node registry {}",
-                config.node_registry_path.display()
-            )
-        })?;
-    let shared = SharedState::new(Arc::clone(&config));
-    let history = HistoryStore::new(
-        config.history_db_path.clone(),
-        config.sqlite_busy_timeout_secs,
-    );
-    let agent_logs = AgentLogStore::new();
-    let audit_store = AuditLog::new(config.audit.clone(), config.sqlite_busy_timeout_secs);
-    history.initialize().await;
-    audit_store.initialize().await?;
-    let readiness = ServerReadiness::new(history.is_available());
-    readiness.mark_history_available(history.is_available());
-    restore_snapshot_if_available(&shared, config.snapshot_path.as_path()).await;
-
-    let shutdown = CancellationToken::new();
-    let mut background_tasks: Vec<JoinHandle<()>> = vec![
-        spawn_registry_reloader(
-            registry.clone(),
-            history.clone(),
-            agent_logs.clone(),
-            readiness.clone(),
-            shutdown.clone(),
-        ),
-        audit_store.spawn_pruner(shutdown.clone()),
-        spawn_stale_reaper(shared.clone(), shutdown.clone()),
-        spawn_snapshot_persistor(
-            shared.clone(),
-            config.snapshot_path.clone(),
-            shutdown.clone(),
-        ),
-    ];
-    if let Some(handle) = spawn_insecure_transport_warning(
-        config.public_base_url.clone(),
-        config.listen,
-        config.insecure_transport_warn_interval_secs,
-        shutdown.clone(),
-    ) {
-        background_tasks.push(handle);
-    }
-
-    let enrolled_nodes = registry.count().await;
-    info!(
-        registry_path = %config.node_registry_path.display(),
-        enrolled_nodes,
-        "node registry loaded",
-    );
-
-    let state = AppState {
-        history,
-        agent_logs,
-        audit_log: audit_store,
-        install_admission: InstallAdmissionController::new(auth_failure_admission_config(
-            &config.ws,
-        )),
-        verify_2fa_admission: InstallAdmissionController::new(auth_failure_admission_config(
-            &config.ws,
-        )),
-        readonly_auth_admission: InstallAdmissionController::new(auth_failure_admission_config(
-            &config.ws,
-        )),
-        sensitive_readonly_auth_admission: InstallAdmissionController::new(
-            sensitive_auth_failure_admission_config(&config.ws),
-        ),
-        readiness,
-        registry,
-        shared,
-        ws_admission: WsAdmissionController::new(&config.ws),
-        readonly_auth: Arc::new(RwLock::new(readonly_route_auth.clone())),
-        two_factor_sessions: TwoFactorSessions::new(),
-        config_path: Arc::new(config_path.to_path_buf()),
-        shutdown: shutdown.clone(),
-    };
-    let shared_for_shutdown = state.shared.clone();
-    let history_for_shutdown = state.history.clone();
-    let audit_for_shutdown = state.audit_log.clone();
-    let snapshot_path = config.snapshot_path.clone();
-    let app = build_router(state);
+    let runtime = initialize_server_runtime(config_path, Arc::clone(&config), readonly_route_auth).await?;
+    let shutdown = runtime.state.shutdown.clone();
+    let app = build_router(runtime.state);
 
     let listener = TcpListener::bind(listen_addr)
         .await
@@ -168,6 +100,113 @@ pub(crate) async fn run_server(config_path: &Path) -> Result<()> {
     .with_graceful_shutdown(shutdown_signal())
     .await
     .context("server exited unexpectedly")?;
+
+    drain_server_shutdown(shutdown, runtime.background_tasks, runtime.shutdown_artifacts).await;
+    Ok(())
+}
+
+async fn initialize_server_runtime(
+    config_path: &Path,
+    config: Arc<ServerConfig>,
+    readonly_route_auth: ReadonlyRouteAuth,
+) -> Result<ServerRuntime> {
+    let registry = NodeRegistry::load(config.node_registry_path.as_path())
+        .await
+        .with_context(|| format!("failed to load node registry {}", config.node_registry_path.display()))?;
+    let shared = SharedState::new(Arc::clone(&config));
+    let history = HistoryStore::new(config.history_db_path.clone(), config.sqlite_busy_timeout_secs);
+    let agent_logs = AgentLogStore::new();
+    let audit_log = AuditLog::new(config.audit.clone(), config.sqlite_busy_timeout_secs);
+    history.initialize().await;
+    audit_log.initialize().await?;
+    let readiness = ServerReadiness::new(history.is_available());
+    readiness.mark_history_available(history.is_available());
+    restore_snapshot_if_available(&shared, config.snapshot_path.as_path()).await;
+
+    let shutdown = CancellationToken::new();
+    let background_tasks = spawn_server_background_tasks(
+        &config,
+        registry.clone(),
+        history.clone(),
+        agent_logs.clone(),
+        audit_log.clone(),
+        readiness.clone(),
+        shared.clone(),
+        shutdown.clone(),
+    );
+    log_registry_loaded(&config, &registry).await;
+
+    let state = AppState {
+        history,
+        agent_logs,
+        audit_log,
+        install_admission: InstallAdmissionController::new(auth_failure_admission_config(&config.ws)),
+        verify_2fa_admission: InstallAdmissionController::new(auth_failure_admission_config(&config.ws)),
+        readonly_auth_admission: InstallAdmissionController::new(auth_failure_admission_config(&config.ws)),
+        sensitive_readonly_auth_admission: InstallAdmissionController::new(sensitive_auth_failure_admission_config(&config.ws)),
+        readiness,
+        registry,
+        shared,
+        ws_admission: WsAdmissionController::new(&config.ws),
+        readonly_auth: Arc::new(RwLock::new(readonly_route_auth)),
+        two_factor_sessions: TwoFactorSessions::new(),
+        config_path: Arc::new(config_path.to_path_buf()),
+        shutdown,
+    };
+    let shutdown_artifacts = ShutdownArtifacts {
+        shared: state.shared.clone(),
+        history: state.history.clone(),
+        audit_log: state.audit_log.clone(),
+        snapshot_path: config.snapshot_path.clone(),
+    };
+    Ok(ServerRuntime {
+        state,
+        background_tasks,
+        shutdown_artifacts,
+    })
+}
+
+fn spawn_server_background_tasks(
+    config: &ServerConfig,
+    registry: NodeRegistry,
+    history: HistoryStore,
+    agent_logs: AgentLogStore,
+    audit_log: AuditLog,
+    readiness: ServerReadiness,
+    shared: SharedState,
+    shutdown: CancellationToken,
+) -> Vec<JoinHandle<()>> {
+    let mut background_tasks = vec![
+        spawn_registry_reloader(registry, history, agent_logs, readiness, shutdown.clone()),
+        audit_log.spawn_pruner(shutdown.clone()),
+        spawn_stale_reaper(shared.clone(), shutdown.clone()),
+        spawn_snapshot_persistor(shared, config.snapshot_path.clone(), shutdown.clone()),
+    ];
+    if let Some(handle) = spawn_insecure_transport_warning(
+        config.public_base_url.clone(),
+        config.listen,
+        config.insecure_transport_warn_interval_secs,
+        shutdown,
+    ) {
+        background_tasks.push(handle);
+    }
+    background_tasks
+}
+
+async fn log_registry_loaded(config: &ServerConfig, registry: &NodeRegistry) {
+    let enrolled_nodes = registry.count().await;
+    info!(
+        registry_path = %config.node_registry_path.display(),
+        enrolled_nodes,
+        "node registry loaded",
+    );
+}
+
+async fn drain_server_shutdown(
+    shutdown: CancellationToken,
+    background_tasks: Vec<JoinHandle<()>>,
+    shutdown_artifacts: ShutdownArtifacts,
+) {
 
     // axum 的 graceful shutdown 只 drain HTTP 请求,不会通知 WebSocket 会话或
     // 后台任务。这里在 HTTP 端 drain 完成后, cancel 全局 token, 让:
@@ -196,21 +235,20 @@ pub(crate) async fn run_server(config_path: &Path) -> Result<()> {
     // 周期持久化任务每 15 秒落盘一次,SIGTERM 期间最近一次 tick 之后的状态变更可能
     // 还没刷到磁盘。这里同步再落一次,确保 systemd restart 后看到的就是退出前最新视图。
     info!("flushing final snapshot before shutdown");
-    let final_statuses = shared_for_shutdown.list_statuses().await;
-    if let Err(error) = persist_snapshot(snapshot_path.as_path(), &final_statuses).await {
-        warn!(error = ?error, path = %snapshot_path.display(), "failed to flush final snapshot");
+    let final_statuses = shutdown_artifacts.shared.list_statuses().await;
+    if let Err(error) = persist_snapshot(shutdown_artifacts.snapshot_path.as_path(), &final_statuses).await {
+        warn!(error = ?error, path = %shutdown_artifacts.snapshot_path.display(), "failed to flush final snapshot");
     }
 
     // History writer 仍可能有入队但未 flush 的样本(WS 在收到 Close 之前
     // 最后那一拍上报的数据)。显式 drain 一次,避免 systemd restart 后历史断档。
     info!("draining history writer before shutdown");
-    history_for_shutdown.shutdown().await;
+    shutdown_artifacts.history.shutdown().await;
 
     info!("draining audit writer before shutdown");
-    audit_for_shutdown.shutdown().await;
+    shutdown_artifacts.audit_log.shutdown().await;
 
     info!("nodelite server shutdown complete");
-    Ok(())
 }
 
 pub(crate) fn build_router(state: AppState) -> Router {
