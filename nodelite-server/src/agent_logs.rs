@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use chrono::{DateTime, Utc};
 use nodelite_proto::{AgentLogEntry, truncate_to_byte_boundary};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 const MAX_LOGS_PER_NODE: usize = 200;
 const MAX_BATCH_ENTRIES: usize = 64;
@@ -11,6 +12,7 @@ const MAX_LOG_MESSAGE_BYTES: usize = 512;
 const MAX_LOG_ENTRIES_TOTAL: usize = 10_000;
 const MAX_LOG_ESTIMATED_BYTES: usize = 8 * 1024 * 1024;
 const ESTIMATED_LOG_ENTRY_OVERHEAD_BYTES: usize = 96;
+const AGENT_LOG_SHARDS: usize = 16;
 
 /// `record_entries` 的结构化结果, 让调用方既能知道"接受了多少",
 /// 也能知道"丢弃了多少 + 因为什么"。
@@ -56,15 +58,21 @@ pub struct AgentLogStats {
 /// - 对消息长度与时间戳做轻量清洗,避免脏数据破坏前端渲染。
 #[derive(Clone, Default)]
 pub struct AgentLogStore {
-    inner: Arc<RwLock<AgentLogState>>,
+    inner: Arc<AgentLogStoreInner>,
 }
 
 #[derive(Default)]
-struct AgentLogState {
+struct AgentLogStoreInner {
+    shards: Vec<RwLock<AgentLogShard>>,
+    total_entries: AtomicUsize,
+    estimated_bytes: AtomicUsize,
+    next_sequence: AtomicU64,
+    eviction_lock: Mutex<()>,
+}
+
+#[derive(Default)]
+struct AgentLogShard {
     buffers: HashMap<String, VecDeque<StoredAgentLogEntry>>,
-    total_entries: usize,
-    estimated_bytes: usize,
-    next_sequence: u64,
 }
 
 #[derive(Clone)]
@@ -76,7 +84,17 @@ struct StoredAgentLogEntry {
 
 impl AgentLogStore {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            inner: Arc::new(AgentLogStoreInner {
+                shards: (0..AGENT_LOG_SHARDS)
+                    .map(|_| RwLock::new(AgentLogShard::default()))
+                    .collect(),
+                total_entries: AtomicUsize::new(0),
+                estimated_bytes: AtomicUsize::new(0),
+                next_sequence: AtomicU64::new(0),
+                eviction_lock: Mutex::new(()),
+            }),
+        }
     }
 
     /// 记录某节点上传的一批日志, 返回结构化的接收 / 丢弃统计。
@@ -88,11 +106,9 @@ impl AgentLogStore {
         let total = entries.len();
         let dropped_batch_cap = total.saturating_sub(MAX_BATCH_ENTRIES);
 
-        let mut guard = self.inner.write().await;
-        let node_id = node_id.to_string();
         let mut accepted = 0;
         let mut dropped_sanitize = 0;
-        let mut evicted_global_budget = 0;
+        let shard_index = shard_index(node_id);
 
         for entry in entries.into_iter().take(MAX_BATCH_ENTRIES) {
             let Some(entry) = sanitize_entry(entry) else {
@@ -100,10 +116,11 @@ impl AgentLogStore {
                 continue;
             };
 
-            guard.push_entry(&node_id, entry);
-            evicted_global_budget += guard.enforce_global_budget();
+            self.push_entry(shard_index, node_id, entry).await;
             accepted += 1;
         }
+
+        let evicted_global_budget = self.enforce_global_budget().await;
 
         RecordResult {
             accepted,
@@ -115,7 +132,7 @@ impl AgentLogStore {
 
     /// 返回某节点最近的若干条日志,按发生时间升序保留。
     pub async fn list(&self, node_id: &str, limit: usize) -> Vec<AgentLogEntry> {
-        let guard = self.inner.read().await;
+        let guard = self.inner.shards[shard_index(node_id)].read().await;
         let Some(buffer) = guard.buffers.get(node_id) else {
             return Vec::new();
         };
@@ -132,72 +149,138 @@ impl AgentLogStore {
     /// 清理已经不在注册表中的节点日志,避免长期运行时缓冲只增不减。
     pub async fn forget_missing(&self, live_node_ids: &[String]) -> usize {
         let live: HashSet<&str> = live_node_ids.iter().map(String::as_str).collect();
-        let mut guard = self.inner.write().await;
-        let before = guard.buffers.len();
-        let removed_nodes = guard
-            .buffers
-            .keys()
-            .filter(|node_id| !live.contains(node_id.as_str()))
-            .cloned()
-            .collect::<Vec<_>>();
-        for node_id in removed_nodes {
-            guard.remove_node(&node_id);
+        let mut removed = 0;
+        for shard in &self.inner.shards {
+            let mut guard = shard.write().await;
+            let before = guard.buffers.len();
+            let removed_nodes = guard
+                .buffers
+                .keys()
+                .filter(|node_id| !live.contains(node_id.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            for node_id in removed_nodes {
+                let removed_stats = guard.remove_node(&node_id);
+                self.inner
+                    .total_entries
+                    .fetch_sub(removed_stats.entries, Ordering::Relaxed);
+                self.inner
+                    .estimated_bytes
+                    .fetch_sub(removed_stats.estimated_bytes, Ordering::Relaxed);
+            }
+            removed += before.saturating_sub(guard.buffers.len());
         }
-        before.saturating_sub(guard.buffers.len())
+        removed
     }
 
     pub async fn stats(&self) -> AgentLogStats {
-        let guard = self.inner.read().await;
+        let mut nodes = 0;
+        for shard in &self.inner.shards {
+            nodes += shard.read().await.buffers.len();
+        }
         AgentLogStats {
-            nodes: guard.buffers.len(),
-            entries: guard.total_entries,
-            estimated_bytes: guard.estimated_bytes,
+            nodes,
+            entries: self.inner.total_entries.load(Ordering::Relaxed),
+            estimated_bytes: self.inner.estimated_bytes.load(Ordering::Relaxed),
             max_entries: MAX_LOG_ENTRIES_TOTAL,
             max_estimated_bytes: MAX_LOG_ESTIMATED_BYTES,
         }
     }
-}
 
-impl AgentLogState {
-    fn push_entry(&mut self, node_id: &str, entry: AgentLogEntry) {
+    async fn push_entry(&self, shard_index: usize, node_id: &str, entry: AgentLogEntry) {
         let estimated_bytes = estimate_entry_bytes(node_id, &entry);
         let stored = StoredAgentLogEntry {
             entry,
-            sequence: self.next_sequence,
+            sequence: self.inner.next_sequence.fetch_add(1, Ordering::Relaxed),
             estimated_bytes,
         };
-        self.next_sequence = self.next_sequence.saturating_add(1);
+        self.inner.total_entries.fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .estimated_bytes
+            .fetch_add(estimated_bytes, Ordering::Relaxed);
 
-        let buffer = self.buffers.entry(node_id.to_string()).or_default();
+        let mut shard = self.inner.shards[shard_index].write().await;
+        let buffer = shard.buffers.entry(node_id.to_string()).or_default();
         buffer.push_back(stored);
-        self.total_entries = self.total_entries.saturating_add(1);
-        self.estimated_bytes = self.estimated_bytes.saturating_add(estimated_bytes);
 
-        while self
+        let mut local_evicted_entries = 0;
+        let mut local_evicted_bytes = 0;
+        while shard
             .buffers
             .get(node_id)
             .is_some_and(|buffer| buffer.len() > MAX_LOGS_PER_NODE)
         {
-            self.pop_front_for_node(node_id);
+            if let Some(entry) = shard.pop_front_for_node(node_id) {
+                local_evicted_entries += 1;
+                local_evicted_bytes += entry.estimated_bytes;
+            }
+        }
+        drop(shard);
+
+        if local_evicted_entries > 0 {
+            self.inner
+                .total_entries
+                .fetch_sub(local_evicted_entries, Ordering::Relaxed);
+            self.inner
+                .estimated_bytes
+                .fetch_sub(local_evicted_bytes, Ordering::Relaxed);
         }
     }
 
-    fn enforce_global_budget(&mut self) -> usize {
-        let mut evicted = 0;
-        while self.total_entries > MAX_LOG_ENTRIES_TOTAL
-            || self.estimated_bytes > MAX_LOG_ESTIMATED_BYTES
+    async fn enforce_global_budget(&self) -> usize {
+        if self.inner.total_entries.load(Ordering::Relaxed) <= MAX_LOG_ENTRIES_TOTAL
+            && self.inner.estimated_bytes.load(Ordering::Relaxed) <= MAX_LOG_ESTIMATED_BYTES
         {
-            let Some(node_id) = self.oldest_node_id() else {
+            return 0;
+        }
+
+        let _guard = self.inner.eviction_lock.lock().await;
+        let mut evicted = 0;
+        while self.inner.total_entries.load(Ordering::Relaxed) > MAX_LOG_ENTRIES_TOTAL
+            || self.inner.estimated_bytes.load(Ordering::Relaxed) > MAX_LOG_ESTIMATED_BYTES
+        {
+            let Some((shard_index, node_id)) = self.oldest_node_location().await else {
                 break;
             };
-            if self.pop_front_for_node(&node_id).is_none() {
-                break;
-            }
+            let mut shard = self.inner.shards[shard_index].write().await;
+            let Some(entry) = shard.pop_front_for_node(&node_id) else {
+                continue;
+            };
+            drop(shard);
+            self.inner.total_entries.fetch_sub(1, Ordering::Relaxed);
+            self.inner
+                .estimated_bytes
+                .fetch_sub(entry.estimated_bytes, Ordering::Relaxed);
             evicted += 1;
         }
         evicted
     }
 
+    async fn oldest_node_location(&self) -> Option<(usize, String)> {
+        let mut oldest: Option<(usize, String, u64)> = None;
+        for (index, shard) in self.inner.shards.iter().enumerate() {
+            let guard = shard.read().await;
+            let Some(candidate) = guard.oldest_node_id() else {
+                continue;
+            };
+            let Some(sequence) = guard
+                .buffers
+                .get(candidate.as_str())
+                .and_then(|buffer| buffer.front())
+                .map(|entry| entry.sequence)
+            else {
+                continue;
+            };
+            match oldest {
+                Some((_, _, best_sequence)) if best_sequence <= sequence => {}
+                _ => oldest = Some((index, candidate, sequence)),
+            }
+        }
+        oldest.map(|(index, node_id, _)| (index, node_id))
+    }
+}
+
+impl AgentLogShard {
     fn oldest_node_id(&self) -> Option<String> {
         self.buffers
             .iter()
@@ -210,14 +293,16 @@ impl AgentLogState {
             .map(|(node_id, _)| node_id.to_string())
     }
 
-    fn remove_node(&mut self, node_id: &str) {
+    fn remove_node(&mut self, node_id: &str) -> RemovedNodeStats {
         let Some(buffer) = self.buffers.remove(node_id) else {
-            return;
+            return RemovedNodeStats::default();
         };
+        let mut removed = RemovedNodeStats::default();
         for entry in buffer {
-            self.total_entries = self.total_entries.saturating_sub(1);
-            self.estimated_bytes = self.estimated_bytes.saturating_sub(entry.estimated_bytes);
+            removed.entries += 1;
+            removed.estimated_bytes = removed.estimated_bytes.saturating_add(entry.estimated_bytes);
         }
+        removed
     }
 
     fn pop_front_for_node(&mut self, node_id: &str) -> Option<StoredAgentLogEntry> {
@@ -225,13 +310,25 @@ impl AgentLogState {
             let buffer = self.buffers.get_mut(node_id)?;
             buffer.pop_front()
         }?;
-        self.total_entries = self.total_entries.saturating_sub(1);
-        self.estimated_bytes = self.estimated_bytes.saturating_sub(entry.estimated_bytes);
         if self.buffers.get(node_id).is_some_and(VecDeque::is_empty) {
             self.buffers.remove(node_id);
         }
         Some(entry)
     }
+}
+
+#[derive(Default)]
+struct RemovedNodeStats {
+    entries: usize,
+    estimated_bytes: usize,
+}
+
+fn shard_index(node_id: &str) -> usize {
+    let mut hash = 5381_u64;
+    for byte in node_id.as_bytes() {
+        hash = hash.wrapping_mul(33).wrapping_add(u64::from(*byte));
+    }
+    (hash as usize) % AGENT_LOG_SHARDS
 }
 
 fn sanitize_entry(mut entry: AgentLogEntry) -> Option<AgentLogEntry> {
@@ -258,6 +355,7 @@ fn estimate_entry_bytes(node_id: &str, entry: &AgentLogEntry) -> usize {
 mod tests {
     use chrono::Utc;
     use nodelite_proto::NoticeLevel;
+    use tokio::task::JoinSet;
 
     use super::{
         AgentLogEntry, AgentLogStore, MAX_BATCH_ENTRIES, MAX_LOG_ENTRIES_TOTAL,
@@ -412,6 +510,48 @@ mod tests {
                 .expect("byte budget should keep the newest entry")
                 .message,
             "heavy-entry-4"
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_record_entries_preserves_batches_across_many_nodes() {
+        let store = AgentLogStore::new();
+        let mut tasks = JoinSet::new();
+        let node_count = 128;
+
+        for node_index in 0..node_count {
+            let store = store.clone();
+            tasks.spawn(async move {
+                let node_id = format!("node-{node_index:03}");
+                let entries = (0..MAX_BATCH_ENTRIES)
+                    .map(|entry_index| test_entry(format!("{node_id}-entry-{entry_index:03}")))
+                    .collect();
+                let result = store.record_entries(&node_id, entries).await;
+                (node_id, result)
+            });
+        }
+
+        while let Some(joined) = tasks.join_next().await {
+            let (node_id, result) = joined.expect("concurrent log write task should join");
+            assert_eq!(result.accepted, MAX_BATCH_ENTRIES, "{node_id}");
+            assert_eq!(result.dropped_batch_cap, 0, "{node_id}");
+            assert_eq!(result.dropped_sanitize, 0, "{node_id}");
+            assert_eq!(result.evicted_global_budget, 0, "{node_id}");
+        }
+
+        let stats = store.stats().await;
+        assert_eq!(stats.nodes, node_count);
+        assert_eq!(stats.entries, node_count * MAX_BATCH_ENTRIES);
+
+        let sample = store.list("node-064", MAX_BATCH_ENTRIES).await;
+        assert_eq!(sample.len(), MAX_BATCH_ENTRIES);
+        assert_eq!(
+            sample.first().expect("sample should contain oldest kept entry").message,
+            "node-064-entry-000"
+        );
+        assert_eq!(
+            sample.last().expect("sample should contain newest kept entry").message,
+            format!("node-064-entry-{:03}", MAX_BATCH_ENTRIES - 1)
         );
     }
 
