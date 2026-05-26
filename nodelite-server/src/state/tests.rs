@@ -16,7 +16,10 @@ use super::{Registry, SessionControlHandle, SharedState};
 #[test]
 fn newer_session_replaces_older_one() {
     let mut registry = Registry::default();
-    let now = Utc.with_ymd_and_hms(2026, 5, 7, 0, 0, 0).unwrap();
+    let now = Utc
+        .with_ymd_and_hms(2026, 5, 7, 0, 0, 0)
+        .single()
+        .expect("valid test datetime");
     let identity = NodeIdentity {
         node_id: "hk-01".to_string(),
         node_label: "Hong Kong 01".to_string(),
@@ -58,7 +61,10 @@ fn newer_session_replaces_older_one() {
 #[test]
 fn stale_nodes_are_marked_offline() {
     let mut registry = Registry::default();
-    let now = Utc.with_ymd_and_hms(2026, 5, 7, 0, 0, 0).unwrap();
+    let now = Utc
+        .with_ymd_and_hms(2026, 5, 7, 0, 0, 0)
+        .single()
+        .expect("valid test datetime");
 
     registry.register_node(7, sample_identity(), Some("198.51.100.10".to_string()), now);
     assert_eq!(
@@ -77,7 +83,10 @@ fn stale_nodes_are_marked_offline() {
 #[test]
 fn overview_saturates_totals_and_skips_invalid_rates() {
     let mut registry = Registry::default();
-    let now = Utc.with_ymd_and_hms(2026, 5, 7, 0, 0, 0).unwrap();
+    let now = Utc
+        .with_ymd_and_hms(2026, 5, 7, 0, 0, 0)
+        .single()
+        .expect("valid test datetime");
 
     registry.register_node(1, sample_identity(), Some("198.51.100.10".to_string()), now);
     registry.register_node(
@@ -114,8 +123,13 @@ fn overview_saturates_totals_and_skips_invalid_rates() {
 
 #[test]
 fn overview_avoids_overflow_when_summing_latency() {
+    // 用接近 u64::MAX 的延迟值复现"原始 sum::<u64>() 会溢出"的场景:
+    // 旧实现在 debug 构建下 panic,release 构建下回绕成异常小的平均值。
     let mut registry = Registry::default();
-    let now = Utc.with_ymd_and_hms(2026, 5, 7, 0, 0, 0).unwrap();
+    let now = Utc
+        .with_ymd_and_hms(2026, 5, 7, 0, 0, 0)
+        .single()
+        .expect("valid test datetime");
 
     registry.register_node(1, sample_identity(), Some("198.51.100.10".to_string()), now);
     registry.register_node(
@@ -145,7 +159,10 @@ fn overview_avoids_overflow_when_summing_latency() {
 #[test]
 fn session_control_is_only_available_for_current_online_session() {
     let mut registry = Registry::default();
-    let now = Utc.with_ymd_and_hms(2026, 5, 7, 0, 0, 0).unwrap();
+    let now = Utc
+        .with_ymd_and_hms(2026, 5, 7, 0, 0, 0)
+        .single()
+        .expect("valid test datetime");
     registry.register_node(7, sample_identity(), Some("198.51.100.10".to_string()), now);
 
     let (control, _control_rx) = SessionControlHandle::channel();
@@ -167,7 +184,10 @@ fn session_control_is_only_available_for_current_online_session() {
 #[test]
 fn mark_disconnected_clears_session_control() {
     let mut registry = Registry::default();
-    let now = Utc.with_ymd_and_hms(2026, 5, 7, 0, 0, 0).unwrap();
+    let now = Utc
+        .with_ymd_and_hms(2026, 5, 7, 0, 0, 0)
+        .single()
+        .expect("valid test datetime");
     registry.register_node(9, sample_identity(), Some("198.51.100.10".to_string()), now);
 
     let (control, _control_rx) = SessionControlHandle::channel();
@@ -332,6 +352,7 @@ async fn snapshot_update_only_invalidates_nodes_view() {
         .register_node(sample_identity(), Some("198.51.100.10".to_string()))
         .await;
 
+    // Prime每个视图各一次。
     let _ = shared.overview_json_bytes().await.expect("overview json");
     let _ = shared.nodes_json_bytes().await.expect("nodes json");
     let _ = shared.metrics_text(&readiness).await;
@@ -339,6 +360,7 @@ async fn snapshot_update_only_invalidates_nodes_view() {
     assert_eq!(shared.api_nodes_cache_build_count(), 1);
     assert_eq!(shared.metrics_cache_build_count(), 1);
 
+    // 单纯的 snapshot 更新只让 nodes 视图失效;overview/metrics 仍命中缓存。
     assert!(
         shared
             .update_snapshot("hk-01", session_id, sample_snapshot(Utc::now()))
@@ -353,6 +375,7 @@ async fn snapshot_update_only_invalidates_nodes_view() {
     let _ = shared.nodes_json_bytes().await.expect("nodes rebuilds");
     assert_eq!(shared.api_nodes_cache_build_count(), 2);
 
+    // latency 更新同样只触达 nodes。
     assert!(shared.update_latency("hk-01", session_id, 42).await);
     let _ = shared.overview_json_bytes().await.expect("overview cached");
     let _ = shared.metrics_text(&readiness).await;
@@ -364,6 +387,7 @@ async fn snapshot_update_only_invalidates_nodes_view() {
         .expect("nodes rebuilds again");
     assert_eq!(shared.api_nodes_cache_build_count(), 3);
 
+    // 真正的结构性变更仍然连带使三视图失效。
     shared.mark_disconnected("hk-01", session_id).await;
     let _ = shared
         .overview_json_bytes()

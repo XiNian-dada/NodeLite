@@ -401,6 +401,8 @@ fn temp_history_db_path(test_name: &str) -> std::path::PathBuf {
     temp_dir.join("history.sqlite3")
 }
 
+/// 集成 record_status -> writer task -> SQLite 全链路:
+/// 多次写入要在 channel + batch 模型下全部落库,而不仅仅是最后一条。
 #[tokio::test]
 async fn record_status_flushes_through_writer_task_to_sqlite() {
     let db_path = temp_history_db_path("writer-task");
@@ -408,6 +410,7 @@ async fn record_status_flushes_through_writer_task_to_sqlite() {
     store.initialize().await;
     assert!(store.is_available());
 
+    // 写入 5 个不同节点的样本(同节点会被 throttle 拦掉,所以这里用不同 node_id)。
     let now = Utc::now();
     for i in 0..5 {
         let node_id = format!("node-{i:02}");
@@ -415,9 +418,11 @@ async fn record_status_flushes_through_writer_task_to_sqlite() {
         store.record_status(&status).await;
     }
 
+    // 触发 shutdown; writer 会把已经入队但还没 flush 的样本 drain 出来。
     store.shutdown().await;
     assert_eq!(store.dropped_writes(), 0, "no writes should have been dropped");
 
+    // 验证 5 条样本都成功落库。
     let connection = initialize_database(&db_path, 5).expect("re-open database");
     let count: i64 = connection
         .query_row("SELECT COUNT(*) FROM history_points", [], |row| row.get(0))
@@ -564,6 +569,8 @@ async fn record_status_skips_point_build_when_throttled() {
     }
 }
 
+/// shutdown() 之后再调用 record_status 必须立刻返回,
+/// 不能 panic 也不能阻塞;此时 sender 已被清空,store 会进入 unavailable 状态。
 #[tokio::test]
 async fn record_status_is_noop_after_shutdown() {
     let db_path = temp_history_db_path("after-shutdown");
@@ -571,6 +578,7 @@ async fn record_status_is_noop_after_shutdown() {
     store.initialize().await;
     store.shutdown().await;
 
+    // shutdown 不会触发 dropped 计数;它走的是 writer_tx 被 take 走的快速 return 路径。
     let status = fake_status_for("hk-01", Utc::now());
     store.record_status(&status).await;
     assert_eq!(store.dropped_writes(), 0);
