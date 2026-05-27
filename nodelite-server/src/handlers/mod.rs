@@ -26,8 +26,9 @@ pub(crate) use pages::{
     verify_2fa_page,
 };
 pub(crate) use settings::{
-    change_readonly_password, disable_two_factor, enable_two_factor, refresh_node_token,
-    server_update_log, settings, start_server_update, start_two_factor_setup,
+    alert_settings, change_readonly_password, disable_two_factor, enable_two_factor,
+    refresh_node_token, server_update_log, settings, start_server_update,
+    start_two_factor_setup, update_alert_settings,
 };
 
 #[cfg(test)]

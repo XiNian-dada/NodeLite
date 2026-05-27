@@ -33,11 +33,13 @@ use crate::background::{
 };
 use crate::fs_security::log_if_directory_is_not_private;
 use crate::handlers::{
-    audit_log, bootstrap, brand_logo_dark_asset, brand_logo_light_asset, change_readonly_password,
-    disable_two_factor, enable_two_factor, healthz, index, install_agent_script, install_bootstrap,
-    logout_and_reauth, metrics, node_detail, node_history, node_logs, node_status, nodes, overview,
-    readyz, refresh_node_token, require_readonly_auth, server_update_log, settings,
-    start_server_update, start_two_factor_setup, ui_i18n_asset, verify_2fa_api, verify_2fa_page,
+    alert_settings, audit_log, bootstrap, brand_logo_dark_asset, brand_logo_light_asset,
+    change_readonly_password, disable_two_factor, enable_two_factor, healthz, index,
+    install_agent_script, install_bootstrap, logout_and_reauth, metrics, node_detail,
+    node_history, node_logs, node_status, nodes, overview, readyz, refresh_node_token,
+    require_readonly_auth, server_update_log, settings, start_server_update,
+    start_two_factor_setup, ui_i18n_asset, update_alert_settings, verify_2fa_api,
+    verify_2fa_page,
 };
 use crate::history::HistoryStore;
 use crate::registry::NodeRegistry;
@@ -159,6 +161,7 @@ async fn initialize_server_runtime(
         shared,
         ws_admission: WsAdmissionController::new(&config.ws),
         readonly_auth: Arc::new(RwLock::new(readonly_route_auth)),
+        alerting: Arc::new(RwLock::new(config.alerting.clone())),
         two_factor_sessions: TwoFactorSessions::new(),
         config_path: Arc::new(config_path.to_path_buf()),
         shutdown,
@@ -286,6 +289,7 @@ pub(crate) fn build_router(state: AppState) -> Router {
             post(refresh_node_token),
         )
         .route("/api/settings/password", post(change_readonly_password))
+        .route("/api/settings/alerts", post(update_alert_settings))
         .route("/api/settings/update/server", post(start_server_update))
         .route("/api/settings/2fa/enable", post(enable_two_factor))
         .route("/api/settings/2fa/disable", post(disable_two_factor))
@@ -305,6 +309,7 @@ pub(crate) fn build_router(state: AppState) -> Router {
         .route("/api/nodes/{node_id}/logs", get(node_logs))
         .route("/api/audit-log", get(audit_log))
         .route("/api/settings", get(settings))
+        .route("/api/settings/alerts", get(alert_settings))
         .route("/api/settings/update/server/log", get(server_update_log))
         .route("/api/settings/2fa/start", post(start_two_factor_setup))
         .merge(protected_json_routes)

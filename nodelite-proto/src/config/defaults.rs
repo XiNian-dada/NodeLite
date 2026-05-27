@@ -1,6 +1,10 @@
 use std::path::PathBuf;
 
 use super::{
+    DEFAULT_ALERT_INSPECTION_CPU_WARN_PERCENT, DEFAULT_ALERT_INSPECTION_LATENCY_WARN_MS,
+    DEFAULT_ALERT_INSPECTION_LOOKBACK_HOURS, DEFAULT_ALERT_INSPECTION_LOCAL_TIME,
+    DEFAULT_ALERT_INSPECTION_MEMORY_WARN_PERCENT, DEFAULT_ALERT_INSPECTION_OFFLINE_GRACE_MINUTES,
+    DEFAULT_ALERT_RULE_COOLDOWN_MINUTES, DEFAULT_ALERT_RULE_WINDOW_MINUTES,
     DEFAULT_AUDIT_RETENTION_DAYS, DEFAULT_CONNECT_TIMEOUT_SECS, DEFAULT_HELLO_TIMEOUT_SECS,
     DEFAULT_INSECURE_TRANSPORT_WARN_INTERVAL_SECS, DEFAULT_MAX_INCOMING_MESSAGE_BYTES,
     DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_MAX_OUTSTANDING_PINGS, DEFAULT_MAX_SANITIZED_DISKS,
@@ -121,6 +125,38 @@ pub(super) fn default_audit_log_token_events() -> bool {
 
 pub(super) fn default_audit_log_rate_limit() -> bool {
     true
+}
+
+pub(super) fn default_alert_rule_window_minutes() -> u64 {
+    DEFAULT_ALERT_RULE_WINDOW_MINUTES
+}
+
+pub(super) fn default_alert_rule_cooldown_minutes() -> u64 {
+    DEFAULT_ALERT_RULE_COOLDOWN_MINUTES
+}
+
+pub(super) fn default_alert_inspection_local_time() -> String {
+    DEFAULT_ALERT_INSPECTION_LOCAL_TIME.to_string()
+}
+
+pub(super) fn default_alert_inspection_lookback_hours() -> u64 {
+    DEFAULT_ALERT_INSPECTION_LOOKBACK_HOURS
+}
+
+pub(super) fn default_alert_inspection_offline_grace_minutes() -> u64 {
+    DEFAULT_ALERT_INSPECTION_OFFLINE_GRACE_MINUTES
+}
+
+pub(super) fn default_alert_inspection_latency_warn_ms() -> u64 {
+    DEFAULT_ALERT_INSPECTION_LATENCY_WARN_MS
+}
+
+pub(super) fn default_alert_inspection_cpu_warn_percent() -> u64 {
+    DEFAULT_ALERT_INSPECTION_CPU_WARN_PERCENT
+}
+
+pub(super) fn default_alert_inspection_memory_warn_percent() -> u64 {
+    DEFAULT_ALERT_INSPECTION_MEMORY_WARN_PERCENT
 }
 
 pub(super) fn default_connect_timeout_secs() -> u64 {

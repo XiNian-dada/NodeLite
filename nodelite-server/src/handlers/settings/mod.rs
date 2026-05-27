@@ -3,6 +3,7 @@
 //! 这里保留共享类型与导出,把读路径、认证变更、更新相关流程拆到独立子模块,
 //! 避免继续膨胀成一个数百行的 monolith。
 
+mod alerts;
 mod config_edit;
 mod helpers;
 mod query;
@@ -10,6 +11,7 @@ mod security;
 mod types;
 mod updates;
 
+pub(crate) use alerts::{alert_settings, update_alert_settings};
 pub(crate) use query::settings;
 pub(crate) use security::{
     change_readonly_password, disable_two_factor, enable_two_factor, start_two_factor_setup,

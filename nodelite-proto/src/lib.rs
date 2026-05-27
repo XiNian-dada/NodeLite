@@ -12,12 +12,18 @@ pub mod text;
 pub mod validation;
 
 pub use config::{
-    AgentConfig, AuditConfig, ConfigError, DEFAULT_AUDIT_RETENTION_DAYS,
+    AgentConfig, AlertChannel, AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode,
+    AlertSeverity, AlertSmtpConfig, AlertSmtpTransport, AlertWebhookConfig, AlertingConfig,
+    AuditConfig, ConfigError, DEFAULT_ALERT_INSPECTION_CPU_WARN_PERCENT,
+    DEFAULT_ALERT_INSPECTION_LATENCY_WARN_MS, DEFAULT_ALERT_INSPECTION_LOCAL_TIME,
+    DEFAULT_ALERT_INSPECTION_LOOKBACK_HOURS, DEFAULT_ALERT_INSPECTION_MEMORY_WARN_PERCENT,
+    DEFAULT_ALERT_INSPECTION_OFFLINE_GRACE_MINUTES, DEFAULT_ALERT_RULE_COOLDOWN_MINUTES,
+    DEFAULT_ALERT_RULE_WINDOW_MINUTES, DEFAULT_AUDIT_RETENTION_DAYS,
     DEFAULT_HISTORY_RETENTION_HOURS, DEFAULT_HISTORY_WRITE_INTERVAL_SECS,
     DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_PING_INTERVAL_SECS, DEFAULT_REFRESH_INTERVAL_SECS,
-    DEFAULT_REPORT_INTERVAL_SECS, DEFAULT_STALE_AFTER_SECS, MAX_NODE_TAG_BYTES, MAX_NODE_TAGS,
-    ReadonlyAuthConfig, ServerConfig, WsConfig, normalize_totp_secret, parse_agent_config,
-    parse_server_config,
+    DEFAULT_REPORT_INTERVAL_SECS, DEFAULT_STALE_AFTER_SECS, InspectionConfig,
+    MAX_NODE_TAG_BYTES, MAX_NODE_TAGS, ReadonlyAuthConfig, ServerConfig, WsConfig,
+    normalize_totp_secret, parse_agent_config, parse_server_config,
 };
 pub use message::{
     AgentLogEntry, AgentLogsMessage, HelloMessage, MIN_SUPPORTED_WIRE_PROTOCOL_VERSION,

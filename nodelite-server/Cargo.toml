@@ -29,6 +29,7 @@ time = "0.3"
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+toml.workspace = true
 toml_edit.workspace = true
 totp-lite = "2.0"
 tower-http.workspace = true

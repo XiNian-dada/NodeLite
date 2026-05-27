@@ -82,6 +82,7 @@ pub(crate) fn test_server_config(
             log_token_events: true,
             log_rate_limit: true,
         },
+        alerting: nodelite_proto::AlertingConfig::default(),
         node_registry_path: registry_path,
         history_db_path: history_path,
         snapshot_path,

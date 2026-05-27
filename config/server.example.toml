@@ -66,6 +66,56 @@ log_token_events = true
 # 是否记录安装/登录等路径触发的限流事件。
 log_rate_limit = true
 
+[alerts]
+# 告警功能总开关。打开后可以通过 Web UI 配置规则与渠道。
+enabled = false
+
+[alerts.smtp]
+# SMTP 渠道开关。配置完整后可用于邮件告警与巡检摘要。
+enabled = false
+host = ""
+port = 587
+username = ""
+# password = ""
+sender = ""
+recipients = []
+transport = "start_tls"
+
+[alerts.webhook]
+# WebHook 渠道开关。建议配合独立机器人入口或告警平台使用。
+enabled = false
+url = ""
+# secret = ""
+send_resolved = true
+
+[alerts.inspection]
+# 每日巡检摘要配置。默认关闭。
+enabled = false
+local_time = "09:00"
+lookback_hours = 24
+delivery = ["smtp"]
+offline_grace_minutes = 10
+latency_warn_ms = 250
+cpu_warn_percent = 85
+memory_warn_percent = 90
+
+[[alerts.rules]]
+# 规则 ID 需要稳定且唯一，便于后续调整和审计。
+id = "cpu-hot"
+name = "CPU 持续过高"
+enabled = true
+metric = "cpu_usage_percent"
+comparator = "gt"
+threshold = 85
+window_minutes = 5
+severity = "critical"
+scope_mode = "all"
+node_ids = []
+tags = []
+delivery = ["smtp", "webhook"]
+cooldown_minutes = 30
+send_resolved = true
+
 [ws]
 # 全局并发 WebSocket 连接上限。
 max_total_connections = 1024

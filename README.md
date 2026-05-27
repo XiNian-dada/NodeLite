@@ -436,6 +436,33 @@ log_failed_auth = true
 log_token_events = true
 log_rate_limit = true
 
+[alerts]
+enabled = false
+
+[alerts.smtp]
+enabled = false
+host = ""
+port = 587
+username = ""
+sender = ""
+recipients = []
+transport = "start_tls"
+
+[alerts.webhook]
+enabled = false
+url = ""
+send_resolved = true
+
+[alerts.inspection]
+enabled = false
+local_time = "09:00"
+lookback_hours = 24
+delivery = ["smtp"]
+offline_grace_minutes = 10
+latency_warn_ms = 250
+cpu_warn_percent = 85
+memory_warn_percent = 90
+
 [ws]
 max_total_connections = 1024
 max_connections_per_ip = 32
@@ -524,6 +551,13 @@ otpauth://totp/NodeLite:viewer?secret=<totp_secret>&issuer=NodeLite
 ```text
 /api/audit-log?event_type=login_failure&success=false&limit=100
 ```
+
+## 告警与巡检
+
+- 服务端配置支持 `[alerts]` 段，用于声明 SMTP、WebHook、规则式告警和每日巡检摘要。
+- `[[alerts.rules]]` 可以按 `cpu_usage_percent`、`memory_usage_percent`、`disk_usage_percent`、`latency_ms`、`offline_minutes` 这些指标定义阈值规则，并按全部节点、指定节点 ID 或指定标签范围生效。
+- `[alerts.inspection]` 用于配置每日巡检摘要的发送时间、回看窗口和巡检阈值，方便定时给用户发送“最近服务器状态如何”的概览。
+- 当前版本已经把这些配置纳入 `server.toml` 与 Web 设置页的数据模型，便于先统一管理；如需真正的外发通道，请同时完成 SMTP / WebHook 目标端的联通性验证。
 
 ## Nginx 反代示例
 

@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow, bail};
-use nodelite_proto::{ReadonlyAuthConfig, parse_server_config};
+use nodelite_proto::{AlertingConfig, ReadonlyAuthConfig, parse_server_config};
+use serde::Serialize;
 use tokio::fs;
 use toml_edit::{DocumentMut, Item, Table, Value, value};
 
@@ -19,6 +20,16 @@ pub(super) async fn persist_auth_2fa_change(
 ) -> Result<()> {
     let content = fs::read_to_string(path).await?;
     let updated = update_auth_2fa(&content, auth.enable_2fa, auth.totp_secret.as_deref())?;
+    validate_server_config(&updated)?;
+    persist_updated_content(path, updated).await
+}
+
+pub(super) async fn persist_alerting_change(
+    path: &std::path::Path,
+    alerting: &AlertingConfig,
+) -> Result<()> {
+    let content = fs::read_to_string(path).await?;
+    let updated = update_alerting_settings(&content, alerting)?;
     validate_server_config(&updated)?;
     persist_updated_content(path, updated).await
 }
@@ -44,6 +55,12 @@ fn update_auth_2fa(content: &str, enable_2fa: bool, totp_secret: Option<&str>) -
             auth.remove("totp_secret");
         }
     }
+    Ok(document.to_string())
+}
+
+fn update_alerting_settings(content: &str, alerting: &AlertingConfig) -> Result<String> {
+    let mut document = parse_document(content)?;
+    document["alerts"] = build_alerts_item(alerting)?;
     Ok(document.to_string())
 }
 
@@ -80,6 +97,15 @@ fn validate_server_config(content: &str) -> Result<()> {
     Ok(())
 }
 
+fn build_alerts_item(alerting: &AlertingConfig) -> Result<Item> {
+    let fragment = toml::to_string(&AlertingDocument { alerts: alerting })
+        .map_err(|error| anyhow!("failed to serialize alerts section: {error}"))?;
+    let mut fragment = parse_document(&fragment)?;
+    fragment
+        .remove("alerts")
+        .ok_or_else(|| anyhow!("serialized alerting config did not produce an [alerts] section"))
+}
+
 async fn persist_updated_content(path: &std::path::Path, updated: String) -> Result<()> {
     let metadata = fs::metadata(path).await.ok();
     let temp_path = path.with_extension("toml.tmp");
@@ -91,9 +117,19 @@ async fn persist_updated_content(path: &std::path::Path, updated: String) -> Res
     Ok(())
 }
 
+#[derive(Serialize)]
+struct AlertingDocument<'a> {
+    alerts: &'a AlertingConfig,
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{update_auth_2fa, update_auth_password};
+    use super::{update_alerting_settings, update_auth_2fa, update_auth_password};
+    use nodelite_proto::{
+        AlertChannel, AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode,
+        AlertSeverity, AlertSmtpConfig, AlertSmtpTransport, AlertWebhookConfig, AlertingConfig,
+        InspectionConfig,
+    };
 
     #[test]
     fn update_auth_password_preserves_trailing_comment_and_multiline_neighbors() {
@@ -167,5 +203,67 @@ listen = "127.0.0.1:8080"
 
         let error = update_auth_password(input, "new-pass").expect_err("missing auth should fail");
         assert!(error.to_string().contains("[auth] section"));
+    }
+
+    #[test]
+    fn update_alerting_settings_replaces_alerts_section_and_preserves_other_sections() {
+        let input = r#"[server]
+listen = "127.0.0.1:8080"
+public_base_url = "https://monitor.example.com"
+
+[alerts]
+enabled = false
+
+[auth]
+username = "viewer"
+password = "old-pass"
+"#;
+
+        let alerting = AlertingConfig {
+            enabled: true,
+            smtp: AlertSmtpConfig {
+                enabled: true,
+                host: "smtp.example.com".to_string(),
+                port: 587,
+                username: "ops".to_string(),
+                password: Some("smtp-secret".to_string()),
+                sender: "nodelite@example.com".to_string(),
+                recipients: vec!["ops@example.com".to_string()],
+                transport: AlertSmtpTransport::StartTls,
+            },
+            webhook: AlertWebhookConfig {
+                enabled: true,
+                url: "https://hooks.example.com/nodelite".to_string(),
+                secret: Some("hook-secret".to_string()),
+                send_resolved: true,
+            },
+            rules: vec![AlertRuleConfig {
+                id: "cpu-hot".to_string(),
+                name: "CPU".to_string(),
+                enabled: true,
+                metric: AlertMetric::CpuUsagePercent,
+                comparator: AlertComparator::Gt,
+                threshold: 85,
+                window_minutes: 5,
+                severity: AlertSeverity::Critical,
+                scope_mode: AlertScopeMode::All,
+                node_ids: Vec::new(),
+                tags: Vec::new(),
+                delivery: vec![AlertChannel::Smtp],
+                cooldown_minutes: 30,
+                send_resolved: true,
+            }],
+            inspection: InspectionConfig::default(),
+        };
+
+        let updated = update_alerting_settings(input, &alerting)
+            .expect("alert settings update should succeed");
+
+        assert!(updated.contains("[alerts]"));
+        assert!(updated.contains("host = \"smtp.example.com\""));
+        assert!(updated.contains("[[alerts.rules]]"));
+        assert!(updated.contains("metric = \"cpu_usage_percent\""));
+        assert!(updated.contains("[auth]"));
+        assert!(updated.contains("username = \"viewer\""));
     }
 }

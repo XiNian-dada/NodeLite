@@ -317,6 +317,7 @@ mod tests {
                 log_token_events: true,
                 log_rate_limit: true,
             },
+            alerting: nodelite_proto::AlertingConfig::default(),
             node_registry_path: PathBuf::from("/opt/nodelite/config/server.json"),
             history_db_path: PathBuf::from("/opt/nodelite/data/history.sqlite3"),
             snapshot_path: PathBuf::from("/opt/nodelite/data/snapshot.json"),
