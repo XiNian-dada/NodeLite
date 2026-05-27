@@ -5,7 +5,7 @@ mod evaluator;
 mod runtime;
 mod tracker;
 
-pub(crate) use delivery::{deliver_alert_event, webhook_endpoint_label};
+pub(crate) use delivery::{deliver_alert_event, smtp_endpoint_label, webhook_endpoint_label};
 pub(crate) use evaluator::{
     AlertMetricReading, EvaluatedRule, build_inspection_report, evaluate_rules,
 };

@@ -4,7 +4,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use hmac::{Hmac, Mac};
 use nodelite_proto::{
-    AlertChannel, AlertMetric, AlertSeverity, AlertWebhookConfig, AlertingConfig,
+    AlertChannel, AlertMetric, AlertSeverity, AlertSmtpConfig, AlertWebhookConfig, AlertingConfig,
 };
 use serde::Serialize;
 use sha2::Sha256;
@@ -17,6 +17,8 @@ use tokio_rustls::rustls::{ClientConfig, RootCertStore, pki_types::ServerName};
 use url::Url;
 
 use super::{AlertEvent, AlertEventKind};
+
+mod smtp;
 
 const WEBHOOK_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_RESPONSE_HEADER_BYTES: usize = 32 * 1024;
@@ -47,6 +49,12 @@ pub(crate) enum AlertDeliveryError {
     ResponseTooLarge,
     #[error("webhook returned HTTP {status}")]
     HttpStatus { status: u16 },
+    #[error("smtp delivery timed out")]
+    SmtpTimeout,
+    #[error("smtp server rejected command: {0}")]
+    Smtp(String),
+    #[error("smtp message contains an invalid header value")]
+    InvalidMailHeader,
 }
 
 #[derive(Debug, Serialize)]
@@ -84,10 +92,23 @@ pub(crate) async fn deliver_alert_event(
     config: &AlertingConfig,
     event: &AlertEvent,
 ) -> Result<(), AlertDeliveryError> {
+    let mut first_error = None;
     if should_send_webhook(config, event) {
-        send_webhook(&config.webhook, event).await?;
+        if let Err(error) = send_webhook(&config.webhook, event).await {
+            first_error = Some(error);
+        }
     }
-    Ok(())
+    if should_send_smtp(config, event)
+        && let Err(error) = smtp::send_smtp(&config.smtp, event).await
+        && first_error.is_none()
+    {
+        first_error = Some(error);
+    }
+
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 pub(crate) fn webhook_endpoint_label(url: &str) -> String {
@@ -98,11 +119,22 @@ pub(crate) fn webhook_endpoint_label(url: &str) -> String {
     format!("{}://{}{}", parsed.scheme(), host, parsed.path())
 }
 
+pub(crate) fn smtp_endpoint_label(config: &AlertSmtpConfig) -> String {
+    if config.host.is_empty() {
+        return "smtp://unconfigured".to_string();
+    }
+    format!("smtp://{}:{}", config.host, config.port)
+}
+
 fn should_send_webhook(config: &AlertingConfig, event: &AlertEvent) -> bool {
     if !config.webhook.enabled || !event.rule.delivery.contains(&AlertChannel::Webhook) {
         return false;
     }
     !matches!(event.kind, AlertEventKind::Resolved) || config.webhook.send_resolved
+}
+
+fn should_send_smtp(config: &AlertingConfig, event: &AlertEvent) -> bool {
+    config.smtp.enabled && event.rule.delivery.contains(&AlertChannel::Smtp)
 }
 
 async fn send_webhook(

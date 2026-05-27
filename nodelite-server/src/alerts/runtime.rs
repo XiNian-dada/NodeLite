@@ -13,7 +13,7 @@ use crate::state::SharedState;
 
 use super::{
     AlertEvent, AlertEventKind, AlertStateTracker, deliver_alert_event, evaluate_rules,
-    webhook_endpoint_label,
+    smtp_endpoint_label, webhook_endpoint_label,
 };
 
 const ALERT_EVALUATION_INTERVAL_SECS: u64 = 30;
@@ -59,6 +59,7 @@ async fn run_alert_runtime(
                         warn!(
                             error = ?error,
                             webhook = %webhook_endpoint_label(&config.webhook.url),
+                            smtp = %smtp_endpoint_label(&config.smtp),
                             rule_id = %event.rule.id,
                             node_id = %event.node_id,
                             "failed to deliver alert notification",
