@@ -173,8 +173,8 @@ fn metric_value(metric: AlertMetric, status: &NodeStatus, now: DateTime<Utc>) ->
 
 fn comparator_matches(comparator: AlertComparator, left: u64, right: u64) -> bool {
     match comparator {
-        AlertComparator::Gt => left >= right,
-        AlertComparator::Lt => left <= right,
+        AlertComparator::Gt => left > right,
+        AlertComparator::Lt => left < right,
     }
 }
 
@@ -267,6 +267,27 @@ mod tests {
         assert_eq!(matched.node_label, "Hong Kong");
         assert_eq!(matched.reading.value, 91);
         assert_eq!(matched.reading.threshold, 90);
+    }
+
+    #[test]
+    fn evaluate_rule_requires_strict_threshold_comparisons() {
+        let now = Utc::now();
+        let status = sample_status(now, "hk-01", "Hong Kong", true, 90.0, 140);
+
+        let mut gt_rule = cpu_rule();
+        gt_rule.comparator = AlertComparator::Gt;
+        assert!(
+            evaluate_rule(&gt_rule, &status, now).is_none(),
+            "equal values must not trigger gt rules"
+        );
+
+        let mut lt_rule = cpu_rule();
+        lt_rule.comparator = AlertComparator::Lt;
+        lt_rule.threshold = 90;
+        assert!(
+            evaluate_rule(&lt_rule, &status, now).is_none(),
+            "equal values must not trigger lt rules"
+        );
     }
 
     #[test]

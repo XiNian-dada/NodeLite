@@ -58,6 +58,11 @@ pub(crate) enum AlertDeliveryError {
     Smtp(String),
     #[error("smtp message contains an invalid header value")]
     InvalidMailHeader,
+    #[error("webhook delivery failed: {webhook}; smtp delivery failed: {smtp}")]
+    MultiChannel {
+        webhook: Box<AlertDeliveryError>,
+        smtp: Box<AlertDeliveryError>,
+    },
 }
 
 impl AlertDeliveryError {
@@ -72,7 +77,36 @@ impl AlertDeliveryError {
             | Self::Signature(_)
             | Self::Serialize(_)
             | Self::ResponseTooLarge
-            | Self::InvalidMailHeader => false,
+            | Self::InvalidMailHeader
+            | Self::MultiChannel { .. } => false,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct DeliveryErrors {
+    webhook: Option<AlertDeliveryError>,
+    smtp: Option<AlertDeliveryError>,
+}
+
+impl DeliveryErrors {
+    fn record_webhook(&mut self, error: AlertDeliveryError) {
+        self.webhook = Some(error);
+    }
+
+    fn record_smtp(&mut self, error: AlertDeliveryError) {
+        self.smtp = Some(error);
+    }
+
+    fn into_result(self) -> Result<(), AlertDeliveryError> {
+        match (self.webhook, self.smtp) {
+            (Some(webhook), Some(smtp)) => Err(AlertDeliveryError::MultiChannel {
+                webhook: Box::new(webhook),
+                smtp: Box::new(smtp),
+            }),
+            (Some(webhook), None) => Err(webhook),
+            (None, Some(smtp)) => Err(smtp),
+            (None, None) => Ok(()),
         }
     }
 }
@@ -147,54 +181,45 @@ pub(crate) async fn deliver_alert_event(
     config: &AlertingConfig,
     event: &AlertEvent,
 ) -> Result<(), AlertDeliveryError> {
-    let mut first_error = None;
+    let mut errors = DeliveryErrors::default();
     if should_send_webhook(config, event) {
         let notification = notification_from_event(event);
         if let Err(error) =
             retry_delivery(|| send_webhook_notification(&config.webhook, &notification)).await
         {
-            first_error = Some(error);
+            errors.record_webhook(error);
         }
     }
     if should_send_smtp(config, event)
         && let Err(error) = retry_delivery(|| smtp::send_alert_event(&config.smtp, event)).await
-        && first_error.is_none()
     {
-        first_error = Some(error);
+        errors.record_smtp(error);
     }
 
-    delivery_result(first_error)
+    errors.into_result()
 }
 
 pub(crate) async fn deliver_inspection_summary(
     config: &AlertingConfig,
     summary: &InspectionSummary<'_>,
 ) -> Result<(), AlertDeliveryError> {
-    let mut first_error = None;
+    let mut errors = DeliveryErrors::default();
     if should_send_inspection_webhook(config) {
         let notification = inspection_notification(summary);
         if let Err(error) =
             retry_delivery(|| send_webhook_notification(&config.webhook, &notification)).await
         {
-            first_error = Some(error);
+            errors.record_webhook(error);
         }
     }
     if should_send_inspection_smtp(config)
         && let Err(error) =
             retry_delivery(|| smtp::send_inspection_summary(&config.smtp, summary)).await
-        && first_error.is_none()
     {
-        first_error = Some(error);
+        errors.record_smtp(error);
     }
 
-    delivery_result(first_error)
-}
-
-fn delivery_result(first_error: Option<AlertDeliveryError>) -> Result<(), AlertDeliveryError> {
-    match first_error {
-        Some(error) => Err(error),
-        None => Ok(()),
-    }
+    errors.into_result()
 }
 
 async fn retry_delivery<F, Fut>(mut operation: F) -> Result<(), AlertDeliveryError>
@@ -234,11 +259,21 @@ fn should_send_webhook(config: &AlertingConfig, event: &AlertEvent) -> bool {
     if !config.webhook.enabled || !event.rule.delivery.contains(&AlertChannel::Webhook) {
         return false;
     }
-    !matches!(event.kind, AlertEventKind::Resolved) || config.webhook.send_resolved
+    should_send_resolved(event) && (!is_resolved(event) || config.webhook.send_resolved)
 }
 
 fn should_send_smtp(config: &AlertingConfig, event: &AlertEvent) -> bool {
-    config.smtp.enabled && event.rule.delivery.contains(&AlertChannel::Smtp)
+    config.smtp.enabled
+        && event.rule.delivery.contains(&AlertChannel::Smtp)
+        && should_send_resolved(event)
+}
+
+fn should_send_resolved(event: &AlertEvent) -> bool {
+    !is_resolved(event) || event.rule.send_resolved
+}
+
+fn is_resolved(event: &AlertEvent) -> bool {
+    matches!(event.kind, AlertEventKind::Resolved)
 }
 
 fn should_send_inspection_webhook(config: &AlertingConfig) -> bool {
@@ -479,7 +514,7 @@ mod tests {
     use chrono::Utc;
     use nodelite_proto::{
         AlertChannel, AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode, AlertSeverity,
-        AlertWebhookConfig, AlertingConfig, InspectionConfig,
+        AlertSmtpConfig, AlertSmtpTransport, AlertWebhookConfig, AlertingConfig, InspectionConfig,
     };
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -586,6 +621,98 @@ mod tests {
         assert!(request.contains("\"offline_nodes\":1"));
     }
 
+    #[tokio::test]
+    async fn deliver_alert_event_reports_webhook_and_smtp_failures() {
+        let mut event = sample_event();
+        event.rule.delivery = vec![AlertChannel::Webhook, AlertChannel::Smtp];
+        let config = AlertingConfig {
+            enabled: true,
+            smtp: invalid_smtp_config(),
+            webhook: AlertWebhookConfig {
+                enabled: true,
+                url: "://bad-url".to_string(),
+                secret: None,
+                send_resolved: true,
+            },
+            ..AlertingConfig::default()
+        };
+
+        let error = deliver_alert_event(&config, &event)
+            .await
+            .expect_err("both channel failures should be returned");
+
+        match error {
+            AlertDeliveryError::MultiChannel { webhook, smtp } => {
+                assert!(matches!(*webhook, AlertDeliveryError::InvalidWebhookUrl(_)));
+                assert!(matches!(*smtp, AlertDeliveryError::InvalidMailHeader));
+            }
+            other => panic!("expected multi-channel error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn deliver_alert_event_skips_resolved_smtp_when_rule_disables_it() {
+        let mut event = sample_event();
+        event.kind = AlertEventKind::Resolved;
+        event.rule.delivery = vec![AlertChannel::Smtp];
+        event.rule.send_resolved = false;
+        let config = AlertingConfig {
+            enabled: true,
+            smtp: invalid_smtp_config(),
+            ..AlertingConfig::default()
+        };
+
+        deliver_alert_event(&config, &event)
+            .await
+            .expect("resolved smtp delivery should be skipped when rule disables it");
+    }
+
+    #[tokio::test]
+    async fn deliver_inspection_summary_reports_webhook_and_smtp_failures() {
+        let report = InspectionReport {
+            total_nodes: 3,
+            offline_nodes: 1,
+            latency_nodes: 1,
+            cpu_hot_nodes: 0,
+            memory_hot_nodes: 0,
+            highlights: Vec::new(),
+        };
+        let summary = InspectionSummary {
+            occurred_at: Utc::now(),
+            local_date: chrono::NaiveDate::from_ymd_opt(2026, 5, 27).expect("date should be valid"),
+            lookback_hours: 24,
+            report: &report,
+        };
+        let config = AlertingConfig {
+            enabled: true,
+            smtp: invalid_smtp_config(),
+            webhook: AlertWebhookConfig {
+                enabled: true,
+                url: "://bad-url".to_string(),
+                secret: None,
+                send_resolved: true,
+            },
+            inspection: InspectionConfig {
+                enabled: true,
+                delivery: vec![AlertChannel::Webhook, AlertChannel::Smtp],
+                ..InspectionConfig::default()
+            },
+            ..AlertingConfig::default()
+        };
+
+        let error = deliver_inspection_summary(&config, &summary)
+            .await
+            .expect_err("both inspection channel failures should be returned");
+
+        match error {
+            AlertDeliveryError::MultiChannel { webhook, smtp } => {
+                assert!(matches!(*webhook, AlertDeliveryError::InvalidWebhookUrl(_)));
+                assert!(matches!(*smtp, AlertDeliveryError::InvalidMailHeader));
+            }
+            other => panic!("expected multi-channel error, got {other:?}"),
+        }
+    }
+
     #[test]
     fn webhook_endpoint_label_omits_query_values() {
         assert_eq!(
@@ -658,6 +785,19 @@ mod tests {
                 value: 91,
                 threshold: 90,
             }),
+        }
+    }
+
+    fn invalid_smtp_config() -> AlertSmtpConfig {
+        AlertSmtpConfig {
+            enabled: true,
+            host: "smtp.example.com".to_string(),
+            port: 587,
+            username: "ops".to_string(),
+            password: Some("smtp-secret".to_string()),
+            sender: "ops@example.com\r\n".to_string(),
+            recipients: vec!["ops@example.com".to_string()],
+            transport: AlertSmtpTransport::StartTls,
         }
     }
 

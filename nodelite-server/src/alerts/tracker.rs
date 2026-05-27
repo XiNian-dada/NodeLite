@@ -297,4 +297,33 @@ mod tests {
 
         assert!(resolved.is_empty());
     }
+
+    #[test]
+    fn update_clears_active_state_when_rule_is_disabled() {
+        let now = Utc::now();
+        let enabled_rule = rule(true);
+        let mut disabled_rule = enabled_rule.clone();
+        disabled_rule.enabled = false;
+        let mut tracker = AlertStateTracker::new();
+
+        let first = tracker.update(std::slice::from_ref(&enabled_rule), &[matched(91)], now);
+        let disabled = tracker.update(&[disabled_rule], &[], now + Duration::minutes(5));
+        let reenabled = tracker.update(&[enabled_rule], &[matched(92)], now + Duration::minutes(6));
+
+        assert_eq!(first.len(), 1);
+        assert!(
+            disabled.is_empty(),
+            "disabled rules should not emit resolved events"
+        );
+        assert_eq!(
+            reenabled.len(),
+            1,
+            "re-enabled rules should trigger immediately"
+        );
+        assert_eq!(reenabled[0].kind, AlertEventKind::Triggered);
+        assert_eq!(
+            reenabled[0].reading.as_ref().map(|reading| reading.value),
+            Some(92)
+        );
+    }
 }
