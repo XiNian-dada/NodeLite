@@ -48,6 +48,8 @@ struct ActiveAlertState {
     node_label: String,
     last_reading: AlertMetricReading,
     last_notified_at: DateTime<Utc>,
+    delivered: bool,
+    resolved_at: Option<DateTime<Utc>>,
 }
 
 impl AlertStateTracker {
@@ -87,6 +89,7 @@ impl AlertStateTracker {
                 Some(active) => {
                     active.node_label.clone_from(&matched.node_label);
                     active.last_reading = matched.reading.clone();
+                    active.resolved_at = None;
                     if should_repeat_alert(active.last_notified_at, rule.cooldown_minutes, now) {
                         active.last_notified_at = now;
                         events.push(triggered_event(rule, matched, now));
@@ -99,6 +102,8 @@ impl AlertStateTracker {
                             node_label: matched.node_label.clone(),
                             last_reading: matched.reading.clone(),
                             last_notified_at: now,
+                            delivered: false,
+                            resolved_at: None,
                         },
                     );
                     events.push(triggered_event(rule, matched, now));
@@ -119,6 +124,12 @@ impl AlertStateTracker {
             let Some(rule) = rules_by_id.get(key.rule_id.as_str()) else {
                 continue;
             };
+            if !active.delivered {
+                let mut active = active;
+                active.resolved_at = Some(now);
+                self.active.insert(key, active);
+                continue;
+            }
             if rule.send_resolved {
                 events.push(AlertEvent {
                     kind: AlertEventKind::Resolved,
@@ -146,6 +157,31 @@ impl AlertStateTracker {
             return;
         };
         active.last_notified_at = retry_notified_at(event.rule.cooldown_minutes, now);
+    }
+
+    pub(crate) fn record_delivery_success(&mut self, event: &AlertEvent) -> Option<AlertEvent> {
+        if event.kind != AlertEventKind::Triggered {
+            return None;
+        }
+        let key = AlertInstanceKey {
+            rule_id: event.rule.id.clone(),
+            node_id: event.node_id.clone(),
+        };
+        let active = self.active.get_mut(&key)?;
+        active.delivered = true;
+        let resolved_at = active.resolved_at?;
+        let active = self.active.remove(&key)?;
+        if !event.rule.send_resolved {
+            return None;
+        }
+        Some(AlertEvent {
+            kind: AlertEventKind::Resolved,
+            occurred_at: resolved_at,
+            rule: event.rule.clone(),
+            node_id: event.node_id.clone(),
+            node_label: active.node_label,
+            reading: Some(active.last_reading),
+        })
     }
 }
 
@@ -278,7 +314,8 @@ mod tests {
         let rules = vec![rule(true)];
         let mut tracker = AlertStateTracker::new();
 
-        let _ = tracker.update(&rules, &[matched(91)], now);
+        let first = tracker.update(&rules, &[matched(91)], now);
+        assert!(tracker.record_delivery_success(&first[0]).is_none());
         let resolved = tracker.update(&rules, &[], now + Duration::minutes(5));
 
         assert_eq!(resolved.len(), 1);
@@ -296,6 +333,51 @@ mod tests {
         let resolved = tracker.update(&rules, &[], now + Duration::minutes(5));
 
         assert!(resolved.is_empty());
+    }
+
+    #[test]
+    fn update_skips_resolved_until_trigger_delivery_succeeds() {
+        let now = Utc::now();
+        let rules = vec![rule(true)];
+        let mut tracker = AlertStateTracker::new();
+
+        let first = tracker.update(&rules, &[matched(91)], now);
+        let skipped = tracker.update(&rules, &[], now + Duration::minutes(5));
+
+        assert_eq!(first.len(), 1);
+        assert!(skipped.is_empty());
+    }
+
+    #[test]
+    fn delivery_success_after_resolution_returns_pending_resolved_event() {
+        let now = Utc::now();
+        let rules = vec![rule(true)];
+        let mut tracker = AlertStateTracker::new();
+
+        let first = tracker.update(&rules, &[matched(91)], now);
+        let skipped = tracker.update(&rules, &[], now + Duration::minutes(5));
+        let resolved = tracker
+            .record_delivery_success(&first[0])
+            .expect("resolved event should be returned once trigger delivery succeeds");
+
+        assert!(skipped.is_empty());
+        assert_eq!(resolved.kind, AlertEventKind::Resolved);
+        assert_eq!(resolved.occurred_at, now + Duration::minutes(5));
+        assert_eq!(resolved.node_id, "hk-01");
+    }
+
+    #[test]
+    fn update_emits_resolved_after_trigger_delivery_succeeds() {
+        let now = Utc::now();
+        let rules = vec![rule(true)];
+        let mut tracker = AlertStateTracker::new();
+
+        let first = tracker.update(&rules, &[matched(91)], now);
+        assert!(tracker.record_delivery_success(&first[0]).is_none());
+        let resolved = tracker.update(&rules, &[], now + Duration::minutes(5));
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].kind, AlertEventKind::Resolved);
     }
 
     #[test]
