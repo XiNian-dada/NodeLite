@@ -12,6 +12,7 @@ use crate::auth::{ReadonlyRouteAuth, TwoFactorSessions};
 use crate::history::HistoryStore;
 use crate::registry::NodeRegistry;
 use crate::state::SharedState;
+use nodelite_proto::AlertingConfig;
 
 #[cfg(test)]
 use crate::admission::{auth_failure_admission_config, sensitive_auth_failure_admission_config};
@@ -35,6 +36,7 @@ pub(crate) struct AppState {
     pub(crate) shared: SharedState,
     pub(crate) ws_admission: WsAdmissionController,
     pub(crate) readonly_auth: Arc<RwLock<ReadonlyRouteAuth>>,
+    pub(crate) alerting: Arc<RwLock<AlertingConfig>>,
     pub(crate) two_factor_sessions: TwoFactorSessions,
     pub(crate) config_path: Arc<PathBuf>,
     /// 进程级关停信号。axum graceful shutdown 之后由 `run_server` 触发,
@@ -122,6 +124,7 @@ impl AppState {
             readonly_auth: Arc::new(RwLock::new(ReadonlyRouteAuth::from_config(
                 config.readonly_auth.clone(),
             ))),
+            alerting: Arc::new(RwLock::new(config.alerting.clone())),
             two_factor_sessions: TwoFactorSessions::new(),
             config_path,
             shutdown: CancellationToken::new(),

@@ -3,6 +3,8 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+mod alerts;
+
 use super::defaults::{
     default_audit_db_path, default_audit_enabled, default_audit_log_failed_auth,
     default_audit_log_rate_limit, default_audit_log_successful_auth,
@@ -21,10 +23,14 @@ use super::helpers::{
     normalize_tags, normalize_totp_secret, parse_trusted_proxies,
     uses_insecure_remote_public_base_url, validate_sha256, validate_totp_secret, validate_url,
 };
-use super::{AgentConfig, AuditConfig, ConfigError, ReadonlyAuthConfig, ServerConfig, WsConfig};
+use super::{
+    AgentConfig, AlertingConfig, AuditConfig, ConfigError, ReadonlyAuthConfig, ServerConfig,
+    WsConfig,
+};
 use crate::validation::{
     ValidationError, normalize_string_list, validate_identifier, validate_non_empty,
 };
+use alerts::RawAlertsSection;
 
 impl From<ValidationError> for ConfigError {
     fn from(error: ValidationError) -> Self {
@@ -42,6 +48,8 @@ pub(super) struct RawServerConfigFile {
     ws: RawWsSection,
     #[serde(default)]
     audit: RawAuditSection,
+    #[serde(default)]
+    alerts: RawAlertsSection,
     #[serde(default)]
     ui: RawUiSection,
     #[serde(default)]
@@ -236,6 +244,7 @@ impl RawServerConfigFile {
         let install = self.validate_install()?;
         let readonly_auth = self.validate_auth(&listen)?;
         let audit = self.validate_audit()?;
+        let alerting = self.validate_alerting()?;
         self.validate_server_limits()?;
         self.validate_ws_limits()?;
         self.validate_ui_limits()?;
@@ -254,6 +263,7 @@ impl RawServerConfigFile {
                 auth_block_secs: self.ws.auth_block_secs,
             },
             audit,
+            alerting,
             node_registry_path: self.server.node_registry_path,
             history_db_path: self.server.history_db_path,
             snapshot_path: self.server.snapshot_path,
@@ -358,6 +368,10 @@ impl RawServerConfigFile {
             log_token_events: self.audit.log_token_events,
             log_rate_limit: self.audit.log_rate_limit,
         })
+    }
+
+    fn validate_alerting(&self) -> Result<AlertingConfig, ConfigError> {
+        self.alerts.validate()
     }
 
     fn validate_auth(

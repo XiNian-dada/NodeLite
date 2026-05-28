@@ -5,6 +5,7 @@
 //! 2. 原始 TOML 反序列化、默认值与内部校验 helper 分拆到子模块中,保持公开 API 稳定。
 //! 3. 所有默认值通过常量 `DEFAULT_*` 暴露,供本模块与外部组件共享。
 
+mod alerts;
 mod defaults;
 mod helpers;
 mod raw;
@@ -25,6 +26,14 @@ use self::defaults::{
 };
 use self::raw::{RawAgentConfigFile, RawServerConfigFile};
 
+pub use self::alerts::{
+    AlertChannel, AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode, AlertSeverity,
+    AlertSmtpConfig, AlertSmtpTransport, AlertWebhookConfig, AlertingConfig,
+    DEFAULT_ALERT_INSPECTION_CPU_WARN_PERCENT, DEFAULT_ALERT_INSPECTION_LATENCY_WARN_MS,
+    DEFAULT_ALERT_INSPECTION_LOCAL_TIME, DEFAULT_ALERT_INSPECTION_LOOKBACK_HOURS,
+    DEFAULT_ALERT_INSPECTION_MEMORY_WARN_PERCENT, DEFAULT_ALERT_INSPECTION_OFFLINE_GRACE_MINUTES,
+    DEFAULT_ALERT_RULE_COOLDOWN_MINUTES, DEFAULT_ALERT_RULE_WINDOW_MINUTES, InspectionConfig,
+};
 pub use self::helpers::normalize_totp_secret;
 
 /// 节点超时阈值:超过该时长未收到任何报文即视为离线。
@@ -119,6 +128,7 @@ pub struct ServerConfig {
     pub readonly_auth: Option<ReadonlyAuthConfig>,
     pub ws: WsConfig,
     pub audit: AuditConfig,
+    pub alerting: AlertingConfig,
     pub node_registry_path: PathBuf,
     pub history_db_path: PathBuf,
     pub snapshot_path: PathBuf,

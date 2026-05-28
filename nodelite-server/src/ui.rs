@@ -15,6 +15,8 @@ use tracing::error;
 
 /// 编译期嵌入的前端 i18n 字典,前端通过 `/assets/ui-i18n.json` 拉取。
 pub const UI_I18N_JSON: &str = include_str!("../assets/ui-i18n.json");
+pub const INDEX_SETTINGS_JS: &str = include_str!("../assets/index-settings.js");
+pub const INDEX_ALERT_SETTINGS_JS: &str = include_str!("../assets/index-alert-settings.js");
 /// 前端 i18n 字典对应的 HTTP 路径,统一注入到模板中。
 pub const UI_I18N_ASSET_PATH: &str = "/assets/ui-i18n.json";
 
@@ -109,12 +111,12 @@ fn render_template_shell(template: &str, refresh_interval_secs: u64) -> String {
 }
 
 fn build_page_csp(template: &str) -> String {
-    let script_hashes = extract_inline_tag_bodies(template, "<script>", "</script>")
+    let script_hashes = extract_inline_tag_bodies(template, "script")
         .into_iter()
         .map(csp_hash)
         .collect::<Vec<_>>()
         .join(" ");
-    let style_hashes = extract_inline_tag_bodies(template, "<style>", "</style>")
+    let style_hashes = extract_inline_tag_bodies(template, "style")
         .into_iter()
         .map(csp_hash)
         .collect::<Vec<_>>()
@@ -126,17 +128,19 @@ fn build_page_csp(template: &str) -> String {
     )
 }
 
-fn extract_inline_tag_bodies<'a>(
-    document: &'a str,
-    open_tag: &str,
-    close_tag: &str,
-) -> Vec<&'a str> {
+fn extract_inline_tag_bodies<'a>(document: &'a str, tag_name: &str) -> Vec<&'a str> {
     let mut bodies = Vec::new();
     let mut rest = document;
+    let open_tag_prefix = format!("<{tag_name}");
+    let close_tag = format!("</{tag_name}>");
 
-    while let Some(open_index) = rest.find(open_tag) {
-        let after_open = &rest[open_index + open_tag.len()..];
-        let Some(close_index) = after_open.find(close_tag) else {
+    while let Some(open_index) = rest.find(&open_tag_prefix) {
+        let after_open_start = &rest[open_index + open_tag_prefix.len()..];
+        let Some(open_end_index) = after_open_start.find('>') else {
+            break;
+        };
+        let after_open = &after_open_start[open_end_index + 1..];
+        let Some(close_index) = after_open.find(&close_tag) else {
             break;
         };
         bodies.push(&after_open[..close_index]);
@@ -233,12 +237,18 @@ mod tests {
 
     #[test]
     fn extract_inline_tag_bodies_stops_on_unclosed_blocks() {
-        let bodies = extract_inline_tag_bodies(
-            "<script>first()</script><script>second()",
-            "<script>",
-            "</script>",
-        );
+        let bodies =
+            extract_inline_tag_bodies("<script>first()</script><script>second()", "script");
         assert_eq!(bodies, vec!["first()"]);
+    }
+
+    #[test]
+    fn extract_inline_tag_bodies_supports_tag_attributes() {
+        let bodies = extract_inline_tag_bodies(
+            "<script type=\"module\">boot()</script><style media=\"screen\">body{}</style>",
+            "script",
+        );
+        assert_eq!(bodies, vec!["boot()"]);
     }
 
     #[test]

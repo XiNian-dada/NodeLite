@@ -166,6 +166,7 @@
         color: var(--text-muted);
       }
       .avatar svg { width: 18px; height: 18px; }
+      .avatar-button { padding: 0; }
 
       /* ---------- Main ---------- */
       .main {
@@ -548,21 +549,206 @@
       .settings-layout {
         display: grid;
         grid-template-columns: minmax(0, 1fr);
-        gap: 16px;
+        gap: 12px;
       }
       .settings-grid {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 16px;
+        align-items: start;
+        gap: 12px;
       }
       .settings-card {
         background: var(--bg-card);
         border: 1px solid var(--border-soft);
-        border-radius: 18px;
-        padding: 18px;
+        border-radius: 14px;
+        padding: 16px;
         min-width: 0;
       }
+      .settings-card-wide { grid-column: 1 / -1; }
       .settings-card h2 { margin: 0 0 12px; font-size: 16px; font-weight: 600; }
+      #settings-root {
+        grid-template-columns: minmax(340px, 0.78fr) minmax(520px, 1.22fr);
+        align-items: stretch;
+      }
+      .alerts-column {
+        display: grid;
+        align-content: start;
+        gap: 12px;
+        min-width: 0;
+      }
+      .settings-token-card {
+        overflow-x: auto;
+      }
+      .settings-token-card .token-table {
+        min-width: 680px;
+      }
+      .settings-version-card {
+        grid-column: 1 !important;
+        grid-row: 1;
+      }
+      .settings-ops-card {
+        grid-column: 2 !important;
+        grid-row: 1;
+      }
+      .settings-token-card {
+        grid-column: 1 / -1 !important;
+        grid-row: 2;
+      }
+      #alerts-root {
+        grid-template-columns: repeat(12, minmax(0, 1fr));
+      }
+      .alerts-overview-card {
+        grid-column: 1 / -1 !important;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 16px;
+        padding: 14px 16px;
+      }
+      .alerts-overview-card h2 { margin: 0; }
+      .alerts-overview-card .settings-note {
+        margin: 0;
+        max-width: none;
+      }
+      .alerts-overview-main {
+        display: grid;
+        gap: 10px;
+        min-width: 0;
+      }
+      .alerts-title-row,
+      .alert-card-head,
+      .alert-rule-summary {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        min-width: 0;
+      }
+      .alerts-summary-strip {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .alerts-summary-tile {
+        border: 1px solid var(--border-soft);
+        border-radius: 12px;
+        background: var(--bg-card-soft);
+        padding: 10px 12px;
+        min-width: 0;
+      }
+      .alerts-summary-tile span {
+        display: block;
+        color: var(--text-muted);
+        font-size: 11px;
+        margin-bottom: 4px;
+      }
+      .alerts-summary-tile strong {
+        display: block;
+        color: var(--text-primary);
+        font-size: 13px;
+        font-weight: 600;
+        overflow-wrap: anywhere;
+      }
+      .alerts-toolbar {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 10px;
+      }
+      .alerts-overview-card .settings-message {
+        grid-column: 1 / -1;
+        min-height: 0;
+      }
+      .alerts-overview-card .settings-checkbox {
+        justify-self: end;
+        white-space: nowrap;
+      }
+      .alerts-primary-column {
+        grid-column: 1 / span 6 !important;
+      }
+      .alerts-secondary-column {
+        grid-column: 7 / -1 !important;
+      }
+      .alerts-rules-card { grid-column: 1 / -1 !important; }
+      .alert-config-card {
+        display: grid;
+        gap: 12px;
+      }
+      .alert-card-head h2,
+      .alert-preview-card h2 { margin-bottom: 4px; }
+      .alert-card-head .settings-note {
+        margin: 0;
+        overflow-wrap: anywhere;
+      }
+      .alert-card-controls {
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 10px;
+      }
+      .alert-compact-form {
+        border-top: 1px solid var(--border-soft);
+        padding-top: 12px;
+      }
+      .alert-summary-kv {
+        border: 1px solid var(--border-soft);
+        border-radius: 12px;
+        background: var(--bg-card-soft);
+        padding: 12px;
+      }
+      .alert-summary-kv div {
+        padding-bottom: 10px;
+      }
+      .alert-summary-kv div:last-child {
+        padding-bottom: 0;
+      }
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        flex: 0 0 auto;
+        border: 1px solid var(--border-soft);
+        border-radius: 999px;
+        background: var(--bg-card-soft);
+        color: var(--text-muted);
+        font-size: 11px;
+        line-height: 1;
+        padding: 6px 9px;
+        white-space: nowrap;
+      }
+      .status-pill.ok {
+        border-color: rgba(34,197,94,0.28);
+        background: var(--accent-green-soft);
+        color: var(--accent-green);
+      }
+      .alert-rule-summary {
+        align-items: center;
+      }
+      .alert-rule-title {
+        color: var(--text-primary);
+        font-size: 14px;
+        font-weight: 600;
+        margin-bottom: 5px;
+      }
+      .alert-rule-expression {
+        color: var(--text-muted);
+        font-size: 12px;
+        line-height: 1.5;
+        overflow-wrap: anywhere;
+      }
+      .alert-rule-actions {
+        display: inline-flex;
+        align-items: center;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+      .alert-rule-details {
+        margin-top: 0;
+      }
+      #account-root {
+        grid-template-columns: minmax(320px, 0.95fr) minmax(360px, 1.05fr);
+      }
       .settings-kv { display: grid; gap: 9px; color: var(--text-secondary); font-size: 13px; }
       .settings-kv div {
         display: flex;
@@ -592,6 +778,11 @@
       .settings-button.danger { border-color: rgba(239,68,68,0.35); background: var(--accent-red-soft); color: var(--accent-red); }
       .settings-form { display: grid; gap: 10px; }
       .settings-form label { display: grid; gap: 5px; color: var(--text-muted); font-size: 12px; }
+      .settings-split {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
       .settings-input {
         width: 100%;
         border: 1px solid var(--border-soft);
@@ -602,9 +793,97 @@
         font: inherit;
       }
       .settings-note { margin-top: 12px; color: var(--text-muted); font-size: 12px; line-height: 1.6; }
+      .settings-code {
+        margin: 8px 0 0;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      .settings-label {
+        margin-bottom: 6px;
+        color: var(--text-muted);
+        font-size: 12px;
+      }
       .settings-message { min-height: 18px; color: var(--text-muted); font-size: 12px; }
       .settings-message.error { color: var(--accent-red); }
       .settings-message.ok { color: var(--accent-green); }
+      .settings-checkbox {
+        display: inline-flex !important;
+        align-items: center;
+        gap: 10px;
+        color: var(--text-secondary);
+        font-size: 13px;
+      }
+      .settings-checkbox input { margin: 0; }
+      .settings-chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 14px;
+      }
+      .settings-details {
+        border-top: 1px solid var(--border-soft);
+        margin-top: 12px;
+        padding-top: 10px;
+      }
+      .settings-details summary {
+        color: var(--text-secondary);
+        cursor: pointer;
+        font-size: 12px;
+        margin-bottom: 10px;
+      }
+      .settings-details summary:hover { color: var(--text-primary); }
+      .section-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      .rule-list {
+        display: grid;
+        gap: 14px;
+      }
+      .alert-rule-card {
+        border: 1px solid var(--border-soft);
+        border-radius: 16px;
+        background: var(--bg-card-soft);
+        padding: 14px;
+        display: grid;
+        gap: 12px;
+      }
+      .rule-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .preview-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+      }
+      .alerts-preview-grid {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 12px;
+      }
+      .preview-kv { margin-bottom: 12px; }
+      .preview-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 10px;
+      }
+      .preview-list li {
+        border: 1px solid var(--border-soft);
+        border-radius: 14px;
+        padding: 12px;
+        display: grid;
+        gap: 4px;
+        color: var(--text-secondary);
+      }
+      .empty.compact {
+        padding: 16px;
+        margin-top: 8px;
+      }
       .update-console-overlay {
         position: fixed;
         inset: 0;
@@ -773,6 +1052,29 @@
       @media (max-width: 900px) {
         .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .settings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        #settings-root,
+        #account-root,
+        #alerts-root { grid-template-columns: minmax(0, 1fr); }
+        #settings-root > .settings-card,
+        #account-root > .settings-card,
+        #alerts-root > .alerts-column,
+        #alerts-root > .settings-card {
+          grid-column: auto !important;
+          grid-row: auto;
+        }
+        .alerts-overview-card {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .alerts-summary-strip {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .alerts-overview-card .settings-checkbox {
+          justify-self: start;
+        }
+        .alerts-toolbar { justify-content: flex-start; }
+        .settings-split,
+        .preview-grid,
+        .rule-grid { grid-template-columns: minmax(0, 1fr); }
       }
       @media (max-width: 720px) {
         .app { grid-template-columns: 1fr; }
@@ -830,13 +1132,21 @@
             <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
           </svg>
         </button>
+        <button type="button" class="nav-button" data-tab="alerts" title="Alerts" aria-label="Alerts">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 1 0-12 0v3.2a2 2 0 0 1-.6 1.4L4 17h5" />
+            <path d="M9 17a3 3 0 0 0 6 0" />
+          </svg>
+        </button>
         <div class="sidebar-bottom">
-          <div class="avatar" title="User">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-              <circle cx="12" cy="7" r="4" />
-            </svg>
-          </div>
+          <button type="button" class="nav-button avatar-button" data-tab="account" title="Account" aria-label="Account">
+            <div class="avatar">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                <circle cx="12" cy="7" r="4" />
+              </svg>
+            </div>
+          </button>
         </div>
       </aside>
 
@@ -967,6 +1277,22 @@
             </div>
           </div>
         </section>
+
+        <section id="alerts-view" class="page-view" hidden>
+          <div class="settings-layout">
+            <div id="alerts-root" class="settings-grid">
+              <div class="empty" data-i18n="alerts.loading">Loading alerts…</div>
+            </div>
+          </div>
+        </section>
+
+        <section id="account-view" class="page-view" hidden>
+          <div class="settings-layout">
+            <div id="account-root" class="settings-grid">
+              <div class="empty" data-i18n="settings.loading">Loading settings…</div>
+            </div>
+          </div>
+        </section>
       </main>
     </div>
 
@@ -993,7 +1319,9 @@
       </section>
     </div>
 
-    <script>
+    <script type="module">
+      import { createAdminPanels } from "/assets/index-settings.js";
+
       const PAGE_CONFIG = document.documentElement.dataset;
       const REFRESH_MS = Number.parseInt(PAGE_CONFIG.refreshMs || "5000", 10) || 5000;
       const I18N_ASSET_PATH = PAGE_CONFIG.i18nAssetPath || "/assets/ui-i18n.json";
@@ -1015,8 +1343,7 @@
       let worldGeoJsonPromise = null;
       let sparkHistoryRefreshToken = 0;
       let activeTab = "overview";
-      let latestSettings = null;
-      let pendingTwoFactorSetup = null;
+      let adminPanels = null;
       let nodeGridEl = null;
       const sparkHistory = new Map();
       const sparkHistoryFetchedAt = new Map();
@@ -1208,15 +1535,19 @@
         });
       }
       function setActiveTab(tab) {
-        activeTab = tab === "settings" ? "settings" : "overview";
+        activeTab = ["overview", "settings", "alerts", "account"].includes(tab) ? tab : "overview";
         document.querySelectorAll(".nav-button[data-tab]").forEach((button) => {
           button.classList.toggle("active", button.dataset.tab === activeTab);
         });
         document.getElementById("overview-view").hidden = activeTab !== "overview";
         document.getElementById("settings-view").hidden = activeTab !== "settings";
+        document.getElementById("alerts-view").hidden = activeTab !== "alerts";
+        document.getElementById("account-view").hidden = activeTab !== "account";
         applyChrome();
         if (activeTab === "overview" && latestNodes.length > 0) scheduleSparkHistoryRefresh(latestNodes);
-        if (activeTab === "settings") void loadSettings();
+        if (activeTab === "settings") void adminPanels.loadSystemSettings();
+        if (activeTab === "alerts") void adminPanels.loadAlertSettings();
+        if (activeTab === "account") void adminPanels.loadAccountSettings();
       }
       function fmtBytes(bytes) {
         if (bytes == null) return t("common.not_available");
@@ -1665,7 +1996,9 @@
         } else {
           latencyEl.innerHTML = `${Math.round(latency)}<small class="value-unit"> ms</small>`;
         }
-        document.getElementById("page-subtitle").textContent = t("index.subtitle", { count: overview.online_nodes });
+        if (activeTab === "overview") {
+          document.getElementById("page-subtitle").textContent = t("index.subtitle", { count: overview.online_nodes });
+        }
       }
 
       function renderUpdated(overview) {
@@ -1848,249 +2181,25 @@
         }
       }
 
-      async function loadSettings() {
-        const root = document.getElementById("settings-root");
-        root.innerHTML = `<div class="empty">${escapeHtml(t("settings.loading"))}</div>`;
-        try {
-          latestSettings = await fetchJson("/api/settings");
-          renderSettings(latestSettings);
-        } catch (error) {
-          root.innerHTML = `<div class="empty">${escapeHtml(t("settings.load_failed", { error: error.message }))}</div>`;
-        }
-      }
-
-      function renderSettings(settings) {
-        const root = document.getElementById("settings-root");
-        const auth = settings.auth || {};
-        root.innerHTML = `
-          <article class="settings-card">
-            <h2>${escapeHtml(t("settings.version.title"))}</h2>
-            <div class="settings-kv">
-              ${kv(t("settings.version.current"), settings.server_version)}
-              ${kv(t("settings.version.repository"), settings.repository)}
-              ${kv(t("settings.version.public_url"), settings.public_base_url)}
-              ${kv(t("settings.version.listen"), settings.listen)}
-            </div>
-            <div class="settings-actions">
-              <button type="button" class="settings-button primary" id="settings-check-update">${escapeHtml(t("settings.version.check_updates"))}</button>
-              <button type="button" class="settings-button" id="settings-view-update-log">${escapeHtml(t("settings.version.view_update_log"))}</button>
-              <a class="settings-button" href="${escapeHtml(settings.updates.latest_release_url)}" target="_blank" rel="noreferrer">${escapeHtml(t("settings.version.open_release"))}</a>
-            </div>
-            <form class="settings-form manual-update-form" id="server-update-form">
-              <p class="settings-note">${escapeHtml(t(auth.two_factor_enabled ? "settings.version.manual_update_note_2fa" : "settings.version.manual_update_note_password"))}</p>
-              ${serverUpdateConfirmationField(auth)}
-              <div class="settings-actions">
-                <button type="submit" class="settings-button primary">${escapeHtml(t("settings.version.update_now"))}</button>
-              </div>
-            </form>
-            <div id="settings-update-message" class="settings-message"></div>
-          </article>
-
-          <article class="settings-card">
-            <h2>${escapeHtml(t("settings.security.title"))}</h2>
-            <div class="settings-kv">
-              ${kv(t("settings.security.auth"), auth.enabled ? t("common.online") : t("common.offline"))}
-              ${kv(t("settings.security.username"), auth.username || t("common.not_available"))}
-              ${kv(t("settings.security.2fa"), auth.two_factor_enabled ? t("settings.enabled") : t("settings.disabled"))}
-              ${kv(t("settings.security.session_ttl"), fmtDurationSeconds(auth.session_ttl_secs))}
-            </div>
-            <p class="settings-note">${escapeHtml(t("settings.security.2fa_note"))}</p>
-            ${twoFactorControls(auth)}
-            <div class="settings-actions">
-              <button type="button" class="settings-button danger" id="settings-logout">${escapeHtml(t("settings.security.logout"))}</button>
-            </div>
-          </article>
-
-          <article class="settings-card">
-            <h2>${escapeHtml(t("settings.password.title"))}</h2>
-            <form class="settings-form" id="password-form">
-              <label>${escapeHtml(t("settings.password.current"))}<input class="settings-input" type="password" name="current_password" autocomplete="current-password" required></label>
-              <label>${escapeHtml(t("settings.password.new"))}<input class="settings-input" type="password" name="new_password" autocomplete="new-password" minlength="8" required></label>
-              <div class="settings-actions">
-                <button type="button" class="settings-button" id="password-generate">${escapeHtml(t("settings.password.generate"))}</button>
-                <button type="submit" class="settings-button primary">${escapeHtml(t("settings.password.submit"))}</button>
-              </div>
-              <div id="password-message" class="settings-message"></div>
-            </form>
-          </article>
-
-          <article class="settings-card" style="grid-column:1 / -1">
-            <h2>${escapeHtml(t("settings.tokens.title"))}</h2>
-            ${tokenTable(settings.agents || [])}
-          </article>
-
-          <article class="settings-card" style="grid-column:1 / -1">
-            <h2>${escapeHtml(t("settings.ops.title"))}</h2>
-            <div class="settings-kv">
-              ${kv(t("settings.ops.config"), settings.config_path)}
-              ${kv(t("settings.ops.registry"), settings.registry_path)}
-              ${kv(t("settings.ops.history"), settings.history_db_path)}
-              ${kv(t("settings.ops.snapshot"), settings.snapshot_path)}
-            </div>
-            <p class="settings-note">${escapeHtml(t("settings.ops.server_upgrade"))}</p>
-            <pre class="settings-note">${escapeHtml(settings.updates.server_upgrade_command)}</pre>
-            <p class="settings-note">${escapeHtml(t("settings.ops.agent_upgrade"))}</p>
-            <pre class="settings-note">${escapeHtml(settings.updates.agent_upgrade_command)}</pre>
-          </article>
-        `;
-        bindSettingsActions(settings);
-      }
-
-      function kv(label, value) {
-        return `<div><span>${escapeHtml(label)}</span><span>${escapeHtml(value ?? t("common.not_available"))}</span></div>`;
-      }
-
-      function serverUpdateConfirmationField(auth) {
-        if (auth.two_factor_enabled) {
-          return `<label>${escapeHtml(t("settings.security.verification_code"))}<input class="settings-input" type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label>`;
-        }
-        return `<label>${escapeHtml(t("settings.password.current"))}<input class="settings-input" type="password" name="current_password" autocomplete="current-password" required></label>`;
-      }
-
-      function twoFactorControls(auth) {
-        if (auth.two_factor_enabled) {
-          return `<form class="settings-form totp-setup" id="totp-disable-form">
-            <p class="settings-note">${escapeHtml(t("settings.security.disable_note"))}</p>
-            <label>${escapeHtml(t("settings.password.current"))}<input class="settings-input" type="password" name="current_password" autocomplete="current-password" required></label>
-            <label>${escapeHtml(t("settings.security.verification_code"))}<input class="settings-input" type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label>
-            <div class="settings-actions">
-              <button type="submit" class="settings-button danger">${escapeHtml(t("settings.security.disable_2fa"))}</button>
-            </div>
-            <div id="totp-message" class="settings-message"></div>
-          </form>`;
-        }
-        if (!pendingTwoFactorSetup) {
-          return `<div class="settings-actions">
-            <button type="button" class="settings-button primary" id="totp-start">${escapeHtml(t("settings.security.start_2fa"))}</button>
-          </div>
-          <div id="totp-message" class="settings-message"></div>`;
-        }
-        return `<div class="totp-setup" id="totp-setup-panel">
-          <div class="totp-setup-grid">
-            <div>
-              <div class="totp-qr-wrap">${pendingTwoFactorSetup.qr_svg}</div>
-            </div>
-            <div>
-              <h3>${escapeHtml(t("settings.security.scan_qr"))}</h3>
-              <p class="settings-note">${escapeHtml(t("settings.security.setup_note"))}</p>
-              <div class="secret-box">${escapeHtml(pendingTwoFactorSetup.secret)}</div>
-            </div>
-          </div>
-          <form class="settings-form" id="totp-enable-form">
-            <label>${escapeHtml(t("settings.password.current"))}<input class="settings-input" type="password" name="current_password" autocomplete="current-password" required></label>
-            <label>${escapeHtml(t("settings.security.verification_code"))}<input class="settings-input" type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label>
-            <div class="settings-actions">
-              <button type="submit" class="settings-button primary">${escapeHtml(t("settings.security.enable_2fa"))}</button>
-              <button type="button" class="settings-button" id="totp-cancel">${escapeHtml(t("settings.security.cancel_setup"))}</button>
-            </div>
-            <div id="totp-message" class="settings-message"></div>
-          </form>
-        </div>`;
-      }
-
-      function tokenTable(agents) {
-        if (!agents.length) return `<div class="empty">${escapeHtml(t("settings.tokens.empty"))}</div>`;
-        const rows = agents.map((agent) => {
-          const seconds = agent.token_expires_in_secs;
-          const cls = seconds == null ? "" : seconds <= 0 ? "token-expired" : seconds < 7 * 86400 ? "token-expiring" : "token-ok";
-          return `<tr>
-            <td>${escapeHtml(agent.node_label || agent.node_id)}<div class="settings-note">${escapeHtml(agent.node_id)}</div></td>
-            <td>${escapeHtml(agent.online ? t("common.online") : t("common.offline"))}</td>
-            <td>${escapeHtml(agent.agent_version || t("common.not_available"))}</td>
-            <td>${escapeHtml(agent.remote_ip || t("common.not_available"))}</td>
-            <td>${escapeHtml(agent.token_expires_at ? fmtDateTime(agent.token_expires_at) : t("settings.token.no_expiry"))}</td>
-            <td class="numeric ${cls}">${escapeHtml(fmtDurationSeconds(seconds))}</td>
-          </tr>`;
-        }).join("");
-        return `<table class="token-table">
-          <thead><tr>
-            <th>${escapeHtml(t("settings.tokens.node"))}</th>
-            <th>${escapeHtml(t("settings.tokens.status"))}</th>
-            <th>${escapeHtml(t("settings.tokens.agent"))}</th>
-            <th>${escapeHtml(t("settings.tokens.ip"))}</th>
-            <th>${escapeHtml(t("settings.tokens.expires_at"))}</th>
-            <th>${escapeHtml(t("settings.tokens.remaining"))}</th>
-          </tr></thead>
-          <tbody>${rows}</tbody>
-        </table>`;
-      }
-
-      function bindSettingsActions(settings) {
-        document.getElementById("settings-logout")?.addEventListener("click", () => {
-          try { window.localStorage.removeItem("nodelite.auth.timestamp"); } catch (_e) {}
-          window.location.href = "/logout-and-reauth";
-        });
-        document.getElementById("settings-check-update")?.addEventListener("click", () => checkForUpdates(settings));
-        document.getElementById("settings-view-update-log")?.addEventListener("click", () => {
-          openUpdateConsole();
-          void fetchUpdateConsoleLog({ reset: true });
-        });
-        document.getElementById("server-update-form")?.addEventListener("submit", submitServerUpdate);
-        document.getElementById("totp-start")?.addEventListener("click", startTwoFactorSetup);
-        document.getElementById("totp-cancel")?.addEventListener("click", () => {
-          pendingTwoFactorSetup = null;
-          renderSettings(settings);
-        });
-        document.getElementById("totp-enable-form")?.addEventListener("submit", submitTwoFactorEnable);
-        document.getElementById("totp-disable-form")?.addEventListener("submit", submitTwoFactorDisable);
-        document.getElementById("password-generate")?.addEventListener("click", () => {
-          const input = document.querySelector("#password-form [name=new_password]");
-          if (input) input.value = generatePassword();
-        });
-        document.getElementById("password-form")?.addEventListener("submit", submitPasswordChange);
-      }
-
-      async function checkForUpdates(settings) {
-        const message = document.getElementById("settings-update-message");
-        message.className = "settings-message";
-        message.textContent = t("settings.version.checking");
-        try {
-          const api = String(settings.repository || "").replace("https://github.com/", "https://api.github.com/repos/") + "/releases/latest";
-          const release = await fetchJson(api);
-          const latest = String(release.tag_name || "").replace(/^v/, "");
-          const current = String(settings.server_version || "").replace(/^v/, "");
-          const newer = compareVersions(latest, current) > 0;
-          message.className = `settings-message ${newer ? "ok" : ""}`;
-          message.textContent = newer
-            ? t("settings.version.update_available", { version: latest })
-            : t("settings.version.up_to_date", { version: current });
-        } catch (error) {
-          message.className = "settings-message error";
-          message.textContent = t("settings.version.check_failed", { error: error.message });
-        }
-      }
-
-      async function submitServerUpdate(event) {
-        event.preventDefault();
-        const form = event.currentTarget;
-        const message = document.getElementById("settings-update-message");
-        const auth = latestSettings?.auth || {};
-        const payload = auth.two_factor_enabled
-          ? { code: form.code.value }
-          : { current_password: form.current_password.value };
-        message.className = "settings-message";
-        message.textContent = t("settings.version.update_starting");
-        openUpdateConsole();
-        resetUpdateConsoleView();
-        setUpdateConsoleStatus("waiting", t("settings.version.console_status_waiting"));
-        setUpdateConsoleMeta(t("settings.version.console_preparing"));
-        setUpdateConsoleText(`[client] ${t("settings.version.update_starting")}`);
-        try {
-          await postSettingsJson("/api/settings/update/server", payload);
-          message.className = "settings-message ok";
-          message.textContent = t("settings.version.update_started");
-          appendUpdateConsoleLine(`[client] ${t("settings.version.update_started")}`);
-          setUpdateConsoleStatus("running", t("settings.version.console_status_running"));
-          setUpdateConsoleMeta(t("settings.version.console_connecting"));
-          void fetchUpdateConsoleLog({ reset: true });
-        } catch (error) {
-          message.className = "settings-message error";
-          message.textContent = t("settings.version.update_failed", { error: error.message });
-          appendUpdateConsoleLine(`[client] ${t("settings.version.update_failed", { error: error.message })}`);
-          setUpdateConsoleStatus("error", t("settings.version.console_status_error"));
-          setUpdateConsoleMeta(t("settings.version.console_failed_to_start"));
-        }
-      }
+      adminPanels = createAdminPanels({
+        t,
+        escapeHtml,
+        fmtDurationSeconds,
+        fmtDateTime,
+        fetchJson,
+        postSettingsJson,
+        compareVersions,
+        generatePassword,
+        updateConsole: {
+          appendLine: appendUpdateConsoleLine,
+          fetch: fetchUpdateConsoleLog,
+          open: openUpdateConsole,
+          reset: resetUpdateConsoleView,
+          setMeta: setUpdateConsoleMeta,
+          setStatus: setUpdateConsoleStatus,
+          setText: setUpdateConsoleText,
+        },
+      });
 
       async function postSettingsJson(url, payload) {
         const response = await fetch(url, {
@@ -2236,61 +2345,6 @@
         }
       }
 
-      async function startTwoFactorSetup() {
-        const message = document.getElementById("totp-message");
-        message.className = "settings-message";
-        message.textContent = t("settings.security.starting_2fa");
-        try {
-          pendingTwoFactorSetup = await postSettingsJson("/api/settings/2fa/start", {});
-          renderSettings(latestSettings);
-        } catch (error) {
-          message.className = "settings-message error";
-          message.textContent = t("settings.security.action_failed", { error: error.message });
-        }
-      }
-
-      async function submitTwoFactorEnable(event) {
-        event.preventDefault();
-        const form = event.currentTarget;
-        const message = document.getElementById("totp-message");
-        message.className = "settings-message";
-        message.textContent = t("settings.security.enabling_2fa");
-        try {
-          await postSettingsJson("/api/settings/2fa/enable", {
-            current_password: form.current_password.value,
-            secret: pendingTwoFactorSetup?.secret || "",
-            code: form.code.value,
-          });
-          message.className = "settings-message ok";
-          message.textContent = t("settings.security.enabled_saved");
-          pendingTwoFactorSetup = null;
-          window.setTimeout(() => loadSettings(), 600);
-        } catch (error) {
-          message.className = "settings-message error";
-          message.textContent = t("settings.security.action_failed", { error: error.message });
-        }
-      }
-
-      async function submitTwoFactorDisable(event) {
-        event.preventDefault();
-        const form = event.currentTarget;
-        const message = document.getElementById("totp-message");
-        message.className = "settings-message";
-        message.textContent = t("settings.security.disabling_2fa");
-        try {
-          await postSettingsJson("/api/settings/2fa/disable", {
-            current_password: form.current_password.value,
-            code: form.code.value,
-          });
-          message.className = "settings-message ok";
-          message.textContent = t("settings.security.disabled_saved");
-          window.setTimeout(() => loadSettings(), 600);
-        } catch (error) {
-          message.className = "settings-message error";
-          message.textContent = t("settings.security.action_failed", { error: error.message });
-        }
-      }
-
       function compareVersions(left, right) {
         const a = String(left).split(".").map((v) => parseInt(v, 10) || 0);
         const b = String(right).split(".").map((v) => parseInt(v, 10) || 0);
@@ -2307,43 +2361,61 @@
         return Array.from(bytes, (b) => chars[b % chars.length]).join("");
       }
 
-      async function submitPasswordChange(event) {
-        event.preventDefault();
-        const form = event.currentTarget;
-        const message = document.getElementById("password-message");
-        const payload = {
-          current_password: form.current_password.value,
-          new_password: form.new_password.value,
-        };
-        message.className = "settings-message";
-        message.textContent = t("settings.password.saving");
-        try {
-          await postSettingsJson("/api/settings/password", payload);
-          message.className = "settings-message ok";
-          message.textContent = t("settings.password.saved");
-          try { window.localStorage.removeItem("nodelite.auth.timestamp"); } catch (_e) {}
-          window.setTimeout(() => { window.location.href = "/logout-and-reauth"; }, 900);
-        } catch (error) {
-          message.className = "settings-message error";
-          message.textContent = t("settings.password.failed", { error: error.message });
+      function setNavLabel(tab, labelKey) {
+        const button = document.querySelector(`.nav-button[data-tab="${tab}"]`);
+        if (!button) return;
+        const label = t(labelKey);
+        button.title = label;
+        button.setAttribute("aria-label", label);
+      }
+
+      function tabChrome(tab) {
+        switch (tab) {
+          case "settings":
+            return {
+              title: t("settings.page_title"),
+              heading: t("settings.heading"),
+              subtitle: t("settings.subtitle"),
+            };
+          case "alerts":
+            return {
+              title: t("alerts.page_title"),
+              heading: t("alerts.heading"),
+              subtitle: t("alerts.subtitle"),
+            };
+          case "account":
+            return {
+              title: t("account.page_title"),
+              heading: t("account.heading"),
+              subtitle: t("account.subtitle"),
+            };
+          case "overview":
+          default:
+            return {
+              title: t("index.page_title"),
+              heading: t("index.heading"),
+              subtitle: t("index.subtitle", { count: latestOverview?.online_nodes ?? "…" }),
+            };
         }
       }
 
       function applyChrome() {
         document.documentElement.lang = currentLanguage;
-        document.title = activeTab === "settings" ? t("settings.page_title") : t("index.page_title");
+        const chrome = tabChrome(activeTab);
+        document.title = chrome.title;
         document.querySelectorAll("[data-i18n]").forEach((el) => {
           el.textContent = t(el.dataset.i18n);
         });
+        setNavLabel("overview", "index.nav.overview");
+        setNavLabel("settings", "index.nav.settings");
+        setNavLabel("alerts", "index.nav.alerts");
+        setNavLabel("account", "index.nav.account");
         renderUpdateConsoleChrome();
         const heading = document.querySelector(".page-title h1");
-        if (heading) heading.textContent = activeTab === "settings" ? t("settings.heading") : t("index.heading");
-        if (activeTab === "settings") {
-          document.getElementById("page-subtitle").textContent = t("settings.subtitle");
-        } else if (latestOverview) {
-          document.getElementById("page-subtitle").textContent = t("index.subtitle", { count: latestOverview.online_nodes });
-        }
-        if (latestSettings && activeTab === "settings") renderSettings(latestSettings);
+        if (heading) heading.textContent = chrome.heading;
+        const subtitle = document.getElementById("page-subtitle");
+        if (subtitle) subtitle.textContent = chrome.subtitle;
+        adminPanels?.applyChrome(activeTab);
       }
 
       async function fetchJson(url) {

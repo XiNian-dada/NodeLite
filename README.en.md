@@ -436,6 +436,34 @@ log_failed_auth = true
 log_token_events = true
 log_rate_limit = true
 
+[alerts]
+enabled = false
+
+[alerts.smtp]
+enabled = false
+host = ""
+port = 587
+username = ""
+sender = ""
+recipients = []
+transport = "start_tls"
+send_resolved = true
+
+[alerts.webhook]
+enabled = false
+url = ""
+send_resolved = true
+
+[alerts.inspection]
+enabled = false
+local_time = "09:00"
+lookback_hours = 24
+delivery = ["smtp"]
+offline_grace_minutes = 10
+latency_warn_ms = 250
+cpu_warn_percent = 85
+memory_warn_percent = 90
+
 [ws]
 max_total_connections = 1024
 max_connections_per_ip = 32
@@ -524,6 +552,13 @@ For example, view the last 100 failed authentication events:
 ```text
 /api/audit-log?event_type=login_failure&success=false&limit=100
 ```
+
+## Alerts and Daily Inspection
+
+- The server config now supports an `[alerts]` section for SMTP, WebHook, rule-based alerts, and a daily inspection digest.
+- `[[alerts.rules]]` can target `cpu_usage_percent`, `memory_usage_percent`, `disk_usage_percent`, `latency_ms`, and `offline_minutes`, and can scope a rule to all nodes, specific node IDs, or matching tags.
+- `[alerts.inspection]` defines the daily digest schedule, lookback window, and inspection thresholds so operators can send a periodic “recent server health” summary.
+- This release wires those settings into `server.toml` and the web settings data model first, so alert policy can be managed centrally before validating outbound SMTP / WebHook delivery.
 
 ## Nginx Reverse Proxy Example
 

@@ -13,6 +13,7 @@
 
 mod admission;
 mod agent_logs;
+mod alerts;
 mod app_state;
 mod audit;
 mod auth;

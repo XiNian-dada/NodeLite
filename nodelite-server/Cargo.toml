@@ -17,6 +17,7 @@ clap.workspace = true
 futures.workspace = true
 getrandom.workspace = true
 hex.workspace = true
+hmac = "0.12"
 ipnet.workspace = true
 libc.workspace = true
 qrcode.workspace = true
@@ -28,13 +29,16 @@ subtle.workspace = true
 time = "0.3"
 thiserror.workspace = true
 tokio.workspace = true
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 tokio-util.workspace = true
+toml.workspace = true
 toml_edit.workspace = true
 totp-lite = "2.0"
 tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true
+webpki-roots = "1.0"
 nodelite-proto = { path = "../nodelite-proto" }
 
 [dev-dependencies]

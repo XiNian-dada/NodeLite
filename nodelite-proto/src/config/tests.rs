@@ -3,10 +3,11 @@ use std::path::PathBuf;
 use ipnet::IpNet;
 
 use super::{
-    DEFAULT_AUDIT_RETENTION_DAYS, DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_WS_AUTH_BLOCK_SECS,
-    DEFAULT_WS_AUTH_FAIL_MAX_ATTEMPTS, DEFAULT_WS_AUTH_FAIL_WINDOW_SECS,
-    DEFAULT_WS_MAX_CONNECTIONS_PER_IP, DEFAULT_WS_MAX_TOTAL_CONNECTIONS, MAX_NODE_TAG_BYTES,
-    parse_agent_config, parse_server_config,
+    AlertChannel, AlertComparator, AlertMetric, AlertScopeMode, AlertSeverity, AlertSmtpTransport,
+    DEFAULT_ALERT_INSPECTION_LOCAL_TIME, DEFAULT_AUDIT_RETENTION_DAYS, DEFAULT_MAX_MESSAGE_BYTES,
+    DEFAULT_WS_AUTH_BLOCK_SECS, DEFAULT_WS_AUTH_FAIL_MAX_ATTEMPTS,
+    DEFAULT_WS_AUTH_FAIL_WINDOW_SECS, DEFAULT_WS_MAX_CONNECTIONS_PER_IP,
+    DEFAULT_WS_MAX_TOTAL_CONNECTIONS, MAX_NODE_TAG_BYTES, parse_agent_config, parse_server_config,
 };
 
 #[test]
@@ -57,6 +58,12 @@ fn parses_server_config_with_defaults() {
     assert!(config.audit.log_failed_auth);
     assert!(config.audit.log_token_events);
     assert!(config.audit.log_rate_limit);
+    assert!(!config.alerting.enabled);
+    assert_eq!(config.alerting.rules, Vec::new());
+    assert_eq!(
+        config.alerting.inspection.local_time,
+        DEFAULT_ALERT_INSPECTION_LOCAL_TIME
+    );
 }
 
 #[test]
@@ -261,6 +268,127 @@ fn parses_server_config_with_audit_overrides() {
     assert!(config.audit.log_failed_auth);
     assert!(config.audit.log_token_events);
     assert!(!config.audit.log_rate_limit);
+}
+
+#[test]
+fn parses_server_config_with_alerting() {
+    let config = parse_server_config(
+        r#"
+        [server]
+        listen = "127.0.0.1:8080"
+        public_base_url = "https://monitor.example.com"
+
+        [alerts]
+        enabled = true
+
+        [alerts.smtp]
+        enabled = true
+        host = "smtp.example.com"
+        port = 465
+        username = "ops"
+        password = "smtp-secret"
+        sender = "nodelite@example.com"
+        recipients = ["ops@example.com", "sre@example.com"]
+        transport = "tls"
+        send_resolved = false
+
+        [alerts.webhook]
+        enabled = true
+        url = "https://hooks.example.com/nodelite"
+        secret = "hook-secret"
+        send_resolved = false
+
+        [alerts.inspection]
+        enabled = true
+        local_time = "08:30"
+        lookback_hours = 48
+        delivery = ["smtp", "webhook"]
+        offline_grace_minutes = 30
+        latency_warn_ms = 420
+        cpu_warn_percent = 90
+        memory_warn_percent = 95
+
+        [[alerts.rules]]
+        id = "cpu-hot"
+        name = "CPU 持续过高"
+        enabled = true
+        metric = "cpu_usage_percent"
+        comparator = "gt"
+        threshold = 85
+        window_minutes = 10
+        severity = "critical"
+        scope_mode = "tags"
+        tags = ["edge", "prod"]
+        delivery = ["smtp"]
+        cooldown_minutes = 45
+        send_resolved = true
+        "#,
+    )
+    .expect("alerting config should parse");
+
+    assert!(config.alerting.enabled);
+    assert!(config.alerting.smtp.enabled);
+    assert_eq!(config.alerting.smtp.transport, AlertSmtpTransport::Tls);
+    assert!(!config.alerting.smtp.send_resolved);
+    assert_eq!(
+        config.alerting.smtp.recipients,
+        vec!["ops@example.com", "sre@example.com"]
+    );
+    assert!(config.alerting.webhook.enabled);
+    assert_eq!(
+        config.alerting.webhook.url,
+        "https://hooks.example.com/nodelite"
+    );
+    assert_eq!(config.alerting.rules.len(), 1);
+    assert_eq!(
+        config.alerting.rules[0].metric,
+        AlertMetric::CpuUsagePercent
+    );
+    assert_eq!(config.alerting.rules[0].comparator, AlertComparator::Gt);
+    assert_eq!(config.alerting.rules[0].severity, AlertSeverity::Critical);
+    assert_eq!(config.alerting.rules[0].scope_mode, AlertScopeMode::Tags);
+    assert_eq!(config.alerting.rules[0].delivery, vec![AlertChannel::Smtp]);
+}
+
+#[test]
+fn rejects_alert_rule_with_missing_scope_values() {
+    let error = parse_server_config(
+        r#"
+        [server]
+        listen = "127.0.0.1:8080"
+        public_base_url = "https://monitor.example.com"
+
+        [[alerts.rules]]
+        id = "latency-hot"
+        name = "Latency"
+        metric = "latency_ms"
+        comparator = "gt"
+        threshold = 200
+        severity = "warning"
+        scope_mode = "node_ids"
+        "#,
+    )
+    .expect_err("missing node ids should fail");
+
+    assert!(error.to_string().contains("scope_mode = node_ids"));
+}
+
+#[test]
+fn rejects_alert_inspection_with_bad_time() {
+    let error = parse_server_config(
+        r#"
+        [server]
+        listen = "127.0.0.1:8080"
+        public_base_url = "https://monitor.example.com"
+
+        [alerts.inspection]
+        enabled = true
+        local_time = "24:61"
+        "#,
+    )
+    .expect_err("invalid inspection time should fail");
+
+    assert!(error.to_string().contains("HH:MM"));
 }
 
 #[test]

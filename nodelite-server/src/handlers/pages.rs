@@ -5,8 +5,8 @@ use axum::response::{AppendHeaders, Html, IntoResponse, Response};
 use crate::AppState;
 use crate::startup::PROTECTED_CACHE_CONTROL;
 use crate::ui::{
-    UI_I18N_JSON, index_html, index_page_csp, node_html, node_page_csp, verify_2fa_html,
-    verify_2fa_page_csp,
+    INDEX_ALERT_SETTINGS_JS, INDEX_SETTINGS_JS, UI_I18N_JSON, index_html, index_page_csp,
+    node_html, node_page_csp, verify_2fa_html, verify_2fa_page_csp,
 };
 
 const BRAND_LOGO_LIGHT_WEBP: &[u8] = include_bytes!("../../../logo/brand-logo-light.webp");
@@ -36,6 +36,22 @@ pub(crate) async fn ui_i18n_asset() -> Response {
     (
         [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
         UI_I18N_JSON,
+    )
+        .into_response()
+}
+
+pub(crate) async fn index_settings_js_asset() -> Response {
+    (
+        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        INDEX_SETTINGS_JS,
+    )
+        .into_response()
+}
+
+pub(crate) async fn index_alert_settings_js_asset() -> Response {
+    (
+        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        INDEX_ALERT_SETTINGS_JS,
     )
         .into_response()
 }

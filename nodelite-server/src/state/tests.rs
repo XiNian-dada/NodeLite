@@ -492,6 +492,7 @@ fn sample_config() -> ServerConfig {
             log_token_events: true,
             log_rate_limit: true,
         },
+        alerting: nodelite_proto::AlertingConfig::default(),
         node_registry_path: PathBuf::from("/tmp/nodelite-test-registry.json"),
         history_db_path: PathBuf::from("/tmp/nodelite-test-history.sqlite3"),
         snapshot_path: PathBuf::from("/tmp/nodelite-test-snapshot.json"),
