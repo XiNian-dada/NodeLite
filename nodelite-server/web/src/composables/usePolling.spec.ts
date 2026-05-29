@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectScope } from 'vue';
+import { ApiAbortError } from '@/api/client';
 import { usePolling } from './usePolling';
 
 describe('usePolling', () => {
@@ -70,5 +71,51 @@ describe('usePolling', () => {
     expect(fn).not.toHaveBeenCalled();
 
     scope.stop();
+  });
+
+  it('swallows ApiAbortError without logging or crashing the interval', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const scope = effectScope();
+    const fn = vi.fn().mockRejectedValue(new ApiAbortError('redirecting'));
+    scope.run(() => {
+      usePolling(fn, 1000);
+    });
+
+    expect(fn).toHaveBeenCalledTimes(1);
+    // Let the rejected promise settle on the microtask queue.
+    await Promise.resolve();
+    expect(errorSpy).not.toHaveBeenCalled();
+
+    // The interval keeps firing despite the rejection.
+    vi.advanceTimersByTime(2000);
+    expect(fn).toHaveBeenCalledTimes(3);
+
+    scope.stop();
+    // Flush the later ticks' rejections while the spy is still mocked.
+    await Promise.resolve();
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('logs a generic error but keeps the interval alive', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const scope = effectScope();
+    const fn = vi.fn().mockRejectedValue(new Error('boom'));
+    scope.run(() => {
+      usePolling(fn, 1000);
+    });
+
+    expect(fn).toHaveBeenCalledTimes(1);
+    await Promise.resolve();
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(2000);
+    expect(fn).toHaveBeenCalledTimes(3);
+
+    scope.stop();
+    // Flush the later ticks' rejections while the spy is still mocked.
+    await Promise.resolve();
+    expect(errorSpy).toHaveBeenCalledTimes(3);
+    errorSpy.mockRestore();
   });
 });

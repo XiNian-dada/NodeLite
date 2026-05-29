@@ -1,36 +1,44 @@
 /**
- * Typed wrappers per legacy endpoint inventory.
- *
- * Response types are hand-written best-effort — full type generation from
- * nodelite-proto is deferred (plan §6.2). When Stage 2/3 components hit a
- * field that's not yet typed, widen here rather than reaching for `any`.
+ * Typed wrappers per legacy endpoint inventory. Response shapes live in
+ * ./types so components can import them without dragging in the client.
  */
 
 import { api } from './client';
+import type {
+  BootstrapResponse,
+  HistoryPoint,
+  HistoryQuery,
+  NodeListItem,
+  OverviewData,
+} from './types';
 
-export interface BootstrapResponse {
-  /** Polling interval in milliseconds */
-  refreshIntervalMs?: number;
-  /** Server display version */
-  version?: string;
-  /** Any other server-provided bootstrap fields (typed in Stage 2) */
-  [key: string]: unknown;
-}
-
-export interface OverviewResponse {
-  [key: string]: unknown;
-}
-
-export interface NodeSummary {
-  id: string;
-  name?: string;
-  [key: string]: unknown;
-}
+export type {
+  BootstrapResponse,
+  HistoryPoint,
+  HistoryQuery,
+  NodeListItem,
+  NodeListIdentity,
+  NodeListSnapshot,
+  OverviewData,
+} from './types';
 
 export const apiClient = {
   bootstrap: () => api<BootstrapResponse>('/api/bootstrap'),
-  overview: () => api<OverviewResponse>('/api/overview'),
-  listNodes: () => api<NodeSummary[]>('/api/nodes'),
-  getNode: (id: string) =>
-    api<NodeSummary>(`/api/nodes/${encodeURIComponent(id)}`),
+  overview: () => api<OverviewData>('/api/overview'),
+  listNodes: () => api<NodeListItem[]>('/api/nodes'),
+  getNode: (id: string) => api<NodeListItem>(`/api/nodes/${encodeURIComponent(id)}`),
+  nodeHistory: (id: string, query: HistoryQuery = {}) => {
+    const params = new URLSearchParams();
+    if (query.windowHours !== undefined) {
+      params.set('window_hours', String(query.windowHours));
+    }
+    if (query.maxPoints !== undefined) {
+      params.set('max_points', String(query.maxPoints));
+    }
+    const qs = params.toString();
+    const suffix = qs ? `?${qs}` : '';
+    return api<HistoryPoint[]>(
+      `/api/nodes/${encodeURIComponent(id)}/history${suffix}`,
+    );
+  },
 };

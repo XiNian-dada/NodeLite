@@ -1,14 +1,14 @@
 import { defineStore } from 'pinia';
 import { ref, shallowRef } from 'vue';
-import { apiClient, type NodeListItem } from '@/api';
+import { apiClient, type OverviewData } from '@/api';
 import { ApiAbortError } from '@/api/client';
 
 /**
- * Node list state. Polling lifecycle is NOT owned by the store —
+ * Overview aggregate stats. Polling lifecycle is NOT owned by the store —
  * see composables/usePolling.ts. Stores hold state + refresh() only.
  */
-export const useNodesStore = defineStore('nodes', () => {
-  const nodes = shallowRef<NodeListItem[]>([]);
+export const useOverviewStore = defineStore('overview', () => {
+  const data = shallowRef<OverviewData | null>(null);
   const loading = ref(false);
   const error = ref<Error | null>(null);
 
@@ -17,7 +17,7 @@ export const useNodesStore = defineStore('nodes', () => {
     loading.value = true;
     error.value = null;
     try {
-      nodes.value = await apiClient.listNodes();
+      data.value = await apiClient.overview();
     } catch (e) {
       if (e instanceof ApiAbortError) return;
       error.value = e instanceof Error ? e : new Error(String(e));
@@ -26,5 +26,5 @@ export const useNodesStore = defineStore('nodes', () => {
     }
   }
 
-  return { nodes, loading, error, refresh };
+  return { data, loading, error, refresh };
 });
