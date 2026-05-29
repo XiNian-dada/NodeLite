@@ -6,6 +6,7 @@ import { createApp, defineComponent, h } from 'vue';
 
 import DashboardView from './DashboardView.vue';
 import { setupI18n, getI18n, __resetI18nForTest, LANGUAGE_STORAGE_KEY } from '@/i18n';
+import { __resetWorldGeoJsonForTest } from '@/composables/useWorldGeoJson';
 
 const FAKE_DICT = {
   en: {
@@ -67,6 +68,9 @@ describe('DashboardView', () => {
   beforeEach(async () => {
     window.localStorage.clear();
     __resetI18nForTest();
+    __resetWorldGeoJsonForTest();
+    // jsdom has no canvas 2D context; NodeMap's paint no-ops with null.
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -82,15 +86,18 @@ describe('DashboardView', () => {
   afterEach(() => {
     window.localStorage.clear();
     __resetI18nForTest();
+    __resetWorldGeoJsonForTest();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     delete document.documentElement.dataset.theme;
   });
 
-  it('renders the shell with sidebar, header, and stats', async () => {
+  it('renders the shell with sidebar, header, map, and stats', async () => {
     const wrapper = await mountDashboard();
     expect(wrapper.find('[data-test="app-shell"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="dashboard-view"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="sidebar-nav"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="node-map"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="overview-stats"]').exists()).toBe(true);
   });
 
