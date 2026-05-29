@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref, shallowRef } from 'vue';
-import { apiClient, type NodeSummary } from '@/api';
+import { apiClient, type NodeListItem } from '@/api';
 import { ApiAbortError } from '@/api/client';
 
 /**
@@ -8,7 +8,7 @@ import { ApiAbortError } from '@/api/client';
  * see composables/usePolling.ts. Stores hold state + refresh() only.
  */
 export const useNodesStore = defineStore('nodes', () => {
-  const nodes = shallowRef<NodeSummary[]>([]);
+  const nodes = shallowRef<NodeListItem[]>([]);
   const loading = ref(false);
   const error = ref<Error | null>(null);
 

@@ -2,6 +2,7 @@ import { setActivePinia, createPinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiAbortError, ApiError } from '@/api/client';
 import { apiClient } from '@/api';
+import { makeBootstrap } from '@/api/__fixtures__/nodes';
 import { useBootstrapStore } from './bootstrap';
 
 vi.mock('@/api', async () => {
@@ -28,7 +29,8 @@ describe('useBootstrapStore', () => {
   });
 
   it('populates data on success', async () => {
-    mockBootstrap.mockResolvedValueOnce({ refreshIntervalMs: 4000 });
+    const bootstrap = makeBootstrap({ refresh_interval_secs: 4 });
+    mockBootstrap.mockResolvedValueOnce(bootstrap);
     const store = useBootstrapStore();
 
     expect(store.loading).toBe(false);
@@ -37,7 +39,7 @@ describe('useBootstrapStore', () => {
     await promise;
 
     expect(store.loading).toBe(false);
-    expect(store.data).toEqual({ refreshIntervalMs: 4000 });
+    expect(store.data).toEqual(bootstrap);
     expect(store.error).toBeNull();
   });
 
@@ -61,7 +63,7 @@ describe('useBootstrapStore', () => {
   });
 
   it('ignores concurrent load() calls', async () => {
-    let resolve: (v: { ok: true }) => void = () => {};
+    let resolve: (v: ReturnType<typeof makeBootstrap>) => void = () => {};
     mockBootstrap.mockReturnValueOnce(
       new Promise((r) => {
         resolve = r;
@@ -74,7 +76,7 @@ describe('useBootstrapStore', () => {
     void store.load();
     expect(mockBootstrap).toHaveBeenCalledTimes(1);
 
-    resolve({ ok: true });
+    resolve(makeBootstrap());
     await first;
     expect(mockBootstrap).toHaveBeenCalledTimes(1);
   });

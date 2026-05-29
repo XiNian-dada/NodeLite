@@ -2,6 +2,7 @@ import { setActivePinia, createPinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiAbortError, ApiError } from '@/api/client';
 import { apiClient } from '@/api';
+import { makeNode } from '@/api/__fixtures__/nodes';
 import { useNodesStore } from './nodes';
 
 vi.mock('@/api', async () => {
@@ -28,11 +29,13 @@ describe('useNodesStore', () => {
   });
 
   it('populates nodes on success', async () => {
-    mockListNodes.mockResolvedValueOnce([{ id: 'a' }, { id: 'b' }]);
+    const a = makeNode({ identity: { node_id: 'a', node_label: 'A', hostname: 'a', tags: [] } });
+    const b = makeNode({ identity: { node_id: 'b', node_label: 'B', hostname: 'b', tags: [] } });
+    mockListNodes.mockResolvedValueOnce([a, b]);
     const store = useNodesStore();
 
     await store.refresh();
-    expect(store.nodes).toEqual([{ id: 'a' }, { id: 'b' }]);
+    expect(store.nodes).toEqual([a, b]);
     expect(store.error).toBeNull();
   });
 
