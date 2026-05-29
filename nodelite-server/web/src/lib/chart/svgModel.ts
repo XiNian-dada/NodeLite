@@ -81,15 +81,10 @@ function isFiniteValue(p: ChartPoint): p is ChartPoint & { value: number } {
   return p.value != null && Number.isFinite(Number(p.value));
 }
 
-function buildGrid(
-  bounds: ChartBounds,
-  width: number,
-  height: number,
-  padLeft: number,
-  kind: ChartValueKind,
-): ChartGridLine[] {
+// Grid lines span padLeft..width-padRight horizontally; that x-range is
+// applied in the template, so only y + label are computed here.
+function buildGrid(bounds: ChartBounds, height: number, kind: ChartValueKind): ChartGridLine[] {
   const ratios = height < 100 ? [0, 0.5, 1] : [0, 0.25, 0.5, 0.75, 1];
-  void width; // grid lines span padLeft..width-padRight in the template
   return ratios.map((ratio) => {
     const tick = bounds.displayMin + (bounds.displayMax - bounds.displayMin) * ratio;
     return { y: chartY(tick, bounds, height, PAD_TOP, PAD_BOTTOM), label: formatChartValue(tick, kind) };
@@ -138,7 +133,7 @@ export function buildAreaChart(points: ChartPoint[], opts: AreaChartOptions): Ch
     padRight: PAD_RIGHT,
     padTop: PAD_TOP,
     padBottom: PAD_BOTTOM,
-    grid: buildGrid(bounds, width, height, padLeft, kind),
+    grid: buildGrid(bounds, height, kind),
     series: [
       {
         label: opts.label ?? '',
@@ -199,7 +194,7 @@ export function buildMultiAreaChart(series: MultiSeriesInput[], opts: ChartOptio
     padRight: PAD_RIGHT,
     padTop: PAD_TOP,
     padBottom: PAD_BOTTOM,
-    grid: buildGrid(bounds, width, height, padLeft, kind),
+    grid: buildGrid(bounds, height, kind),
     series: built,
     empty: false,
   };
