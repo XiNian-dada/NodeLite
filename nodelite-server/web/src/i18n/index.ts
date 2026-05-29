@@ -18,7 +18,7 @@ export const I18N_ASSET_PATH = '/assets/ui-i18n.json';
 export type Messages = Record<string, string>;
 export type Dictionary = Record<SupportedLocale, Messages>;
 
-export type AppI18n = ReturnType<typeof createI18n<false, Dictionary>>;
+export type AppI18n = ReturnType<typeof createI18n>;
 
 let i18nInstance: AppI18n | null = null;
 
@@ -73,16 +73,17 @@ async function fetchDictionary(): Promise<Dictionary> {
  */
 export async function setupI18n(app: App): Promise<AppI18n> {
   const messages = await fetchDictionary();
-  i18nInstance = createI18n<false, Dictionary>({
+  const instance = createI18n({
     legacy: false,
     globalInjection: true,
     locale: resolveInitialLocale(),
     fallbackLocale: FALLBACK_LOCALE,
     flatJson: true,
     messages,
-  });
-  app.use(i18nInstance);
-  return i18nInstance;
+  }) as unknown as AppI18n;
+  i18nInstance = instance;
+  app.use(instance);
+  return instance;
 }
 
 export function getI18n(): AppI18n {

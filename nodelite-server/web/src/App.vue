@@ -1,122 +1,114 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onMounted } from 'vue';
+import { useTheme } from '@/composables/useTheme';
+import { usePolling } from '@/composables/usePolling';
+import { useLanguage } from '@/i18n/language';
+import { useBootstrapStore } from '@/stores/bootstrap';
+import { useNodesStore } from '@/stores/nodes';
+import { SUPPORTED_LOCALES } from '@/i18n';
 
-interface BootstrapResponse {
-  service: string;
-  status: string;
-  ready: boolean;
-  history_available: boolean;
-  public_base_url: string | null;
-  refresh_interval_secs: number;
-  registered_nodes: number;
-}
+const { theme, toggleTheme } = useTheme();
+const { currentLocale, setLocale } = useLanguage();
 
-type LoadState =
-  | { kind: 'idle' }
-  | { kind: 'loading' }
-  | { kind: 'ok'; data: BootstrapResponse }
-  | { kind: 'error'; message: string };
+const bootstrapStore = useBootstrapStore();
+const nodesStore = useNodesStore();
 
-const state = ref<LoadState>({ kind: 'idle' });
+onMounted(() => {
+  void bootstrapStore.load();
+});
 
-async function loadBootstrap(): Promise<void> {
-  state.value = { kind: 'loading' };
-  try {
-    const res = await fetch('/api/bootstrap', {
-      credentials: 'same-origin',
-      headers: { Accept: 'application/json' },
-    });
-    if (!res.ok) {
-      state.value = { kind: 'error', message: `HTTP ${res.status}` };
-      return;
-    }
-    const data = (await res.json()) as BootstrapResponse;
-    state.value = { kind: 'ok', data };
-  } catch (error) {
-    state.value = {
-      kind: 'error',
-      message: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
-onMounted(loadBootstrap);
+// Default polling cadence matches legacy REFRESH_MS=5000. Stage 2 will
+// read the real interval from the bootstrap response.
+usePolling(() => nodesStore.refresh(), 5000);
 </script>
 
 <template>
-  <main class="hello">
-    <h1>NodeLite — Vue scaffold</h1>
-    <p class="hint">Stage 0 hello world. Verifies /api/bootstrap is reachable through the Vite dev proxy.</p>
-
-    <section v-if="state.kind === 'loading'" data-test="bootstrap-loading">Loading…</section>
-
-    <section v-else-if="state.kind === 'error'" data-test="bootstrap-error" class="error">
-      Failed to load bootstrap: {{ state.message }}
-    </section>
-
-    <section v-else-if="state.kind === 'ok'" data-test="bootstrap-ok">
-      <dl>
-        <dt>service</dt>
-        <dd>{{ state.data.service }}</dd>
-        <dt>status</dt>
-        <dd>{{ state.data.status }}</dd>
-        <dt>ready</dt>
-        <dd>{{ state.data.ready }}</dd>
-        <dt>refresh_interval_secs</dt>
-        <dd>{{ state.data.refresh_interval_secs }}</dd>
-        <dt>registered_nodes</dt>
-        <dd>{{ state.data.registered_nodes }}</dd>
-      </dl>
-    </section>
-
-    <button type="button" @click="loadBootstrap">Reload</button>
-  </main>
+  <div class="app-shell" data-test="app-shell">
+    <header class="app-shell__bar">
+      <strong class="app-shell__brand">NodeLite</strong>
+      <div class="app-shell__controls">
+        <button
+          type="button"
+          class="app-shell__toggle"
+          data-test="theme-toggle"
+          @click="toggleTheme"
+        >
+          {{ theme === 'dark' ? '☀︎' : '☾' }}
+          <span class="app-shell__toggle-label">{{ $t('common.theme_toggle') }}</span>
+        </button>
+        <label class="app-shell__lang">
+          <span class="app-shell__lang-label">{{ $t('common.language') }}</span>
+          <select
+            data-test="language-select"
+            :value="currentLocale"
+            @change="setLocale(($event.target as HTMLSelectElement).value)"
+          >
+            <option v-for="locale in SUPPORTED_LOCALES" :key="locale" :value="locale">
+              {{ locale }}
+            </option>
+          </select>
+        </label>
+      </div>
+    </header>
+    <main class="app-shell__main">
+      <RouterView />
+    </main>
+  </div>
 </template>
 
 <style scoped>
-.hello {
-  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
-  padding: 2rem;
-  max-width: 640px;
-  margin: 0 auto;
-  color: #e6edf3;
-  background: #0e1422;
+.app-shell {
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-app);
+  color: var(--text-primary);
 }
-h1 {
-  margin: 0 0 0.25rem;
-  font-size: 1.5rem;
+.app-shell__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border-soft);
 }
-.hint {
-  color: #b6bfcc;
-  font-size: 0.9rem;
+.app-shell__brand {
+  font-size: 1rem;
 }
-.error {
-  color: #ef4444;
+.app-shell__controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
 }
-dl {
-  display: grid;
-  grid-template-columns: 12rem 1fr;
-  gap: 0.25rem 1rem;
-  margin: 1rem 0;
+.app-shell__toggle {
+  background: var(--bg-card-soft);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  padding: 6px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
-dt {
-  color: #6b7785;
-  font-variant: small-caps;
+.app-shell__toggle-label {
+  font-size: 0.85rem;
 }
-dd {
-  margin: 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+.app-shell__lang {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
 }
-button {
-  background: #3b82f6;
-  color: #fff;
-  border: 0;
-  padding: 0.4rem 0.9rem;
-  border-radius: 4px;
-  cursor: pointer;
+.app-shell__lang select {
+  background: var(--bg-card-soft);
+  color: var(--text-primary);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  padding: 4px 8px;
 }
-button:hover {
-  background: #2563eb;
+.app-shell__main {
+  flex: 1;
+  min-height: 0;
 }
 </style>
