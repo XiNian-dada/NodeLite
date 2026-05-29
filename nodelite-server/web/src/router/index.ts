@@ -1,0 +1,19 @@
+import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router';
+
+const routes: RouteRecordRaw[] = [
+  {
+    path: '/',
+    name: 'dashboard',
+    component: () => import('@/views/DashboardView.vue'),
+  },
+  {
+    path: '/nodes/:id',
+    name: 'node-detail',
+    component: () => import('@/views/NodeDetailView.vue'),
+  },
+];
+
+export const router = createRouter({
+  history: createWebHistory(),
+  routes,
+});
