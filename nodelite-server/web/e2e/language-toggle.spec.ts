@@ -1,10 +1,27 @@
-import { test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+import { waitForAppShell } from './_helpers';
 
-// Plan §3.7.2 flow 5: language toggle (en ↔ zh).
-// Validation point:
-//   - Every element with `data-i18n` (legacy) / vue-i18n binding (new) updates
-//     to the chosen language. Spot-check a stable set of keys (nav, headers).
-test.fixme('language toggle updates all i18n-bound copy', async ({ page }) => {
+// Plan §3.7.2 flow 5: language toggle (en ↔ zh-CN).
+// Validation point: the language selector flips vue-i18n's active locale,
+// the value is persisted, and at least one $t()-bound string updates.
+test('language toggle updates app shell copy and persists', async ({ page }) => {
   await page.goto('/');
-  // TODO: switch to zh, assert a few known strings; switch back to en, re-assert.
+  await waitForAppShell(page);
+
+  const select = page.locator('[data-test="language-select"]');
+  await expect(select).toBeVisible();
+
+  await select.selectOption('zh-CN');
+  await expect(page.locator('[data-test="language-select"]')).toHaveValue('zh-CN');
+  const persisted = await page.evaluate(() =>
+    window.localStorage.getItem('nodelite.ui.language'),
+  );
+  expect(persisted).toBe('zh-CN');
+
+  await page.reload();
+  await waitForAppShell(page);
+  await expect(page.locator('[data-test="language-select"]')).toHaveValue('zh-CN');
+
+  await page.locator('[data-test="language-select"]').selectOption('en');
+  await expect(page.locator('[data-test="language-select"]')).toHaveValue('en');
 });

@@ -1,14 +1,19 @@
-import { test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 
 // Plan §3.7.2 flow 3: 24h auto-logout.
-// Validation point:
-//   - Mock the timestamp the client uses to decide it's been 24h since auth →
-//     UI navigates to `/logout-and-reauth` (clearing the 2FA cookie).
-// Note: legacy UI reads the timestamp from inline JS; for the new SPA this
-// will likely be a store value driven by `bootstrap.refresh_interval_secs`
-// or a dedicated session-expiry timer.
-test.fixme('client triggers logout-and-reauth after 24h', async ({ page }) => {
-  await page.goto('/');
-  // TODO: page.clock.install() once we're on Playwright 1.45+, fast-forward 24h,
-  // assert URL becomes `/logout-and-reauth`.
+// Validation point: when the cached auth timestamp is older than 24h,
+// the SPA's inline expiry shim (index.html) redirects to /logout-and-reauth
+// before the Vue app even mounts.
+test('client triggers logout-and-reauth after 24h', async ({ page }) => {
+  await page.addInitScript(() => {
+    const TWENTY_FIVE_HOURS = 25 * 60 * 60 * 1000;
+    window.localStorage.setItem(
+      'nodelite.auth.timestamp',
+      String(Date.now() - TWENTY_FIVE_HOURS),
+    );
+  });
+
+  await page.goto('/', { waitUntil: 'commit' });
+  await page.waitForURL('**/logout-and-reauth', { timeout: 5000 });
+  await expect(page).toHaveURL(/\/logout-and-reauth$/);
 });
