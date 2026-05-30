@@ -28,6 +28,12 @@
   --accent-purple: #a855f7;
   --map-land-dot: rgba(148, 163, 184, 0.48);
   --map-land-stroke: rgba(15, 23, 42, 0.34);
+  /* Chart series colors (node.html:75-79; theme-independent). */
+  --chart-cpu: #22c55e;
+  --chart-memory: #3b82f6;
+  --chart-network-down: #22c55e;
+  --chart-network-up: #a855f7;
+  --chart-latency: #eab308;
   font-family: 'Inter', 'PingFang SC', 'Helvetica Neue', 'Segoe UI', system-ui, -apple-system, sans-serif;
 }
 
