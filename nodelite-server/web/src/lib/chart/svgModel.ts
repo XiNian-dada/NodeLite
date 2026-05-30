@@ -9,6 +9,7 @@ import {
   averageValue,
   chartDisplayBounds,
   type ChartBounds,
+  type ChartData,
   type ChartPoint,
 } from './chartData';
 import { formatChartValue, type ChartValueKind } from './format';
@@ -75,6 +76,18 @@ export interface MultiSeriesInput {
   label: string;
   color: string;
   points: ChartPoint[];
+}
+
+/** Network down/up series for a multi-area chart, with the standard colors. */
+export function networkSeries(
+  data: ChartData,
+  downLabel: string,
+  upLabel: string,
+): MultiSeriesInput[] {
+  return [
+    { label: downLabel, color: 'var(--chart-network-down)', points: data.dlPts },
+    { label: upLabel, color: 'var(--chart-network-up)', points: data.upPts },
+  ];
 }
 
 function isFiniteValue(p: ChartPoint): p is ChartPoint & { value: number } {

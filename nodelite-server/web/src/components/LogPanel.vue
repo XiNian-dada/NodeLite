@@ -21,7 +21,8 @@ function fmtDateTime(value: string): string {
 // Newest first, matching legacy renderAgentLogs (reversed).
 const rows = computed(() =>
   [...props.entries].reverse().map((entry, i) => ({
-    key: i,
+    // Stable-ish key from the timestamp; index disambiguates same-ms entries.
+    key: `${entry.occurred_at}#${i}`,
     level: entry.level,
     levelLabel: t(levelLabelKey(entry.level)),
     time: fmtDateTime(entry.occurred_at),

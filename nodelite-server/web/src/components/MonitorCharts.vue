@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { HistoryPoint, NodeStatus } from '@/api';
 import { buildChartData } from '@/lib/chart/chartData';
+import { networkSeries } from '@/lib/chart/svgModel';
 import { provideChartHoverGroup } from '@/composables/useChartHoverGroup';
 import { PRESET_WINDOWS, type PresetKey } from '@/composables/useChartSelection';
 import MetricChart from './MetricChart.vue';
@@ -27,9 +28,28 @@ provideChartHoverGroup();
 
 const data = computed(() => buildChartData(props.history));
 
-const networkSeries = computed(() => [
-  { label: t('index.node.download'), color: 'var(--chart-network-down)', points: data.value.dlPts },
-  { label: t('index.node.upload'), color: 'var(--chart-network-up)', points: data.value.upPts },
+// One config per chart; the network entry is multi-series, the rest area.
+const charts = computed(() => [
+  {
+    metric: 'cpu' as const,
+    title: t('node.cpu_usage'),
+    chartProps: { points: data.value.cpuPts, valueKind: 'percent' as const, color: 'var(--chart-cpu)', label: t('node.cpu_usage') },
+  },
+  {
+    metric: 'memory' as const,
+    title: t('node.memory_usage'),
+    chartProps: { points: data.value.memPts, valueKind: 'percent' as const, color: 'var(--chart-memory)', label: t('node.memory_usage') },
+  },
+  {
+    metric: 'network' as const,
+    title: t('node.network_traffic'),
+    chartProps: { series: networkSeries(data.value, t('index.node.download'), t('index.node.upload')), valueKind: 'rate' as const },
+  },
+  {
+    metric: 'latency' as const,
+    title: t('node.latency_history'),
+    chartProps: { points: data.value.rttPts, valueKind: 'latency' as const, color: 'var(--chart-latency)', label: t('node.latency_history') },
+  },
 ]);
 </script>
 
@@ -50,45 +70,21 @@ const networkSeries = computed(() => [
     </div>
 
     <div class="monitor__grid">
-      <article class="panel big-chart">
+      <article v-for="chart in charts" :key="chart.metric" class="panel big-chart">
         <header class="big-chart__head">
-          <span class="big-chart__title">{{ t('node.cpu_usage') }}</span>
+          <span class="big-chart__title">{{ chart.title }}</span>
           <button
             type="button"
             class="zoom-button"
             :aria-label="t('node.chart.zoom')"
             :title="t('node.chart.zoom')"
-            data-test="zoom-cpu"
-            @click="emit('zoom', 'cpu')"
+            :data-test="`zoom-${chart.metric}`"
+            @click="emit('zoom', chart.metric)"
           >
             ⤢
           </button>
         </header>
-        <MetricChart :points="data.cpuPts" value-kind="percent" color="var(--chart-cpu)" :label="t('node.cpu_usage')" :min-value="0" :height="220" />
-      </article>
-
-      <article class="panel big-chart">
-        <header class="big-chart__head">
-          <span class="big-chart__title">{{ t('node.memory_usage') }}</span>
-          <button type="button" class="zoom-button" :aria-label="t('node.chart.zoom')" :title="t('node.chart.zoom')" data-test="zoom-memory" @click="emit('zoom', 'memory')">⤢</button>
-        </header>
-        <MetricChart :points="data.memPts" value-kind="percent" color="var(--chart-memory)" :label="t('node.memory_usage')" :min-value="0" :height="220" />
-      </article>
-
-      <article class="panel big-chart">
-        <header class="big-chart__head">
-          <span class="big-chart__title">{{ t('node.network_traffic') }}</span>
-          <button type="button" class="zoom-button" :aria-label="t('node.chart.zoom')" :title="t('node.chart.zoom')" data-test="zoom-network" @click="emit('zoom', 'network')">⤢</button>
-        </header>
-        <MetricChart :series="networkSeries" value-kind="rate" :min-value="0" :height="220" />
-      </article>
-
-      <article class="panel big-chart">
-        <header class="big-chart__head">
-          <span class="big-chart__title">{{ t('node.latency_history') }}</span>
-          <button type="button" class="zoom-button" :aria-label="t('node.chart.zoom')" :title="t('node.chart.zoom')" data-test="zoom-latency" @click="emit('zoom', 'latency')">⤢</button>
-        </header>
-        <MetricChart :points="data.rttPts" value-kind="latency" color="var(--chart-latency)" :label="t('node.latency_history')" :min-value="0" :height="220" />
+        <MetricChart v-bind="chart.chartProps" :min-value="0" :height="220" />
       </article>
     </div>
   </div>

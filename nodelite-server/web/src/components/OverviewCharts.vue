@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { HistoryPoint, NodeStatus } from '@/api';
 import { buildChartData, averageValue, type ChartPoint } from '@/lib/chart/chartData';
+import { networkSeries } from '@/lib/chart/svgModel';
 import { formatChartValue, type ChartValueKind } from '@/lib/chart/format';
 import { provideChartHoverGroup } from '@/composables/useChartHoverGroup';
 import MetricChart from './MetricChart.vue';
@@ -35,10 +36,9 @@ const nowLatency = computed(() =>
   props.node?.latency_ms == null ? '—' : formatChartValue(props.node.latency_ms, 'latency'),
 );
 
-const networkSeries = computed(() => [
-  { label: t('index.node.download'), color: 'var(--chart-network-down)', points: data.value.dlPts },
-  { label: t('index.node.upload'), color: 'var(--chart-network-up)', points: data.value.upPts },
-]);
+const netSeries = computed(() =>
+  networkSeries(data.value, t('index.node.download'), t('index.node.upload')),
+);
 </script>
 
 <template>
@@ -81,7 +81,7 @@ const networkSeries = computed(() => [
       <header class="chart-card__head">
         <span class="chart-card__title">{{ t('node.network_traffic') }}</span>
       </header>
-      <MetricChart :series="networkSeries" value-kind="rate" :min-value="0" />
+      <MetricChart :series="netSeries" value-kind="rate" :min-value="0" />
     </article>
 
     <article class="panel chart-card chart-card--rtt">

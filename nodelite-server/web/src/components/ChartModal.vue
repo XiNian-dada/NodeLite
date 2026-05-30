@@ -5,8 +5,10 @@ import type { ChartValueKind } from '@/lib/chart/format';
 import type { MultiSeriesInput } from '@/lib/chart/svgModel';
 import MetricChart from './MetricChart.vue';
 
+// Visibility is owned by the parent via v-if (it already gates on having a
+// selected metric), so there's no `open` prop here — the modal renders its
+// content whenever mounted.
 const props = defineProps<{
-  open: boolean;
   title: string;
   points?: ChartPoint[];
   series?: MultiSeriesInput[];
@@ -31,7 +33,6 @@ const chartProps = computed(() => ({
 
 <template>
   <div
-    v-if="open"
     class="chart-modal"
     data-test="chart-modal"
     role="dialog"

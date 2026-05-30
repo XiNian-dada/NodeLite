@@ -33,17 +33,9 @@ describe('ChartModal', () => {
     vi.unstubAllGlobals();
   });
 
-  it('renders nothing when closed', () => {
+  it('renders the chart + title and emits close (parent gates visibility)', async () => {
     const wrapper = mount(ChartModal, {
-      props: { open: false, title: 'CPU', points: pts([10, 90]), valueKind: 'percent' },
-      global: { plugins: [getI18n()] },
-    });
-    expect(wrapper.find('[data-test="chart-modal"]').exists()).toBe(false);
-  });
-
-  it('renders the chart + title when open and emits close', async () => {
-    const wrapper = mount(ChartModal, {
-      props: { open: true, title: 'CPU', points: pts([10, 90]), valueKind: 'percent', color: 'var(--chart-cpu)' },
+      props: { title: 'CPU', points: pts([10, 90]), valueKind: 'percent', color: 'var(--chart-cpu)' },
       global: { plugins: [getI18n()] },
     });
     expect(wrapper.find('[data-test="chart-modal"]').exists()).toBe(true);

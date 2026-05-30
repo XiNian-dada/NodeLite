@@ -16,6 +16,7 @@ import { nodeStatusKey } from '@/lib/map/projection';
 import { ipFromNode, locationFromNode } from '@/lib/nodeMeta';
 import { uptimeParts, fmtBytes, fmtRate } from '@/lib/format';
 import { buildChartData } from '@/lib/chart/chartData';
+import { networkSeries } from '@/lib/chart/svgModel';
 import { formatChartValue } from '@/lib/chart/format';
 import { useI18n } from 'vue-i18n';
 import { useNodeStatusStore } from '@/stores/nodeStatus';
@@ -94,13 +95,9 @@ const net = computed(() => {
     latency: node.value?.latency_ms == null ? '—' : formatChartValue(node.value.latency_ms, 'latency'),
   };
 });
-const networkSeries = computed(() => {
-  const data = buildChartData(historyStore.points);
-  return [
-    { label: t('index.node.download'), color: 'var(--chart-network-down)', points: data.dlPts },
-    { label: t('index.node.upload'), color: 'var(--chart-network-up)', points: data.upPts },
-  ];
-});
+const netSeries = computed(() =>
+  networkSeries(buildChartData(historyStore.points), t('index.node.download'), t('index.node.upload')),
+);
 
 // loadIfStale (not load) so re-entering a tab within the throttle window
 // reuses the cached data, matching legacy fetchOverviewHistory/fetchAgentLogs.
@@ -161,10 +158,7 @@ const modalConfig = computed(() => {
     case 'network':
       return {
         title: t('node.network_traffic'),
-        series: [
-          { label: t('index.node.download'), color: 'var(--chart-network-down)', points: data.dlPts },
-          { label: t('index.node.upload'), color: 'var(--chart-network-up)', points: data.upPts },
-        ],
+        series: networkSeries(data, t('index.node.download'), t('index.node.upload')),
         valueKind: 'rate' as const,
       };
   }
@@ -240,7 +234,7 @@ const modalConfig = computed(() => {
             </div>
           </div>
           <article class="panel">
-            <MetricChart :series="networkSeries" value-kind="rate" :min-value="0" :height="240" />
+            <MetricChart :series="netSeries" value-kind="rate" :min-value="0" :height="240" />
           </article>
         </template>
 
@@ -270,12 +264,7 @@ const modalConfig = computed(() => {
       </section>
     </div>
 
-    <ChartModal
-      v-if="modalConfig"
-      :open="modalMetric !== null"
-      v-bind="modalConfig"
-      @close="closeZoom"
-    />
+    <ChartModal v-if="modalConfig" v-bind="modalConfig" @close="closeZoom" />
   </AppLayout>
 </template>
 
