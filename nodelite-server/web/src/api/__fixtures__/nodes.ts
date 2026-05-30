@@ -4,7 +4,56 @@ import type {
   NodeListItem,
   NodeStatus,
   OverviewData,
+  SettingsResponse,
 } from '@/api';
+
+export function makeSettings(overrides: Partial<SettingsResponse> = {}): SettingsResponse {
+  const base: SettingsResponse = {
+    service: 'nodelite-server',
+    server_version: '2.3.0',
+    repository: 'https://github.com/XiNian-dada/NodeLite',
+    public_base_url: 'http://localhost:8080',
+    listen: '127.0.0.1:8080',
+    config_path: '/etc/nodelite/server.toml',
+    registry_path: '/var/lib/nodelite/registry.json',
+    history_db_path: '/var/lib/nodelite/history.db',
+    snapshot_path: '/var/lib/nodelite/snapshot.json',
+    history_retention_hours: 336,
+    refresh_interval_secs: 5,
+    auth: {
+      enabled: true,
+      username: 'admin',
+      two_factor_enabled: false,
+      totp_secret_configured: false,
+      session_ttl_secs: 86_400,
+      pending_ttl_secs: 300,
+    },
+    updates: {
+      latest_release_url: 'https://github.com/XiNian-dada/NodeLite/releases/latest',
+      server_upgrade_command: 'curl -fsSL https://example/install.sh | sh',
+      agent_upgrade_command: 'curl -fsSL https://example/agent.sh | sh',
+    },
+    agents: [
+      {
+        node_id: 'node-a',
+        node_label: 'Node A',
+        online: true,
+        agent_version: '2.3.0',
+        remote_ip: '203.0.113.7',
+        tags: [],
+        token_expires_at: '2026-12-01T00:00:00Z',
+        token_expires_in_secs: 1_000_000,
+      },
+    ],
+  };
+  return {
+    ...base,
+    ...overrides,
+    auth: { ...base.auth, ...overrides.auth },
+    updates: { ...base.updates, ...overrides.updates },
+    agents: overrides.agents ?? base.agents,
+  };
+}
 
 export function makeBootstrap(
   overrides: Partial<BootstrapResponse> = {},

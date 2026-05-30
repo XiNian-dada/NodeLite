@@ -12,6 +12,9 @@ import type {
   NodeListItem,
   NodeStatus,
   OverviewData,
+  ReauthPayload,
+  SettingsActionResponse,
+  SettingsResponse,
 } from './types';
 
 export type {
@@ -28,6 +31,12 @@ export type {
   NodeSnapshot,
   NodeStatus,
   OverviewData,
+  ReauthPayload,
+  SettingsActionResponse,
+  SettingsAgentToken,
+  SettingsAuth,
+  SettingsResponse,
+  SettingsUpdates,
 } from './types';
 
 export const apiClient = {
@@ -58,4 +67,13 @@ export const apiClient = {
     api<AgentLogEntry[]>(
       `/api/nodes/${encodeURIComponent(id)}/logs?limit=${encodeURIComponent(String(limit))}`,
     ),
+
+  // --- Settings ---
+  settings: () => api<SettingsResponse>('/api/settings'),
+  updateServer: (body: ReauthPayload) =>
+    api<SettingsActionResponse>('/api/settings/update/server', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
 };

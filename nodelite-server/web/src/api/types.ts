@@ -145,3 +145,61 @@ export interface AgentLogEntry {
   level: LogLevel;
   message: string;
 }
+
+// --- Settings (handlers/settings/types.rs) ---
+
+export interface SettingsAuth {
+  enabled: boolean;
+  username: string | null;
+  two_factor_enabled: boolean;
+  totp_secret_configured: boolean;
+  session_ttl_secs: number;
+  pending_ttl_secs: number;
+}
+
+export interface SettingsUpdates {
+  latest_release_url: string;
+  server_upgrade_command: string;
+  agent_upgrade_command: string;
+}
+
+export interface SettingsAgentToken {
+  node_id: string;
+  node_label: string;
+  online: boolean;
+  agent_version: string | null;
+  remote_ip: string | null;
+  tags: string[];
+  token_expires_at: string | null;
+  token_expires_in_secs: number | null;
+}
+
+/** GET /api/settings — SettingsResponse (flat + nested) */
+export interface SettingsResponse {
+  service: string;
+  server_version: string;
+  repository: string;
+  public_base_url: string;
+  listen: string;
+  config_path: string;
+  registry_path: string;
+  history_db_path: string;
+  snapshot_path: string;
+  history_retention_hours: number;
+  refresh_interval_secs: number;
+  auth: SettingsAuth;
+  updates: SettingsUpdates;
+  agents: SettingsAgentToken[];
+}
+
+/** Standard mutation response for the settings endpoints. */
+export interface SettingsActionResponse {
+  ok: boolean;
+  message: string;
+}
+
+/** Reauth carried by every sensitive settings write. */
+export interface ReauthPayload {
+  current_password?: string;
+  code?: string;
+}
