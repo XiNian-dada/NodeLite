@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import AppLayout from '@/components/AppLayout.vue';
 import NodeInfoPanel from '@/components/NodeInfoPanel.vue';
@@ -7,7 +7,11 @@ import NodeSummaryCards from '@/components/NodeSummaryCards.vue';
 import OverviewCharts from '@/components/OverviewCharts.vue';
 import NodeDisks from '@/components/NodeDisks.vue';
 import MetricChart from '@/components/MetricChart.vue';
+import MonitorCharts, { type MonitorMetric } from '@/components/MonitorCharts.vue';
+import ChartModal from '@/components/ChartModal.vue';
+import LogPanel from '@/components/LogPanel.vue';
 import { usePolling } from '@/composables/usePolling';
+import { useChartSelection, type PresetKey } from '@/composables/useChartSelection';
 import { nodeStatusKey } from '@/lib/map/projection';
 import { ipFromNode, locationFromNode } from '@/lib/nodeMeta';
 import { uptimeParts, fmtBytes, fmtRate } from '@/lib/format';
@@ -16,6 +20,8 @@ import { formatChartValue } from '@/lib/chart/format';
 import { useI18n } from 'vue-i18n';
 import { useNodeStatusStore } from '@/stores/nodeStatus';
 import { useDetailHistoryStore } from '@/stores/detailHistory';
+import { useMonitorHistoryStore } from '@/stores/monitorHistory';
+import { useNodeLogsStore } from '@/stores/nodeLogs';
 
 const NODE_DETAIL_REFRESH_MS = 5000;
 
@@ -33,6 +39,9 @@ const router = useRouter();
 const { t } = useI18n();
 const store = useNodeStatusStore();
 const historyStore = useDetailHistoryStore();
+const monitorStore = useMonitorHistoryStore();
+const logsStore = useNodeLogsStore();
+const selection = useChartSelection();
 
 const nodeId = computed(() => String(route.params.id ?? ''));
 const node = computed(() => store.data);
@@ -67,11 +76,12 @@ const ip = computed(() => (node.value ? ipFromNode(node.value) : null));
 const location = computed(() => (node.value ? locationFromNode(node.value) : null));
 const uptime = computed(() => uptimeParts(node.value?.snapshot?.uptime_secs));
 
-// Tabs that render history charts; only those trigger the overview-history
-// fetch (mirrors legacy detailHistoryNeedsData; monitor lands in 3d).
+// Tabs that render the overview-history charts (overview/network).
 const historyNeeded = computed(
   () => activeTab.value === 'overview' || activeTab.value === 'network',
 );
+const monitorNeeded = computed(() => activeTab.value === 'monitor');
+const logsNeeded = computed(() => activeTab.value === 'logs');
 
 // Network tab values (legacy renderSummaryCards net block).
 const net = computed(() => {
@@ -92,32 +102,74 @@ const networkSeries = computed(() => {
   ];
 });
 
-function ensureHistory(): void {
-  // loadIfStale (not load) so re-entering a history tab within the throttle
-  // window reuses the cached series, matching legacy fetchOverviewHistory.
-  if (historyNeeded.value && nodeId.value) void historyStore.loadIfStale(nodeId.value);
+// loadIfStale (not load) so re-entering a tab within the throttle window
+// reuses the cached data, matching legacy fetchOverviewHistory/fetchAgentLogs.
+function ensureTabData(): void {
+  const id = nodeId.value;
+  if (!id) return;
+  if (historyNeeded.value) void historyStore.loadIfStale(id);
+  if (monitorNeeded.value) void monitorStore.loadIfStale(id, selection.windowHours.value);
+  if (logsNeeded.value) void logsStore.loadIfStale(id);
 }
 
 onMounted(() => {
   void store.load(nodeId.value);
-  ensureHistory();
+  ensureTabData();
 });
 
-// Navigating between nodes (same component, new :id) reloads both.
+// Navigating between nodes (same component, new :id) reloads.
 watch(nodeId, (id) => {
   if (id) void store.load(id);
-  ensureHistory();
+  ensureTabData();
 });
 
-// Switching into a history tab lazily loads the overview history.
-watch(historyNeeded, (needed) => {
-  if (needed) ensureHistory();
-});
+// Switching tabs / changing the monitor window lazily loads that data.
+watch([activeTab, selection.windowHours], () => ensureTabData());
 
 usePolling(() => {
   void store.refresh();
   if (historyNeeded.value) void historyStore.refresh();
+  if (monitorNeeded.value && nodeId.value) {
+    void monitorStore.refresh(nodeId.value, selection.windowHours.value);
+  }
+  if (logsNeeded.value) void logsStore.refresh();
 }, NODE_DETAIL_REFRESH_MS);
+
+// --- Monitor zoom modal ---
+const modalMetric = ref<MonitorMetric | null>(null);
+function openZoom(metric: MonitorMetric): void {
+  modalMetric.value = metric;
+}
+function closeZoom(): void {
+  modalMetric.value = null;
+}
+function onSelectPreset(key: PresetKey): void {
+  selection.selectPreset(key);
+}
+
+const modalConfig = computed(() => {
+  const metric = modalMetric.value;
+  if (!metric) return null;
+  const data = buildChartData(monitorStore.points);
+  switch (metric) {
+    case 'cpu':
+      return { title: t('node.cpu_usage'), points: data.cpuPts, valueKind: 'percent' as const, color: 'var(--chart-cpu)' };
+    case 'memory':
+      return { title: t('node.memory_usage'), points: data.memPts, valueKind: 'percent' as const, color: 'var(--chart-memory)' };
+    case 'latency':
+      return { title: t('node.latency_history'), points: data.rttPts, valueKind: 'latency' as const, color: 'var(--chart-latency)' };
+    case 'network':
+      return {
+        title: t('node.network_traffic'),
+        series: [
+          { label: t('index.node.download'), color: 'var(--chart-network-down)', points: data.dlPts },
+          { label: t('index.node.upload'), color: 'var(--chart-network-up)', points: data.upPts },
+        ],
+        valueKind: 'rate' as const,
+      };
+  }
+  return null;
+});
 </script>
 
 <template>
@@ -201,11 +253,29 @@ usePolling(() => {
           </article>
         </template>
 
-        <p v-else class="placeholder" data-test="pane-placeholder">
-          {{ activeTab }} — coming in Stage 3d
-        </p>
+        <MonitorCharts
+          v-else-if="activeTab === 'monitor'"
+          :node="node"
+          :history="monitorStore.points"
+          :active-key="selection.activeKey.value"
+          @select-preset="onSelectPreset"
+          @zoom="openZoom"
+        />
+
+        <LogPanel
+          v-else-if="activeTab === 'logs'"
+          :entries="logsStore.entries"
+          :error="logsStore.error"
+        />
       </section>
     </div>
+
+    <ChartModal
+      v-if="modalConfig"
+      :open="modalMetric !== null"
+      v-bind="modalConfig"
+      @close="closeZoom"
+    />
   </AppLayout>
 </template>
 

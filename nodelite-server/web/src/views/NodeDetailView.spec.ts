@@ -17,12 +17,14 @@ vi.mock('@/api', async () => {
       ...actual.apiClient,
       nodeStatus: vi.fn(),
       nodeHistory: vi.fn().mockResolvedValue([]),
+      nodeLogs: vi.fn().mockResolvedValue([]),
     },
   };
 });
 
 const mockStatus = vi.mocked(apiClient.nodeStatus);
 const mockHistory = vi.mocked(apiClient.nodeHistory);
+const mockLogs = vi.mocked(apiClient.nodeLogs);
 
 const FAKE_DICT = {
   en: {
@@ -60,7 +62,18 @@ const FAKE_DICT = {
     'node.network_traffic': 'Network Traffic',
     'node.latency_history': 'RTT',
     'node.chart.average': 'Avg {value}',
+    'node.chart.zoom': 'Open enlarged chart',
     'node.waiting_history': 'Waiting…',
+    'node.preset.last_3h': '3h',
+    'node.preset.last_24h': '24h',
+    'node.preset.last_3d': '3d',
+    'node.preset.last_7d': '7d',
+    'node.preset.last_14d': '14d',
+    'node.logs.empty': 'No logs.',
+    'node.logs.load_failed': 'Failed: {error}',
+    'node.logs.level_info': 'Info',
+    'node.logs.level_warn': 'Warn',
+    'node.logs.level_error': 'Error',
     'index.node.download': 'Down',
     'index.node.upload': 'Up',
     'common.unknown': 'Unknown',
@@ -188,5 +201,37 @@ describe('NodeDetailView', () => {
     await flushPromises();
     expect(wrapper.find('[data-test="node-disks"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="node-info-panel"]').exists()).toBe(true);
+  });
+
+  it('shows monitor charts and loads high-res history on the monitor tab', async () => {
+    const { wrapper, router } = await mountDetail('srv-1');
+    mockHistory.mockClear();
+    await router.replace({ hash: '#monitor' });
+    await flushPromises();
+    expect(wrapper.find('[data-test="monitor-charts"]').exists()).toBe(true);
+    // default 24h preset, high-res 720 points
+    expect(mockHistory).toHaveBeenCalledWith('srv-1', { windowHours: 24, maxPoints: 720 });
+  });
+
+  it('opens the zoom modal from a monitor chart and closes it', async () => {
+    const { wrapper, router } = await mountDetail('srv-1');
+    await router.replace({ hash: '#monitor' });
+    await flushPromises();
+
+    await wrapper.find('[data-test="zoom-cpu"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-test="chart-modal"]').exists()).toBe(true);
+
+    await wrapper.find('[data-test="chart-modal-close"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-test="chart-modal"]').exists()).toBe(false);
+  });
+
+  it('shows the log panel and loads logs on the logs tab', async () => {
+    const { wrapper, router } = await mountDetail('srv-1');
+    await router.replace({ hash: '#logs' });
+    await flushPromises();
+    expect(wrapper.find('[data-test="log-panel"]').exists()).toBe(true);
+    expect(mockLogs).toHaveBeenCalledWith('srv-1', 200);
   });
 });

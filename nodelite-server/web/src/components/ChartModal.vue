@@ -1,10 +1,11 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import type { ChartPoint } from '@/lib/chart/chartData';
 import type { ChartValueKind } from '@/lib/chart/format';
 import type { MultiSeriesInput } from '@/lib/chart/svgModel';
 import MetricChart from './MetricChart.vue';
 
-defineProps<{
+const props = defineProps<{
   open: boolean;
   title: string;
   points?: ChartPoint[];
@@ -14,6 +15,18 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{ close: [] }>();
+
+// Only include points OR series — exactOptionalPropertyTypes forbids passing
+// an explicit undefined to an optional prop, so omit the absent one.
+const chartProps = computed(() => ({
+  valueKind: props.valueKind,
+  color: props.color ?? 'var(--accent-blue)',
+  label: props.title,
+  minValue: 0,
+  height: 360,
+  ...(props.points ? { points: props.points } : {}),
+  ...(props.series ? { series: props.series } : {}),
+}));
 </script>
 
 <template>
@@ -32,15 +45,7 @@ const emit = defineEmits<{ close: [] }>();
           ✕
         </button>
       </header>
-      <MetricChart
-        :points="points"
-        :series="series"
-        :value-kind="valueKind"
-        :color="color ?? 'var(--accent-blue)'"
-        :label="title"
-        :min-value="0"
-        :height="360"
-      />
+      <MetricChart v-bind="chartProps" />
     </div>
   </div>
 </template>
