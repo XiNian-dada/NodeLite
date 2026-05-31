@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { fmtBytes, fmtLatency, fmtPercent, fmtRate, uptimeParts } from './format';
+import {
+  fmtBytes,
+  fmtLatency,
+  fmtPercent,
+  fmtRate,
+  tokenRemaining,
+  tokenSeverity,
+  uptimeParts,
+} from './format';
 
 describe('fmtBytes', () => {
   it('scales by 1024 with legacy decimal rules', () => {
@@ -61,5 +69,29 @@ describe('uptimeParts', () => {
   it('returns null for null/NaN', () => {
     expect(uptimeParts(null)).toBeNull();
     expect(uptimeParts(Number.NaN)).toBeNull();
+  });
+});
+
+describe('tokenRemaining', () => {
+  it('maps null/NaN to none, <=0 to expired', () => {
+    expect(tokenRemaining(null)).toEqual({ kind: 'none' });
+    expect(tokenRemaining(Number.NaN)).toEqual({ kind: 'none' });
+    expect(tokenRemaining(0)).toEqual({ kind: 'expired' });
+    expect(tokenRemaining(-5)).toEqual({ kind: 'expired' });
+  });
+
+  it('uses days_hours when >=1 day, minutes (min 1) otherwise', () => {
+    expect(tokenRemaining((25 * 3600 + 5))).toEqual({ kind: 'days_hours', days: 1, hours: 1 });
+    expect(tokenRemaining(90 * 60)).toEqual({ kind: 'minutes', minutes: 90 });
+    expect(tokenRemaining(10)).toEqual({ kind: 'minutes', minutes: 1 }); // floor → 0, clamped to 1
+  });
+});
+
+describe('tokenSeverity', () => {
+  it('classifies by remaining seconds', () => {
+    expect(tokenSeverity(null)).toBe('');
+    expect(tokenSeverity(0)).toBe('expired');
+    expect(tokenSeverity(3 * 86400)).toBe('expiring'); // < 7 days
+    expect(tokenSeverity(30 * 86400)).toBe('ok');
   });
 });

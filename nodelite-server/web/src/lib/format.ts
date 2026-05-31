@@ -59,3 +59,32 @@ export function uptimeParts(seconds: number | null | undefined): UptimeParts | n
   const minutes = totalMinutes % 60;
   return { days, hours, minutes };
 }
+
+export type DurationResult =
+  | { kind: 'none' }
+  | { kind: 'expired' }
+  | { kind: 'days_hours'; days: number; hours: number }
+  | { kind: 'minutes'; minutes: number };
+
+/**
+ * Token-expiry "remaining" duration, ported from legacy fmtDurationSeconds.
+ * The caller maps the result to i18n: none → settings.token.no_expiry,
+ * expired → settings.token.expired, days_hours → settings.duration.days_hours,
+ * minutes → settings.duration.minutes. Returns structured (i18n-free).
+ */
+export function tokenRemaining(seconds: number | null | undefined): DurationResult {
+  if (seconds == null || !Number.isFinite(Number(seconds))) return { kind: 'none' };
+  const value = Number(seconds);
+  if (value <= 0) return { kind: 'expired' };
+  const days = Math.floor(value / 86400);
+  const hours = Math.floor((value % 86400) / 3600);
+  if (days > 0) return { kind: 'days_hours', days, hours };
+  return { kind: 'minutes', minutes: Math.max(1, Math.floor(value / 60)) };
+}
+
+/** Token-row severity class from remaining seconds (expired / <7d / ok). */
+export function tokenSeverity(seconds: number | null | undefined): '' | 'expired' | 'expiring' | 'ok' {
+  if (seconds == null) return '';
+  if (seconds <= 0) return 'expired';
+  return seconds < 7 * 86400 ? 'expiring' : 'ok';
+}
