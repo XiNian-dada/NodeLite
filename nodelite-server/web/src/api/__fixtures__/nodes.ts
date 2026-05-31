@@ -1,14 +1,27 @@
 import type {
   AgentLogEntry,
+  AlertRuleView,
   AlertSettingsResponse,
   AlertSettingsView,
+  AlertSmtpSettingsView,
+  AlertWebhookSettingsView,
   AlertPreview,
   BootstrapResponse,
+  InspectionSettingsView,
   NodeListItem,
   NodeStatus,
   OverviewData,
   SettingsResponse,
 } from '@/api';
+
+/** Override shape for the alert View fixture: nested channels accept partials. */
+interface AlertSettingsViewOverrides {
+  enabled?: boolean;
+  smtp?: Partial<AlertSmtpSettingsView>;
+  webhook?: Partial<AlertWebhookSettingsView>;
+  rules?: AlertRuleView[];
+  inspection?: Partial<InspectionSettingsView>;
+}
 
 export function makeSettings(overrides: Partial<SettingsResponse> = {}): SettingsResponse {
   const base: SettingsResponse = {
@@ -174,7 +187,7 @@ export function makeOverview(overrides: Partial<OverviewData> = {}): OverviewDat
   };
 }
 
-export function makeAlertSettingsView(overrides: Partial<AlertSettingsView> = {}): AlertSettingsView {
+export function makeAlertSettingsView(overrides: AlertSettingsViewOverrides = {}): AlertSettingsView {
   const base: AlertSettingsView = {
     enabled: true,
     smtp: {
@@ -249,8 +262,13 @@ export function makeAlertPreview(overrides: Partial<AlertPreview> = {}): AlertPr
   };
 }
 
+interface AlertSettingsResponseOverrides {
+  config?: AlertSettingsViewOverrides;
+  preview?: Partial<AlertPreview>;
+}
+
 export function makeAlertSettings(
-  overrides: Partial<AlertSettingsResponse> = {},
+  overrides: AlertSettingsResponseOverrides = {},
 ): AlertSettingsResponse {
   return {
     config: makeAlertSettingsView(overrides.config),
