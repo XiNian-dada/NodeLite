@@ -203,3 +203,29 @@ export interface ReauthPayload {
   current_password?: string;
   code?: string;
 }
+
+/** GET /api/settings/2fa/start — TwoFactorSetupResponse */
+export interface TwoFactorSetupResponse {
+  secret: string;
+  otpauth_uri: string;
+  qr_svg: string;
+}
+
+/** POST /api/settings/2fa/enable */
+export interface EnableTwoFactorRequest {
+  current_password: string;
+  secret: string;
+  code: string;
+}
+
+/** POST /api/settings/2fa/disable */
+export interface DisableTwoFactorRequest {
+  current_password: string;
+  code: string;
+}
+
+/** POST /api/settings/password */
+export interface ChangePasswordRequest {
+  current_password: string;
+  new_password: string;
+}

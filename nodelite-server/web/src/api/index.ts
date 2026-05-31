@@ -7,6 +7,9 @@ import { api } from './client';
 import type {
   AgentLogEntry,
   BootstrapResponse,
+  ChangePasswordRequest,
+  DisableTwoFactorRequest,
+  EnableTwoFactorRequest,
   HistoryPoint,
   HistoryQuery,
   NodeListItem,
@@ -15,12 +18,16 @@ import type {
   ReauthPayload,
   SettingsActionResponse,
   SettingsResponse,
+  TwoFactorSetupResponse,
 } from './types';
 
 export type {
   AgentLogEntry,
   BootstrapResponse,
+  ChangePasswordRequest,
+  DisableTwoFactorRequest,
   DiskUsage,
+  EnableTwoFactorRequest,
   HistoryPoint,
   HistoryQuery,
   LogLevel,
@@ -37,7 +44,16 @@ export type {
   SettingsAuth,
   SettingsResponse,
   SettingsUpdates,
+  TwoFactorSetupResponse,
 } from './types';
+
+function postJson<T>(path: string, body: unknown): Promise<T> {
+  return api<T>(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
 
 export const apiClient = {
   bootstrap: () => api<BootstrapResponse>('/api/bootstrap'),
@@ -71,9 +87,15 @@ export const apiClient = {
   // --- Settings ---
   settings: () => api<SettingsResponse>('/api/settings'),
   updateServer: (body: ReauthPayload) =>
-    api<SettingsActionResponse>('/api/settings/update/server', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    }),
+    postJson<SettingsActionResponse>('/api/settings/update/server', body),
+
+  // --- Account / security ---
+  twoFactorStart: () =>
+    postJson<TwoFactorSetupResponse>('/api/settings/2fa/start', {}),
+  twoFactorEnable: (body: EnableTwoFactorRequest) =>
+    postJson<SettingsActionResponse>('/api/settings/2fa/enable', body),
+  twoFactorDisable: (body: DisableTwoFactorRequest) =>
+    postJson<SettingsActionResponse>('/api/settings/2fa/disable', body),
+  changePassword: (body: ChangePasswordRequest) =>
+    postJson<SettingsActionResponse>('/api/settings/password', body),
 };
