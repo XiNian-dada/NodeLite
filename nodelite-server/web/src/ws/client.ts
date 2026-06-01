@@ -68,12 +68,14 @@ export class WsClient {
     if (!this.handlers.has(type)) {
       this.handlers.set(type, new Set());
     }
-    this.handlers.get(type)!.add(handler as MessageHandler<BrowserMessage['type']>);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this.handlers.get(type)!.add(handler as any);
 
     return () => {
       const set = this.handlers.get(type);
       if (set) {
-        set.delete(handler as MessageHandler<BrowserMessage['type']>);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        set.delete(handler as any);
         if (set.size === 0) this.handlers.delete(type);
       }
     };
@@ -89,7 +91,8 @@ export class WsClient {
     this.handshakeFailures = 0;
     this.setState({ kind: 'open', sinceTs: Date.now() });
 
-    if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
+    // Dev-only DOM marker for E2E tests
+    if (process.env.NODE_ENV !== 'production') {
       document.body.setAttribute('data-ws-conn-id', String(this.connectionId));
     }
 
