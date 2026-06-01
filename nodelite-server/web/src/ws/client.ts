@@ -26,7 +26,12 @@ export class WsClient {
 
   private readonly handlers = new Map<string, Set<MessageHandler<BrowserMessage['type']>>>();
 
-  constructor(private readonly url: string) {}
+  constructor(private readonly url: string) {
+    this.handleVisibilityChange = this.handleVisibilityChange.bind(this);
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', this.handleVisibilityChange);
+    }
+  }
 
   connect(): void {
     if (this.state.kind === 'connecting' || this.state.kind === 'open') return;
@@ -192,5 +197,29 @@ export class WsClient {
       clearTimeout(this.pongTimer);
       this.pongTimer = null;
     }
+  }
+
+  private handleVisibilityChange(): void {
+    if (typeof document === 'undefined') return;
+
+    if (document.hidden) {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        console.log('Tab hidden, closing WebSocket');
+        this.ws.close();
+      }
+    } else {
+      if (this.state.kind === 'failed' || this.state.kind === 'idle') {
+        console.log('Tab visible, reconnecting');
+        this.handshakeFailures = 0;
+        this.connect();
+      }
+    }
+  }
+
+  destroy(): void {
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.handleVisibilityChange);
+    }
+    this.disconnect();
   }
 }

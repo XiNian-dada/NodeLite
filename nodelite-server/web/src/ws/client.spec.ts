@@ -370,4 +370,102 @@ describe('WsClient', () => {
       });
     }, 15000);
   });
+
+  describe('visibility handling', () => {
+    it('closes connection when tab becomes hidden', async () => {
+      server = new WS('ws://localhost:1234/ws/browser');
+      client = new WsClient('ws://localhost:1234/ws/browser');
+
+      client.connect();
+      await server.connected;
+
+      expect(client.getState().kind).toBe('open');
+
+      Object.defineProperty(document, 'hidden', {
+        configurable: true,
+        value: true,
+      });
+      document.dispatchEvent(new Event('visibilitychange'));
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect(client.getState().kind).toBe('reconnecting');
+    });
+
+    it('reconnects when tab becomes visible after being hidden', async () => {
+      server = new WS('ws://localhost:1234/ws/browser');
+      client = new WsClient('ws://localhost:1234/ws/browser');
+
+      client.connect();
+      await server.connected;
+
+      Object.defineProperty(document, 'hidden', {
+        configurable: true,
+        value: true,
+      });
+      document.dispatchEvent(new Event('visibilitychange'));
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const state1 = client.getState();
+      if (state1.kind === 'reconnecting') {
+        const delay = state1.nextAttemptAt - Date.now();
+        await new Promise((resolve) => setTimeout(resolve, delay + 100));
+      }
+
+      server = new WS('ws://localhost:1234/ws/browser');
+
+      Object.defineProperty(document, 'hidden', {
+        configurable: true,
+        value: false,
+      });
+      document.dispatchEvent(new Event('visibilitychange'));
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await server.connected;
+
+      expect(client.getState().kind).toBe('open');
+    });
+
+    it('resets handshake failure counter on visibility-triggered reconnect', async () => {
+      client = new WsClient('ws://localhost:1234/ws/browser');
+
+      // Simulate 3 failures to reach failed state
+      for (let i = 0; i < 3; i++) {
+        client.connect();
+        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        if (client['ws']) {
+          client['ws'].dispatchEvent(new Event('error'));
+          client['ws'].close();
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        if (i < 2) {
+          const state = client.getState();
+          if (state.kind === 'reconnecting') {
+            const delay = state.nextAttemptAt - Date.now();
+            await new Promise((resolve) => setTimeout(resolve, delay + 100));
+          }
+        }
+      }
+
+      expect(client.getState().kind).toBe('failed');
+
+      // Visibility change should reset counter and reconnect
+      server = new WS('ws://localhost:1234/ws/browser');
+
+      Object.defineProperty(document, 'hidden', {
+        configurable: true,
+        value: false,
+      });
+      document.dispatchEvent(new Event('visibilitychange'));
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await server.connected;
+
+      expect(client.getState().kind).toBe('open');
+    }, 15000);
+  });
 });
