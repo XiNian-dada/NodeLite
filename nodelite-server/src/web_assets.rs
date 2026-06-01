@@ -6,10 +6,10 @@
 
 use axum::{
     body::Body,
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
-use include_dir::{include_dir, Dir};
+use include_dir::{Dir, include_dir};
 
 /// Embedded web assets from `web/dist/`
 static WEB_ASSETS: Dir = include_dir!("$CARGO_MANIFEST_DIR/web/dist");
@@ -125,9 +125,15 @@ mod tests {
     #[test]
     fn test_mime_type_for_path() {
         assert_eq!(mime_type_for_path("index.html"), "text/html; charset=utf-8");
-        assert_eq!(mime_type_for_path("app.js"), "application/javascript; charset=utf-8");
+        assert_eq!(
+            mime_type_for_path("app.js"),
+            "application/javascript; charset=utf-8"
+        );
         assert_eq!(mime_type_for_path("style.css"), "text/css; charset=utf-8");
-        assert_eq!(mime_type_for_path("data.json"), "application/json; charset=utf-8");
+        assert_eq!(
+            mime_type_for_path("data.json"),
+            "application/json; charset=utf-8"
+        );
         assert_eq!(mime_type_for_path("font.woff2"), "font/woff2");
         assert_eq!(mime_type_for_path("image.webp"), "image/webp");
     }

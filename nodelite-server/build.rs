@@ -50,8 +50,14 @@ fn main() {
         .output()
         .expect("failed to spawn pnpm install");
     if !output.status.success() {
-        eprintln!("pnpm install stdout: {}", String::from_utf8_lossy(&output.stdout));
-        eprintln!("pnpm install stderr: {}", String::from_utf8_lossy(&output.stderr));
+        eprintln!(
+            "pnpm install stdout: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        eprintln!(
+            "pnpm install stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         panic!("pnpm install failed");
     }
 
@@ -61,8 +67,14 @@ fn main() {
         .output()
         .expect("failed to spawn pnpm build");
     if !output.status.success() {
-        eprintln!("pnpm build stdout: {}", String::from_utf8_lossy(&output.stdout));
-        eprintln!("pnpm build stderr: {}", String::from_utf8_lossy(&output.stderr));
+        eprintln!(
+            "pnpm build stdout: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        eprintln!(
+            "pnpm build stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         panic!("pnpm build failed");
     }
 }
