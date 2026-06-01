@@ -14,7 +14,7 @@ const router = createRouter({
 });
 
 describe('App.vue', () => {
-  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  let fetchSpy: ReturnType<typeof vi.spyOn<typeof global, 'fetch'>>;
 
   beforeEach(() => {
     // Mock fetch to avoid auth probe errors in tests

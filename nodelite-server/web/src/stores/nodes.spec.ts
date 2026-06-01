@@ -132,7 +132,7 @@ describe('useNodesStore', () => {
       store.applyServerState([a], '2026-06-01T12:01:00Z');
       store.upsertNode(aUpdated, '2026-06-01T12:00:00Z');
 
-      expect(store.nodes[0].identity.node_label).toBe('A');
+      expect(store.nodes[0]?.identity.node_label).toBe('A');
     });
 
     it('rejects stale removeNode', () => {

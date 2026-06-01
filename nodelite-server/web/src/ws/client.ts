@@ -68,12 +68,12 @@ export class WsClient {
     if (!this.handlers.has(type)) {
       this.handlers.set(type, new Set());
     }
-    this.handlers.get(type)!.add(handler);
+    this.handlers.get(type)!.add(handler as MessageHandler<BrowserMessage['type']>);
 
     return () => {
       const set = this.handlers.get(type);
       if (set) {
-        set.delete(handler);
+        set.delete(handler as MessageHandler<BrowserMessage['type']>);
         if (set.size === 0) this.handlers.delete(type);
       }
     };
@@ -89,7 +89,7 @@ export class WsClient {
     this.handshakeFailures = 0;
     this.setState({ kind: 'open', sinceTs: Date.now() });
 
-    if (import.meta.env.DEV) {
+    if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
       document.body.setAttribute('data-ws-conn-id', String(this.connectionId));
     }
 

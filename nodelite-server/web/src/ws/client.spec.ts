@@ -6,7 +6,7 @@ import type { BrowserMessage } from '@/api/types';
 describe('WsClient', () => {
   let server: WS;
   let client: WsClient;
-  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  let fetchSpy: ReturnType<typeof vi.spyOn<typeof global, 'fetch'>>;
 
   beforeEach(() => {
     vi.useRealTimers();
