@@ -1,5 +1,6 @@
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
+
 use anyhow::Result;
 use nodelite_agent::config_io::{load_agent_config, update_token_in_config};
 

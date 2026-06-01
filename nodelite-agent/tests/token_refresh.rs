@@ -1,7 +1,8 @@
 use std::fs;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use anyhow::{Context, Result, anyhow};
+
+use anyhow::{anyhow, Context, Result};
 use futures::{SinkExt, StreamExt};
 use nodelite_agent::collector::new_collector;
 use nodelite_agent::session::{AgentLogBuffer, run_session};
@@ -43,17 +44,17 @@ async fn run_mock_server(listener: TcpListener, new_token: String) -> Result<()>
         level: NoticeLevel::Info,
         message: "authenticated".to_string(),
     });
-    ws_stream
-        .send(Message::Text(serde_json::to_string(&auth_notice)?.into()))
-        .await?;
+    let auth_payload = serde_json::to_string(&auth_notice)?;
+    ws_stream.send(Message::Text(auth_payload.into())).await?;
 
     // 3. Send RefreshTokenResponse
     let refresh_response = WireMessage::RefreshTokenResponse(RefreshTokenResponseMessage {
         new_token,
         expires_at: "2026-06-02T00:00:00Z".to_string(),
     });
+    let refresh_payload = serde_json::to_string(&refresh_response)?;
     ws_stream
-        .send(Message::Text(serde_json::to_string(&refresh_response)?.into()))
+        .send(Message::Text(refresh_payload.into()))
         .await?;
 
     // 4. Close the websocket
@@ -127,7 +128,13 @@ report_interval_secs = 5
     // Run a single agent session - it should connect, authenticate, get token, persist it, and exit when server closes socket.
     let result = tokio::time::timeout(
         Duration::from_secs(5),
-        run_session(&mut config, &mut collector, &identity, &config_path, &mut log_buffer),
+        run_session(
+            &mut config,
+            &mut collector,
+            &identity,
+            &config_path,
+            &mut log_buffer,
+        ),
     )
     .await;
 
