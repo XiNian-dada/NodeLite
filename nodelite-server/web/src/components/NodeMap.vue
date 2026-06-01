@@ -139,13 +139,19 @@ watch([geojson, theme], repaint);
 .map-stage {
   position: relative;
   aspect-ratio: 16 / 8;
-  min-height: clamp(200px, 40vw, 280px);
+  min-height: 280px;
   background:
     radial-gradient(circle at 20% 30%, rgba(59, 130, 246, 0.09), transparent 55%),
     radial-gradient(circle at 78% 62%, rgba(34, 197, 94, 0.06), transparent 52%),
     linear-gradient(135deg, rgba(15, 23, 42, 0.18), rgba(30, 41, 59, 0.04));
   border-radius: 14px;
   overflow: hidden;
+}
+@media (max-width: 640px) {
+  .map-stage {
+    aspect-ratio: 16 / 10;
+    min-height: 200px;
+  }
 }
 .map-grid {
   position: absolute;

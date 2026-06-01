@@ -24,6 +24,7 @@ import { useNodeStatusStore } from '@/stores/nodeStatus';
 import { useDetailHistoryStore } from '@/stores/detailHistory';
 import { useMonitorHistoryStore } from '@/stores/monitorHistory';
 import { useNodeLogsStore } from '@/stores/nodeLogs';
+import { ApiError } from '@/api/client';
 
 const NODE_DETAIL_REFRESH_MS = 5000;
 
@@ -76,9 +77,15 @@ const ip = computed(() => (node.value ? ipFromNode(node.value) : null));
 const location = computed(() => (node.value ? locationFromNode(node.value) : null));
 const uptime = computed(() => uptimeParts(node.value?.snapshot?.uptime_secs));
 
-// Render not-found state when the API returned an error and we have no data.
-// A missing node returns 404, which sets store.error but leaves store.data null.
-const notFound = computed(() => store.error !== null && store.data === null);
+// Render not-found state only when the API returned 404. Other errors (500,
+// network failure, JSON parse error) should show a generic error/retry state.
+const notFound = computed(
+  () => store.error instanceof ApiError && store.error.status === 404 && store.data === null,
+);
+// Generic error state for non-404 failures (network, 500, etc).
+const loadError = computed(
+  () => store.error !== null && store.data === null && !notFound.value,
+);
 
 // Tabs that render the overview-history charts (overview/network).
 const historyNeeded = computed(
@@ -172,7 +179,8 @@ const modalConfig = computed(() => {
 <template>
   <AppLayout>
     <template #title>
-      <div class="node-title" data-test="node-detail-view">
+      <!-- Hide header when showing not-found or generic error state -->
+      <div v-if="!notFound && !loadError" class="node-title" data-test="node-detail-view">
         <h1 class="node-title__name">{{ title }}</h1>
         <span class="badge" :class="status" data-test="node-status-badge">
           {{ $t(statusLabelKey) }}
@@ -187,7 +195,7 @@ const modalConfig = computed(() => {
     </template>
 
     <div class="node-detail">
-      <!-- Not-found state: API returned an error and we have no data -->
+      <!-- Not-found state: API returned 404 -->
       <div v-if="notFound" class="error-state" data-test="node-not-found">
         <div class="error-state__icon">⚠️</div>
         <h2 class="error-state__title">{{ $t('node.not_found.title') }}</h2>
@@ -197,6 +205,18 @@ const modalConfig = computed(() => {
         <RouterLink to="/" class="error-state__link">
           {{ $t('node.not_found.back_to_dashboard') }}
         </RouterLink>
+      </div>
+
+      <!-- Generic error state: network failure, 500, etc -->
+      <div v-else-if="loadError" class="error-state" data-test="node-load-error">
+        <div class="error-state__icon">⚠️</div>
+        <h2 class="error-state__title">{{ $t('node.load_error.title') }}</h2>
+        <p class="error-state__message">
+          {{ $t('node.load_error.message') }}
+        </p>
+        <button type="button" class="error-state__button" @click="store.refresh()">
+          {{ $t('node.load_error.retry') }}
+        </button>
       </div>
 
       <template v-else>
@@ -440,6 +460,23 @@ const modalConfig = computed(() => {
   transition: opacity 0.2s;
 }
 .error-state__link:hover {
+  opacity: 0.9;
+}
+.error-state__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 20px;
+  background: var(--accent-blue);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.error-state__button:hover {
   opacity: 0.9;
 }
 @media (max-width: 880px) {
