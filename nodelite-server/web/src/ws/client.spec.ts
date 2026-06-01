@@ -6,6 +6,7 @@ import type { BrowserMessage } from '@/api/types';
 describe('WsClient', () => {
   let server: WS;
   let client: WsClient;
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.useRealTimers();
@@ -14,12 +15,19 @@ describe('WsClient', () => {
       value: false,
     });
     document.body.removeAttribute('data-ws-conn-id');
+
+    // Mock fetch to avoid "Invalid URL" errors in Node.js tests
+    fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue({
+      status: 200,
+      ok: true,
+    } as Response);
   });
 
   afterEach(() => {
     if (server) {
       server.close();
     }
+    fetchSpy.mockRestore();
   });
 
   describe('connection lifecycle', () => {
@@ -413,6 +421,7 @@ describe('WsClient', () => {
         await new Promise((resolve) => setTimeout(resolve, delay + 100));
       }
 
+      server.close();
       server = new WS('ws://localhost:1234/ws/browser');
 
       Object.defineProperty(document, 'hidden', {
@@ -421,7 +430,7 @@ describe('WsClient', () => {
       });
       document.dispatchEvent(new Event('visibilitychange'));
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 200));
       await server.connected;
 
       expect(client.getState().kind).toBe('open');
@@ -467,5 +476,84 @@ describe('WsClient', () => {
 
       expect(client.getState().kind).toBe('open');
     }, 15000);
+  });
+
+  describe('auth probe on handshake failure', () => {
+    it('probes /api/bootstrap on WS error during connecting', async () => {
+      client = new WsClient('ws://localhost:1234/ws/browser');
+      client.connect();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Simulate error before onopen
+      if (client['ws']) {
+        client['ws'].dispatchEvent(new Event('error'));
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect(fetchSpy).toHaveBeenCalledWith('/api/bootstrap');
+    });
+
+    it('navigates to /verify-2fa on 302 response', async () => {
+      const originalLocation = window.location.href;
+      delete (window as { location?: unknown }).location;
+      window.location = { href: originalLocation } as Location;
+
+      fetchSpy.mockResolvedValue({
+        status: 302,
+        ok: false,
+      } as Response);
+
+      client = new WsClient('ws://localhost:1234/ws/browser');
+      client.connect();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      if (client['ws']) {
+        client['ws'].dispatchEvent(new Event('error'));
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect(window.location.href).toBe('/verify-2fa');
+    });
+
+    it('navigates to /logout-and-reauth on 401 response', async () => {
+      const originalLocation = window.location.href;
+      delete (window as { location?: unknown }).location;
+      window.location = { href: originalLocation } as Location;
+
+      fetchSpy.mockResolvedValue({
+        status: 401,
+        ok: false,
+      } as Response);
+
+      client = new WsClient('ws://localhost:1234/ws/browser');
+      client.connect();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      if (client['ws']) {
+        client['ws'].dispatchEvent(new Event('error'));
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect(window.location.href).toBe('/logout-and-reauth');
+    });
+
+    it('does not navigate on successful probe (200)', async () => {
+      const originalLocation = window.location.href;
+
+      client = new WsClient('ws://localhost:1234/ws/browser');
+      client.connect();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      if (client['ws']) {
+        client['ws'].dispatchEvent(new Event('error'));
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect(window.location.href).toBe(originalLocation);
+    });
   });
 });

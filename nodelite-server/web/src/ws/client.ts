@@ -119,6 +119,7 @@ export class WsClient {
     console.error('WebSocket error', event);
     if (this.state.kind === 'connecting') {
       this.handshakeFailures++;
+      this.probeAuthState();
     }
   }
 
@@ -135,6 +136,19 @@ export class WsClient {
     }
 
     this.scheduleReconnect();
+  }
+
+  private probeAuthState(): void {
+    fetch('/api/bootstrap')
+      .then((res) => {
+        if (res.status === 401 || res.status === 302) {
+          console.warn('Auth probe detected auth failure, navigating to re-auth');
+          window.location.href = res.status === 302 ? '/verify-2fa' : '/logout-and-reauth';
+        }
+      })
+      .catch((err) => {
+        console.error('Auth probe failed', err);
+      });
   }
 
   private scheduleReconnect(): void {
@@ -208,8 +222,9 @@ export class WsClient {
         this.ws.close();
       }
     } else {
-      if (this.state.kind === 'failed' || this.state.kind === 'idle') {
+      if (this.state.kind === 'failed' || this.state.kind === 'idle' || this.state.kind === 'reconnecting') {
         console.log('Tab visible, reconnecting');
+        this.clearReconnectTimer();
         this.handshakeFailures = 0;
         this.connect();
       }
