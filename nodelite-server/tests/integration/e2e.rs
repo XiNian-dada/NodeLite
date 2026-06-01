@@ -1,7 +1,10 @@
-use super::*;
 use std::fs;
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use anyhow::{anyhow, Context};
+
+use super::*;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -16,7 +19,11 @@ async fn test_e2e_agent_server_handshake() -> Result<()> {
     #[cfg(windows)]
     agent_bin.set_extension("exe");
 
-    assert!(agent_bin.exists(), "nodelite-agent binary not found at {}", agent_bin.display());
+    assert!(
+        agent_bin.exists(),
+        "nodelite-agent binary not found at {}",
+        agent_bin.display()
+    );
 
     // 2. Start the TestServer
     let server = TestServer::start().await?;
@@ -53,7 +60,7 @@ report_interval_secs = 1
     // 5. Wait for the agent to connect and authenticate
     let status = tokio::time::timeout(
         Duration::from_secs(10),
-        server.wait_for_node_uptime(&node.node_id, 1, TEST_TIMEOUT)
+        server.wait_for_node_uptime(&node.node_id, 1, TEST_TIMEOUT),
     )
     .await;
 
@@ -66,7 +73,9 @@ report_interval_secs = 1
         }
         Err(_) => {
             let _ = child.kill();
-            return Err(anyhow!("Timed out waiting for agent to connect and report uptime"));
+            return Err(anyhow!(
+                "Timed out waiting for agent to connect and report uptime"
+            ));
         }
     };
 
@@ -84,7 +93,7 @@ report_interval_secs = 1
 
     let offline_status = tokio::time::timeout(
         Duration::from_secs(10),
-        server.wait_for_node_offline(&node.node_id, TEST_TIMEOUT)
+        server.wait_for_node_offline(&node.node_id, TEST_TIMEOUT),
     )
     .await
     .context("Timed out waiting for agent to go offline")??;
