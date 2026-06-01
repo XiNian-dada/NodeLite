@@ -413,11 +413,26 @@ fn protected_routes_attach_security_headers() {
             .expect("response should be produced");
 
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get(header::CONTENT_SECURITY_POLICY),
-            Some(&header::HeaderValue::from_static(
-                crate::startup::PROTECTED_CONTENT_SECURITY_POLICY,
-            )),
+        // `/` serves the SPA shell, whose CSP pins index.html's inline bootstrap
+        // shim by sha256 under an explicit `script-src 'self'`, while keeping the
+        // rest of the strict policy (no inline styles).
+        let index_csp = response
+            .headers()
+            .get(header::CONTENT_SECURITY_POLICY)
+            .expect("spa index should set a CSP")
+            .to_str()
+            .expect("CSP should be valid ascii");
+        assert!(
+            index_csp.contains("script-src 'self' 'sha256-"),
+            "spa index CSP should pin its inline shim: {index_csp}"
+        );
+        assert!(
+            !index_csp.contains("'unsafe-inline'"),
+            "spa index CSP must not relax to unsafe-inline: {index_csp}"
+        );
+        assert!(
+            index_csp.contains("frame-ancestors 'none'"),
+            "spa index CSP should retain the strict directives: {index_csp}"
         );
         assert_security_headers(response.headers());
 

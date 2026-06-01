@@ -37,9 +37,14 @@ const NO_CACHE: &str = "no-store, no-cache, must-revalidate";
 /// Cache control for hashed static assets (cache forever)
 const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 
-/// Serves the SPA index.html (for `/` and `/nodes/:id` routes)
+/// Serves the SPA index.html (for `/` and `/nodes/:id` routes).
+///
+/// index.html ships two small bootstrap shims inline (theme anti-flash + 24h
+/// auth-timestamp check) that must run before the app bundle. Under the SPA's
+/// strict `script-src 'self'` they would be CSP-blocked, so we serve it with a
+/// CSP that pins those inline blocks by sha256 — without relaxing `style-src`.
 pub fn spa_index() -> Response {
-    serve_file("index.html", NO_CACHE)
+    serve_file("index.html", NO_CACHE, spa_index_csp())
 }
 
 /// Serves the standalone 2FA verification page (`verify-2fa.html`).
@@ -79,11 +84,11 @@ pub fn static_asset(path: &str) -> Response {
         NO_CACHE
     };
 
-    serve_file(&full_path, cache_control)
+    serve_file(&full_path, cache_control, SPA_CSP)
 }
 
 /// Serves a file from the embedded assets
-fn serve_file(path: &str, cache_control: &str) -> Response {
+fn serve_file(path: &str, cache_control: &str, csp: &str) -> Response {
     let file = match WEB_ASSETS.get_file(path) {
         Some(f) => f,
         None => {
@@ -96,7 +101,7 @@ fn serve_file(path: &str, cache_control: &str) -> Response {
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)
         .header(header::CACHE_CONTROL, cache_control)
-        .header(header::CONTENT_SECURITY_POLICY, SPA_CSP);
+        .header(header::CONTENT_SECURITY_POLICY, csp);
     // Legacy HTTP/1.0 proxies honour Pragma; pair it with no-cache responses so
     // the SPA shell matches every other no-cache protected response.
     if cache_control == NO_CACHE {
@@ -165,6 +170,35 @@ fn verify_2fa_csp() -> &'static str {
                 .map(|file| String::from_utf8_lossy(file.contents()).into_owned())
                 .unwrap_or_default();
             build_page_csp(&template)
+        })
+        .as_str()
+}
+
+static SPA_INDEX_CSP: OnceLock<String> = OnceLock::new();
+
+/// Computes (once) the CSP for the SPA shell: `SPA_CSP` plus an explicit
+/// `script-src 'self'` that also pins index.html's inline bootstrap shim(s)
+/// (theme anti-flash + 24h auth check) by sha256. Only `script-src` is widened;
+/// `style-src` stays at the strict `default-src 'self'` because the Vite build
+/// emits no inline styles.
+fn spa_index_csp() -> &'static str {
+    SPA_INDEX_CSP
+        .get_or_init(|| {
+            let html = WEB_ASSETS
+                .get_file("index.html")
+                .map(|file| String::from_utf8_lossy(file.contents()).into_owned())
+                .unwrap_or_default();
+            let script_hashes = extract_inline_tag_bodies(&html, "script")
+                .into_iter()
+                // Skip external `<script src=…>` (empty body); only hash real inline shims.
+                .filter(|body| !body.trim().is_empty())
+                .map(csp_hash)
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!(
+                "default-src 'self'; script-src 'self' {script_hashes}; {}",
+                SPA_CSP.trim_start_matches("default-src 'self'; ")
+            )
         })
         .as_str()
 }
@@ -260,6 +294,24 @@ mod tests {
         // This will fail at compile time if web/dist/index.html doesn't exist
         let response = spa_index();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn test_spa_index_csp_pins_shim_without_relaxing_style() {
+        let response = spa_index();
+        let csp = response
+            .headers()
+            .get(header::CONTENT_SECURITY_POLICY)
+            .expect("spa index should set a CSP")
+            .to_str()
+            .expect("CSP should be valid ascii");
+        // index.html's inline bootstrap shim must be pinned by sha256 so it is
+        // not CSP-blocked under script-src 'self'.
+        assert!(csp.contains("script-src 'self' 'sha256-"), "csp={csp}");
+        // But the SPA has no inline styles, so style-src must stay strict —
+        // no 'unsafe-inline' should leak in from the hashing path.
+        assert!(!csp.contains("'unsafe-inline'"), "csp={csp}");
+        assert!(csp.contains("frame-ancestors 'none'"), "csp={csp}");
     }
 
     #[test]
