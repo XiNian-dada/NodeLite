@@ -14,7 +14,7 @@ const router = createRouter({
 });
 
 describe('App.vue', () => {
-  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  let fetchSpy: any; // eslint-disable-line @typescript-eslint/no-explicit-any
 
   beforeEach(() => {
     // Mock fetch to avoid auth probe errors in tests
