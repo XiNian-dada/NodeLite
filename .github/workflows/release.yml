@@ -295,11 +295,21 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG_NAME: ${{ env.RELEASE_TAG }}
         run: |
+          release_flags=()
+          if [[ "$TAG_NAME" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
+
           if ! gh release view "$TAG_NAME" --repo "$GH_REPO" >/dev/null 2>&1; then
             gh release create "$TAG_NAME" \
               --repo "$GH_REPO" \
               --title "NodeLite $TAG_NAME" \
-              --generate-notes
+              --generate-notes \
+              "${release_flags[@]}"
+          elif [[ "$TAG_NAME" == *-* ]]; then
+            gh release edit "$TAG_NAME" \
+              --repo "$GH_REPO" \
+              --prerelease
           fi
 
           gh release upload "$TAG_NAME" \
