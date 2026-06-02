@@ -22,7 +22,7 @@ use crate::config_io::update_token_in_config;
 use crate::support::shutdown_signal;
 
 /// Agent 本地最多暂存的待上报日志条数。超出后丢弃最旧项,避免断线期间内存无限增长。
-pub const MAX_PENDING_AGENT_LOGS: usize = 256;
+const MAX_PENDING_AGENT_LOGS: usize = 256;
 /// 单次推送到服务端的最大日志条数,控制消息体积。
 const MAX_AGENT_LOG_BATCH: usize = 32;
 /// 单条日志消息的最大字节数,避免异常长错误串撑爆 WebSocket 消息。
@@ -37,9 +37,10 @@ const TOKEN_EXPIRED_LONG_RECONNECT_DELAY: Duration = Duration::from_secs(3600);
 
 #[derive(Debug)]
 pub struct SessionError {
+    /// 是否曾经成功完成认证。外部测试据此区分"连接前失败"与"连接后断开"。
     pub established_session: bool,
-    pub token_expired: bool,
-    pub source: anyhow::Error,
+    pub(crate) token_expired: bool,
+    pub(crate) source: anyhow::Error,
 }
 
 type AgentWsSender = futures::stream::SplitSink<
@@ -53,7 +54,7 @@ pub struct AgentLogBuffer {
 }
 
 impl AgentLogBuffer {
-    pub fn push(&mut self, level: NoticeLevel, message: impl Into<String>) {
+    pub(crate) fn push(&mut self, level: NoticeLevel, message: impl Into<String>) {
         let message = truncate_to_byte_boundary(&message.into(), MAX_AGENT_LOG_MESSAGE_BYTES)
             .trim()
             .to_string();

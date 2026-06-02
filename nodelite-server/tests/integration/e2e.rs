@@ -1,10 +1,40 @@
 use std::fs;
 use std::process::Command;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 
 use super::*;
+
+/// RAII 临时目录:即便测试 panic,Drop 也会清理,避免临时目录泄漏。
+/// 仅在运行 e2e 测试的平台上编译,避免在其它平台引入未使用项。
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct TempDir {
+    path: std::path::PathBuf,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl TempDir {
+    fn new(prefix: &str) -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("{prefix}-{}-{unique}", std::process::id()));
+        std::fs::create_dir_all(&path).expect("create unique temp dir for e2e test");
+        Self { path }
+    }
+
+    fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -29,14 +59,9 @@ async fn test_e2e_agent_server_handshake() -> Result<()> {
     let server = TestServer::start().await?;
     let node = server.issue_node("e2e-agent-01", "E2E Agent 01").await?;
 
-    // 3. Create a temporary config file for the agent
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let temp_dir = std::env::temp_dir().join(format!("nodelite-e2e-test-{timestamp}"));
-    fs::create_dir_all(&temp_dir)?;
-    let config_path = temp_dir.join("agent.toml");
+    // 3. Create a temporary config file for the agent (RAII cleanup, panic-safe).
+    let temp_dir = TempDir::new("nodelite-e2e-test");
+    let config_path = temp_dir.path().join("agent.toml");
 
     let agent_config_toml = format!(
         r#"[agent]
@@ -101,7 +126,6 @@ report_interval_secs = 1
 
     // Cleanup
     server.shutdown().await?;
-    let _ = fs::remove_dir_all(&temp_dir);
 
     Ok(())
 }

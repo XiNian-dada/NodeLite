@@ -1,19 +1,16 @@
 use std::fs;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use nodelite_agent::config_io::{load_agent_config, update_token_in_config};
 
+mod common;
+use common::TempDir;
+
 #[tokio::test]
 async fn test_agent_config_load_and_token_update() -> Result<()> {
-    // Generate a unique temporary path for the configuration file
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let temp_dir = std::env::temp_dir().join(format!("nodelite-agent-test-{timestamp}"));
-    fs::create_dir_all(&temp_dir)?;
-    let config_path = temp_dir.join("agent.toml");
+    // 唯一的临时目录由 RAII 守卫管理:即便断言 panic 也会被清理。
+    let temp_dir = TempDir::new("nodelite-agent-config-test");
+    let config_path = temp_dir.path().join("agent.toml");
 
     let initial_toml = r#"[agent]
 node_id = "test-node-01"
@@ -41,7 +38,6 @@ report_interval_secs = 5
     assert_eq!(updated_config.token, "refreshed-secret-token");
     assert_eq!(updated_config.node_id, "test-node-01"); // Other fields remain unchanged
 
-    // Clean up temp directory
-    let _ = fs::remove_dir_all(&temp_dir);
+    // 清理由 `TempDir` 的 Drop 负责。
     Ok(())
 }

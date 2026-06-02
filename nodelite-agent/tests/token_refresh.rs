@@ -1,8 +1,7 @@
 use std::fs;
-use std::path::Path;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use futures::{SinkExt, StreamExt};
 use nodelite_agent::collector::new_collector;
 use nodelite_agent::session::{AgentLogBuffer, run_session};
@@ -13,6 +12,9 @@ use nodelite_proto::{
 use tokio::net::TcpListener;
 use tokio_tungstenite::accept_async;
 use tokio_tungstenite::tungstenite::Message;
+
+mod common;
+use common::TempDir;
 
 // A simple mock WebSocket server that completes the handshake and issues a token refresh
 async fn run_mock_server(listener: TcpListener, new_token: String) -> Result<()> {
@@ -68,14 +70,9 @@ async fn test_agent_token_refresh_lifecycle() -> Result<()> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let local_addr = listener.local_addr()?;
 
-    // Create a temporary configuration file
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let temp_dir = std::env::temp_dir().join(format!("nodelite-agent-refresh-test-{timestamp}"));
-    fs::create_dir_all(&temp_dir)?;
-    let config_path = temp_dir.join("agent.toml");
+    // 唯一的临时目录由 RAII 守卫管理:即便断言 panic 也会被清理。
+    let temp_dir = TempDir::new("nodelite-agent-refresh-test");
+    let config_path = temp_dir.path().join("agent.toml");
 
     let initial_toml = format!(
         r#"[agent]
@@ -141,7 +138,8 @@ report_interval_secs = 5
     // Check that run_session completed and returned the expected connection closure error
     let session_res = result.context("Session timed out")?;
     assert!(session_res.is_err());
-    let session_err = session_res.unwrap_err();
+    let session_err =
+        session_res.expect_err("session should end with an error when the server closes the socket");
     assert!(session_err.established_session);
 
     // Verify token was updated in config file
@@ -151,9 +149,8 @@ report_interval_secs = 5
     // Verify token was updated in memory config
     assert_eq!(config.token, "refreshed-rotated-token-12345");
 
-    // Cleanup
+    // 清理由 `TempDir` 的 Drop 负责。
     let _ = server_task.await;
-    let _ = fs::remove_dir_all(&temp_dir);
 
     Ok(())
 }
