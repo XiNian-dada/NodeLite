@@ -26,6 +26,13 @@ const FAKE_DICT = {
     'index.stat.online': 'Online',
     'index.stat.offline': 'Offline',
     'index.stat.latency': 'Avg Latency',
+    'index.matrix.title': 'Latency Overview (ms)',
+    'index.matrix.subtitle': 'Recent RTT per node',
+    'index.matrix.more': 'More',
+    'index.matrix.col_current': 'Now',
+    'index.matrix.empty': 'No agents reporting yet.',
+    'index.node.cpu': 'CPU',
+    'index.node.memory': 'Memory',
   },
   'zh-CN': {
     'index.heading': '概览',
@@ -40,6 +47,13 @@ const FAKE_DICT = {
     'index.stat.online': '在线',
     'index.stat.offline': '离线',
     'index.stat.latency': '平均延迟',
+    'index.matrix.title': '延迟概览 (ms)',
+    'index.matrix.subtitle': '节点近期 RTT',
+    'index.matrix.more': '更多',
+    'index.matrix.col_current': '当前',
+    'index.matrix.empty': '暂无节点接入。',
+    'index.node.cpu': 'CPU',
+    'index.node.memory': '内存',
   },
 };
 
@@ -105,6 +119,7 @@ describe('DashboardView', () => {
     expect(wrapper.find('[data-test="dashboard-view"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="node-map"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="overview-stats"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="node-health-matrix"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="node-list"]').exists()).toBe(true);
   });
 

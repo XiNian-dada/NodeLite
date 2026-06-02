@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted } from 'vue';
 import AppLayout from '@/components/AppLayout.vue';
 import OverviewStats from '@/components/OverviewStats.vue';
+import NodeHealthMatrix from '@/components/NodeHealthMatrix.vue';
 import NodeMap from '@/components/NodeMap.vue';
 import NodeList from '@/components/NodeList.vue';
 import { useWebSocket } from '@/ws';
@@ -66,6 +67,7 @@ onMounted(() => {
         <NodeMap />
         <div class="right-stack">
           <OverviewStats />
+          <NodeHealthMatrix />
         </div>
       </section>
       <NodeList />
