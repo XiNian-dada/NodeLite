@@ -14,6 +14,7 @@ const FAKE_DICT = {
     'index.matrix.more': 'More',
     'index.matrix.col_current': 'Now',
     'index.matrix.empty': 'No agents reporting yet.',
+    'index.node.load': 'Load',
     'index.node.cpu': 'CPU',
     'index.node.memory': 'Memory',
   },
@@ -23,6 +24,7 @@ const FAKE_DICT = {
     'index.matrix.more': '更多',
     'index.matrix.col_current': '当前',
     'index.matrix.empty': '暂无节点接入。',
+    'index.node.load': '负载',
     'index.node.cpu': 'CPU',
     'index.node.memory': '内存',
   },
@@ -94,14 +96,14 @@ describe('NodeHealthMatrix', () => {
     ]);
   });
 
-  it('renders rounded latency, cpu, and memory values with legacy tones', async () => {
+  it('renders latency, load, cpu, and memory values with legacy tones', async () => {
     const wrapper = await mountMatrix([
       makeNode({
         identity: { node_id: 'alpha', node_label: 'Alpha', hostname: 'alpha', tags: [] },
         latency_ms: 42.4,
         snapshot: {
           cpu_usage_percent: 63.7,
-          load: { one: 0.1 },
+          load: { one: 1.24 },
           memory: { total_bytes: 200, used_bytes: 100 },
         },
       }),
@@ -109,11 +111,14 @@ describe('NodeHealthMatrix', () => {
 
     const row = wrapper.find('[data-test="health-matrix-row"]');
     const latency = row.find('[data-test="health-matrix-latency"]');
+    const load = row.find('[data-test="health-matrix-load"]');
     const cpu = row.find('[data-test="health-matrix-cpu"]');
     const memory = row.find('[data-test="health-matrix-memory"]');
 
     expect(latency.text()).toBe('42');
     expect(latency.classes()).toContain('green');
+    expect(load.text()).toBe('1.24');
+    expect(load.classes()).toContain('yellow');
     expect(cpu.text()).toBe('64%');
     expect(cpu.classes()).toContain('yellow');
     expect(memory.text()).toBe('50%');
@@ -132,6 +137,7 @@ describe('NodeHealthMatrix', () => {
     const row = wrapper.find('[data-test="health-matrix-row"]');
     for (const selector of [
       '[data-test="health-matrix-latency"]',
+      '[data-test="health-matrix-load"]',
       '[data-test="health-matrix-cpu"]',
       '[data-test="health-matrix-memory"]',
     ]) {

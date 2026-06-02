@@ -12,6 +12,8 @@ interface MatrixRow {
   label: string;
   latencyText: string;
   latencyTone: Tone;
+  loadText: string;
+  loadTone: Tone;
   cpuText: string;
   cpuTone: Tone;
   memoryText: string;
@@ -33,6 +35,7 @@ function labelFor(node: NodeListItem): string {
 
 function toMatrixRow(node: NodeListItem): MatrixRow {
   const cpu = node.snapshot?.cpu_usage_percent ?? null;
+  const load = node.snapshot?.load.one ?? null;
   const memory = memoryPercent(node);
   const latency = node.latency_ms;
 
@@ -41,6 +44,8 @@ function toMatrixRow(node: NodeListItem): MatrixRow {
     label: labelFor(node),
     latencyText: latency == null ? PLACEHOLDER : String(Math.round(latency)),
     latencyTone: latencyTone(latency),
+    loadText: loadText(load),
+    loadTone: loadTone(load),
     cpuText: percentText(cpu),
     cpuTone: usageTone(cpu),
     memoryText: percentText(memory),
@@ -58,12 +63,24 @@ function percentText(value: number | null): string {
   return value == null ? PLACEHOLDER : `${value.toFixed(0)}%`;
 }
 
+function loadText(value: number | null): string {
+  return value == null ? PLACEHOLDER : value.toFixed(2);
+}
+
 function latencyTone(value: number | null): Tone {
   if (value == null) return 'muted';
   if (value < 60) return 'green';
   if (value < 120) return 'greenSoft';
   if (value < 200) return 'yellow';
   if (value < 350) return 'orange';
+  return 'red';
+}
+
+function loadTone(value: number | null): Tone {
+  if (value == null) return 'muted';
+  if (value < 1) return 'green';
+  if (value < 2) return 'yellow';
+  if (value < 4) return 'orange';
   return 'red';
 }
 
@@ -96,6 +113,7 @@ function usageTone(value: number | null): Tone {
         <tr>
           <th class="row-head" />
           <th>{{ $t('index.matrix.col_current') }}</th>
+          <th>{{ $t('index.node.load') }}</th>
           <th>{{ $t('index.node.cpu') }}</th>
           <th>{{ $t('index.node.memory') }}</th>
         </tr>
@@ -106,6 +124,11 @@ function usageTone(value: number | null): Tone {
           <td>
             <div class="matrix-cell" :class="row.latencyTone" data-test="health-matrix-latency">
               {{ row.latencyText }}
+            </div>
+          </td>
+          <td>
+            <div class="matrix-cell" :class="row.loadTone" data-test="health-matrix-load">
+              {{ row.loadText }}
             </div>
           </td>
           <td>
@@ -186,7 +209,7 @@ function usageTone(value: number | null): Tone {
   text-align: center;
 }
 .matrix-table th.row-head {
-  width: 36%;
+  width: 28%;
   padding-left: 4px;
   text-align: left;
 }
