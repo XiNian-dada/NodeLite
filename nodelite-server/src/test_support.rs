@@ -83,6 +83,14 @@ pub(crate) fn test_server_config(
             log_token_events: true,
             log_rate_limit: true,
         },
+        geoip: nodelite_proto::GeoIpConfig {
+            enabled: false,
+            provider: nodelite_proto::GeoIpProvider::Dbip,
+            edition: nodelite_proto::GeoIpEdition::CountryLite,
+            database_path: PathBuf::from("./data/geoip/dbip.mmdb"),
+            auto_update: true,
+            update_interval_days: nodelite_proto::DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS,
+        },
         alerting: nodelite_proto::AlertingConfig::default(),
         node_registry_path: registry_path,
         history_db_path: history_path,
@@ -134,7 +142,9 @@ pub struct TestNode {
 }
 
 pub struct TestServer {
-    addr: SocketAddr,
+    /// 绑定的本地地址。集成测试(如 e2e)需要据此拼出 Agent 连接用的 `ws://` URL,
+    /// 因此放开到 crate 可见;`test_support` 整体受 `#[cfg(test)]` 门控,不进入公开 API。
+    pub(crate) addr: SocketAddr,
     registry: NodeRegistry,
     registry_path: PathBuf,
     shared: SharedState,
@@ -280,6 +290,22 @@ impl TestServer {
                         .as_ref()
                         .is_some_and(|snapshot| snapshot.uptime_secs == expected_uptime)
             },
+            node_id,
+        )
+        .await
+    }
+
+    /// 等待节点上线并至少上报过一次快照,但不校验具体 uptime 数值。
+    /// e2e 测试运行真实 agent,其 `uptime_secs` 取自宿主机 `/proc/uptime`,
+    /// 数值不可预知,因此只断言"在线且已上报快照"。
+    pub async fn wait_for_node_online(
+        &self,
+        node_id: &str,
+        timeout_duration: Duration,
+    ) -> Result<NodeStatus> {
+        self.wait_for_status(
+            timeout_duration,
+            |status| status.online && status.snapshot.is_some(),
             node_id,
         )
         .await

@@ -210,6 +210,10 @@ describe('WsClient', () => {
             hostname: 'host1',
             tags: [],
           },
+          geoip_country: null,
+          geoip_city: null,
+          geoip_latitude: null,
+          geoip_longitude: null,
           snapshot: {
             cpu_usage_percent: 50,
             load: { one: 1.5 },

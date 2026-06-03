@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
+import { createPinia, setActivePinia } from 'pinia';
 import { createMemoryHistory, createRouter, type Router } from 'vue-router';
 import { createApp, defineComponent, h } from 'vue';
 
 import AppLayout from './AppLayout.vue';
+import { useBootstrapStore } from '@/stores/bootstrap';
 import { setupI18n, getI18n, __resetI18nForTest, LANGUAGE_STORAGE_KEY } from '@/i18n';
 
 const FAKE_DICT = {
@@ -54,6 +56,7 @@ async function mountLayout() {
 
 describe('AppLayout', () => {
   beforeEach(async () => {
+    setActivePinia(createPinia());
     window.localStorage.clear();
     __resetI18nForTest();
     vi.stubGlobal(
@@ -81,6 +84,49 @@ describe('AppLayout', () => {
     expect(wrapper.find('[data-test="sidebar-nav"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="slot-title"]').text()).toBe('Hi');
     expect(wrapper.find('[data-test="slot-body"]').text()).toBe('Body');
+  });
+
+  it('renders GeoIP attribution only for enabled providers', async () => {
+    const wrapper = await mountLayout();
+    expect(wrapper.find('.geoip-attribution').exists()).toBe(false);
+
+    const bootstrapStore = useBootstrapStore();
+    bootstrapStore.data = {
+      service: 'nodelite-server',
+      status: 'ready',
+      ready: true,
+      history_available: true,
+      public_base_url: 'http://localhost:8080',
+      refresh_interval_secs: 5,
+      registered_nodes: 0,
+      geoip_enabled: true,
+      geoip_provider: 'custom',
+    };
+    await wrapper.vm.$nextTick();
+
+    let footer = wrapper.find('.geoip-attribution');
+    expect(footer.text()).toBe('GeoIP database: custom MMDB');
+    expect(footer.find('a').exists()).toBe(false);
+
+    bootstrapStore.data = {
+      ...bootstrapStore.data,
+      geoip_provider: 'dbip',
+    };
+    await wrapper.vm.$nextTick();
+
+    footer = wrapper.find('.geoip-attribution');
+    const attributionLink = footer.find('a');
+    expect(attributionLink.text()).toBe('IP geolocation by DB-IP');
+    expect(attributionLink.attributes('href')).toBe('https://db-ip.com');
+
+    bootstrapStore.data = {
+      ...bootstrapStore.data,
+      geoip_enabled: false,
+      geoip_provider: null,
+    };
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.find('.geoip-attribution').exists()).toBe(false);
   });
 
   it('theme toggle flips the html data-theme attribute', async () => {

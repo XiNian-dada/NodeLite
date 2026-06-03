@@ -9,6 +9,7 @@ use crate::admission::{InstallAdmissionController, WsAdmissionController};
 use crate::agent_logs::AgentLogStore;
 use crate::audit::AuditLog;
 use crate::auth::{ReadonlyRouteAuth, TwoFactorSessions};
+use crate::geoip::GeoIpResolver;
 use crate::history::HistoryStore;
 use crate::registry::NodeRegistry;
 use crate::state::SharedState;
@@ -23,6 +24,7 @@ pub(crate) struct AppState {
     pub(crate) history: HistoryStore,
     pub(crate) agent_logs: AgentLogStore,
     pub(crate) audit_log: AuditLog,
+    pub(crate) geoip: GeoIpResolver,
     pub(crate) install_admission: InstallAdmissionController,
     /// `/api/verify-2fa` 的 IP 维度限流器:与 `install_admission` 同型,
     /// 但实例独立,避免安装接口的失败计数误伤 2FA 登录,反之亦然。
@@ -102,12 +104,14 @@ impl AppState {
         let audit_log = AuditLog::new(config.audit.clone(), config.sqlite_busy_timeout_secs);
         audit_log.initialize().await?;
         let readiness = ServerReadiness::new(history.is_available());
+        let geoip = GeoIpResolver::new(config.geoip.clone()).await;
         let registry = NodeRegistry::load(config.node_registry_path.as_path()).await?;
 
         Ok(Self {
             history,
             agent_logs: AgentLogStore::new(),
             audit_log,
+            geoip,
             install_admission: InstallAdmissionController::new(auth_failure_admission_config(
                 &config.ws,
             )),

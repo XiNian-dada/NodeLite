@@ -16,6 +16,23 @@ describe('locationFromNode', () => {
     });
     expect(locationFromNode(node)).toBeNull();
   });
+
+  it('falls back to geoip city and country', () => {
+    const node = makeNodeStatus({
+      identity: { ...makeNodeStatus().identity, tags: [] },
+      geoip_city: 'Tokyo',
+      geoip_country: 'JP',
+    });
+    expect(locationFromNode(node)).toBe('Tokyo, JP');
+  });
+
+  it('reports LAN geoip without hostname inference', () => {
+    const node = makeNodeStatus({
+      identity: { ...makeNodeStatus().identity, tags: [] },
+      geoip_country: 'LAN',
+    });
+    expect(locationFromNode(node)).toBe('LAN');
+  });
 });
 
 describe('ipFromNode', () => {

@@ -106,4 +106,10 @@ onMounted(() => {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+@media (min-width: 1920px) {
+  .top-row {
+    grid-template-columns: minmax(0, 1.35fr) minmax(420px, 0.85fr);
+    gap: 18px;
+  }
+}
 </style>

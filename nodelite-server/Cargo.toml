@@ -16,11 +16,14 @@ chrono.workspace = true
 clap.workspace = true
 futures.workspace = true
 getrandom.workspace = true
+flate2.workspace = true
 hex.workspace = true
 hmac = "0.12"
 ipnet.workspace = true
 libc.workspace = true
+maxminddb.workspace = true
 qrcode.workspace = true
+reqwest.workspace = true
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -49,6 +52,9 @@ which = "6"
 proptest = "1.4"
 tokio-tungstenite.workspace = true
 tower = "0.5"
+
+[features]
+load_test = []
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }

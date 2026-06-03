@@ -287,6 +287,10 @@ fn sample_status(node_id: &str, node_label: &str, uptime_secs: u64, load_15m: f6
             tags: vec!["tag".to_string()],
         },
         remote_ip: None,
+        geoip_country: None,
+        geoip_city: None,
+        geoip_latitude: None,
+        geoip_longitude: None,
         snapshot: Some(NodeSnapshot {
             collected_at: Utc::now(),
             cpu_usage_percent: Some(42.0),

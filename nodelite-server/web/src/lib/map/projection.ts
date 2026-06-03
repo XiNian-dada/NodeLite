@@ -24,31 +24,74 @@ export type NodeStatus = 'online' | 'offline' | 'latency';
 
 /** Region anchor points as {x, y} fractions of the map (0..1). */
 export const REGION_HINTS: Record<string, readonly [number, number]> = {
-  cn: [0.78, 0.42], china: [0.78, 0.42],
-  hk: [0.79, 0.5], tw: [0.82, 0.5],
-  jp: [0.86, 0.42], japan: [0.86, 0.42],
-  kr: [0.83, 0.4], korea: [0.83, 0.4],
-  sg: [0.77, 0.62], singapore: [0.77, 0.62],
-  in: [0.69, 0.5], india: [0.69, 0.5],
-  ae: [0.62, 0.5], au: [0.88, 0.78], australia: [0.88, 0.78],
-  ru: [0.7, 0.28], russia: [0.7, 0.28],
-  de: [0.49, 0.32], germany: [0.49, 0.32], eu: [0.5, 0.34],
-  fr: [0.48, 0.34], uk: [0.46, 0.3], gb: [0.46, 0.3],
-  nl: [0.49, 0.31], es: [0.46, 0.4], it: [0.5, 0.38],
-  us: [0.22, 0.4], usa: [0.22, 0.4],
-  ca: [0.22, 0.28], canada: [0.22, 0.28],
-  br: [0.34, 0.7], brazil: [0.34, 0.7],
-  ar: [0.32, 0.82], mx: [0.18, 0.5],
-  za: [0.55, 0.74], ng: [0.5, 0.6], eg: [0.55, 0.5],
+  cn: [0.78, 0.42],
+  china: [0.78, 0.42],
+  hk: [0.79, 0.5],
+  tw: [0.82, 0.5],
+  jp: [0.86, 0.42],
+  japan: [0.86, 0.42],
+  kr: [0.83, 0.4],
+  korea: [0.83, 0.4],
+  sg: [0.77, 0.62],
+  singapore: [0.77, 0.62],
+  in: [0.69, 0.5],
+  india: [0.69, 0.5],
+  ae: [0.62, 0.5],
+  au: [0.88, 0.78],
+  australia: [0.88, 0.78],
+  ru: [0.7, 0.28],
+  russia: [0.7, 0.28],
+  de: [0.49, 0.32],
+  germany: [0.49, 0.32],
+  eu: [0.5, 0.34],
+  fr: [0.48, 0.34],
+  uk: [0.46, 0.3],
+  gb: [0.46, 0.3],
+  nl: [0.49, 0.31],
+  es: [0.46, 0.4],
+  it: [0.5, 0.38],
+  us: [0.22, 0.4],
+  usa: [0.22, 0.4],
+  ca: [0.22, 0.28],
+  canada: [0.22, 0.28],
+  br: [0.34, 0.7],
+  brazil: [0.34, 0.7],
+  ar: [0.32, 0.82],
+  mx: [0.18, 0.5],
+  za: [0.55, 0.74],
+  ng: [0.5, 0.6],
+  eg: [0.55, 0.5],
 };
 
 /** Flag emoji per region key; falls back to a globe. */
 export const COUNTRY_FLAGS: Record<string, string> = {
-  cn: '🇨🇳', hk: '🇭🇰', tw: '🇹🇼', jp: '🇯🇵', kr: '🇰🇷', sg: '🇸🇬',
-  in: '🇮🇳', ae: '🇦🇪', au: '🇦🇺', ru: '🇷🇺', de: '🇩🇪', fr: '🇫🇷',
-  uk: '🇬🇧', gb: '🇬🇧', nl: '🇳🇱', es: '🇪🇸', it: '🇮🇹', us: '🇺🇸',
-  usa: '🇺🇸', ca: '🇨🇦', br: '🇧🇷', ar: '🇦🇷', mx: '🇲🇽', za: '🇿🇦',
-  ng: '🇳🇬', eg: '🇪🇬',
+  lan: '🏠',
+  cn: '🇨🇳',
+  hk: '🇭🇰',
+  tw: '🇹🇼',
+  jp: '🇯🇵',
+  kr: '🇰🇷',
+  sg: '🇸🇬',
+  in: '🇮🇳',
+  ae: '🇦🇪',
+  au: '🇦🇺',
+  ru: '🇷🇺',
+  de: '🇩🇪',
+  fr: '🇫🇷',
+  uk: '🇬🇧',
+  gb: '🇬🇧',
+  nl: '🇳🇱',
+  es: '🇪🇸',
+  it: '🇮🇹',
+  us: '🇺🇸',
+  usa: '🇺🇸',
+  ca: '🇨🇦',
+  br: '🇧🇷',
+  ar: '🇦🇷',
+  mx: '🇲🇽',
+  za: '🇿🇦',
+  ng: '🇳🇬',
+  eg: '🇪🇬',
 };
 
 export function hashString(value: string): number {
@@ -71,6 +114,9 @@ export function nodeRegionKey(node: NodeListItem): string | null {
     const m = lower.match(/^(?:country|region|cc|loc)[:=](\w+)$/);
     if (m && m[1] && REGION_HINTS[m[1]]) return m[1];
   }
+  const geoipCountry = String(node.geoip_country || '').toLowerCase();
+  if (geoipCountry === 'lan') return 'lan';
+  if (geoipCountry && REGION_HINTS[geoipCountry]) return geoipCountry;
   const hostname = String(node.identity.hostname || '').toLowerCase();
   for (const key of Object.keys(REGION_HINTS)) {
     if (

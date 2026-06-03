@@ -30,7 +30,9 @@ const nowCpu = computed(() =>
 );
 const nowMemory = computed(() => {
   const mem = props.node?.snapshot?.memory;
-  return mem?.total_bytes ? formatChartValue((mem.used_bytes / mem.total_bytes) * 100, 'percent') : '—';
+  return mem?.total_bytes
+    ? formatChartValue((mem.used_bytes / mem.total_bytes) * 100, 'percent')
+    : '—';
 });
 const nowLatency = computed(() =>
   props.node?.latency_ms == null ? '—' : formatChartValue(props.node.latency_ms, 'latency'),
@@ -110,6 +112,11 @@ const netSeries = computed(() =>
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 14px;
+}
+@media (min-width: 1920px) {
+  .overview-charts {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 .chart-card {
   background: var(--bg-card);

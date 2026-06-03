@@ -28,6 +28,12 @@ SERVICE_NAME="nodelite-server"
 BIN_PATH="/usr/local/bin/nodelite-server"
 UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 MODE="${NODELITE_SERVER_MODE:-auto}"
+GEOIP_ENABLED="${NODELITE_GEOIP_ENABLED:-false}"
+GEOIP_PROVIDER="${NODELITE_GEOIP_PROVIDER:-dbip}"
+GEOIP_EDITION="${NODELITE_GEOIP_EDITION:-country-lite}"
+GEOIP_DATABASE_PATH="${NODELITE_GEOIP_DATABASE_PATH:-}"
+GEOIP_AUTO_UPDATE="${NODELITE_GEOIP_AUTO_UPDATE:-true}"
+GEOIP_UPDATE_INTERVAL_DAYS="${NODELITE_GEOIP_UPDATE_INTERVAL_DAYS:-30}"
 
 TMP_BIN=""
 TMP_SHA256=""
@@ -438,6 +444,18 @@ load_existing_server_defaults() {
   [ -n "$value" ] && UI_REFRESH_INTERVAL_SECS="$value"
   value="$(trim_whitespace "$(toml_get_raw "$config_path" filters ignored_filesystems)")"
   [ -n "$value" ] && IGNORED_FILESYSTEMS_RAW="$value"
+  value="$(trim_whitespace "$(toml_get_raw "$config_path" geoip enabled)")"
+  [ -n "$value" ] && GEOIP_ENABLED="$value"
+  value="$(strip_toml_string_quotes "$(toml_get_raw "$config_path" geoip provider)")"
+  [ -n "$value" ] && GEOIP_PROVIDER="$value"
+  value="$(strip_toml_string_quotes "$(toml_get_raw "$config_path" geoip edition)")"
+  [ -n "$value" ] && GEOIP_EDITION="$value"
+  value="$(strip_toml_string_quotes "$(toml_get_raw "$config_path" geoip database_path)")"
+  [ -n "$value" ] && GEOIP_DATABASE_PATH="$value"
+  value="$(trim_whitespace "$(toml_get_raw "$config_path" geoip auto_update)")"
+  [ -n "$value" ] && GEOIP_AUTO_UPDATE="$value"
+  value="$(trim_whitespace "$(toml_get_raw "$config_path" geoip update_interval_days)")"
+  [ -n "$value" ] && GEOIP_UPDATE_INTERVAL_DAYS="$value"
 }
 
 # 把交互或默认得到的变量拼成最终 server.toml 文本。
@@ -446,6 +464,7 @@ render_server_config() {
   if [ "$PUBLIC_SCHEME" = "http" ]; then
     insecure_allow_http_value="true"
   fi
+  geoip_database_path="${GEOIP_DATABASE_PATH:-${DATA_DIR}/geoip/dbip.mmdb}"
   cat <<EOF
 [server]
 listen = "${LISTEN_HOST}:${LISTEN_PORT}"
@@ -471,6 +490,14 @@ auth_block_secs = ${WS_AUTH_BLOCK_SECS}
 
 [ui]
 refresh_interval_secs = ${UI_REFRESH_INTERVAL_SECS}
+
+[geoip]
+enabled = ${GEOIP_ENABLED}
+provider = "${GEOIP_PROVIDER}"
+edition = "${GEOIP_EDITION}"
+database_path = "${geoip_database_path}"
+auto_update = ${GEOIP_AUTO_UPDATE}
+update_interval_days = ${GEOIP_UPDATE_INTERVAL_DAYS}
 
 [filters]
 ignored_filesystems = ${IGNORED_FILESYSTEMS_RAW}

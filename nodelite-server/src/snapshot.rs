@@ -232,6 +232,7 @@ mod tests {
             .register_node(
                 synthetic_identity("hk-01", "Hong Kong 01", "1.0.0", None, "edge"),
                 Some("198.51.100.24".to_string()),
+                None,
             )
             .await;
 
@@ -337,6 +338,10 @@ mod tests {
                 tags: vec!["edge".to_string()],
             },
             remote_ip: Some("198.51.100.24".to_string()),
+            geoip_country: None,
+            geoip_city: None,
+            geoip_latitude: None,
+            geoip_longitude: None,
             snapshot: None,
             last_seen: Some(Utc::now()),
             latency_ms: None,

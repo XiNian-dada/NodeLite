@@ -276,6 +276,10 @@ mod tests {
             online,
             last_seen: Some(Utc::now() - Duration::minutes(30)),
             remote_ip: Some("203.0.113.8".to_string()),
+            geoip_country: None,
+            geoip_city: None,
+            geoip_latitude: None,
+            geoip_longitude: None,
             latency_ms: Some(latency_ms),
         }
     }

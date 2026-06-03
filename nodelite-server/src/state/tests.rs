@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use chrono::{Duration as ChronoDuration, TimeZone, Utc};
 use nodelite_proto::{
-    LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot, ReadonlyAuthConfig,
-    ServerConfig, WsConfig, percentage,
+    GeoIpLocation, LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot,
+    ReadonlyAuthConfig, ServerConfig, WsConfig, percentage,
 };
 
 use super::{Registry, SessionControlHandle, SharedState};
@@ -33,11 +33,18 @@ fn newer_session_replaces_older_one() {
         tags: Vec::new(),
     };
 
-    registry.register_node(1, identity.clone(), Some("198.51.100.10".to_string()), now);
+    registry.register_node(
+        1,
+        identity.clone(),
+        Some("198.51.100.10".to_string()),
+        None,
+        now,
+    );
     registry.register_node(
         2,
         identity,
         Some("198.51.100.11".to_string()),
+        None,
         now + ChronoDuration::seconds(3),
     );
 
@@ -66,7 +73,13 @@ fn stale_nodes_are_marked_offline() {
         .single()
         .expect("valid test datetime");
 
-    registry.register_node(7, sample_identity(), Some("198.51.100.10".to_string()), now);
+    registry.register_node(
+        7,
+        sample_identity(),
+        Some("198.51.100.10".to_string()),
+        None,
+        now,
+    );
     assert_eq!(
         registry.mark_stale(Duration::from_secs(10), now + ChronoDuration::seconds(15)),
         1
@@ -88,7 +101,13 @@ fn overview_saturates_totals_and_skips_invalid_rates() {
         .single()
         .expect("valid test datetime");
 
-    registry.register_node(1, sample_identity(), Some("198.51.100.10".to_string()), now);
+    registry.register_node(
+        1,
+        sample_identity(),
+        Some("198.51.100.10".to_string()),
+        None,
+        now,
+    );
     registry.register_node(
         2,
         NodeIdentity {
@@ -97,6 +116,7 @@ fn overview_saturates_totals_and_skips_invalid_rates() {
             ..sample_identity()
         },
         Some("198.51.100.11".to_string()),
+        None,
         now,
     );
 
@@ -131,7 +151,13 @@ fn overview_avoids_overflow_when_summing_latency() {
         .single()
         .expect("valid test datetime");
 
-    registry.register_node(1, sample_identity(), Some("198.51.100.10".to_string()), now);
+    registry.register_node(
+        1,
+        sample_identity(),
+        Some("198.51.100.10".to_string()),
+        None,
+        now,
+    );
     registry.register_node(
         2,
         NodeIdentity {
@@ -140,6 +166,7 @@ fn overview_avoids_overflow_when_summing_latency() {
             ..sample_identity()
         },
         Some("198.51.100.11".to_string()),
+        None,
         now,
     );
 
@@ -163,7 +190,13 @@ fn session_control_is_only_available_for_current_online_session() {
         .with_ymd_and_hms(2026, 5, 7, 0, 0, 0)
         .single()
         .expect("valid test datetime");
-    registry.register_node(7, sample_identity(), Some("198.51.100.10".to_string()), now);
+    registry.register_node(
+        7,
+        sample_identity(),
+        Some("198.51.100.10".to_string()),
+        None,
+        now,
+    );
 
     let (control, _control_rx) = SessionControlHandle::channel();
     assert!(registry.attach_session_control("hk-01", 7, control));
@@ -173,6 +206,7 @@ fn session_control_is_only_available_for_current_online_session() {
         8,
         sample_identity(),
         Some("198.51.100.11".to_string()),
+        None,
         now + ChronoDuration::seconds(1),
     );
     assert!(
@@ -188,7 +222,13 @@ fn mark_disconnected_clears_session_control() {
         .with_ymd_and_hms(2026, 5, 7, 0, 0, 0)
         .single()
         .expect("valid test datetime");
-    registry.register_node(9, sample_identity(), Some("198.51.100.10".to_string()), now);
+    registry.register_node(
+        9,
+        sample_identity(),
+        Some("198.51.100.10".to_string()),
+        None,
+        now,
+    );
 
     let (control, _control_rx) = SessionControlHandle::channel();
     assert!(registry.attach_session_control("hk-01", 9, control));
@@ -201,7 +241,7 @@ fn mark_disconnected_clears_session_control() {
 async fn cached_api_json_invalidates_after_visible_status_change() {
     let shared = SharedState::new(Arc::new(sample_config()));
     let session_id = shared
-        .register_node(sample_identity(), Some("198.51.100.10".to_string()))
+        .register_node(sample_identity(), Some("198.51.100.10".to_string()), None)
         .await;
 
     let first_nodes = shared.nodes_json_bytes().await.expect("nodes json");
@@ -238,7 +278,7 @@ async fn cached_api_json_invalidates_after_visible_status_change() {
 async fn concurrent_api_cache_miss_serializes_once() {
     let shared = SharedState::new(Arc::new(sample_config()));
     shared
-        .register_node(sample_identity(), Some("198.51.100.10".to_string()))
+        .register_node(sample_identity(), Some("198.51.100.10".to_string()), None)
         .await;
 
     let mut tasks = Vec::new();
@@ -266,7 +306,7 @@ async fn concurrent_api_cache_miss_serializes_once() {
 async fn api_overview_and_nodes_caches_build_independently() {
     let shared = SharedState::new(Arc::new(sample_config()));
     shared
-        .register_node(sample_identity(), Some("198.51.100.10".to_string()))
+        .register_node(sample_identity(), Some("198.51.100.10".to_string()), None)
         .await;
 
     let first_overview = shared.overview_json_bytes().await.expect("overview json");
@@ -310,7 +350,7 @@ async fn api_overview_and_nodes_caches_build_independently() {
 async fn registry_disk_entries_total_counts_snapshot_disks() {
     let shared = SharedState::new(Arc::new(sample_config()));
     let first_session = shared
-        .register_node(sample_identity(), Some("198.51.100.10".to_string()))
+        .register_node(sample_identity(), Some("198.51.100.10".to_string()), None)
         .await;
     let second_session = shared
         .register_node(
@@ -320,6 +360,7 @@ async fn registry_disk_entries_total_counts_snapshot_disks() {
                 ..sample_identity()
             },
             Some("198.51.100.11".to_string()),
+            None,
         )
         .await;
 
@@ -345,11 +386,78 @@ async fn registry_disk_entries_total_counts_snapshot_disks() {
 }
 
 #[tokio::test]
+async fn refresh_geoip_locations_updates_online_node_view() {
+    let shared = SharedState::new(Arc::new(sample_config()));
+    let _session_id = shared
+        .register_node(sample_identity(), Some("8.8.8.8".to_string()), None)
+        .await;
+
+    assert_eq!(
+        shared.geoip_refresh_candidates().await,
+        vec![("hk-01".to_string(), "8.8.8.8".to_string())]
+    );
+
+    let updated = shared
+        .refresh_geoip_locations(vec![(
+            "hk-01".to_string(),
+            "8.8.8.8".to_string(),
+            GeoIpLocation {
+                country: "US".to_string(),
+                city: Some("Mountain View".to_string()),
+                latitude: Some(37.386),
+                longitude: Some(-122.0838),
+            },
+        )])
+        .await;
+
+    assert_eq!(updated, 1);
+    let status = shared.get_status("hk-01").await.expect("node status");
+    assert_eq!(status.geoip_country.as_deref(), Some("US"));
+    assert_eq!(status.geoip_city.as_deref(), Some("Mountain View"));
+    assert_eq!(status.geoip_latitude, Some(37.386));
+    assert_eq!(status.geoip_longitude, Some(-122.0838));
+
+    let summary = shared
+        .list_node_summaries()
+        .await
+        .into_iter()
+        .find(|node| node.identity.node_id == "hk-01")
+        .expect("node summary");
+    assert_eq!(summary.geoip_country.as_deref(), Some("US"));
+    assert_eq!(summary.geoip_city.as_deref(), Some("Mountain View"));
+}
+
+#[tokio::test]
+async fn refresh_geoip_locations_skips_stale_remote_ip() {
+    let shared = SharedState::new(Arc::new(sample_config()));
+    shared
+        .register_node(sample_identity(), Some("8.8.8.8".to_string()), None)
+        .await;
+
+    let updated = shared
+        .refresh_geoip_locations(vec![(
+            "hk-01".to_string(),
+            "1.1.1.1".to_string(),
+            GeoIpLocation {
+                country: "US".to_string(),
+                city: None,
+                latitude: None,
+                longitude: None,
+            },
+        )])
+        .await;
+
+    assert_eq!(updated, 0);
+    let status = shared.get_status("hk-01").await.expect("node status");
+    assert_eq!(status.geoip_country, None);
+}
+
+#[tokio::test]
 async fn snapshot_update_only_invalidates_nodes_view() {
     let shared = SharedState::new(Arc::new(sample_config()));
     let readiness = crate::ServerReadiness::new(true);
     let session_id = shared
-        .register_node(sample_identity(), Some("198.51.100.10".to_string()))
+        .register_node(sample_identity(), Some("198.51.100.10".to_string()), None)
         .await;
 
     // Prime每个视图各一次。
@@ -405,7 +513,7 @@ async fn metrics_cache_reuses_and_invalidates_cleanly() {
     let shared = SharedState::new(Arc::new(sample_config()));
     let readiness = crate::ServerReadiness::new(true);
     let session_id = shared
-        .register_node(sample_identity(), Some("198.51.100.10".to_string()))
+        .register_node(sample_identity(), Some("198.51.100.10".to_string()), None)
         .await;
     assert!(
         shared
@@ -491,6 +599,14 @@ fn sample_config() -> ServerConfig {
             log_failed_auth: true,
             log_token_events: true,
             log_rate_limit: true,
+        },
+        geoip: nodelite_proto::GeoIpConfig {
+            enabled: false,
+            provider: nodelite_proto::GeoIpProvider::Dbip,
+            edition: nodelite_proto::GeoIpEdition::CountryLite,
+            database_path: PathBuf::from("./data/geoip/dbip.mmdb"),
+            auto_update: true,
+            update_interval_days: nodelite_proto::DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS,
         },
         alerting: nodelite_proto::AlertingConfig::default(),
         node_registry_path: PathBuf::from("/tmp/nodelite-test-registry.json"),

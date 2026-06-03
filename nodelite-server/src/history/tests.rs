@@ -33,6 +33,10 @@ fn history_point_uses_server_last_seen_timestamp() {
             tags: vec!["edge".to_string()],
         },
         remote_ip: Some("198.51.100.24".to_string()),
+        geoip_country: None,
+        geoip_city: None,
+        geoip_latitude: None,
+        geoip_longitude: None,
         snapshot: Some(NodeSnapshot {
             collected_at: now + Duration::hours(24),
             cpu_usage_percent: Some(42.0),
@@ -360,6 +364,10 @@ fn fake_status_for(node_id: &str, recorded_at: chrono::DateTime<Utc>) -> NodeSta
             tags: Vec::new(),
         },
         remote_ip: Some("198.51.100.24".to_string()),
+        geoip_country: None,
+        geoip_city: None,
+        geoip_latitude: None,
+        geoip_longitude: None,
         snapshot: Some(NodeSnapshot {
             collected_at: recorded_at,
             cpu_usage_percent: Some(42.0),

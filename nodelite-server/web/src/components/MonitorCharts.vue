@@ -165,6 +165,11 @@ const charts = computed(() => [
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
   gap: 14px;
 }
+@media (min-width: 1920px) {
+  .monitor__grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
 .big-chart {
   background: var(--bg-card);
   border: 1px solid var(--border-soft);

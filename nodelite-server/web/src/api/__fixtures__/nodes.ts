@@ -71,9 +71,7 @@ export function makeSettings(overrides: Partial<SettingsResponse> = {}): Setting
   };
 }
 
-export function makeBootstrap(
-  overrides: Partial<BootstrapResponse> = {},
-): BootstrapResponse {
+export function makeBootstrap(overrides: Partial<BootstrapResponse> = {}): BootstrapResponse {
   return {
     service: 'nodelite-server',
     status: 'ready',
@@ -82,6 +80,8 @@ export function makeBootstrap(
     public_base_url: 'http://localhost:8080',
     refresh_interval_secs: 5,
     registered_nodes: 3,
+    geoip_enabled: false,
+    geoip_provider: null,
     ...overrides,
   };
 }
@@ -102,6 +102,10 @@ export function makeNode(overrides: Partial<NodeListItem> = {}): NodeListItem {
       tags: [],
       ...overrides.identity,
     },
+    geoip_country: 'geoip_country' in overrides ? (overrides.geoip_country ?? null) : null,
+    geoip_city: 'geoip_city' in overrides ? (overrides.geoip_city ?? null) : null,
+    geoip_latitude: 'geoip_latitude' in overrides ? (overrides.geoip_latitude ?? null) : null,
+    geoip_longitude: 'geoip_longitude' in overrides ? (overrides.geoip_longitude ?? null) : null,
     snapshot: 'snapshot' in overrides ? (overrides.snapshot ?? null) : defaultSnapshot,
     latency_ms: 'latency_ms' in overrides ? (overrides.latency_ms ?? null) : 5,
     online: 'online' in overrides ? (overrides.online ?? false) : true,
@@ -124,6 +128,10 @@ export function makeNodeStatus(overrides: Partial<NodeStatus> = {}): NodeStatus 
       ...overrides.identity,
     },
     remote_ip: 'remote_ip' in overrides ? (overrides.remote_ip ?? null) : '203.0.113.7',
+    geoip_country: 'geoip_country' in overrides ? (overrides.geoip_country ?? null) : null,
+    geoip_city: 'geoip_city' in overrides ? (overrides.geoip_city ?? null) : null,
+    geoip_latitude: 'geoip_latitude' in overrides ? (overrides.geoip_latitude ?? null) : null,
+    geoip_longitude: 'geoip_longitude' in overrides ? (overrides.geoip_longitude ?? null) : null,
     snapshot:
       'snapshot' in overrides
         ? (overrides.snapshot ?? null)
@@ -187,7 +195,9 @@ export function makeOverview(overrides: Partial<OverviewData> = {}): OverviewDat
   };
 }
 
-export function makeAlertSettingsView(overrides: AlertSettingsViewOverrides = {}): AlertSettingsView {
+export function makeAlertSettingsView(
+  overrides: AlertSettingsViewOverrides = {},
+): AlertSettingsView {
   const base: AlertSettingsView = {
     enabled: true,
     smtp: {

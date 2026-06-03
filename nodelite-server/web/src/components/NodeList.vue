@@ -8,11 +8,7 @@ const nodesStore = useNodesStore();
 <template>
   <section class="nodes-section" data-test="node-list">
     <div v-if="nodesStore.nodes.length > 0" class="node-grid">
-      <NodeCard
-        v-for="node in nodesStore.nodes"
-        :key="node.identity.node_id"
-        :node="node"
-      />
+      <NodeCard v-for="node in nodesStore.nodes" :key="node.identity.node_id" :node="node" />
     </div>
     <p v-else class="nodes-empty" data-test="node-list-empty">
       {{ $t('common.waiting_for_data') }}
@@ -26,7 +22,7 @@ const nodesStore = useNodesStore();
 }
 .node-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
   gap: 14px;
 }
 .nodes-empty {
@@ -34,5 +30,10 @@ const nodesStore = useNodesStore();
   font-size: 13px;
   margin: 0;
   padding: 24px 0;
+}
+@media (min-width: 1920px) {
+  .node-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
 }
 </style>

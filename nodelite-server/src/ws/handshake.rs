@@ -32,11 +32,12 @@ pub(super) async fn handle_socket(
     let authorized =
         authorize_hello(&state, client_ip, &mut socket, &hello, audit_user_agent).await?;
     let identity = authorized.identity;
+    let geoip = state.geoip.lookup(client_ip).await;
     let mut session = ActiveSession {
         node_id: identity.node_id.clone(),
         node_label: identity.node_label.clone(),
         session_id: shared
-            .register_node(identity, Some(client_ip.to_string()))
+            .register_node(identity, Some(client_ip.to_string()), geoip)
             .await,
         session_token: hello.token,
         session_generation: authorized.generation,

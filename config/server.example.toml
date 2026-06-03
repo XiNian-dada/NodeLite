@@ -66,6 +66,20 @@ log_token_events = true
 # 是否记录安装/登录等路径触发的限流事件。
 log_rate_limit = true
 
+[geoip]
+# 自动根据 Agent 连接 IP 推断国家/地区。默认关闭,关闭时行为与旧版本一致。
+enabled = false
+# provider = "dbip" 会使用 DB-IP Lite; provider = "custom" 时只读取本地 database_path。
+provider = "dbip"
+# country-lite 只提供国家; city-lite 会额外填充 city/latitude/longitude。
+edition = "country-lite"
+# MaxMind DB 格式的 .mmdb 文件路径。中性文件名可同时用于 country-lite / city-lite。
+database_path = "./data/geoip/dbip.mmdb"
+# 启动后后台检查并下载 DB-IP Lite 数据库,失败只记录 warning,不阻塞服务启动。
+auto_update = true
+# 本地数据库超过该天数后才会重新下载。
+update_interval_days = 30
+
 [alerts]
 # 告警功能总开关。打开后可以通过 Web UI 配置规则与渠道。
 enabled = false

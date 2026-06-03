@@ -53,6 +53,30 @@ describe('nodeRegionKey', () => {
     expect(nodeRegionKey(node)).toBe('us');
   });
 
+  it('uses geoip country before hostname fallback', () => {
+    const node = makeNode({
+      identity: { node_id: 'x', node_label: 'X', hostname: 'web-in-1', tags: [] },
+      geoip_country: 'US',
+    });
+    expect(nodeRegionKey(node)).toBe('us');
+  });
+
+  it('keeps explicit tags ahead of geoip country', () => {
+    const node = makeNode({
+      identity: { node_id: 'x', node_label: 'X', hostname: 'h', tags: ['country:de'] },
+      geoip_country: 'US',
+    });
+    expect(nodeRegionKey(node)).toBe('de');
+  });
+
+  it('treats LAN geoip as local instead of falling back to hostname', () => {
+    const node = makeNode({
+      identity: { node_id: 'x', node_label: 'X', hostname: 'web-in-1', tags: [] },
+      geoip_country: 'LAN',
+    });
+    expect(nodeRegionKey(node)).toBe('lan');
+  });
+
   it('returns null when nothing matches', () => {
     const node = makeNode({
       identity: { node_id: 'zzz', node_label: 'Z', hostname: 'host', tags: [] },
@@ -124,6 +148,14 @@ describe('nodeFlag', () => {
       identity: { node_id: 'zzz', node_label: 'Z', hostname: 'host', tags: [] },
     });
     expect(nodeFlag(node)).toBe('🌐');
+  });
+
+  it('returns a local flag for LAN geoip nodes', () => {
+    const node = makeNode({
+      identity: { node_id: 'x', node_label: 'X', hostname: 'web-in-1', tags: [] },
+      geoip_country: 'LAN',
+    });
+    expect(nodeFlag(node)).toBe('🏠');
   });
 });
 

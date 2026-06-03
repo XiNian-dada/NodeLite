@@ -299,6 +299,7 @@ async fn settings_node_token_refresh_covers_success_offline_and_timeout_paths() 
                 "itest",
             ),
             Some("127.0.0.1".to_string()),
+            None,
         )
         .await;
     harness
@@ -352,6 +353,7 @@ async fn settings_node_token_refresh_covers_success_offline_and_timeout_paths() 
                 "itest",
             ),
             None,
+            None,
         )
         .await;
     harness
@@ -382,6 +384,7 @@ async fn settings_node_token_refresh_covers_success_offline_and_timeout_paths() 
                 None,
                 "itest",
             ),
+            None,
             None,
         )
         .await;

@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import { computed, onMounted } from 'vue';
 import SidebarNav from '@/components/SidebarNav.vue';
 import { useTheme } from '@/composables/useTheme';
 import { useLanguage } from '@/i18n/language';
 import { SUPPORTED_LOCALES, type SupportedLocale } from '@/i18n';
+import { useBootstrapStore } from '@/stores/bootstrap';
 
 // Shared chrome for every top-level view: sidebar rail + a header whose
 // left side is a per-view #title slot and right side holds the global
@@ -10,6 +12,33 @@ import { SUPPORTED_LOCALES, type SupportedLocale } from '@/i18n';
 // place so DashboardView / NodeDetailView don't each reimplement it.
 const { theme, toggleTheme } = useTheme();
 const { currentLocale, setLocale } = useLanguage();
+const bootstrapStore = useBootstrapStore();
+
+type GeoIpAttribution = {
+  label: string;
+  href?: string;
+};
+
+const geoipAttribution = computed<GeoIpAttribution | null>(() => {
+  const bootstrap = bootstrapStore.data;
+  if (!bootstrap?.geoip_enabled) return null;
+  if (bootstrap.geoip_provider === 'dbip') {
+    return {
+      label: 'IP geolocation by DB-IP',
+      href: 'https://db-ip.com',
+    };
+  }
+  if (bootstrap.geoip_provider === 'custom') {
+    return {
+      label: 'GeoIP database: custom MMDB',
+    };
+  }
+  return null;
+});
+
+onMounted(() => {
+  void bootstrapStore.load();
+});
 
 function onLanguageChange(event: Event): void {
   setLocale((event.target as HTMLSelectElement).value);
@@ -82,6 +111,18 @@ const localeLabels: Record<SupportedLocale, string> = {
       </header>
 
       <slot />
+
+      <footer v-if="geoipAttribution" class="geoip-attribution">
+        <a
+          v-if="geoipAttribution.href"
+          :href="geoipAttribution.href"
+          rel="noreferrer"
+          target="_blank"
+        >
+          {{ geoipAttribution.label }}
+        </a>
+        <span v-else>{{ geoipAttribution.label }}</span>
+      </footer>
     </main>
   </div>
 </template>
@@ -96,7 +137,7 @@ const localeLabels: Record<SupportedLocale, string> = {
 }
 .main {
   padding: 24px clamp(20px, 3vw, 36px) 40px;
-  max-width: 1680px;
+  max-width: 2560px;
   width: 100%;
 }
 .page-header {
@@ -139,5 +180,14 @@ const localeLabels: Record<SupportedLocale, string> = {
 .theme-toggle svg {
   width: 18px;
   height: 18px;
+}
+.geoip-attribution {
+  margin-top: 28px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: right;
+}
+.geoip-attribution a {
+  color: inherit;
 }
 </style>

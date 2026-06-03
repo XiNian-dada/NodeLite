@@ -4,10 +4,11 @@ use ipnet::IpNet;
 
 use super::{
     AlertChannel, AlertComparator, AlertMetric, AlertScopeMode, AlertSeverity, AlertSmtpTransport,
-    DEFAULT_ALERT_INSPECTION_LOCAL_TIME, DEFAULT_AUDIT_RETENTION_DAYS, DEFAULT_MAX_MESSAGE_BYTES,
-    DEFAULT_WS_AUTH_BLOCK_SECS, DEFAULT_WS_AUTH_FAIL_MAX_ATTEMPTS,
-    DEFAULT_WS_AUTH_FAIL_WINDOW_SECS, DEFAULT_WS_MAX_CONNECTIONS_PER_IP,
-    DEFAULT_WS_MAX_TOTAL_CONNECTIONS, MAX_NODE_TAG_BYTES, parse_agent_config, parse_server_config,
+    DEFAULT_ALERT_INSPECTION_LOCAL_TIME, DEFAULT_AUDIT_RETENTION_DAYS,
+    DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS, DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_WS_AUTH_BLOCK_SECS,
+    DEFAULT_WS_AUTH_FAIL_MAX_ATTEMPTS, DEFAULT_WS_AUTH_FAIL_WINDOW_SECS,
+    DEFAULT_WS_MAX_CONNECTIONS_PER_IP, DEFAULT_WS_MAX_TOTAL_CONNECTIONS, GeoIpEdition,
+    GeoIpProvider, MAX_NODE_TAG_BYTES, parse_agent_config, parse_server_config,
 };
 
 #[test]
@@ -58,12 +59,73 @@ fn parses_server_config_with_defaults() {
     assert!(config.audit.log_failed_auth);
     assert!(config.audit.log_token_events);
     assert!(config.audit.log_rate_limit);
+    assert!(!config.geoip.enabled);
+    assert_eq!(config.geoip.provider, GeoIpProvider::Dbip);
+    assert_eq!(config.geoip.edition, GeoIpEdition::CountryLite);
+    assert_eq!(
+        config.geoip.database_path,
+        PathBuf::from("./data/geoip/dbip.mmdb")
+    );
+    assert!(config.geoip.auto_update);
+    assert_eq!(
+        config.geoip.update_interval_days,
+        DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS
+    );
     assert!(!config.alerting.enabled);
     assert_eq!(config.alerting.rules, Vec::new());
     assert_eq!(
         config.alerting.inspection.local_time,
         DEFAULT_ALERT_INSPECTION_LOCAL_TIME
     );
+}
+
+#[test]
+fn parses_server_config_with_geoip_overrides() {
+    let config = parse_server_config(
+        r#"
+        [server]
+        listen = "127.0.0.1:8080"
+        public_base_url = "https://monitor.example.com"
+
+        [geoip]
+        enabled = true
+        provider = "custom"
+        edition = "city-lite"
+        database_path = "/var/lib/nodelite/geoip/custom.mmdb"
+        auto_update = false
+        update_interval_days = 45
+        "#,
+    )
+    .expect("geoip config should parse");
+
+    assert!(config.geoip.enabled);
+    assert_eq!(config.geoip.provider, GeoIpProvider::Custom);
+    assert_eq!(config.geoip.edition, GeoIpEdition::CityLite);
+    assert_eq!(
+        config.geoip.database_path,
+        PathBuf::from("/var/lib/nodelite/geoip/custom.mmdb")
+    );
+    assert!(!config.geoip.auto_update);
+    assert_eq!(config.geoip.update_interval_days, 45);
+}
+
+#[test]
+fn rejects_custom_geoip_auto_update() {
+    let error = parse_server_config(
+        r#"
+        [server]
+        listen = "127.0.0.1:8080"
+        public_base_url = "https://monitor.example.com"
+
+        [geoip]
+        enabled = true
+        provider = "custom"
+        auto_update = true
+        "#,
+    )
+    .expect_err("custom geoip auto update should fail");
+
+    assert!(error.to_string().contains("geoip.auto_update"));
 }
 
 #[test]

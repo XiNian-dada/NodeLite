@@ -11,6 +11,9 @@ export function locationFromNode(node: NodeStatus): string | null {
     const m = String(tag).match(/^(?:loc|location|region|city)[:=](.+)$/i);
     if (m && m[1]) return m[1];
   }
+  if (node.geoip_country === 'LAN') return 'LAN';
+  if (node.geoip_city && node.geoip_country) return `${node.geoip_city}, ${node.geoip_country}`;
+  if (node.geoip_country) return node.geoip_country;
   return null;
 }
 

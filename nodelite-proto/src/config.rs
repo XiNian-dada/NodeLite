@@ -80,6 +80,8 @@ pub const DEFAULT_METRIC_ANOMALY_SESSION_LIMIT: usize = 5;
 pub const DEFAULT_SQLITE_BUSY_TIMEOUT_SECS: u64 = 5;
 /// 审计日志默认保留天数。
 pub const DEFAULT_AUDIT_RETENTION_DAYS: u64 = 90;
+/// GeoIP 数据库默认更新间隔(天)。
+pub const DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS: u64 = 30;
 /// Agent 连接超时(秒)。
 pub const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 20;
 /// Agent 最大接收消息字节数。
@@ -128,6 +130,7 @@ pub struct ServerConfig {
     pub readonly_auth: Option<ReadonlyAuthConfig>,
     pub ws: WsConfig,
     pub audit: AuditConfig,
+    pub geoip: GeoIpConfig,
     pub alerting: AlertingConfig,
     pub node_registry_path: PathBuf,
     pub history_db_path: PathBuf,
@@ -194,6 +197,33 @@ pub struct AuditConfig {
     pub log_failed_auth: bool,
     pub log_token_events: bool,
     pub log_rate_limit: bool,
+}
+
+/// IP 地理位置数据库配置。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GeoIpConfig {
+    pub enabled: bool,
+    pub provider: GeoIpProvider,
+    pub edition: GeoIpEdition,
+    pub database_path: PathBuf,
+    pub auto_update: bool,
+    pub update_interval_days: u64,
+}
+
+/// GeoIP 数据来源。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum GeoIpProvider {
+    Dbip,
+    Custom,
+}
+
+/// DB-IP Lite 数据库粒度。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum GeoIpEdition {
+    CountryLite,
+    CityLite,
 }
 
 /// Agent 启动需要的全部配置。
