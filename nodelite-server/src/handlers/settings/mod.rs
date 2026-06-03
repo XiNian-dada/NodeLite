@@ -8,6 +8,7 @@ mod config_edit;
 mod helpers;
 mod query;
 mod security;
+mod subprocess;
 mod types;
 mod updates;
 
@@ -20,10 +21,12 @@ pub(crate) use updates::{refresh_node_token, server_update_log, start_server_upd
 
 use config_edit::{persist_auth_2fa_change, persist_auth_password_change};
 use helpers::{
-    generate_totp_secret, otpauth_uri, server_build_version, server_update_cache_dir,
+    generate_totp_secret, is_writable_paths_subset_of_install_root, otpauth_uri,
+    server_build_version, server_update_cache_dir, server_update_install_root,
     server_update_log_path, server_update_shell_command, server_update_writable_paths,
     settings_json_error, validate_password_for_settings,
 };
+use subprocess::{UpdateLaunchMode, spawn_server_update_subprocess};
 use types::{
     ChangePasswordRequest, DisableTwoFactorRequest, EnableTwoFactorRequest,
     NodeTokenRefreshResponse, ServerUpdateLogQuery, ServerUpdateLogResponse,

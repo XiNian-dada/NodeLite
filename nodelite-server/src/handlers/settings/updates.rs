@@ -1,4 +1,3 @@
-use std::process::Stdio;
 use std::time::Duration;
 
 use axum::Json;
@@ -6,9 +5,9 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use chrono::Utc;
+use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 use tokio::time::timeout;
-use tokio::{fs, process::Command};
 use tracing::{error, info};
 
 use crate::AppState;
@@ -16,9 +15,10 @@ use crate::AppState;
 use super::security::settings_confirmation_error_for_sensitive_action;
 use super::{
     MAX_UPDATE_LOG_CHUNK_BYTES, NodeTokenRefreshResponse, ServerUpdateLogQuery,
-    ServerUpdateLogResponse, SettingsActionResponse, StartServerUpdateRequest,
-    server_update_cache_dir, server_update_log_path, server_update_shell_command,
-    server_update_writable_paths, settings_json_error,
+    ServerUpdateLogResponse, SettingsActionResponse, StartServerUpdateRequest, UpdateLaunchMode,
+    is_writable_paths_subset_of_install_root, server_update_cache_dir, server_update_install_root,
+    server_update_log_path, server_update_shell_command, server_update_writable_paths,
+    settings_json_error, spawn_server_update_subprocess,
 };
 
 #[cfg(not(test))]
@@ -50,33 +50,34 @@ pub(crate) async fn start_server_update(
     let log_path = server_update_log_path(state.shared.config());
     let cache_dir = server_update_cache_dir(state.shared.config());
     let command = server_update_shell_command(&log_path, &cache_dir);
+    let writable_paths = server_update_writable_paths(state.shared.config());
+    let install_root = server_update_install_root(state.shared.config());
+    if !is_writable_paths_subset_of_install_root(&writable_paths, &install_root) {
+        error!(
+            install_root = %install_root.display(),
+            paths = ?writable_paths,
+            "server update writable paths escaped the allowed roots"
+        );
+        return settings_json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to start server update",
+        );
+    }
     let unit_name = format!(
         "nodelite-server-web-update-{}",
         Utc::now().timestamp_millis()
     );
-    let mut systemd_run = Command::new("systemd-run");
-    systemd_run
-        .arg(format!("--unit={unit_name}"))
-        .arg("--collect")
-        .arg("--service-type=exec")
-        .arg("--property=ProtectSystem=full")
-        .arg("--property=ProtectHome=yes")
-        .arg("--property=PrivateTmp=yes")
-        .arg("--property=NoNewPrivileges=yes");
-    for path in server_update_writable_paths(state.shared.config()) {
-        systemd_run.arg(format!("--property=ReadWritePaths={}", path.display()));
-    }
-    match systemd_run
-        .arg("sh")
-        .arg("-c")
-        .arg(command)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        Ok(_) => {
-            info!(unit = %unit_name, "manual server update started from settings page");
+    match spawn_server_update_subprocess(&unit_name, &command, &writable_paths).await {
+        Ok(launch_mode) => {
+            let launch_mode = match launch_mode {
+                UpdateLaunchMode::Systemd => "systemd",
+                UpdateLaunchMode::FallbackShell => "shell-fallback",
+            };
+            info!(
+                unit = %unit_name,
+                launch_mode,
+                "manual server update started from settings page"
+            );
             (
                 StatusCode::ACCEPTED,
                 Json(SettingsActionResponse {
