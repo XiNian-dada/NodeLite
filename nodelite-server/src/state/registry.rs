@@ -209,6 +209,56 @@ impl Registry {
         self.nodes.get(node_id).map(|entry| entry.status.clone())
     }
 
+    pub(super) fn geoip_refresh_candidates(&self) -> Vec<(String, String)> {
+        self.sorted_node_ids
+            .iter()
+            .filter_map(|node_id| {
+                let entry = self.nodes.get(node_id)?;
+                if !entry.status.online || entry.active_session_id.is_none() {
+                    return None;
+                }
+                entry
+                    .status
+                    .remote_ip
+                    .as_ref()
+                    .map(|remote_ip| (node_id.clone(), remote_ip.clone()))
+            })
+            .collect()
+    }
+
+    pub(super) fn update_geoip(
+        &mut self,
+        node_id: &str,
+        expected_remote_ip: &str,
+        geoip: GeoIpLocation,
+    ) -> bool {
+        let Some(entry) = self.nodes.get_mut(node_id) else {
+            return false;
+        };
+        if entry.status.remote_ip.as_deref() != Some(expected_remote_ip) {
+            return false;
+        }
+
+        let geoip_country = Some(geoip.country);
+        let geoip_city = geoip.city;
+        let geoip_latitude = geoip.latitude;
+        let geoip_longitude = geoip.longitude;
+        if entry.status.geoip_country == geoip_country
+            && entry.status.geoip_city == geoip_city
+            && entry.status.geoip_latitude == geoip_latitude
+            && entry.status.geoip_longitude == geoip_longitude
+        {
+            return false;
+        }
+
+        entry.status.geoip_country = geoip_country;
+        entry.status.geoip_city = geoip_city;
+        entry.status.geoip_latitude = geoip_latitude;
+        entry.status.geoip_longitude = geoip_longitude;
+        entry.summary = NodeListItem::from(&entry.status);
+        true
+    }
+
     pub(super) fn session_control(&self, node_id: &str) -> Option<SessionControlHandle> {
         let entry = self.nodes.get(node_id)?;
         if entry.active_session_id.is_none() || !entry.status.online {

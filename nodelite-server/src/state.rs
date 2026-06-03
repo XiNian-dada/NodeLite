@@ -236,6 +236,28 @@ impl SharedState {
         registry.get_status(node_id)
     }
 
+    pub(crate) async fn geoip_refresh_candidates(&self) -> Vec<(String, String)> {
+        let registry = self.registry.read().await;
+        registry.geoip_refresh_candidates()
+    }
+
+    pub(crate) async fn refresh_geoip_locations(
+        &self,
+        updates: Vec<(String, String, GeoIpLocation)>,
+    ) -> usize {
+        let mut registry = self.registry.write().await;
+        let mut updated = 0;
+        for (node_id, remote_ip, geoip) in updates {
+            if registry.update_geoip(&node_id, &remote_ip, geoip) {
+                updated += 1;
+            }
+        }
+        if updated > 0 {
+            self.bump_nodes_revision_only();
+        }
+        updated
+    }
+
     /// 对在线 Agent 发起一次“立即续期”请求,返回一个用于等待结果的 receiver。
     pub async fn request_live_token_refresh(
         &self,

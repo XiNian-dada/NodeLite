@@ -2,7 +2,7 @@
 
 use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -34,13 +34,12 @@ impl GeoIpResolver {
         resolver
     }
 
-    pub(crate) async fn prepare_database(&self) {
+    pub(crate) async fn prepare_database(&self) -> bool {
         if !self.config.enabled {
-            return;
+            return false;
         }
         if should_skip_download(&self.config) {
-            self.reload_from_disk().await;
-            return;
+            return self.reload_from_disk().await;
         }
         match download_dbip_database(&self.config).await {
             Ok(()) => {
@@ -48,10 +47,11 @@ impl GeoIpResolver {
                     path = %self.config.database_path.display(),
                     "geoip database downloaded"
                 );
-                self.reload_from_disk().await;
+                self.reload_from_disk().await
             }
             Err(error) => {
                 warn!(error = ?error, "failed to update geoip database; continuing without blocking startup");
+                false
             }
         }
     }
@@ -76,9 +76,9 @@ impl GeoIpResolver {
         lookup_location(&reader, ip, self.config.edition)
     }
 
-    async fn reload_from_disk(&self) {
+    async fn reload_from_disk(&self) -> bool {
         if !self.config.enabled {
-            return;
+            return false;
         }
         match maxminddb::Reader::open_readfile(&self.config.database_path) {
             Ok(reader) => {
@@ -88,6 +88,7 @@ impl GeoIpResolver {
                     path = %self.config.database_path.display(),
                     "geoip database loaded"
                 );
+                true
             }
             Err(error) => {
                 warn!(
@@ -95,6 +96,7 @@ impl GeoIpResolver {
                     error = ?error,
                     "geoip database is not available"
                 );
+                false
             }
         }
     }
@@ -147,10 +149,29 @@ async fn download_dbip_database(config: &GeoIpConfig) -> Result<()> {
             .await
             .with_context(|| format!("create geoip directory {}", parent.display()))?;
     }
-    tokio::fs::write(&config.database_path, database)
+    let temp_path = temporary_database_path(&config.database_path);
+    tokio::fs::write(&temp_path, database)
         .await
-        .with_context(|| format!("write geoip database {}", config.database_path.display()))?;
+        .with_context(|| format!("write temporary geoip database {}", temp_path.display()))?;
+    tokio::fs::rename(&temp_path, &config.database_path)
+        .await
+        .with_context(|| {
+            format!(
+                "replace geoip database {} with {}",
+                config.database_path.display(),
+                temp_path.display(),
+            )
+        })?;
     Ok(())
+}
+
+fn temporary_database_path(path: &Path) -> PathBuf {
+    let mut name = path
+        .file_name()
+        .map(|name| name.to_os_string())
+        .unwrap_or_else(|| "geoip.mmdb".into());
+    name.push(".tmp");
+    path.with_file_name(name)
 }
 
 fn dbip_download_url(edition: GeoIpEdition) -> String {
@@ -178,15 +199,11 @@ fn lookup_location(
 }
 
 fn lookup_country(reader: &maxminddb::Reader<Vec<u8>>, ip: IpAddr) -> Option<GeoIpLocation> {
-    let country = reader.lookup::<geoip2::Country>(ip).ok().flatten()?;
+    let country = reader.lookup(ip).ok()?.decode::<geoip2::Country>().ok()??;
     let iso_code = country
         .country
-        .and_then(|country| country.iso_code)
-        .or_else(|| {
-            country
-                .registered_country
-                .and_then(|country| country.iso_code)
-        })?;
+        .iso_code
+        .or(country.registered_country.iso_code)?;
     Some(GeoIpLocation {
         country: iso_code.to_ascii_uppercase(),
         city: None,
@@ -196,30 +213,25 @@ fn lookup_country(reader: &maxminddb::Reader<Vec<u8>>, ip: IpAddr) -> Option<Geo
 }
 
 fn lookup_city(reader: &maxminddb::Reader<Vec<u8>>, ip: IpAddr) -> Option<GeoIpLocation> {
-    let city = reader.lookup::<geoip2::City>(ip).ok().flatten()?;
-    let country = city
-        .country
-        .and_then(|country| country.iso_code)
-        .or_else(|| city.registered_country.and_then(|country| country.iso_code))?;
+    let city = reader.lookup(ip).ok()?.decode::<geoip2::City>().ok()??;
+    let country = city.country.iso_code.or(city.registered_country.iso_code)?;
     let city_name = city
         .city
-        .and_then(|city| city.names)
-        .and_then(|names| {
-            names
-                .get("en")
-                .copied()
-                .or_else(|| names.values().next().copied())
-        })
+        .names
+        .english
+        .or(city.city.names.simplified_chinese)
+        .or(city.city.names.french)
+        .or(city.city.names.spanish)
+        .or(city.city.names.japanese)
+        .or(city.city.names.german)
+        .or(city.city.names.brazilian_portuguese)
+        .or(city.city.names.russian)
         .map(str::to_string);
-    let (latitude, longitude) = city
-        .location
-        .map(|location| (location.latitude, location.longitude))
-        .unwrap_or((None, None));
     Some(GeoIpLocation {
         country: country.to_ascii_uppercase(),
         city: city_name,
-        latitude,
-        longitude,
+        latitude: city.location.latitude,
+        longitude: city.location.longitude,
     })
 }
 
@@ -253,7 +265,9 @@ mod tests {
 
     use nodelite_proto::GeoIpEdition;
 
-    use super::{dbip_download_url, is_lan_ip};
+    use std::path::Path;
+
+    use super::{dbip_download_url, is_lan_ip, temporary_database_path};
 
     #[test]
     fn lan_ip_detection_covers_private_and_documentation_ranges() {
@@ -283,5 +297,13 @@ mod tests {
     fn dbip_download_url_uses_requested_edition() {
         assert!(dbip_download_url(GeoIpEdition::CountryLite).contains("dbip-country-lite-"));
         assert!(dbip_download_url(GeoIpEdition::CityLite).contains("dbip-city-lite-"));
+    }
+
+    #[test]
+    fn temporary_database_path_uses_sibling_tmp_file() {
+        assert_eq!(
+            temporary_database_path(Path::new("/var/lib/nodelite/geoip/dbip.mmdb")),
+            Path::new("/var/lib/nodelite/geoip/dbip.mmdb.tmp"),
+        );
     }
 }

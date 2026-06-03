@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use chrono::{Duration as ChronoDuration, TimeZone, Utc};
 use nodelite_proto::{
-    LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot, ReadonlyAuthConfig,
-    ServerConfig, WsConfig, percentage,
+    GeoIpLocation, LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot,
+    ReadonlyAuthConfig, ServerConfig, WsConfig, percentage,
 };
 
 use super::{Registry, SessionControlHandle, SharedState};
@@ -386,6 +386,73 @@ async fn registry_disk_entries_total_counts_snapshot_disks() {
 }
 
 #[tokio::test]
+async fn refresh_geoip_locations_updates_online_node_view() {
+    let shared = SharedState::new(Arc::new(sample_config()));
+    let _session_id = shared
+        .register_node(sample_identity(), Some("8.8.8.8".to_string()), None)
+        .await;
+
+    assert_eq!(
+        shared.geoip_refresh_candidates().await,
+        vec![("hk-01".to_string(), "8.8.8.8".to_string())]
+    );
+
+    let updated = shared
+        .refresh_geoip_locations(vec![(
+            "hk-01".to_string(),
+            "8.8.8.8".to_string(),
+            GeoIpLocation {
+                country: "US".to_string(),
+                city: Some("Mountain View".to_string()),
+                latitude: Some(37.386),
+                longitude: Some(-122.0838),
+            },
+        )])
+        .await;
+
+    assert_eq!(updated, 1);
+    let status = shared.get_status("hk-01").await.expect("node status");
+    assert_eq!(status.geoip_country.as_deref(), Some("US"));
+    assert_eq!(status.geoip_city.as_deref(), Some("Mountain View"));
+    assert_eq!(status.geoip_latitude, Some(37.386));
+    assert_eq!(status.geoip_longitude, Some(-122.0838));
+
+    let summary = shared
+        .list_node_summaries()
+        .await
+        .into_iter()
+        .find(|node| node.identity.node_id == "hk-01")
+        .expect("node summary");
+    assert_eq!(summary.geoip_country.as_deref(), Some("US"));
+    assert_eq!(summary.geoip_city.as_deref(), Some("Mountain View"));
+}
+
+#[tokio::test]
+async fn refresh_geoip_locations_skips_stale_remote_ip() {
+    let shared = SharedState::new(Arc::new(sample_config()));
+    shared
+        .register_node(sample_identity(), Some("8.8.8.8".to_string()), None)
+        .await;
+
+    let updated = shared
+        .refresh_geoip_locations(vec![(
+            "hk-01".to_string(),
+            "1.1.1.1".to_string(),
+            GeoIpLocation {
+                country: "US".to_string(),
+                city: None,
+                latitude: None,
+                longitude: None,
+            },
+        )])
+        .await;
+
+    assert_eq!(updated, 0);
+    let status = shared.get_status("hk-01").await.expect("node status");
+    assert_eq!(status.geoip_country, None);
+}
+
+#[tokio::test]
 async fn snapshot_update_only_invalidates_nodes_view() {
     let shared = SharedState::new(Arc::new(sample_config()));
     let readiness = crate::ServerReadiness::new(true);
@@ -537,7 +604,7 @@ fn sample_config() -> ServerConfig {
             enabled: false,
             provider: nodelite_proto::GeoIpProvider::Dbip,
             edition: nodelite_proto::GeoIpEdition::CountryLite,
-            database_path: PathBuf::from("./data/geoip/dbip-country-lite.mmdb"),
+            database_path: PathBuf::from("./data/geoip/dbip.mmdb"),
             auto_update: true,
             update_interval_days: nodelite_proto::DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS,
         },

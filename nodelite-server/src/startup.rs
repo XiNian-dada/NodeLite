@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -205,7 +205,11 @@ fn spawn_server_background_tasks(config: &ServerConfig, state: &AppState) -> Vec
             state.shared.clone(),
             state.shutdown.clone(),
         ),
-        spawn_geoip_database_preparer(state.geoip.clone(), state.shutdown.clone()),
+        spawn_geoip_database_preparer(
+            state.geoip.clone(),
+            state.shared.clone(),
+            state.shutdown.clone(),
+        ),
     ];
     if let Some(handle) = spawn_insecure_transport_warning(
         config.public_base_url.clone(),
@@ -220,14 +224,37 @@ fn spawn_server_background_tasks(config: &ServerConfig, state: &AppState) -> Vec
 
 fn spawn_geoip_database_preparer(
     geoip: GeoIpResolver,
+    shared: SharedState,
     shutdown: CancellationToken,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         tokio::select! {
             _ = shutdown.cancelled() => {}
-            _ = geoip.prepare_database() => {}
+            prepared = geoip.prepare_database() => {
+                if prepared {
+                    refresh_online_geoip_locations(&geoip, &shared).await;
+                }
+            }
         }
     })
+}
+
+async fn refresh_online_geoip_locations(geoip: &GeoIpResolver, shared: &SharedState) {
+    let candidates = shared.geoip_refresh_candidates().await;
+    let mut updates = Vec::new();
+    for (node_id, remote_ip) in candidates {
+        let Ok(ip) = remote_ip.parse::<IpAddr>() else {
+            continue;
+        };
+        if let Some(location) = geoip.lookup(ip).await {
+            updates.push((node_id, remote_ip, location));
+        }
+    }
+
+    let updated = shared.refresh_geoip_locations(updates).await;
+    if updated > 0 {
+        info!(updated, "refreshed geoip locations for online nodes");
+    }
 }
 
 async fn log_registry_loaded(config: &ServerConfig, registry: &NodeRegistry) {
