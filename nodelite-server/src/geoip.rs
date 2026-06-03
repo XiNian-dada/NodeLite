@@ -16,10 +16,12 @@ use tracing::{info, warn};
 const LAN_COUNTRY_CODE: &str = "LAN";
 const DOWNLOAD_TIMEOUT_SECS: u64 = 30;
 
+type GeoIpReader = Arc<maxminddb::Reader<Vec<u8>>>;
+
 #[derive(Clone)]
 pub(crate) struct GeoIpResolver {
     config: GeoIpConfig,
-    reader: Arc<RwLock<Option<Arc<maxminddb::Reader<Vec<u8>>>>>>,
+    reader: Arc<RwLock<Option<GeoIpReader>>>,
 }
 
 impl GeoIpResolver {
