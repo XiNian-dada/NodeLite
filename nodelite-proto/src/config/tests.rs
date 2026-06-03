@@ -64,7 +64,7 @@ fn parses_server_config_with_defaults() {
     assert_eq!(config.geoip.edition, GeoIpEdition::CountryLite);
     assert_eq!(
         config.geoip.database_path,
-        PathBuf::from("./data/geoip/dbip-country-lite.mmdb")
+        PathBuf::from("./data/geoip/dbip.mmdb")
     );
     assert!(config.geoip.auto_update);
     assert_eq!(

@@ -73,8 +73,8 @@ enabled = false
 provider = "dbip"
 # country-lite 只提供国家; city-lite 会额外填充 city/latitude/longitude。
 edition = "country-lite"
-# MaxMind DB 格式的 .mmdb 文件路径。
-database_path = "./data/geoip/dbip-country-lite.mmdb"
+# MaxMind DB 格式的 .mmdb 文件路径。中性文件名可同时用于 country-lite / city-lite。
+database_path = "./data/geoip/dbip.mmdb"
 # 启动后后台检查并下载 DB-IP Lite 数据库,失败只记录 warning,不阻塞服务启动。
 auto_update = true
 # 本地数据库超过该天数后才会重新下载。

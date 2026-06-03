@@ -464,7 +464,7 @@ render_server_config() {
   if [ "$PUBLIC_SCHEME" = "http" ]; then
     insecure_allow_http_value="true"
   fi
-  geoip_database_path="${GEOIP_DATABASE_PATH:-${DATA_DIR}/geoip/dbip-country-lite.mmdb}"
+  geoip_database_path="${GEOIP_DATABASE_PATH:-${DATA_DIR}/geoip/dbip.mmdb}"
   cat <<EOF
 [server]
 listen = "${LISTEN_HOST}:${LISTEN_PORT}"

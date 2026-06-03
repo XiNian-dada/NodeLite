@@ -321,7 +321,7 @@ mod tests {
                 enabled: false,
                 provider: nodelite_proto::GeoIpProvider::Dbip,
                 edition: nodelite_proto::GeoIpEdition::CountryLite,
-                database_path: PathBuf::from("./data/geoip/dbip-country-lite.mmdb"),
+                database_path: PathBuf::from("./data/geoip/dbip.mmdb"),
                 auto_update: true,
                 update_interval_days: nodelite_proto::DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS,
             },

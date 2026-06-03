@@ -37,7 +37,7 @@ pub(super) fn default_audit_db_path() -> PathBuf {
 }
 
 pub(super) fn default_geoip_database_path() -> PathBuf {
-    PathBuf::from("./data/geoip/dbip-country-lite.mmdb")
+    PathBuf::from("./data/geoip/dbip.mmdb")
 }
 
 pub(super) fn default_stale_after_secs() -> u64 {
