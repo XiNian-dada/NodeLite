@@ -6,10 +6,13 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Router;
-use axum::body::Body;
+use axum::body::{Body, to_bytes};
 use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, HeaderValue, Request, StatusCode, header};
+use axum::response::IntoResponse;
 use axum::routing::get;
+use nodelite_proto::GeoIpProvider;
+use serde_json::Value;
 use tokio::runtime::Runtime;
 use tower::util::ServiceExt;
 use tower_http::trace::TraceLayer;
@@ -149,6 +152,66 @@ fn install_endpoints_disable_caching() {
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     });
+}
+
+#[test]
+fn bootstrap_reports_geoip_attribution_fields() {
+    let runtime = Runtime::new().expect("runtime should build");
+    runtime.block_on(async {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic enough")
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("nodelite-bootstrap-geoip-test-{unique}"));
+        std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+
+        let disabled = bootstrap_payload(&temp_dir, "disabled", false, GeoIpProvider::Dbip).await;
+        assert_eq!(disabled["geoip_enabled"], Value::Bool(false));
+        assert_eq!(disabled["geoip_provider"], Value::Null);
+
+        let dbip = bootstrap_payload(&temp_dir, "dbip", true, GeoIpProvider::Dbip).await;
+        assert_eq!(dbip["geoip_enabled"], Value::Bool(true));
+        assert_eq!(dbip["geoip_provider"], Value::String("dbip".to_string()));
+
+        let custom = bootstrap_payload(&temp_dir, "custom", true, GeoIpProvider::Custom).await;
+        assert_eq!(custom["geoip_enabled"], Value::Bool(true));
+        assert_eq!(
+            custom["geoip_provider"],
+            Value::String("custom".to_string())
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    });
+}
+
+async fn bootstrap_payload(
+    temp_dir: &std::path::Path,
+    suffix: &str,
+    geoip_enabled: bool,
+    geoip_provider: GeoIpProvider,
+) -> Value {
+    let mut config = test_server_config(
+        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8080)),
+        "https://monitor.example.com".to_string(),
+        temp_dir.join(format!("{suffix}-server.json")),
+        temp_dir.join(format!("{suffix}-history.sqlite3")),
+        temp_dir.join(format!("{suffix}-snapshot.json")),
+    );
+    config.readonly_auth = None;
+    config.geoip.enabled = geoip_enabled;
+    config.geoip.provider = geoip_provider;
+    let state = AppState::test_fixture(config.into(), Arc::new(temp_dir.join("server.toml")))
+        .await
+        .expect("state fixture should build");
+    let response = bootstrap(State(state.clone())).await.into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("bootstrap body should collect");
+    let payload = serde_json::from_slice(&body).expect("bootstrap body should be json");
+    state.history.shutdown().await;
+    state.audit_log.shutdown().await;
+    payload
 }
 
 #[test]
