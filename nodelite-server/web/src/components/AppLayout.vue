@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import { computed, onMounted } from 'vue';
 import SidebarNav from '@/components/SidebarNav.vue';
 import { useTheme } from '@/composables/useTheme';
 import { useLanguage } from '@/i18n/language';
 import { SUPPORTED_LOCALES, type SupportedLocale } from '@/i18n';
+import { useBootstrapStore } from '@/stores/bootstrap';
 
 // Shared chrome for every top-level view: sidebar rail + a header whose
 // left side is a per-view #title slot and right side holds the global
@@ -10,6 +12,19 @@ import { SUPPORTED_LOCALES, type SupportedLocale } from '@/i18n';
 // place so DashboardView / NodeDetailView don't each reimplement it.
 const { theme, toggleTheme } = useTheme();
 const { currentLocale, setLocale } = useLanguage();
+const bootstrapStore = useBootstrapStore();
+
+const geoipAttribution = computed(() => {
+  const bootstrap = bootstrapStore.data;
+  if (!bootstrap?.geoip_enabled) return null;
+  if (bootstrap.geoip_provider === 'dbip') return 'IP geolocation by DB-IP';
+  if (bootstrap.geoip_provider === 'custom') return 'GeoIP database: custom MMDB';
+  return null;
+});
+
+onMounted(() => {
+  void bootstrapStore.load();
+});
 
 function onLanguageChange(event: Event): void {
   setLocale((event.target as HTMLSelectElement).value);
@@ -83,7 +98,9 @@ const localeLabels: Record<SupportedLocale, string> = {
 
       <slot />
 
-      <footer class="geoip-attribution">IP geolocation by DB-IP</footer>
+      <footer v-if="geoipAttribution" class="geoip-attribution">
+        {{ geoipAttribution }}
+      </footer>
     </main>
   </div>
 </template>

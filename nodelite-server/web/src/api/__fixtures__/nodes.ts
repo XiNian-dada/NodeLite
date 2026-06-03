@@ -80,6 +80,8 @@ export function makeBootstrap(overrides: Partial<BootstrapResponse> = {}): Boots
     public_base_url: 'http://localhost:8080',
     refresh_interval_secs: 5,
     registered_nodes: 3,
+    geoip_enabled: false,
+    geoip_provider: null,
     ...overrides,
   };
 }

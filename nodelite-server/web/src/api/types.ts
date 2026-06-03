@@ -16,6 +16,8 @@ export interface BootstrapResponse {
   public_base_url: string;
   refresh_interval_secs: number;
   registered_nodes: number;
+  geoip_enabled: boolean;
+  geoip_provider: 'dbip' | 'custom' | null;
 }
 
 /** GET /api/overview — nodelite-proto OverviewData */

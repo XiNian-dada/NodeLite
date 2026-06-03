@@ -18,7 +18,7 @@ use crate::handlers::metrics_exporter::{
     render_metrics_response_body_bytes, render_runtime_metrics, render_writer_metrics,
 };
 use crate::history::HistoryError;
-use nodelite_proto::AgentLogEntry;
+use nodelite_proto::{AgentLogEntry, GeoIpProvider};
 
 const DEFAULT_HISTORY_WINDOW_HOURS: u64 = 24;
 const DEFAULT_HISTORY_MAX_POINTS: usize = 480;
@@ -36,6 +36,8 @@ struct BootstrapResponse {
     public_base_url: String,
     refresh_interval_secs: u64,
     registered_nodes: usize,
+    geoip_enabled: bool,
+    geoip_provider: Option<&'static str>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,14 +64,20 @@ pub(crate) struct AuditLogQuery {
 
 /// 提供给前端读取的"引导信息":服务名、刷新周期与已登记节点数。
 pub(crate) async fn bootstrap(State(state): State<AppState>) -> impl IntoResponse {
+    let config = state.shared.config();
     Json(BootstrapResponse {
         service: "nodelite-server",
         status: state.readiness.status_label(),
         ready: state.readiness.is_ready(),
         history_available: state.readiness.history_available(),
-        public_base_url: state.shared.config().public_base_url.clone(),
-        refresh_interval_secs: state.shared.config().refresh_interval_secs,
+        public_base_url: config.public_base_url.clone(),
+        refresh_interval_secs: config.refresh_interval_secs,
         registered_nodes: state.registry.count().await,
+        geoip_enabled: config.geoip.enabled,
+        geoip_provider: config.geoip.enabled.then_some(match config.geoip.provider {
+            GeoIpProvider::Dbip => "dbip",
+            GeoIpProvider::Custom => "custom",
+        }),
     })
 }
 
