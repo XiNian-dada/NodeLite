@@ -21,6 +21,7 @@ mod background;
 mod cli;
 mod encoding;
 mod fs_security;
+mod geoip;
 mod handlers;
 mod history;
 #[cfg(test)]

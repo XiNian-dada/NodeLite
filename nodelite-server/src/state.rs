@@ -21,8 +21,7 @@ use std::time::Duration;
 use axum::body::Bytes;
 use chrono::Utc;
 use nodelite_proto::{
-    GeoIpLocation, NodeIdentity, NodeListItem, NodeSnapshot, NodeStatus, OverviewData,
-    ServerConfig,
+    GeoIpLocation, NodeIdentity, NodeListItem, NodeSnapshot, NodeStatus, OverviewData, ServerConfig,
 };
 use tokio::sync::{Mutex, RwLock, broadcast, oneshot};
 

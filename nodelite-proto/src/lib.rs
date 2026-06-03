@@ -19,11 +19,12 @@ pub use config::{
     DEFAULT_ALERT_INSPECTION_LOOKBACK_HOURS, DEFAULT_ALERT_INSPECTION_MEMORY_WARN_PERCENT,
     DEFAULT_ALERT_INSPECTION_OFFLINE_GRACE_MINUTES, DEFAULT_ALERT_RULE_COOLDOWN_MINUTES,
     DEFAULT_ALERT_RULE_WINDOW_MINUTES, DEFAULT_AUDIT_RETENTION_DAYS,
-    DEFAULT_HISTORY_RETENTION_HOURS, DEFAULT_HISTORY_WRITE_INTERVAL_SECS,
-    DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_PING_INTERVAL_SECS, DEFAULT_REFRESH_INTERVAL_SECS,
-    DEFAULT_REPORT_INTERVAL_SECS, DEFAULT_STALE_AFTER_SECS, InspectionConfig, MAX_NODE_TAG_BYTES,
-    MAX_NODE_TAGS, ReadonlyAuthConfig, ServerConfig, WsConfig, normalize_totp_secret,
-    parse_agent_config, parse_server_config,
+    DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS, DEFAULT_HISTORY_RETENTION_HOURS,
+    DEFAULT_HISTORY_WRITE_INTERVAL_SECS, DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_PING_INTERVAL_SECS,
+    DEFAULT_REFRESH_INTERVAL_SECS, DEFAULT_REPORT_INTERVAL_SECS, DEFAULT_STALE_AFTER_SECS,
+    GeoIpConfig, GeoIpEdition, GeoIpProvider, InspectionConfig, MAX_NODE_TAG_BYTES, MAX_NODE_TAGS,
+    ReadonlyAuthConfig, ServerConfig, WsConfig, normalize_totp_secret, parse_agent_config,
+    parse_server_config,
 };
 pub use message::{
     AgentLogEntry, AgentLogsMessage, BrowserMessage, HelloMessage,
@@ -32,9 +33,9 @@ pub use message::{
     WIRE_PROTOCOL_VERSION, WireMessage,
 };
 pub use model::{
-    DiskUsage, HistoryPoint, LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity,
-    NodeListIdentity, NodeListItem, NodeListLoadAverage, NodeListMemoryUsage, NodeListSnapshot,
-    GeoIpLocation, NodeSnapshot, NodeStatus, OverviewData, percentage,
+    DiskUsage, GeoIpLocation, HistoryPoint, LoadAverage, MemoryUsage, NetworkCounters,
+    NodeIdentity, NodeListIdentity, NodeListItem, NodeListLoadAverage, NodeListMemoryUsage,
+    NodeListSnapshot, NodeSnapshot, NodeStatus, OverviewData, percentage,
 };
 pub use netutil::{host_is_local, uses_insecure_remote_url};
 pub use text::{truncate_string_to_byte_boundary, truncate_to_byte_boundary};

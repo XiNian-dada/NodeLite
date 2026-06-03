@@ -33,6 +33,7 @@ use crate::background::{
     spawn_insecure_transport_warning, spawn_registry_reloader, spawn_stale_reaper,
 };
 use crate::fs_security::log_if_directory_is_not_private;
+use crate::geoip::GeoIpResolver;
 use crate::handlers::{
     alert_settings, audit_log, bootstrap, change_readonly_password, disable_two_factor,
     enable_two_factor, healthz, index, install_agent_script, install_bootstrap, logout_and_reauth,
@@ -134,6 +135,7 @@ async fn initialize_server_runtime(
     let audit_log = AuditLog::new(config.audit.clone(), config.sqlite_busy_timeout_secs);
     history.initialize().await;
     audit_log.initialize().await?;
+    let geoip = GeoIpResolver::new(config.geoip.clone()).await;
     let readiness = ServerReadiness::new(history.is_available());
     readiness.mark_history_available(history.is_available());
     restore_snapshot_if_available(&shared, config.snapshot_path.as_path()).await;
@@ -143,6 +145,7 @@ async fn initialize_server_runtime(
         history,
         agent_logs,
         audit_log,
+        geoip,
         install_admission: InstallAdmissionController::new(auth_failure_admission_config(
             &config.ws,
         )),
@@ -202,6 +205,7 @@ fn spawn_server_background_tasks(config: &ServerConfig, state: &AppState) -> Vec
             state.shared.clone(),
             state.shutdown.clone(),
         ),
+        spawn_geoip_database_preparer(state.geoip.clone(), state.shutdown.clone()),
     ];
     if let Some(handle) = spawn_insecure_transport_warning(
         config.public_base_url.clone(),
@@ -212,6 +216,18 @@ fn spawn_server_background_tasks(config: &ServerConfig, state: &AppState) -> Vec
         background_tasks.push(handle);
     }
     background_tasks
+}
+
+fn spawn_geoip_database_preparer(
+    geoip: GeoIpResolver,
+    shutdown: CancellationToken,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = shutdown.cancelled() => {}
+            _ = geoip.prepare_database() => {}
+        }
+    })
 }
 
 async fn log_registry_loaded(config: &ServerConfig, registry: &NodeRegistry) {

@@ -204,6 +204,10 @@ pub(super) async fn seed_history_points(
         let status = NodeStatus {
             identity: fake_identity(credential),
             remote_ip: Some("127.0.0.1".to_string()),
+            geoip_country: None,
+            geoip_city: None,
+            geoip_latitude: None,
+            geoip_longitude: None,
             snapshot: Some(fake_snapshot_at(index as u64 + 1, recorded_at)),
             last_seen: Some(recorded_at),
             latency_ms: Some(6 + (index as u64 % 17)),
