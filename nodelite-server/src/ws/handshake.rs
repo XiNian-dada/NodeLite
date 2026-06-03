@@ -36,7 +36,7 @@ pub(super) async fn handle_socket(
         node_id: identity.node_id.clone(),
         node_label: identity.node_label.clone(),
         session_id: shared
-            .register_node(identity, Some(client_ip.to_string()))
+            .register_node(identity, Some(client_ip.to_string()), None)
             .await,
         session_token: hello.token,
         session_generation: authorized.generation,

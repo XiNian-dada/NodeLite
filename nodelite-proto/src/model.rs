@@ -88,6 +88,18 @@ pub struct NetworkCounters {
     pub tx_bytes_per_sec: Option<f64>,
 }
 
+/// Server 端推断出的 IP 地理位置。手动 tag 仍然可以在 UI 中覆盖/回退。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GeoIpLocation {
+    pub country: String,
+    #[serde(default)]
+    pub city: Option<String>,
+    #[serde(default)]
+    pub latitude: Option<f64>,
+    #[serde(default)]
+    pub longitude: Option<f64>,
+}
+
 /// 单次采样得到的完整节点快照。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NodeSnapshot {
@@ -120,6 +132,14 @@ pub struct NodeStatus {
     pub identity: NodeIdentity,
     #[serde(default)]
     pub remote_ip: Option<String>,
+    #[serde(default)]
+    pub geoip_country: Option<String>,
+    #[serde(default)]
+    pub geoip_city: Option<String>,
+    #[serde(default)]
+    pub geoip_latitude: Option<f64>,
+    #[serde(default)]
+    pub geoip_longitude: Option<f64>,
     pub snapshot: Option<NodeSnapshot>,
     pub last_seen: Option<DateTime<Utc>>,
     pub latency_ms: Option<u64>,
@@ -130,6 +150,14 @@ pub struct NodeStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NodeListItem {
     pub identity: NodeListIdentity,
+    #[serde(default)]
+    pub geoip_country: Option<String>,
+    #[serde(default)]
+    pub geoip_city: Option<String>,
+    #[serde(default)]
+    pub geoip_latitude: Option<f64>,
+    #[serde(default)]
+    pub geoip_longitude: Option<f64>,
     pub snapshot: Option<NodeListSnapshot>,
     pub latency_ms: Option<u64>,
     pub online: bool,
@@ -216,6 +244,10 @@ impl From<&NodeStatus> for NodeListItem {
     fn from(status: &NodeStatus) -> Self {
         Self {
             identity: NodeListIdentity::from(&status.identity),
+            geoip_country: status.geoip_country.clone(),
+            geoip_city: status.geoip_city.clone(),
+            geoip_latitude: status.geoip_latitude,
+            geoip_longitude: status.geoip_longitude,
             snapshot: status.snapshot.as_ref().map(NodeListSnapshot::from),
             latency_ms: status.latency_ms,
             online: status.online,

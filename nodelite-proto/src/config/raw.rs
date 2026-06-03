@@ -9,6 +9,8 @@ use super::defaults::{
     default_audit_db_path, default_audit_enabled, default_audit_log_failed_auth,
     default_audit_log_rate_limit, default_audit_log_successful_auth,
     default_audit_log_token_events, default_audit_retention_days, default_connect_timeout_secs,
+    default_geoip_auto_update, default_geoip_database_path, default_geoip_edition,
+    default_geoip_enabled, default_geoip_provider, default_geoip_update_interval_days,
     default_hello_timeout_secs, default_history_db_path, default_ignored_filesystems,
     default_insecure_transport_warn_interval_secs, default_max_incoming_message_bytes,
     default_max_message_bytes, default_max_outstanding_pings, default_max_sanitized_disks,
@@ -24,8 +26,8 @@ use super::helpers::{
     uses_insecure_remote_public_base_url, validate_sha256, validate_totp_secret, validate_url,
 };
 use super::{
-    AgentConfig, AlertingConfig, AuditConfig, ConfigError, ReadonlyAuthConfig, ServerConfig,
-    WsConfig,
+    AgentConfig, AlertingConfig, AuditConfig, ConfigError, GeoIpConfig, GeoIpEdition,
+    GeoIpProvider, ReadonlyAuthConfig, ServerConfig, WsConfig,
 };
 use crate::validation::{
     ValidationError, normalize_string_list, validate_identifier, validate_non_empty,
@@ -48,6 +50,8 @@ pub(super) struct RawServerConfigFile {
     ws: RawWsSection,
     #[serde(default)]
     audit: RawAuditSection,
+    #[serde(default)]
+    geoip: RawGeoIpSection,
     #[serde(default)]
     alerts: RawAlertsSection,
     #[serde(default)]
@@ -136,6 +140,23 @@ struct RawAuditSection {
     log_rate_limit: bool,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawGeoIpSection {
+    #[serde(default = "default_geoip_enabled")]
+    enabled: bool,
+    #[serde(default = "default_geoip_provider")]
+    provider: GeoIpProvider,
+    #[serde(default = "default_geoip_edition")]
+    edition: GeoIpEdition,
+    #[serde(default = "default_geoip_database_path")]
+    database_path: PathBuf,
+    #[serde(default = "default_geoip_auto_update")]
+    auto_update: bool,
+    #[serde(default = "default_geoip_update_interval_days")]
+    update_interval_days: u64,
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct RawAuthSection {
@@ -176,6 +197,19 @@ impl Default for RawAuditSection {
             log_failed_auth: default_audit_log_failed_auth(),
             log_token_events: default_audit_log_token_events(),
             log_rate_limit: default_audit_log_rate_limit(),
+        }
+    }
+}
+
+impl Default for RawGeoIpSection {
+    fn default() -> Self {
+        Self {
+            enabled: default_geoip_enabled(),
+            provider: default_geoip_provider(),
+            edition: default_geoip_edition(),
+            database_path: default_geoip_database_path(),
+            auto_update: default_geoip_auto_update(),
+            update_interval_days: default_geoip_update_interval_days(),
         }
     }
 }
@@ -244,6 +278,7 @@ impl RawServerConfigFile {
         let install = self.validate_install()?;
         let readonly_auth = self.validate_auth(&listen)?;
         let audit = self.validate_audit()?;
+        let geoip = self.validate_geoip()?;
         let alerting = self.validate_alerting()?;
         self.validate_server_limits()?;
         self.validate_ws_limits()?;
@@ -263,6 +298,7 @@ impl RawServerConfigFile {
                 auth_block_secs: self.ws.auth_block_secs,
             },
             audit,
+            geoip,
             alerting,
             node_registry_path: self.server.node_registry_path,
             history_db_path: self.server.history_db_path,
@@ -367,6 +403,27 @@ impl RawServerConfigFile {
             log_failed_auth: self.audit.log_failed_auth,
             log_token_events: self.audit.log_token_events,
             log_rate_limit: self.audit.log_rate_limit,
+        })
+    }
+
+    fn validate_geoip(&self) -> Result<GeoIpConfig, ConfigError> {
+        if self.geoip.update_interval_days == 0 {
+            return Err(ConfigError::new(
+                "geoip.update_interval_days must be greater than 0",
+            ));
+        }
+        if self.geoip.provider == GeoIpProvider::Custom && self.geoip.auto_update {
+            return Err(ConfigError::new(
+                "geoip.auto_update must be false when geoip.provider = \"custom\"",
+            ));
+        }
+        Ok(GeoIpConfig {
+            enabled: self.geoip.enabled,
+            provider: self.geoip.provider,
+            edition: self.geoip.edition,
+            database_path: self.geoip.database_path.clone(),
+            auto_update: self.geoip.auto_update,
+            update_interval_days: self.geoip.update_interval_days,
         })
     }
 

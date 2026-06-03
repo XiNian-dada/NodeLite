@@ -329,6 +329,10 @@ mod tests {
                 hostname: "hk-01".to_string(),
                 tags: vec!["apac".to_string()],
             },
+            geoip_country: None,
+            geoip_city: None,
+            geoip_latitude: None,
+            geoip_longitude: None,
             snapshot: Some(NodeListSnapshot {
                 cpu_usage_percent: Some(33.0),
                 load: NodeListLoadAverage { one: 0.5 },

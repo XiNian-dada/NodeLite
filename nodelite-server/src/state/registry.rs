@@ -4,7 +4,9 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use nodelite_proto::{NodeIdentity, NodeListItem, NodeSnapshot, NodeStatus, OverviewData};
+use nodelite_proto::{
+    GeoIpLocation, NodeIdentity, NodeListItem, NodeSnapshot, NodeStatus, OverviewData,
+};
 
 use super::overview::build_overview_from_iter;
 use super::session_control::SessionControlHandle;
@@ -32,14 +34,23 @@ impl Registry {
         session_id: u64,
         identity: NodeIdentity,
         remote_ip: Option<String>,
+        geoip: Option<GeoIpLocation>,
         now: DateTime<Utc>,
     ) {
         let node_id = identity.node_id.clone();
+        let geoip_country = geoip.as_ref().map(|location| location.country.clone());
+        let geoip_city = geoip.as_ref().and_then(|location| location.city.clone());
+        let geoip_latitude = geoip.as_ref().and_then(|location| location.latitude);
+        let geoip_longitude = geoip.as_ref().and_then(|location| location.longitude);
         let inserted = !self.nodes.contains_key(&node_id);
         let entry = self.nodes.entry(node_id).or_insert_with(|| NodeEntry {
             status: NodeStatus {
                 identity: identity.clone(),
                 remote_ip: remote_ip.clone(),
+                geoip_country: geoip_country.clone(),
+                geoip_city: geoip_city.clone(),
+                geoip_latitude,
+                geoip_longitude,
                 snapshot: None,
                 last_seen: Some(now),
                 latency_ms: None,
@@ -47,6 +58,10 @@ impl Registry {
             },
             summary: NodeListItem {
                 identity: nodelite_proto::NodeListIdentity::from(&identity),
+                geoip_country: geoip_country.clone(),
+                geoip_city: geoip_city.clone(),
+                geoip_latitude,
+                geoip_longitude,
                 snapshot: None,
                 latency_ms: None,
                 online: true,
@@ -57,6 +72,10 @@ impl Registry {
 
         entry.status.identity = identity;
         entry.status.remote_ip = remote_ip;
+        entry.status.geoip_country = geoip_country;
+        entry.status.geoip_city = geoip_city;
+        entry.status.geoip_latitude = geoip_latitude;
+        entry.status.geoip_longitude = geoip_longitude;
         entry.status.online = true;
         entry.status.last_seen = Some(now);
         entry.status.latency_ms = None;

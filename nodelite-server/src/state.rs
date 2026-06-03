@@ -21,7 +21,8 @@ use std::time::Duration;
 use axum::body::Bytes;
 use chrono::Utc;
 use nodelite_proto::{
-    NodeIdentity, NodeListItem, NodeSnapshot, NodeStatus, OverviewData, ServerConfig,
+    GeoIpLocation, NodeIdentity, NodeListItem, NodeSnapshot, NodeStatus, OverviewData,
+    ServerConfig,
 };
 use tokio::sync::{Mutex, RwLock, broadcast, oneshot};
 
@@ -139,11 +140,16 @@ impl SharedState {
 
     /// 登记一个新的 WebSocket 会话并返回唯一的 `session_id`。
     /// 同一节点重连时会得到比上次更大的 ID,从而抢占老的会话。
-    pub async fn register_node(&self, identity: NodeIdentity, remote_ip: Option<String>) -> u64 {
+    pub async fn register_node(
+        &self,
+        identity: NodeIdentity,
+        remote_ip: Option<String>,
+        geoip: Option<GeoIpLocation>,
+    ) -> u64 {
         let session_id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
         let now = Utc::now();
         let mut registry = self.registry.write().await;
-        registry.register_node(session_id, identity, remote_ip, now);
+        registry.register_node(session_id, identity, remote_ip, geoip, now);
         self.bump_view_revision();
         session_id
     }
