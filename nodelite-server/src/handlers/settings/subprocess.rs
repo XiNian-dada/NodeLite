@@ -133,15 +133,21 @@ impl UpdateLauncher {
                 Ok(UpdateLaunchMode::Systemd)
             }
             SystemdAvailability::Missing => {
-                warn!("systemd-run is unavailable for server updates; refusing unsafe shell fallback");
+                warn!(
+                    "systemd-run is unavailable for server updates; refusing unsafe shell fallback"
+                );
                 Err(unsupported_update_launcher())
             }
             SystemdAvailability::TimedOut => {
-                warn!("systemd-run probe timed out for server updates; refusing unsafe shell fallback");
+                warn!(
+                    "systemd-run probe timed out for server updates; refusing unsafe shell fallback"
+                );
                 Err(unsupported_update_launcher())
             }
             SystemdAvailability::Failed => {
-                warn!("systemd-run probe failed for server updates; refusing unsafe shell fallback");
+                warn!(
+                    "systemd-run probe failed for server updates; refusing unsafe shell fallback"
+                );
                 Err(unsupported_update_launcher())
             }
         }
@@ -341,7 +347,10 @@ mod tests {
 
         assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
         sleep(Duration::from_millis(50)).await;
-        assert!(!marker.exists(), "shell fallback should not have been spawned");
+        assert!(
+            !marker.exists(),
+            "shell fallback should not have been spawned"
+        );
     }
 
     async fn wait_for_file(path: &Path) -> String {
