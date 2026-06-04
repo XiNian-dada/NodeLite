@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use axum::Json;
 use axum::http::StatusCode;
@@ -72,6 +72,22 @@ pub(super) fn server_update_writable_paths(config: &nodelite_proto::ServerConfig
     paths
 }
 
+pub(super) fn is_writable_paths_subset_of_install_root(
+    paths: &[PathBuf],
+    install_root: &Path,
+) -> bool {
+    paths.iter().all(|path| {
+        !path
+            .components()
+            .any(|component| component == Component::ParentDir)
+            && (path.starts_with(install_root)
+                || path == Path::new("/usr/local/bin")
+                || path.starts_with("/usr/local/bin/")
+                || path == Path::new("/etc/systemd/system")
+                || path.starts_with("/etc/systemd/system/"))
+    })
+}
+
 pub(super) fn server_update_shell_command(log_path: &Path, cache_dir: &Path) -> String {
     let installer_url = format!(
         "{}/releases/latest/download/install-server.sh",
@@ -114,7 +130,7 @@ pub(super) fn server_update_shell_command(log_path: &Path, cache_dir: &Path) -> 
     .join("\n")
 }
 
-fn server_update_install_root(config: &nodelite_proto::ServerConfig) -> PathBuf {
+pub(super) fn server_update_install_root(config: &nodelite_proto::ServerConfig) -> PathBuf {
     let all_paths: Vec<&Path> = [
         config.node_registry_path.parent(),
         config.history_db_path.parent(),
@@ -181,8 +197,9 @@ mod tests {
     use nodelite_proto::{ServerConfig, WsConfig};
 
     use super::{
-        otpauth_uri, server_update_cache_dir, server_update_shell_command,
-        server_update_writable_paths, validate_password_for_settings,
+        is_writable_paths_subset_of_install_root, otpauth_uri, server_update_cache_dir,
+        server_update_install_root, server_update_shell_command, server_update_writable_paths,
+        validate_password_for_settings,
     };
 
     #[test]
@@ -271,12 +288,36 @@ mod tests {
     fn server_update_paths_stay_under_install_root_plus_required_system_dirs() {
         let config = sample_server_config();
         let paths = server_update_writable_paths(&config);
+        let install_root = server_update_install_root(&config);
 
         assert!(paths.contains(&PathBuf::from("/opt/nodelite")));
         assert!(paths.contains(&PathBuf::from("/opt/nodelite/data")));
         assert!(paths.contains(&PathBuf::from("/opt/nodelite/data/.server-update-cache")));
         assert!(paths.contains(&PathBuf::from("/usr/local/bin")));
         assert!(paths.contains(&PathBuf::from("/etc/systemd/system")));
+        assert!(is_writable_paths_subset_of_install_root(
+            &paths,
+            &install_root,
+        ));
+    }
+
+    #[test]
+    fn server_update_paths_reject_parent_dir_and_unapproved_roots() {
+        let install_root = Path::new("/opt/nodelite");
+        let invalid_root = vec![
+            PathBuf::from("/opt/nodelite/data"),
+            PathBuf::from("/var/lib/nodelite"),
+        ];
+        assert!(!is_writable_paths_subset_of_install_root(
+            &invalid_root,
+            install_root,
+        ));
+
+        let parent_dir_escape = vec![PathBuf::from("/usr/local/bin/../etc")];
+        assert!(!is_writable_paths_subset_of_install_root(
+            &parent_dir_escape,
+            install_root,
+        ));
     }
 
     #[test]
