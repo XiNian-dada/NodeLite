@@ -118,7 +118,13 @@ impl HostCollector {
             node_id: config.node_id.clone(),
             node_label: config.node_label.clone(),
             hostname: config.hostname_override.clone().unwrap_or(read_hostname()?),
-            os: read_os_name().unwrap_or_else(|_| "macOS".to_string()),
+            os: read_os_name().unwrap_or_else(|error| {
+                warn!(
+                    error = ?error,
+                    "failed to parse macOS SystemVersion.plist; falling back to generic OS name"
+                );
+                "macOS".to_string()
+            }),
             kernel_version: read_kernel_version().ok(),
             cpu_model: read_cpu_model().ok(),
             cpu_cores: count_cpu_cores().unwrap_or(1),
@@ -253,8 +259,12 @@ fn c_chars_to_string(value: &[libc::c_char]) -> Result<String> {
 fn read_os_name() -> Result<String> {
     let content = fs::read_to_string("/System/Library/CoreServices/SystemVersion.plist")
         .context("read /System/Library/CoreServices/SystemVersion.plist")?;
-    let product_name = extract_plist_value(&content, "ProductName");
-    let product_version = extract_plist_value(&content, "ProductVersion");
+    parse_os_name_from_plist(&content)
+}
+
+fn parse_os_name_from_plist(content: &str) -> Result<String> {
+    let product_name = extract_plist_value(content, "ProductName");
+    let product_version = extract_plist_value(content, "ProductVersion");
 
     match (product_name, product_version) {
         (Some(name), Some(version)) => Ok(format!("{name} {version}")),
@@ -266,6 +276,8 @@ fn read_os_name() -> Result<String> {
     }
 }
 
+/// 仅解析 Apple `SystemVersion.plist` 里 `<key>` 后紧邻 `<string>` 的简单模式。
+/// 如果 plist 结构改成注释、CDATA 或其它元素穿插,这里会返回 `None` 让调用方走告警回退。
 fn extract_plist_value(content: &str, key: &str) -> Option<String> {
     let key_marker = format!("<key>{key}</key>");
     let key_index = content.find(&key_marker)?;
@@ -766,7 +778,7 @@ mod tests {
     use super::{
         NetworkInterfaceCache, NetworkInterfaceSignature, ObservedNetworkSample,
         compute_available_memory_bytes, compute_network_rates,
-        compute_network_rates_if_same_interfaces, extract_plist_value,
+        compute_network_rates_if_same_interfaces, extract_plist_value, parse_os_name_from_plist,
     };
     use std::time::{Duration, Instant};
 
@@ -789,6 +801,44 @@ mod tests {
         assert_eq!(
             extract_plist_value(content, "ProductVersion").as_deref(),
             Some("15.5")
+        );
+    }
+
+    #[test]
+    fn parses_os_name_from_system_version_plist() {
+        let content = r#"
+            <plist version="1.0">
+              <dict>
+                <key>ProductName</key>
+                <string>macOS</string>
+                <key>ProductVersion</key>
+                <string>15.5</string>
+              </dict>
+            </plist>
+        "#;
+
+        assert_eq!(
+            parse_os_name_from_plist(content).expect("plist should parse"),
+            "macOS 15.5"
+        );
+    }
+
+    #[test]
+    fn rejects_plist_without_product_fields() {
+        let content = r#"
+            <plist version="1.0">
+              <dict>
+                <key>BuildVersion</key>
+                <string>24F74</string>
+              </dict>
+            </plist>
+        "#;
+
+        let error = parse_os_name_from_plist(content).expect_err("plist should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("ProductName/ProductVersion missing from SystemVersion.plist")
         );
     }
 
