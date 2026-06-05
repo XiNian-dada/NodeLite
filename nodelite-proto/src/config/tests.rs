@@ -12,6 +12,16 @@ use super::{
 };
 
 #[test]
+fn server_example_documents_install_section() {
+    let example = include_str!("../../../config/server.example.toml");
+
+    assert!(example.contains("[install]"));
+    assert!(example.contains("agent_release_base_url"));
+    assert!(example.contains("agent_release_sha256_x86_64"));
+    assert!(example.contains("agent_release_sha256_aarch64"));
+}
+
+#[test]
 fn parses_server_config_with_defaults() {
     let config = parse_server_config(
         r#"

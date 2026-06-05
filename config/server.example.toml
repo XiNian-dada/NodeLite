@@ -80,6 +80,13 @@ auto_update = true
 # 本地数据库超过该天数后才会重新下载。
 update_interval_days = 30
 
+[install]
+# 可选:覆盖 install-agent / upgrade-agent 使用的 release 基地址。
+agent_release_base_url = "https://downloads.example.com/nodelite/releases/latest/download"
+# 当配置了 agent_release_base_url 时,两个架构的 SHA256 都必须同时提供。
+agent_release_sha256_x86_64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+agent_release_sha256_aarch64 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+
 [alerts]
 # 告警功能总开关。打开后可以通过 Web UI 配置规则与渠道。
 enabled = false
