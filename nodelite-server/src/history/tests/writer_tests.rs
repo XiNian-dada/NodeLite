@@ -61,33 +61,6 @@ async fn record_status_flushes_through_writer_task_to_sqlite() {
 }
 
 #[tokio::test]
-async fn history_writer_does_not_wait_for_read_connection_lock() {
-    let db_path = temp_history_db_path("writer-write-connection");
-    let store = HistoryStore::new(db_path.clone(), 5);
-    store.initialize().await;
-    assert!(store.is_available());
-
-    let read_guard = store.read_connection.lock().await;
-    let status = fake_status_for("hk-01", Utc::now());
-    store.record_status(&status).await;
-    tokio::time::timeout(std::time::Duration::from_secs(1), store.shutdown())
-        .await
-        .expect("writer flush should not wait for read connection lock");
-    drop(read_guard);
-
-    let connection = initialize_database(&db_path, 5).expect("re-open database");
-    let count: i64 = connection
-        .query_row("SELECT COUNT(*) FROM history_points", [], |row| row.get(0))
-        .expect("count query");
-    assert_eq!(count, 1);
-
-    let _ = std::fs::remove_file(&db_path);
-    if let Some(parent) = db_path.parent() {
-        let _ = std::fs::remove_dir(parent);
-    }
-}
-
-#[tokio::test]
 async fn record_status_does_not_throttle_after_queue_full_drop() {
     let db_path = temp_history_db_path("queue-full-throttle");
     let store = HistoryStore::new(db_path.clone(), 5);

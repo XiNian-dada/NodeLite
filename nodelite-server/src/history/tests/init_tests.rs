@@ -52,20 +52,20 @@ fn history_database_artifacts_are_mode_600() {
 }
 
 #[tokio::test]
-async fn query_history_reports_connection_not_initialized() {
+async fn query_history_reports_query_error_when_read_database_is_missing() {
     let store = HistoryStore::new(PathBuf::from("./data/history.sqlite3"), 5);
     store.available.store(true, Ordering::Relaxed);
 
     let error = store
         .query_history("hk-01", 1, 60)
         .await
-        .expect_err("query should surface typed connection error");
+        .expect_err("query should surface read connection error");
 
-    assert!(matches!(error, HistoryError::ConnectionNotInitialized));
+    assert!(matches!(error, HistoryError::Query(_)));
 }
 
 #[tokio::test]
-async fn query_history_range_reports_connection_not_initialized() {
+async fn query_history_range_reports_query_error_when_read_database_is_missing() {
     let store = HistoryStore::new(PathBuf::from("./data/history.sqlite3"), 5);
     store.available.store(true, Ordering::Relaxed);
 
@@ -73,9 +73,9 @@ async fn query_history_range_reports_connection_not_initialized() {
     let error = store
         .query_history_range("hk-01", now - Duration::hours(1), now, 60)
         .await
-        .expect_err("range query should surface typed connection error");
+        .expect_err("range query should surface read connection error");
 
-    assert!(matches!(error, HistoryError::ConnectionNotInitialized));
+    assert!(matches!(error, HistoryError::Query(_)));
 }
 
 #[test]
