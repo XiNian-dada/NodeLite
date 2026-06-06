@@ -333,6 +333,25 @@ cargo test -p nodelite-server sanitize::tests
 cargo test -p nodelite-server registry::tests
 ```
 
+### 协议解析 fuzz smoke
+
+`fuzz/` 是独立的 Cargo crate，不属于默认 workspace，因此不会被普通
+`cargo test --workspace` 编译。它覆盖外部 WebSocket 文本帧的 JSON 解析入口：
+`WireMessage`（Agent 通道）和 `BrowserMessage`（浏览器通道）。
+
+常用手动验证命令：
+
+```bash
+cargo test --manifest-path fuzz/Cargo.toml
+cargo run --manifest-path fuzz/Cargo.toml --bin wire_message -- fuzz/corpus/protocol_messages
+cargo run --manifest-path fuzz/Cargo.toml --bin browser_message -- fuzz/corpus/protocol_messages
+cargo run --manifest-path fuzz/Cargo.toml --bin protocol_messages -- 10000
+```
+
+其中 `protocol_messages` 使用固定种子的伪随机输入跑指定迭代数，适合在本地或
+定期任务中做“任意输入不崩溃”的快速 smoke；真实崩溃应以能复现的 corpus 文件
+形式加入 `fuzz/corpus/protocol_messages/`。
+
 ## 交叉编译 Linux x86_64 / aarch64
 
 仓库内已经包含 musl 目标的 `lld` 链接配置，可以直接构建静态 Linux 二进制：
