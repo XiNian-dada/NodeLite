@@ -14,6 +14,7 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use include_dir::{Dir, include_dir};
 use sha2::{Digest, Sha256};
+use tracing::error;
 
 /// Embedded web assets from `web/dist/`
 static WEB_ASSETS: Dir = include_dir!("$CARGO_MANIFEST_DIR/web/dist");
@@ -62,14 +63,16 @@ pub fn verify_2fa_page() -> Response {
         }
     };
 
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-        .header(header::CACHE_CONTROL, NO_CACHE)
-        .header(header::PRAGMA, "no-cache")
-        .header(header::CONTENT_SECURITY_POLICY, verify_2fa_csp())
-        .body(Body::from(file.contents()))
-        .unwrap()
+    finish_asset_response(
+        "verify-2fa page",
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+            .header(header::CACHE_CONTROL, NO_CACHE)
+            .header(header::PRAGMA, "no-cache")
+            .header(header::CONTENT_SECURITY_POLICY, verify_2fa_csp())
+            .body(Body::from(file.contents())),
+    )
 }
 
 /// Serves static assets from `/assets/*` path
@@ -107,7 +110,17 @@ fn serve_file(path: &str, cache_control: &str, csp: &str) -> Response {
     if cache_control == NO_CACHE {
         builder = builder.header(header::PRAGMA, "no-cache");
     }
-    builder.body(Body::from(file.contents())).unwrap()
+    finish_asset_response(path, builder.body(Body::from(file.contents())))
+}
+
+fn finish_asset_response(asset: &str, response: Result<Response, axum::http::Error>) -> Response {
+    match response {
+        Ok(response) => response,
+        Err(error) => {
+            error!(error = ?error, asset, "failed to build web asset response");
+            (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
+        }
+    }
 }
 
 /// Determines if a path is a content-hashed asset (safe to cache forever).
@@ -334,6 +347,18 @@ mod tests {
             !csp.contains("script-src 'self' 'unsafe-inline'"),
             "csp={csp}"
         );
+    }
+
+    #[test]
+    fn finish_asset_response_returns_500_on_builder_error() {
+        let response = finish_asset_response(
+            "broken asset",
+            Response::builder()
+                .header(header::CONTENT_TYPE, "bad\nvalue")
+                .body(Body::empty()),
+        );
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[test]
