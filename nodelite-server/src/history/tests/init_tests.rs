@@ -53,7 +53,8 @@ fn history_database_artifacts_are_mode_600() {
 
 #[tokio::test]
 async fn query_history_reports_query_error_when_read_database_is_missing() {
-    let store = HistoryStore::new(PathBuf::from("./data/history.sqlite3"), 5);
+    let db_path = temp_history_db_path("missing-query-db");
+    let store = HistoryStore::new(db_path.clone(), 5);
     store.available.store(true, Ordering::Relaxed);
 
     let error = store
@@ -62,11 +63,16 @@ async fn query_history_reports_query_error_when_read_database_is_missing() {
         .expect_err("query should surface read connection error");
 
     assert!(matches!(error, HistoryError::Query(_)));
+
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
 }
 
 #[tokio::test]
 async fn query_history_range_reports_query_error_when_read_database_is_missing() {
-    let store = HistoryStore::new(PathBuf::from("./data/history.sqlite3"), 5);
+    let db_path = temp_history_db_path("missing-range-query-db");
+    let store = HistoryStore::new(db_path.clone(), 5);
     store.available.store(true, Ordering::Relaxed);
 
     let now = Utc::now();
@@ -76,6 +82,10 @@ async fn query_history_range_reports_query_error_when_read_database_is_missing()
         .expect_err("range query should surface read connection error");
 
     assert!(matches!(error, HistoryError::Query(_)));
+
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
 }
 
 #[test]
