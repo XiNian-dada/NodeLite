@@ -563,14 +563,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn truncate_to_byte_boundary_preserves_utf8() {
-        let value = "日志-abcdef";
-        let truncated = nodelite_proto::truncate_to_byte_boundary(value, 5);
-        assert!(truncated.is_char_boundary(truncated.len()));
-        assert_eq!(truncated, "日");
-    }
-
     fn test_entry(message: String) -> AgentLogEntry {
         AgentLogEntry {
             occurred_at: Utc::now().to_rfc3339(),

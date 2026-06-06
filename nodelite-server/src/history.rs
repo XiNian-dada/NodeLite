@@ -38,6 +38,7 @@ use self::query::{HistoryQueryError, query_history, query_history_between};
 use self::writer::{WriterContext, build_history_point, run_history_writer};
 #[cfg(test)]
 use self::writer::{sqlite_busy_retry_delay, write_history_point};
+use crate::queue::{QueueSendError, bounded_mpsc_channel, record_dropped_write, try_enqueue};
 
 /// SQLite 在并发写入冲突时的等待时长。
 const SQLITE_BUSY_MAX_RETRIES: u32 = 10;
@@ -175,7 +176,7 @@ impl HistoryStore {
 
     /// 启动后台 writer task:消费 channel,做 batch transaction 写入。
     async fn spawn_writer_task(&self) {
-        let (tx, rx) = mpsc::channel::<HistoryPoint>(HISTORY_CHANNEL_CAPACITY);
+        let (tx, rx) = bounded_mpsc_channel(HISTORY_CHANNEL_CAPACITY);
         {
             let mut guard = self.writer_tx.write().await;
             *guard = Some(tx);
@@ -264,19 +265,18 @@ impl HistoryStore {
             }
         }
 
-        match tx.try_send(point) {
+        match try_enqueue(&tx, point) {
             Ok(()) => {
                 throttle.insert(node_id, recorded_at);
             }
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                self.dropped_writes.fetch_add(1, Ordering::Relaxed);
+            Err(QueueSendError::Full) => {
+                let dropped_total = record_dropped_write(&self.dropped_writes);
                 warn!(
                     capacity = HISTORY_CHANNEL_CAPACITY,
-                    dropped_total = self.dropped_writes.load(Ordering::Relaxed),
-                    "history writer queue full; dropping write"
+                    dropped_total, "history writer queue full; dropping write"
                 );
             }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
+            Err(QueueSendError::Closed) => {
                 // Writer 已退出 — 标记 store 整体不可用,后续 record_status 会快速 return。
                 self.available.store(false, Ordering::Relaxed);
             }

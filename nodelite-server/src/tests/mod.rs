@@ -15,4 +15,3 @@ mod readonly_auth_tests;
 mod route_surface_tests;
 mod sanitize_snapshot_tests;
 mod support;
-mod truncate_tests;

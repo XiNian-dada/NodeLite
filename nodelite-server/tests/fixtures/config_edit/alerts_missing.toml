@@ -1,0 +1,7 @@
+[server]
+listen = "127.0.0.1:8080"
+public_base_url = "https://monitor.example.com"
+
+[auth]
+username = "viewer"
+password = "old-pass"

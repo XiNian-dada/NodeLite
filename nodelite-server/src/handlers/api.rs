@@ -400,3 +400,26 @@ pub(crate) async fn node_logs(
         .clamp(1, MAX_NODE_LOG_LIMIT);
     Json(state.agent_logs.list(&node_id, limit).await)
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Bytes;
+
+    use super::metrics_response_body;
+
+    #[test]
+    fn metrics_response_body_size_metric_matches_final_body_len() {
+        let body = metrics_response_body(
+            Bytes::from_static(b"nodelite_cached_metric 1\n"),
+            "nodelite_dynamic_metric 2\n".to_string(),
+        );
+        let text = std::str::from_utf8(body.as_ref()).expect("metrics body should be utf-8");
+
+        assert!(text.contains("nodelite_cached_metric 1\n"));
+        assert!(text.contains("nodelite_dynamic_metric 2\n"));
+        assert!(text.contains(&format!(
+            "nodelite_metrics_response_body_bytes {}",
+            body.len()
+        )));
+    }
+}

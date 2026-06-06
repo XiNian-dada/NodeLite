@@ -7,6 +7,7 @@
 
 mod alerts;
 mod defaults;
+mod edit;
 mod helpers;
 mod raw;
 #[cfg(test)]
@@ -34,6 +35,7 @@ pub use self::alerts::{
     DEFAULT_ALERT_INSPECTION_MEMORY_WARN_PERCENT, DEFAULT_ALERT_INSPECTION_OFFLINE_GRACE_MINUTES,
     DEFAULT_ALERT_RULE_COOLDOWN_MINUTES, DEFAULT_ALERT_RULE_WINDOW_MINUTES, InspectionConfig,
 };
+pub use self::edit::upsert_toml_item_preserving_decor;
 pub use self::helpers::normalize_totp_secret;
 
 /// 节点超时阈值:超过该时长未收到任何报文即视为离线。

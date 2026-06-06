@@ -33,6 +33,7 @@ mod integration_tests;
 #[cfg(test)]
 mod load_test;
 mod qr;
+mod queue;
 mod registry;
 mod sanitize;
 mod snapshot;

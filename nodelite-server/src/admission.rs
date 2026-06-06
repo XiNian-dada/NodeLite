@@ -4,8 +4,8 @@
 //! 1. [`WsAdmissionController`] 对 `/ws` 做"总量 + 单 IP"并发限流,叠加认证失败封禁。
 //! 2. [`InstallAdmissionController`] 仅按 IP 做认证失败封禁,因为 install 是
 //!    一次性短请求,没有"活动连接数"概念,被复用为 `/api/verify-2fa` 的 IP 限流。
-//! 3. [`resolve_client_ip`] 在反向代理场景下解析真实客户端 IP,以及 [`AuthFailureState`]
-//!    及其 prune/sweep helpers 这两个 controller 共享。
+//! 3. [`resolve_client_ip`] 在反向代理场景下解析真实客户端 IP,以及 [`AuthFailureTracker`]
+//!    这套共享失败追踪状态机。
 
 use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
@@ -30,6 +30,93 @@ const INSTALL_AUTH_FAILURE_TABLE_HARD_LIMIT: usize = 4096;
 pub struct AuthFailureState {
     pub recent_failures: VecDeque<Instant>,
     pub blocked_until: Option<Instant>,
+}
+
+#[derive(Debug)]
+struct AuthFailureTracker {
+    failures: HashMap<IpAddr, AuthFailureState>,
+    soft_limit: usize,
+    hard_limit: usize,
+}
+
+impl AuthFailureTracker {
+    fn new(soft_limit: usize, hard_limit: usize) -> Self {
+        Self {
+            failures: HashMap::new(),
+            soft_limit,
+            hard_limit,
+        }
+    }
+
+    fn check(
+        &mut self,
+        client_ip: IpAddr,
+        now: Instant,
+        failure_window: Duration,
+    ) -> Result<(), u64> {
+        let failure_state = self.failures.entry(client_ip).or_default();
+        prune_auth_failure_state(failure_state, now, failure_window);
+        if let Some(blocked_until) = failure_state.blocked_until
+            && blocked_until > now
+        {
+            return Err(blocked_until.duration_since(now).as_secs().max(1));
+        }
+        if failure_state.recent_failures.is_empty() && failure_state.blocked_until.is_none() {
+            self.failures.remove(&client_ip);
+        }
+        Ok(())
+    }
+
+    fn record_failure(
+        &mut self,
+        client_ip: IpAddr,
+        now: Instant,
+        failure_window: Duration,
+        max_attempts: usize,
+        block_duration: Duration,
+    ) {
+        let failure_state = self.failures.entry(client_ip).or_default();
+        prune_auth_failure_state(failure_state, now, failure_window);
+        failure_state.recent_failures.push_back(now);
+        if failure_state.recent_failures.len() >= max_attempts {
+            failure_state.blocked_until = Some(now + block_duration);
+            failure_state.recent_failures.clear();
+        }
+        self.trim(now, failure_window);
+    }
+
+    fn clear(&mut self, client_ip: IpAddr) {
+        self.failures.remove(&client_ip);
+    }
+
+    fn recover_after_poison(&mut self, now: Instant, failure_window: Duration) {
+        sweep_expired_auth_failures(&mut self.failures, now, failure_window);
+        self.failures.retain(|_, failure_state| {
+            failure_state.blocked_until.is_some_and(|until| until > now)
+                || !failure_state.recent_failures.is_empty()
+        });
+        enforce_auth_failure_hard_cap(&mut self.failures, self.hard_limit);
+    }
+
+    fn trim(&mut self, now: Instant, failure_window: Duration) {
+        trim_auth_failure_table(
+            &mut self.failures,
+            now,
+            failure_window,
+            self.soft_limit,
+            self.hard_limit,
+        );
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.failures.len()
+    }
+
+    #[cfg(test)]
+    fn contains_key(&self, client_ip: &IpAddr) -> bool {
+        self.failures.contains_key(client_ip)
+    }
 }
 
 pub fn auth_failure_admission_config(ws: &WsConfig) -> InstallAdmissionConfig {
@@ -65,11 +152,24 @@ pub struct WsAdmissionSnapshot {
     pub max_connections_per_ip: usize,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct WsAdmissionState {
     total_active_connections: usize,
     active_by_ip: HashMap<IpAddr, usize>,
-    auth_failures: HashMap<IpAddr, AuthFailureState>,
+    auth_failures: AuthFailureTracker,
+}
+
+impl WsAdmissionState {
+    fn new() -> Self {
+        Self {
+            total_active_connections: 0,
+            active_by_ip: HashMap::new(),
+            auth_failures: AuthFailureTracker::new(
+                WS_AUTH_FAILURE_TABLE_SOFT_LIMIT,
+                WS_AUTH_FAILURE_TABLE_HARD_LIMIT,
+            ),
+        }
+    }
 }
 
 /// RAII 句柄:存在意味着占用一个 WebSocket 连接槽,析构时归还。
@@ -90,7 +190,7 @@ impl WsAdmissionController {
     pub fn new(config: &WsConfig) -> Self {
         Self {
             config: config.clone(),
-            state: Arc::new(Mutex::new(WsAdmissionState::default())),
+            state: Arc::new(Mutex::new(WsAdmissionState::new())),
         }
     }
 
@@ -101,18 +201,10 @@ impl WsAdmissionController {
         let now = Instant::now();
         let mut state = self.lock_state();
         let failure_window = Duration::from_secs(self.config.auth_fail_window_secs);
-        let failure_state = state.auth_failures.entry(client_ip).or_default();
-        prune_auth_failure_state(failure_state, now, failure_window);
-        if let Some(blocked_until) = failure_state.blocked_until
-            && blocked_until > now
-        {
-            return Err(WsAdmissionError::Blocked {
-                retry_after_secs: blocked_until.duration_since(now).as_secs().max(1),
-            });
-        }
-        if failure_state.recent_failures.is_empty() && failure_state.blocked_until.is_none() {
-            state.auth_failures.remove(&client_ip);
-        }
+        state
+            .auth_failures
+            .check(client_ip, now, failure_window)
+            .map_err(|retry_after_secs| WsAdmissionError::Blocked { retry_after_secs })?;
 
         if state.total_active_connections >= self.config.max_total_connections {
             return Err(WsAdmissionError::TotalCapacity);
@@ -136,31 +228,23 @@ impl WsAdmissionController {
         let now = Instant::now();
         let failure_window = Duration::from_secs(self.config.auth_fail_window_secs);
         let mut state = self.lock_state();
-        let failure_state = state.auth_failures.entry(client_ip).or_default();
-        prune_auth_failure_state(failure_state, now, failure_window);
-        failure_state.recent_failures.push_back(now);
-        if failure_state.recent_failures.len() >= self.config.auth_fail_max_attempts {
-            failure_state.blocked_until =
-                Some(now + Duration::from_secs(self.config.auth_block_secs));
-            failure_state.recent_failures.clear();
-        }
         // 攻击者可以用一波伪造 IP 把失败表撑大,而单 IP 后续不再回访就不会被
-        // `try_acquire` / `prune_auth_failure_state` 主动清理 —— 在长跑实例里
+        // `try_acquire` / `AuthFailureTracker::check` 主动清理 —— 在长跑实例里
         // 这是一条慢速内存泄漏。表过大时顺手做一次全表扫描,把已过期且未封禁
         // 的条目删掉;代价 O(N) 但摊销到攻击侧,稳态查询路径仍然 O(1)。
-        trim_auth_failure_table(
-            &mut state.auth_failures,
+        state.auth_failures.record_failure(
+            client_ip,
             now,
             failure_window,
-            WS_AUTH_FAILURE_TABLE_SOFT_LIMIT,
-            WS_AUTH_FAILURE_TABLE_HARD_LIMIT,
+            self.config.auth_fail_max_attempts,
+            Duration::from_secs(self.config.auth_block_secs),
         );
     }
 
     /// 认证成功后清理该 IP 的失败历史。
     pub fn clear_auth_failures(&self, client_ip: IpAddr) {
         let mut state = self.lock_state();
-        state.auth_failures.remove(&client_ip);
+        state.auth_failures.clear(client_ip);
     }
 
     pub fn snapshot(&self) -> WsAdmissionSnapshot {
@@ -191,15 +275,7 @@ impl WsAdmissionController {
             let mut guard = poisoned.into_inner();
             let now = Instant::now();
             let failure_window = Duration::from_secs(self.config.auth_fail_window_secs);
-            sweep_expired_auth_failures(&mut guard.auth_failures, now, failure_window);
-            guard.auth_failures.retain(|_, failure_state| {
-                failure_state.blocked_until.is_some_and(|until| until > now)
-                    || !failure_state.recent_failures.is_empty()
-            });
-            enforce_auth_failure_hard_cap(
-                &mut guard.auth_failures,
-                WS_AUTH_FAILURE_TABLE_HARD_LIMIT,
-            );
+            guard.auth_failures.recover_after_poison(now, failure_window);
             reconcile_ws_connection_counters(&mut guard, &self.config);
             self.state.clear_poison();
             guard
@@ -243,16 +319,27 @@ pub struct InstallAdmissionConfig {
     pub auth_block_secs: u64,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct InstallAdmissionState {
-    auth_failures: HashMap<IpAddr, AuthFailureState>,
+    auth_failures: AuthFailureTracker,
+}
+
+impl InstallAdmissionState {
+    fn new() -> Self {
+        Self {
+            auth_failures: AuthFailureTracker::new(
+                INSTALL_AUTH_FAILURE_TABLE_SOFT_LIMIT,
+                INSTALL_AUTH_FAILURE_TABLE_HARD_LIMIT,
+            ),
+        }
+    }
 }
 
 impl InstallAdmissionController {
     pub fn new(config: InstallAdmissionConfig) -> Self {
         Self {
             config,
-            state: Arc::new(Mutex::new(InstallAdmissionState::default())),
+            state: Arc::new(Mutex::new(InstallAdmissionState::new())),
         }
     }
 
@@ -262,43 +349,25 @@ impl InstallAdmissionController {
         let now = Instant::now();
         let mut state = self.lock_state();
         let failure_window = Duration::from_secs(self.config.auth_fail_window_secs);
-        let failure_state = state.auth_failures.entry(client_ip).or_default();
-        prune_auth_failure_state(failure_state, now, failure_window);
-        if let Some(blocked_until) = failure_state.blocked_until
-            && blocked_until > now
-        {
-            return Err(blocked_until.duration_since(now).as_secs().max(1));
-        }
-        if failure_state.recent_failures.is_empty() && failure_state.blocked_until.is_none() {
-            state.auth_failures.remove(&client_ip);
-        }
-        Ok(())
+        state.auth_failures.check(client_ip, now, failure_window)
     }
 
     pub fn record_auth_failure(&self, client_ip: IpAddr) {
         let now = Instant::now();
         let failure_window = Duration::from_secs(self.config.auth_fail_window_secs);
         let mut state = self.lock_state();
-        let failure_state = state.auth_failures.entry(client_ip).or_default();
-        prune_auth_failure_state(failure_state, now, failure_window);
-        failure_state.recent_failures.push_back(now);
-        if failure_state.recent_failures.len() >= self.config.auth_fail_max_attempts {
-            failure_state.blocked_until =
-                Some(now + Duration::from_secs(self.config.auth_block_secs));
-            failure_state.recent_failures.clear();
-        }
-        trim_auth_failure_table(
-            &mut state.auth_failures,
+        state.auth_failures.record_failure(
+            client_ip,
             now,
             failure_window,
-            INSTALL_AUTH_FAILURE_TABLE_SOFT_LIMIT,
-            INSTALL_AUTH_FAILURE_TABLE_HARD_LIMIT,
+            self.config.auth_fail_max_attempts,
+            Duration::from_secs(self.config.auth_block_secs),
         );
     }
 
     pub fn clear_auth_failures(&self, client_ip: IpAddr) {
         let mut state = self.lock_state();
-        state.auth_failures.remove(&client_ip);
+        state.auth_failures.clear(client_ip);
     }
 
     fn lock_state(&self) -> std::sync::MutexGuard<'_, InstallAdmissionState> {
@@ -307,15 +376,7 @@ impl InstallAdmissionController {
             let mut guard = poisoned.into_inner();
             let now = Instant::now();
             let failure_window = Duration::from_secs(self.config.auth_fail_window_secs);
-            sweep_expired_auth_failures(&mut guard.auth_failures, now, failure_window);
-            guard.auth_failures.retain(|_, failure_state| {
-                failure_state.blocked_until.is_some_and(|until| until > now)
-                    || !failure_state.recent_failures.is_empty()
-            });
-            enforce_auth_failure_hard_cap(
-                &mut guard.auth_failures,
-                INSTALL_AUTH_FAILURE_TABLE_HARD_LIMIT,
-            );
+            guard.auth_failures.recover_after_poison(now, failure_window);
             self.state.clear_poison();
             guard
         })
@@ -624,7 +685,7 @@ mod tests {
 
         let _ = catch_unwind(AssertUnwindSafe(|| {
             let mut state = controller.state.lock().expect("lock state");
-            state.auth_failures.insert(
+            state.auth_failures.failures.insert(
                 client_ip,
                 AuthFailureState {
                     recent_failures: VecDeque::from([Instant::now(), Instant::now()]),

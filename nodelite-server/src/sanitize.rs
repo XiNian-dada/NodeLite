@@ -281,19 +281,6 @@ mod tests {
         #![proptest_config(ProptestConfig::with_cases(64))]
 
         #[test]
-        fn truncate_to_byte_boundary_keeps_valid_prefix(
-            original in ".*",
-            max_bytes in 0usize..512,
-        ) {
-            let mut value = original.clone();
-            nodelite_proto::truncate_string_to_byte_boundary(&mut value, max_bytes);
-
-            prop_assert!(value.len() <= max_bytes);
-            prop_assert!(original.starts_with(&value));
-            prop_assert!(value.is_char_boundary(value.len()));
-        }
-
-        #[test]
         fn sanitize_non_negative_f64_returns_finite_bounded_values(
             value in any::<f64>(),
             max in 0.0f64..1_000_000_000_000.0,

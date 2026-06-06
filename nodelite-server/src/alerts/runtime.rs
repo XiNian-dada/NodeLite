@@ -9,6 +9,7 @@ use tokio::time::{MissedTickBehavior, interval};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use crate::queue::{bounded_mpsc_channel, try_enqueue};
 use crate::state::SharedState;
 
 use super::delivery::AlertDeliveryError;
@@ -70,7 +71,7 @@ async fn run_alert_runtime(
 ) {
     let mut tracker = AlertStateTracker::new();
     let mut inspection_dispatch = InspectionDispatchState::new();
-    let (delivery_tx, delivery_rx) = mpsc::channel(DELIVERY_QUEUE_CAPACITY);
+    let (delivery_tx, delivery_rx) = bounded_mpsc_channel(DELIVERY_QUEUE_CAPACITY);
     let (result_tx, mut result_rx) = mpsc::unbounded_channel();
     let delivery_dispatcher = spawn_delivery_dispatcher(delivery_rx, result_tx);
     let mut ticker = interval(Duration::from_secs(ALERT_EVALUATION_INTERVAL_SECS));
@@ -219,12 +220,14 @@ fn enqueue_alert_delivery(
     event: &AlertEvent,
     now: DateTime<Utc>,
 ) {
-    if delivery_tx
-        .try_send(DeliveryJob::Alert {
+    if try_enqueue(
+        delivery_tx,
+        DeliveryJob::Alert {
             config: config.clone(),
             event: event.clone(),
-        })
-        .is_err()
+        },
+    )
+    .is_err()
     {
         tracker.record_delivery_failure(event, now);
         warn!(
@@ -245,15 +248,17 @@ fn enqueue_inspection_delivery(
     local_date: NaiveDate,
     now: DateTime<Utc>,
 ) {
-    if delivery_tx
-        .try_send(DeliveryJob::Inspection {
+    if try_enqueue(
+        delivery_tx,
+        DeliveryJob::Inspection {
             config: config.clone(),
             occurred_at: now,
             local_date,
             lookback_hours: config.inspection.lookback_hours,
             report,
-        })
-        .is_ok()
+        },
+    )
+    .is_ok()
     {
         inspection_dispatch.mark_pending(local_date);
         return;

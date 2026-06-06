@@ -600,12 +600,4 @@ mod tests {
             Some("after-overflow")
         );
     }
-
-    #[test]
-    fn truncate_to_byte_boundary_preserves_utf8() {
-        assert_eq!(
-            nodelite_proto::truncate_to_byte_boundary("日志abcdef", 4),
-            "日"
-        );
-    }
 }

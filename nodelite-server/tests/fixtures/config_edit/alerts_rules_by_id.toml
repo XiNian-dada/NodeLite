@@ -1,0 +1,42 @@
+[server]
+listen = "127.0.0.1:8080"
+public_base_url = "https://monitor.example.com"
+
+[auth]
+username = "viewer"
+password = "old-pass"
+
+[alerts]
+enabled = true
+
+[[alerts.rules]]
+id = "cpu-hot" # cpu id comment
+name = "Old CPU"
+enabled = true
+metric = "cpu_usage_percent"
+comparator = "gt"
+threshold = 80
+window_minutes = 5
+severity = "warning"
+scope_mode = "all"
+node_ids = []
+tags = []
+delivery = ["smtp"]
+cooldown_minutes = 30
+send_resolved = true
+
+[[alerts.rules]]
+id = "memory-hot" # memory id comment
+name = "Old Memory"
+enabled = true
+metric = "memory_usage_percent"
+comparator = "gt"
+threshold = 80
+window_minutes = 5
+severity = "warning"
+scope_mode = "all"
+node_ids = []
+tags = []
+delivery = ["smtp"]
+cooldown_minutes = 30
+send_resolved = true
