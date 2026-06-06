@@ -15,6 +15,7 @@ use super::defaults::{
     default_insecure_transport_warn_interval_secs, default_max_incoming_message_bytes,
     default_max_message_bytes, default_max_outstanding_pings, default_max_sanitized_disks,
     default_max_sanitized_string_bytes, default_metric_anomaly_session_limit,
+    default_metrics_export_node_disk_metrics, default_metrics_export_node_resource_metrics,
     default_node_registry_path, default_ping_interval_secs, default_refresh_interval_secs,
     default_report_interval_secs, default_snapshot_path, default_sqlite_busy_timeout_secs,
     default_stale_after_secs, default_trusted_proxies, default_ws_auth_block_secs,
@@ -27,7 +28,7 @@ use super::helpers::{
 };
 use super::{
     AgentConfig, AlertingConfig, AuditConfig, ConfigError, GeoIpConfig, GeoIpEdition,
-    GeoIpProvider, ReadonlyAuthConfig, ServerConfig, WsConfig,
+    GeoIpProvider, MetricsConfig, ReadonlyAuthConfig, ServerConfig, WsConfig,
 };
 use crate::validation::{
     ValidationError, normalize_string_list, validate_identifier, validate_non_empty,
@@ -48,6 +49,8 @@ pub(super) struct RawServerConfigFile {
     auth: RawAuthSection,
     #[serde(default)]
     ws: RawWsSection,
+    #[serde(default)]
+    metrics: RawMetricsSection,
     #[serde(default)]
     audit: RawAuditSection,
     #[serde(default)]
@@ -123,6 +126,15 @@ struct RawWsSection {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct RawMetricsSection {
+    #[serde(default = "default_metrics_export_node_resource_metrics")]
+    export_node_resource_metrics: bool,
+    #[serde(default = "default_metrics_export_node_disk_metrics")]
+    export_node_disk_metrics: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawAuditSection {
     #[serde(default = "default_audit_enabled")]
     enabled: bool,
@@ -183,6 +195,15 @@ impl Default for RawWsSection {
             auth_fail_window_secs: default_ws_auth_fail_window_secs(),
             auth_fail_max_attempts: default_ws_auth_fail_max_attempts(),
             auth_block_secs: default_ws_auth_block_secs(),
+        }
+    }
+}
+
+impl Default for RawMetricsSection {
+    fn default() -> Self {
+        Self {
+            export_node_resource_metrics: default_metrics_export_node_resource_metrics(),
+            export_node_disk_metrics: default_metrics_export_node_disk_metrics(),
         }
     }
 }
@@ -296,6 +317,10 @@ impl RawServerConfigFile {
                 auth_fail_window_secs: self.ws.auth_fail_window_secs,
                 auth_fail_max_attempts: self.ws.auth_fail_max_attempts,
                 auth_block_secs: self.ws.auth_block_secs,
+            },
+            metrics: MetricsConfig {
+                export_node_resource_metrics: self.metrics.export_node_resource_metrics,
+                export_node_disk_metrics: self.metrics.export_node_disk_metrics,
             },
             audit,
             geoip,

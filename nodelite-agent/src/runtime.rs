@@ -7,7 +7,7 @@ use nodelite_proto::{NoticeLevel, uses_insecure_remote_url};
 use tokio::time::{MissedTickBehavior, interval};
 use tracing::{info, warn};
 
-use crate::collector::new_collector;
+use crate::collector::{collect_identity_blocking, collect_snapshot_blocking, new_collector};
 use crate::config_io::load_agent_config;
 use crate::session::{AgentLogBuffer, run_forever};
 use crate::support::{
@@ -34,7 +34,12 @@ pub async fn run() -> Result<()> {
     let cli = Cli::parse();
     let config = load_agent_config(&cli.config).await?;
     let mut collector = new_collector();
-    let identity = collector.collect_identity(&config, agent_build_version())?;
+    let identity = collect_identity_blocking(
+        &mut collector,
+        config.clone(),
+        agent_build_version().to_string(),
+    )
+    .await?;
 
     info!(
         node_id = %identity.node_id,
@@ -51,7 +56,7 @@ pub async fn run() -> Result<()> {
     );
 
     if cli.sample_once {
-        return run_sample_once(&mut collector, &config);
+        return run_sample_once(&mut collector, &config).await;
     }
 
     spawn_insecure_transport_warning(
@@ -69,13 +74,16 @@ pub async fn run() -> Result<()> {
     .await
 }
 
-fn run_sample_once(
+async fn run_sample_once(
     collector: &mut crate::collector::HostCollector,
     config: &nodelite_proto::AgentConfig,
 ) -> Result<()> {
-    let snapshot = collector.collect_snapshot()?;
+    let snapshot = collect_snapshot_blocking(collector).await?;
+    let identity =
+        collect_identity_blocking(collector, config.clone(), agent_build_version().to_string())
+            .await?;
     let output = serde_json::json!({
-        "identity": collector.collect_identity(config, agent_build_version())?,
+        "identity": identity,
         "snapshot": snapshot,
     });
     println!(

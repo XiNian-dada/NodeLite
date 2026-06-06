@@ -482,7 +482,10 @@ mod tests {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpListener;
 
-    use super::{build_alert_message, build_inspection_message, dot_stuff, send_alert_event};
+    use super::{
+        SMTP_TIMEOUT, build_alert_message, build_inspection_message, dot_stuff, send_alert_event,
+    };
+    use crate::alerts::delivery::AlertDeliveryError;
     use crate::alerts::evaluator::InspectionHighlight;
     use crate::alerts::{AlertEvent, AlertEventKind, AlertMetricReading};
 
@@ -527,6 +530,63 @@ mod tests {
                 .contains("Subject: [NodeLite] triggered CPU hot on Hong Kong")
         );
         assert!(session.message.contains("Metric: CpuUsagePercent"));
+    }
+
+    #[tokio::test]
+    async fn send_smtp_reports_protocol_error() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("listener should expose addr");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("smtp client should connect");
+            socket
+                .write_all(b"421 fake.smtp unavailable\r\n")
+                .await
+                .expect("error response should write");
+        });
+        let config = smtp_config(addr.port());
+
+        let error = send_alert_event(&config, &sample_event())
+            .await
+            .expect_err("smtp protocol error should fail delivery");
+        server.await.expect("fake smtp should join");
+
+        assert!(
+            matches!(error, AlertDeliveryError::Smtp(message) if message.contains("421 fake.smtp unavailable"))
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn send_smtp_times_out_waiting_for_greeting() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("listener should expose addr");
+        let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.expect("smtp client should connect");
+            accepted_tx
+                .send(())
+                .expect("test should await accept signal");
+            let _hold_open = socket;
+            std::future::pending::<()>().await;
+        });
+        let config = smtp_config(addr.port());
+        let delivery =
+            tokio::spawn(async move { send_alert_event(&config, &sample_event()).await });
+
+        accepted_rx
+            .await
+            .expect("smtp server should accept connection");
+        tokio::time::advance(SMTP_TIMEOUT + std::time::Duration::from_millis(1)).await;
+        let error = delivery
+            .await
+            .expect("delivery task should join")
+            .expect_err("smtp greeting should time out");
+        server.abort();
+
+        assert!(matches!(error, AlertDeliveryError::SmtpTimeout));
     }
 
     #[test]

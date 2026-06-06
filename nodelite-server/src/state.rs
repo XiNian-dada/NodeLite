@@ -384,7 +384,7 @@ impl SharedState {
 
         let body = {
             let registry = self.registry.read().await;
-            Bytes::from(registry.render_metrics_body(readiness))
+            Bytes::from(registry.render_metrics_body(readiness, self.config.metrics))
         };
         self.metrics_body_bytes
             .store(body.len() as u64, Ordering::Relaxed);

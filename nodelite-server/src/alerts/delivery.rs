@@ -474,6 +474,24 @@ mod tests {
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 
+    #[tokio::test]
+    async fn retry_delivery_stops_after_retryable_error_limit() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+
+        let error = retry_delivery(|| {
+            let attempts = Arc::clone(&attempts);
+            async move {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                Err(AlertDeliveryError::SmtpTimeout)
+            }
+        })
+        .await
+        .expect_err("retryable errors should eventually fail");
+
+        assert!(matches!(error, AlertDeliveryError::SmtpTimeout));
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
     fn sample_event() -> AlertEvent {
         AlertEvent {
             kind: AlertEventKind::Triggered,

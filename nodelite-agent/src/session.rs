@@ -17,7 +17,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tracing::{info, warn};
 
-use crate::collector::HostCollector;
+use crate::collector::{HostCollector, collect_snapshot_blocking};
 use crate::config_io::update_token_in_config;
 
 /// Agent 本地最多暂存的待上报日志条数。超出后丢弃最旧项,避免断线期间内存无限增长。
@@ -367,7 +367,7 @@ fn incoming_ws_config(max_incoming_message_bytes: usize) -> WebSocketConfig {
 }
 
 async fn send_metrics(sender: &mut AgentWsSender, collector: &mut HostCollector) -> Result<()> {
-    let snapshot = collector.collect_snapshot()?;
+    let snapshot = collect_snapshot_blocking(collector).await?;
     send_wire_message(sender, &WireMessage::Metrics(MetricsMessage { snapshot })).await
 }
 

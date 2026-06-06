@@ -251,6 +251,8 @@ cargo check
 
 NodeLite 现在提供受保护的 `/metrics` 端点，输出 Prometheus exposition text。它和仪表盘共用只读认证，因此抓取端需要带上同一组 Basic Auth 凭据。
 
+默认 `/metrics` 只导出 server / overview 聚合和少量 node summary 指标，避免大规模集群下 scrape 响应体过大。如果需要按节点导出 CPU、uptime、memory、load、network 等最新快照细节，可在 `server.toml` 的 `[metrics]` 中设置 `export_node_resource_metrics = true`；如果还需要按挂载点导出磁盘指标，再设置 `export_node_disk_metrics = true`。这些开关会按节点数和挂载点数量增加 series 与响应体大小，建议只在确实需要 Prometheus 长期采集这些细节时开启。
+
 先用 `curl` 验证：
 
 ```bash

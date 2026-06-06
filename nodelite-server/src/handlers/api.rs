@@ -373,7 +373,6 @@ pub(crate) async fn node_history(
         Ok(points) => Json(points).into_response(),
         Err(error) => {
             let history_error = match &error {
-                HistoryError::ConnectionNotInitialized => "connection_not_initialized",
                 HistoryError::Query(_) => "query_failed",
                 HistoryError::TaskFailed(_) => "task_failed",
             };

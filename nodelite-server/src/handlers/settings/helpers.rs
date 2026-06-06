@@ -349,6 +349,7 @@ mod tests {
                 auth_fail_max_attempts: 8,
                 auth_block_secs: 900,
             },
+            metrics: nodelite_proto::MetricsConfig::default(),
             audit: nodelite_proto::AuditConfig {
                 enabled: true,
                 db_path: PathBuf::from("/opt/nodelite/data/audit.sqlite3"),

@@ -74,6 +74,7 @@ pub(crate) fn test_server_config(
             totp_secret: None,
         }),
         ws: test_ws_config(128, 128),
+        metrics: nodelite_proto::MetricsConfig::default(),
         audit: AuditConfig {
             enabled: true,
             db_path: history_path.with_file_name("audit.sqlite3"),

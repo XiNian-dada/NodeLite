@@ -138,6 +138,7 @@ watch([geojson, theme], repaint);
 }
 .map-stage {
   position: relative;
+  width: 100%;
   aspect-ratio: 16 / 8;
   min-height: 280px;
   background:
@@ -150,7 +151,8 @@ watch([geojson, theme], repaint);
 @media (max-width: 640px) {
   .map-stage {
     aspect-ratio: 16 / 10;
-    min-height: 200px;
+    min-height: 0;
+    height: clamp(160px, 45vw, 200px);
   }
 }
 .map-grid {

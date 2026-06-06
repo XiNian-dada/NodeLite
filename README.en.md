@@ -249,6 +249,8 @@ cargo check
 
 NodeLite provides a protected `/metrics` endpoint outputting Prometheus exposition text. It shares the read-only authentication with the dashboard, so scrapers must use the same Basic Auth credentials.
 
+By default, `/metrics` exports server / overview aggregates and a small set of node summary metrics only, keeping scrape responses small for large fleets. To export per-node CPU, uptime, memory, load, network, and other latest snapshot details, set `export_node_resource_metrics = true` under `[metrics]` in `server.toml`; to also export per-mount disk metrics, set `export_node_disk_metrics = true`. These switches increase series count and response size with node and mount count, so enable them only when Prometheus must retain those details.
+
 Verify with `curl` first:
 
 ```bash

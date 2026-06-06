@@ -63,7 +63,6 @@ pub type HistoryResult<T> = std::result::Result<T, HistoryError>;
 /// 历史查询路径对外暴露的稳定错误边界。
 #[derive(Debug)]
 pub enum HistoryError {
-    ConnectionNotInitialized,
     Query(anyhow::Error),
     TaskFailed(anyhow::Error),
 }
@@ -71,7 +70,6 @@ pub enum HistoryError {
 impl std::fmt::Display for HistoryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::ConnectionNotInitialized => f.write_str("history connection not initialized"),
             Self::Query(_) => f.write_str("history query failed"),
             Self::TaskFailed(_) => f.write_str("history query task failed"),
         }
@@ -82,7 +80,6 @@ impl std::error::Error for HistoryError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Query(error) | Self::TaskFailed(error) => Some(error.root_cause()),
-            Self::ConnectionNotInitialized => None,
         }
     }
 }
@@ -100,8 +97,6 @@ pub struct HistoryStore {
     available: Arc<AtomicBool>,
     /// 持久化 SQLite 写连接,由 writer task 短暂持有。
     write_connection: Arc<Mutex<Option<Connection>>>,
-    /// 持久化 SQLite 查询连接,只在 query 路径短暂持有。
-    read_connection: Arc<Mutex<Option<Connection>>>,
     /// 节点 → 上一次成功节流通过的时间。仅短暂持有 lock(check + 乐观更新),
     /// 不再跨越 spawn_blocking,因此与 SQLite I/O 解耦。
     last_written_at: Arc<Mutex<HashMap<String, DateTime<Utc>>>>,
@@ -126,7 +121,6 @@ impl HistoryStore {
             db_path: Arc::new(db_path),
             available: Arc::new(AtomicBool::new(false)),
             write_connection: Arc::new(Mutex::new(None)),
-            read_connection: Arc::new(Mutex::new(None)),
             last_written_at: Arc::new(Mutex::new(HashMap::new())),
             last_pruned_at: Arc::new(AtomicI64::new(0)),
             artifacts_hardened_after_write: Arc::new(AtomicBool::new(false)),
@@ -143,21 +137,16 @@ impl HistoryStore {
         let sqlite_busy_timeout_secs = self.sqlite_busy_timeout_secs;
         let result = tokio::task::spawn_blocking(move || {
             let write_connection = initialize_database(db_path.as_ref(), sqlite_busy_timeout_secs)?;
-            let read_connection = open_read_connection(db_path.as_ref(), sqlite_busy_timeout_secs)?;
-            anyhow::Ok((write_connection, read_connection))
+            anyhow::Ok(write_connection)
         })
         .await
         .context("history database task failed");
 
         match result {
-            Ok(Ok((write_connection, read_connection))) => {
+            Ok(Ok(write_connection)) => {
                 {
                     let mut guard = self.write_connection.lock().await;
                     *guard = Some(write_connection);
-                }
-                {
-                    let mut guard = self.read_connection.lock().await;
-                    *guard = Some(read_connection);
                 }
                 self.available.store(true, Ordering::Relaxed);
                 self.spawn_writer_task().await;
@@ -329,18 +318,17 @@ impl HistoryStore {
             return Ok(Vec::new());
         }
 
-        let connection_arc = Arc::clone(&self.read_connection);
+        let db_path = Arc::clone(&self.db_path);
         let node_id = node_id.to_string();
         let clamped_window_hours = window_hours.clamp(1, DEFAULT_HISTORY_RETENTION_HOURS);
         let clamped_max_points = max_points.max(60);
         let since = Utc::now() - chrono::Duration::hours(clamped_window_hours as i64);
+        let sqlite_busy_timeout_secs = self.sqlite_busy_timeout_secs;
 
         tokio::task::spawn_blocking(move || {
-            let guard = connection_arc.blocking_lock();
-            let Some(ref connection) = *guard else {
-                return Err(HistoryError::ConnectionNotInitialized);
-            };
-            query_history(connection, &node_id, since, clamped_max_points)
+            let connection = open_read_connection(db_path.as_ref(), sqlite_busy_timeout_secs)
+                .map_err(HistoryError::Query)?;
+            query_history(&connection, &node_id, since, clamped_max_points)
                 .map_err(HistoryError::from)
         })
         .await
@@ -367,17 +355,16 @@ impl HistoryStore {
             return Ok(Vec::new());
         }
 
-        let connection_arc = Arc::clone(&self.read_connection);
+        let db_path = Arc::clone(&self.db_path);
         let node_id = node_id.to_string();
         let clamped_max_points = max_points.max(60);
+        let sqlite_busy_timeout_secs = self.sqlite_busy_timeout_secs;
 
         tokio::task::spawn_blocking(move || {
-            let guard = connection_arc.blocking_lock();
-            let Some(ref connection) = *guard else {
-                return Err(HistoryError::ConnectionNotInitialized);
-            };
+            let connection = open_read_connection(db_path.as_ref(), sqlite_busy_timeout_secs)
+                .map_err(HistoryError::Query)?;
             query_history_between(
-                connection,
+                &connection,
                 &node_id,
                 clamped_start,
                 clamped_end,

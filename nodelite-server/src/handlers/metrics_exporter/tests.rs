@@ -5,14 +5,14 @@ use chrono::Utc;
 use super::{
     ApiCacheMetrics, RuntimeMetrics, SqliteWalCheckpointMetrics, SqliteWalCheckpointStats,
     WriterMetrics, WsMessageMetrics, render_agent_log_metrics, render_api_cache_metrics,
-    render_metrics_response_body_bytes, render_prometheus_metrics, render_runtime_metrics,
-    render_writer_metrics,
+    render_metrics_response_body_bytes, render_prometheus_metrics,
+    render_prometheus_metrics_from_iter, render_runtime_metrics, render_writer_metrics,
 };
 use crate::ServerReadiness;
 use crate::agent_logs::AgentLogStats;
 use nodelite_proto::{
-    DiskUsage, LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot, NodeStatus,
-    OverviewData,
+    DiskUsage, LoadAverage, MemoryUsage, MetricsConfig, NetworkCounters, NodeIdentity,
+    NodeSnapshot, NodeStatus, OverviewData,
 };
 
 #[test]
@@ -23,13 +23,18 @@ fn exporter_emits_help_and_type_once_per_family() {
 
     assert_eq!(body.matches("# HELP nodelite_node_online ").count(), 1);
     assert_eq!(body.matches("# TYPE nodelite_node_online gauge").count(), 1);
+    assert_eq!(body.matches("# HELP nodelite_nodes_total ").count(), 1);
+
+    let detailed_body = render_detailed_prometheus_metrics();
     assert_eq!(
-        body.matches("# HELP nodelite_node_cpu_usage_ratio ")
+        detailed_body
+            .matches("# HELP nodelite_node_cpu_usage_ratio ")
             .count(),
         1
     );
     assert_eq!(
-        body.matches("# TYPE nodelite_node_network_bytes_total counter")
+        detailed_body
+            .matches("# TYPE nodelite_node_network_bytes_total counter")
             .count(),
         1
     );
@@ -50,9 +55,7 @@ fn exporter_uses_info_metric_for_mutable_identity_labels() {
 
 #[test]
 fn exporter_exposes_snapshot_resource_metrics_for_each_node() {
-    let readiness = ServerReadiness::new(true);
-    let overview = sample_overview();
-    let body = render_prometheus_metrics(&readiness, &sample_statuses(), &overview);
+    let body = render_detailed_prometheus_metrics();
 
     assert_eq!(
         body.lines()
@@ -76,6 +79,65 @@ fn exporter_exposes_snapshot_resource_metrics_for_each_node() {
 }
 
 #[test]
+fn exporter_omits_snapshot_resource_metrics_by_default() {
+    let readiness = ServerReadiness::new(true);
+    let overview = sample_overview();
+    let statuses = sample_statuses();
+    let body = render_prometheus_metrics(&readiness, &statuses, &overview);
+    let detailed_body = render_prometheus_metrics_from_iter(
+        &readiness,
+        statuses.iter(),
+        &overview,
+        MetricsConfig {
+            export_node_resource_metrics: true,
+            export_node_disk_metrics: true,
+        },
+    );
+
+    assert!(body.contains("nodelite_node_info{"));
+    assert!(body.contains("nodelite_node_online{node_id=\"node-1\"} 1"));
+    for metric in [
+        "nodelite_node_snapshot_timestamp_seconds{",
+        "nodelite_node_uptime_seconds{",
+        "nodelite_node_cpu_usage_ratio{",
+        "nodelite_node_memory_bytes{",
+        "nodelite_node_load_average{",
+        "nodelite_node_network_bytes_total{",
+        "nodelite_node_network_rate_bytes_per_second{",
+        "nodelite_node_disk_bytes{",
+    ] {
+        assert!(!body.contains(metric), "default /metrics exported {metric}");
+    }
+    assert!(
+        body.lines().count() + 20 < detailed_body.lines().count(),
+        "default metrics body should have far fewer node detail lines"
+    );
+}
+
+#[test]
+fn exporter_can_enable_disk_metrics_explicitly() {
+    let readiness = ServerReadiness::new(true);
+    let overview = sample_overview();
+    let statuses = sample_statuses();
+    let body = render_prometheus_metrics_from_iter(
+        &readiness,
+        statuses.iter(),
+        &overview,
+        MetricsConfig {
+            export_node_disk_metrics: true,
+            ..MetricsConfig::default()
+        },
+    );
+
+    assert!(body.contains(
+        "nodelite_node_disk_bytes{node_id=\"node-1\",mount_point=\"/\",state=\"used\"} 500"
+    ));
+    assert!(
+        body.contains("nodelite_node_disk_used_ratio{node_id=\"node-1\",mount_point=\"/\"} 0.5")
+    );
+}
+
+#[test]
 fn exporter_skips_unknown_cpu_usage() {
     let readiness = ServerReadiness::new(true);
     let overview = sample_overview();
@@ -86,7 +148,15 @@ fn exporter_skips_unknown_cpu_usage() {
         .expect("sample node should have snapshot")
         .cpu_usage_percent = None;
 
-    let body = render_prometheus_metrics(&readiness, &statuses, &overview);
+    let body = render_prometheus_metrics_from_iter(
+        &readiness,
+        statuses.iter(),
+        &overview,
+        MetricsConfig {
+            export_node_resource_metrics: true,
+            ..MetricsConfig::default()
+        },
+    );
 
     assert_eq!(
         body.lines()
@@ -96,6 +166,21 @@ fn exporter_skips_unknown_cpu_usage() {
     );
     assert!(!body.contains("nodelite_node_cpu_usage_ratio{node_id=\"node-1\""));
     assert!(body.contains("nodelite_node_cpu_usage_ratio{node_id=\"node-2\""));
+}
+
+fn render_detailed_prometheus_metrics() -> String {
+    let readiness = ServerReadiness::new(true);
+    let overview = sample_overview();
+    let statuses = sample_statuses();
+    render_prometheus_metrics_from_iter(
+        &readiness,
+        statuses.iter(),
+        &overview,
+        MetricsConfig {
+            export_node_resource_metrics: true,
+            ..MetricsConfig::default()
+        },
+    )
 }
 
 #[test]

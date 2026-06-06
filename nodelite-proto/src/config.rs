@@ -23,7 +23,8 @@ use self::defaults::{
     default_connect_timeout_secs, default_hello_timeout_secs,
     default_insecure_transport_warn_interval_secs, default_max_incoming_message_bytes,
     default_max_outstanding_pings, default_max_sanitized_disks, default_max_sanitized_string_bytes,
-    default_metric_anomaly_session_limit, default_sqlite_busy_timeout_secs,
+    default_metric_anomaly_session_limit, default_metrics_export_node_disk_metrics,
+    default_metrics_export_node_resource_metrics, default_sqlite_busy_timeout_secs,
 };
 use self::raw::{RawAgentConfigFile, RawServerConfigFile};
 
@@ -131,6 +132,7 @@ pub struct ServerConfig {
     pub trusted_proxies: Vec<IpNet>,
     pub readonly_auth: Option<ReadonlyAuthConfig>,
     pub ws: WsConfig,
+    pub metrics: MetricsConfig,
     pub audit: AuditConfig,
     pub geoip: GeoIpConfig,
     pub alerting: AlertingConfig,
@@ -187,6 +189,15 @@ pub struct WsConfig {
     pub auth_fail_window_secs: u64,
     pub auth_fail_max_attempts: usize,
     pub auth_block_secs: u64,
+}
+
+/// Prometheus 导出粒度控制。默认保持轻量 summary,细节点资源指标需显式打开。
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MetricsConfig {
+    #[serde(default = "default_metrics_export_node_resource_metrics")]
+    pub export_node_resource_metrics: bool,
+    #[serde(default = "default_metrics_export_node_disk_metrics")]
+    pub export_node_disk_metrics: bool,
 }
 
 /// 审计日志存储与记录策略。

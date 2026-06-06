@@ -22,6 +22,15 @@ fn server_example_documents_install_section() {
 }
 
 #[test]
+fn server_example_documents_metrics_section() {
+    let example = include_str!("../../../config/server.example.toml");
+
+    assert!(example.contains("[metrics]"));
+    assert!(example.contains("export_node_resource_metrics"));
+    assert!(example.contains("export_node_disk_metrics"));
+}
+
+#[test]
 fn parses_server_config_with_defaults() {
     let config = parse_server_config(
         r#"
@@ -54,6 +63,8 @@ fn parses_server_config_with_defaults() {
         DEFAULT_WS_AUTH_FAIL_MAX_ATTEMPTS
     );
     assert_eq!(config.ws.auth_block_secs, DEFAULT_WS_AUTH_BLOCK_SECS);
+    assert!(!config.metrics.export_node_resource_metrics);
+    assert!(!config.metrics.export_node_disk_metrics);
     assert_eq!(
         config.node_registry_path,
         PathBuf::from("./config/server.json")
@@ -87,6 +98,25 @@ fn parses_server_config_with_defaults() {
         config.alerting.inspection.local_time,
         DEFAULT_ALERT_INSPECTION_LOCAL_TIME
     );
+}
+
+#[test]
+fn parses_server_config_with_metrics_overrides() {
+    let config = parse_server_config(
+        r#"
+        [server]
+        listen = "127.0.0.1:8080"
+        public_base_url = "https://monitor.example.com"
+
+        [metrics]
+        export_node_resource_metrics = true
+        export_node_disk_metrics = true
+        "#,
+    )
+    .expect("metrics config should parse");
+
+    assert!(config.metrics.export_node_resource_metrics);
+    assert!(config.metrics.export_node_disk_metrics);
 }
 
 #[test]

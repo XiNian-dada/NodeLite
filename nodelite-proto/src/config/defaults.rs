@@ -108,6 +108,14 @@ pub(super) fn default_sqlite_busy_timeout_secs() -> u64 {
     DEFAULT_SQLITE_BUSY_TIMEOUT_SECS
 }
 
+pub(super) fn default_metrics_export_node_resource_metrics() -> bool {
+    false
+}
+
+pub(super) fn default_metrics_export_node_disk_metrics() -> bool {
+    false
+}
+
 pub(super) fn default_audit_enabled() -> bool {
     true
 }

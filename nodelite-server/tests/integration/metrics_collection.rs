@@ -66,9 +66,9 @@ async fn prometheus_metrics_export_reflects_current_nodes() -> Result<()> {
     assert!(metrics.contains("nodelite_node_online{node_id=\"itest-metrics-03\""));
     assert!(metrics.contains("nodelite_node_info{node_id=\"itest-metrics-02\""));
     assert!(metrics.contains("nodelite_node_info{node_id=\"itest-metrics-03\""));
-    assert!(metrics.contains("nodelite_node_snapshot_timestamp_seconds"));
-    assert!(metrics.contains("nodelite_node_cpu_usage_ratio"));
-    assert!(metrics.contains("nodelite_node_network_bytes_total"));
+    assert!(!metrics.contains("nodelite_node_snapshot_timestamp_seconds"));
+    assert!(!metrics.contains("nodelite_node_cpu_usage_ratio"));
+    assert!(!metrics.contains("nodelite_node_network_bytes_total"));
     assert!(metrics.contains("nodelite_network_rate_bytes_per_second{direction=\"rx\"}"));
     assert!(metrics.contains("nodelite_history_queue_depth"));
     assert!(metrics.contains("nodelite_audit_queue_depth"));

@@ -40,6 +40,13 @@ metric_anomaly_session_limit = 5
 # SQLite 忙等待超时(秒)。
 sqlite_busy_timeout_secs = 5
 
+[metrics]
+# Prometheus 默认只导出 server/overview 与少量 node summary 指标,避免大规模 scrape 构建过大的文本体。
+# 开启后会额外按节点导出 CPU、uptime、memory、load、network 等最新快照细节。
+export_node_resource_metrics = false
+# 开启后会按节点和挂载点导出磁盘字节数与使用率;节点多或挂载点多时 series/body 会快速增长。
+export_node_disk_metrics = false
+
 [auth]
 # 前端只读访问用的基本认证用户名。
 username = "viewer"

@@ -5,7 +5,8 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use nodelite_proto::{
-    GeoIpLocation, NodeIdentity, NodeListItem, NodeSnapshot, NodeStatus, OverviewData,
+    GeoIpLocation, MetricsConfig, NodeIdentity, NodeListItem, NodeSnapshot, NodeStatus,
+    OverviewData,
 };
 
 use super::overview::build_overview_from_iter;
@@ -271,7 +272,11 @@ impl Registry {
         build_overview_from_iter(self.nodes.values().map(|entry| &entry.status))
     }
 
-    pub(super) fn render_metrics_body(&self, readiness: &ServerReadiness) -> String {
+    pub(super) fn render_metrics_body(
+        &self,
+        readiness: &ServerReadiness,
+        metrics_config: MetricsConfig,
+    ) -> String {
         let overview = self.overview();
         render_prometheus_metrics_from_iter(
             readiness,
@@ -280,6 +285,7 @@ impl Registry {
                 .filter_map(|node_id| self.nodes.get(node_id))
                 .map(|entry| &entry.status),
             &overview,
+            metrics_config,
         )
     }
 

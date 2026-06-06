@@ -50,6 +50,7 @@ which = "6"
 
 [dev-dependencies]
 proptest = "1.4"
+tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite.workspace = true
 tower = "0.5"
 

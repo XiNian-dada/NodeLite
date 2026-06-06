@@ -163,3 +163,58 @@ async fn query_history_does_not_wait_for_write_connection_lock() {
         let _ = std::fs::remove_dir(parent);
     }
 }
+
+#[tokio::test]
+async fn concurrent_history_queries_use_independent_read_connections() {
+    let db_path = temp_history_db_path("query-concurrent-readers");
+    let mut connection = initialize_database(&db_path, 5).expect("database should initialize");
+    let hardened = AtomicBool::new(false);
+    let start = Utc::now() - Duration::hours(2);
+    for index in 0..240 {
+        write_history_point(
+            &db_path,
+            &mut connection,
+            &HistoryPoint {
+                node_id: "hk-01".to_string(),
+                recorded_at: start + Duration::seconds(index * 30),
+                cpu_usage_percent: Some(index as f64),
+                memory_used_percent: 50.0,
+                rx_bytes_per_sec: Some(index as f64),
+                tx_bytes_per_sec: Some(index as f64 / 2.0),
+                latency_ms: Some((index % 10) as u64),
+                disk_used_percent: Some(60.0),
+            },
+            None,
+            &hardened,
+        )
+        .expect("history point should persist");
+    }
+    drop(connection);
+
+    let store = HistoryStore::new(db_path.clone(), 5);
+    store.initialize().await;
+    assert!(store.is_available());
+
+    let end = start + Duration::seconds(240 * 30);
+    let tasks = (0..8)
+        .map(|_| {
+            let store = store.clone();
+            tokio::spawn(async move { store.query_history_range("hk-01", start, end, 120).await })
+        })
+        .collect::<Vec<_>>();
+
+    for task in tasks {
+        let points = task
+            .await
+            .expect("query task should not panic")
+            .expect("history query should succeed");
+        assert!(!points.is_empty());
+        assert!(points.len() <= 120);
+    }
+    store.shutdown().await;
+
+    let _ = std::fs::remove_file(&db_path);
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
+}

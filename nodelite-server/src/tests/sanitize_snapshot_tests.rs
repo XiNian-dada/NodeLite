@@ -28,6 +28,7 @@ fn sanitize_snapshot_clamps_invalid_metrics() {
             auth_fail_max_attempts: 6,
             auth_block_secs: 600,
         },
+        metrics: nodelite_proto::MetricsConfig::default(),
         audit: nodelite_proto::AuditConfig {
             enabled: true,
             db_path: PathBuf::from("./data/audit.sqlite3"),
@@ -199,6 +200,7 @@ fn sanitize_caps_disk_field_string_length() {
             auth_fail_max_attempts: 6,
             auth_block_secs: 600,
         },
+        metrics: nodelite_proto::MetricsConfig::default(),
         audit: nodelite_proto::AuditConfig {
             enabled: true,
             db_path: PathBuf::from("./data/audit.sqlite3"),
@@ -294,6 +296,7 @@ fn sanitize_snapshot_caps_disk_count_and_tracks_clean_reports() {
             auth_fail_max_attempts: 6,
             auth_block_secs: 600,
         },
+        metrics: nodelite_proto::MetricsConfig::default(),
         audit: nodelite_proto::AuditConfig {
             enabled: true,
             db_path: PathBuf::from("./data/audit.sqlite3"),
@@ -404,6 +407,7 @@ fn sanitize_snapshot_deduplicates_repeated_disk_devices() {
             auth_fail_max_attempts: 6,
             auth_block_secs: 600,
         },
+        metrics: nodelite_proto::MetricsConfig::default(),
         audit: nodelite_proto::AuditConfig {
             enabled: true,
             db_path: PathBuf::from("./data/audit.sqlite3"),
