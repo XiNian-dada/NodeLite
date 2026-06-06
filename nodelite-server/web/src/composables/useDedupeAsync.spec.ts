@@ -39,15 +39,15 @@ describe('useDedupeAsync', () => {
     const runner = useDedupeAsync<string>();
     const oldRequest = deferred<string>();
     const newRequest = deferred<string>();
-    const oldIsCurrent = vi.fn<boolean, []>();
-    const newIsCurrent = vi.fn<boolean, []>();
+    let oldIsCurrent = (): boolean => false;
+    let newIsCurrent = (): boolean => false;
 
     const oldPromise = runner.run('node-a', ({ isCurrent }) => {
-      oldIsCurrent.mockImplementation(isCurrent);
+      oldIsCurrent = isCurrent;
       return oldRequest.promise;
     });
     const newPromise = runner.run('node-b', ({ isCurrent }) => {
-      newIsCurrent.mockImplementation(isCurrent);
+      newIsCurrent = isCurrent;
       return newRequest.promise;
     });
 
@@ -71,16 +71,16 @@ describe('useDedupeAsync', () => {
     const firstRequest = deferred<string>();
     const middleRequest = deferred<string>();
     const latestRequest = deferred<string>();
-    const firstIsCurrent = vi.fn<boolean, []>();
-    const latestIsCurrent = vi.fn<boolean, []>();
+    let firstIsCurrent = (): boolean => false;
+    let latestIsCurrent = (): boolean => false;
 
     const firstPromise = runner.run('node-a', ({ isCurrent }) => {
-      firstIsCurrent.mockImplementation(isCurrent);
+      firstIsCurrent = isCurrent;
       return firstRequest.promise;
     });
     const middlePromise = runner.run('node-b', () => middleRequest.promise);
     const latestPromise = runner.run('node-a', ({ isCurrent }) => {
-      latestIsCurrent.mockImplementation(isCurrent);
+      latestIsCurrent = isCurrent;
       return latestRequest.promise;
     });
 
