@@ -1,0 +1,5 @@
+[auth]
+username = "viewer"
+password = "old-pass"
+enable_2fa = true
+totp_secret = "JBSWY3DPEHPK3PXP" # stale

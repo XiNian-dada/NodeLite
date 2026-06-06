@@ -24,7 +24,7 @@ pub use config::{
     DEFAULT_REFRESH_INTERVAL_SECS, DEFAULT_REPORT_INTERVAL_SECS, DEFAULT_STALE_AFTER_SECS,
     GeoIpConfig, GeoIpEdition, GeoIpProvider, InspectionConfig, MAX_NODE_TAG_BYTES, MAX_NODE_TAGS,
     ReadonlyAuthConfig, ServerConfig, WsConfig, normalize_totp_secret, parse_agent_config,
-    parse_server_config,
+    parse_server_config, upsert_toml_item_preserving_decor,
 };
 pub use message::{
     AgentLogEntry, AgentLogsMessage, BrowserMessage, HelloMessage,
