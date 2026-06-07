@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+#[cfg(test)]
+use nodelite_proto::DiskUsage;
 use nodelite_proto::{
     GeoIpLocation, MetricsConfig, NodeIdentity, NodeListIdentity, NodeListItem, NodeListSnapshot,
     NodeSnapshot, NodeStatus, OverviewData,
@@ -410,6 +412,17 @@ impl Registry {
             + std::mem::size_of::<Option<SessionControlHandle>>()
     }
 
+    #[cfg(test)]
+    pub(super) fn retained_heap_estimates_for_test(
+        status: NodeStatus,
+    ) -> (RetainedHeapEstimate, RetainedHeapEstimate) {
+        let previous_summary = NodeListItem::from(&status);
+        let previous =
+            node_status_heap_estimate(&status) + node_list_item_heap_estimate(&previous_summary);
+        let runtime = node_entry_heap_estimate(&NodeEntry::from_restored_status(status));
+        (runtime, previous)
+    }
+
     fn resort_node_ids(&mut self) {
         self.sorted_node_ids.sort_by(|left_id, right_id| {
             let (Some(left), Some(right)) = (self.nodes.get(left_id), self.nodes.get(right_id))
@@ -421,5 +434,124 @@ impl Registry {
                 .cmp(&right.identity.node_label)
                 .then_with(|| left.identity.node_id.cmp(&right.identity.node_id))
         });
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct RetainedHeapEstimate {
+    pub(super) bytes: usize,
+    pub(super) allocations: usize,
+}
+
+#[cfg(test)]
+impl std::ops::Add for RetainedHeapEstimate {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            bytes: self.bytes + other.bytes,
+            allocations: self.allocations + other.allocations,
+        }
+    }
+}
+
+#[cfg(test)]
+fn node_entry_heap_estimate(entry: &NodeEntry) -> RetainedHeapEstimate {
+    node_identity_heap_estimate(&entry.identity)
+        + option_string_heap_estimate(&entry.remote_ip)
+        + option_string_heap_estimate(&entry.geoip_country)
+        + option_string_heap_estimate(&entry.geoip_city)
+        + entry
+            .snapshot
+            .as_ref()
+            .map(node_snapshot_heap_estimate)
+            .unwrap_or_default()
+}
+
+#[cfg(test)]
+fn node_status_heap_estimate(status: &NodeStatus) -> RetainedHeapEstimate {
+    node_identity_heap_estimate(&status.identity)
+        + option_string_heap_estimate(&status.remote_ip)
+        + option_string_heap_estimate(&status.geoip_country)
+        + option_string_heap_estimate(&status.geoip_city)
+        + status
+            .snapshot
+            .as_ref()
+            .map(node_snapshot_heap_estimate)
+            .unwrap_or_default()
+}
+
+#[cfg(test)]
+fn node_list_item_heap_estimate(item: &NodeListItem) -> RetainedHeapEstimate {
+    node_list_identity_heap_estimate(&item.identity)
+        + option_string_heap_estimate(&item.geoip_country)
+        + option_string_heap_estimate(&item.geoip_city)
+}
+
+#[cfg(test)]
+fn node_identity_heap_estimate(identity: &NodeIdentity) -> RetainedHeapEstimate {
+    string_heap_estimate(&identity.node_id)
+        + string_heap_estimate(&identity.node_label)
+        + string_heap_estimate(&identity.hostname)
+        + string_heap_estimate(&identity.os)
+        + option_string_heap_estimate(&identity.kernel_version)
+        + option_string_heap_estimate(&identity.cpu_model)
+        + string_heap_estimate(&identity.agent_version)
+        + string_vec_heap_estimate(&identity.tags)
+}
+
+#[cfg(test)]
+fn node_list_identity_heap_estimate(identity: &NodeListIdentity) -> RetainedHeapEstimate {
+    string_heap_estimate(&identity.node_id)
+        + string_heap_estimate(&identity.node_label)
+        + string_heap_estimate(&identity.hostname)
+        + string_vec_heap_estimate(&identity.tags)
+}
+
+#[cfg(test)]
+fn node_snapshot_heap_estimate(snapshot: &NodeSnapshot) -> RetainedHeapEstimate {
+    vec_buffer_heap_estimate::<DiskUsage>(snapshot.disks.capacity())
+        + snapshot
+            .disks
+            .iter()
+            .map(disk_usage_heap_estimate)
+            .fold(RetainedHeapEstimate::default(), |total, next| total + next)
+}
+
+#[cfg(test)]
+fn disk_usage_heap_estimate(disk: &DiskUsage) -> RetainedHeapEstimate {
+    string_heap_estimate(&disk.device)
+        + string_heap_estimate(&disk.mount_point)
+        + string_heap_estimate(&disk.fs_type)
+}
+
+#[cfg(test)]
+fn string_vec_heap_estimate(values: &[String]) -> RetainedHeapEstimate {
+    vec_buffer_heap_estimate::<String>(values.len())
+        + values
+            .iter()
+            .map(string_heap_estimate)
+            .fold(RetainedHeapEstimate::default(), |total, next| total + next)
+}
+
+#[cfg(test)]
+fn option_string_heap_estimate(value: &Option<String>) -> RetainedHeapEstimate {
+    value.as_ref().map(string_heap_estimate).unwrap_or_default()
+}
+
+#[cfg(test)]
+fn string_heap_estimate(value: &String) -> RetainedHeapEstimate {
+    RetainedHeapEstimate {
+        bytes: value.capacity(),
+        allocations: usize::from(value.capacity() > 0),
+    }
+}
+
+#[cfg(test)]
+fn vec_buffer_heap_estimate<T>(capacity: usize) -> RetainedHeapEstimate {
+    RetainedHeapEstimate {
+        bytes: capacity * std::mem::size_of::<T>(),
+        allocations: usize::from(capacity > 0),
     }
 }

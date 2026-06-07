@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use chrono::{Duration as ChronoDuration, TimeZone, Utc};
 use nodelite_proto::{
-    GeoIpLocation, LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot,
-    ReadonlyAuthConfig, ServerConfig, WsConfig, percentage,
+    DiskUsage, GeoIpLocation, LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity,
+    NodeSnapshot, ReadonlyAuthConfig, ServerConfig, WsConfig, percentage,
 };
 
 use super::{Registry, SessionControlHandle, SharedState};
