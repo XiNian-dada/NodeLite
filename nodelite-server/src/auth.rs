@@ -3,7 +3,7 @@
 //! - [`ReadonlyRouteAuth`] 把 `[auth]` 配置预先转成"期望的 Basic 头"+ 2FA 配置;
 //! - [`TwoFactorSessions`] 把 pending / authenticated 票据保留在服务端内存里,
 //!   并跟踪每个 pending 的连续失败次数和已经被消费过的 TOTP `time_step`;
-//! - 顶层 helper(`verify_totp_step` / `cookie_*` / 常量时间比较)只暴露纯输入
+//! - 顶层 helper(`matching_totp_steps` / `cookie_*` / 常量时间比较)只暴露纯输入
 //!   输出的小函数,使路由层不需要关心 TOTP / Base32 / cookie 字符串细节。
 //! - 对外暴露的 session token 生成接口统一返回 [`AuthSessionError`],避免把
 //!   裸 `anyhow::Error` 扩散到 handler 与测试调用方。
@@ -358,28 +358,39 @@ pub fn decode_totp_secret(value: &str) -> Option<Vec<u8>> {
         .or_else(|| base32::decode(base32::Alphabet::Rfc4648 { padding: true }, &normalized))
 }
 
-/// 验证 TOTP 码并返回匹配到的当前 30 秒 `time_step`。
+/// 返回当前 drift 窗口内与验证码匹配的所有 TOTP step。
 ///
-/// 调用方收到 `Some(step)` 后需要进一步检查该 step 是否已经被消费过
-/// (`TwoFactorSessions::is_totp_step_used`),以满足 RFC 6238 §5.2 的
-/// "同一步骤的代码不允许重复使用"要求。
-pub fn verify_totp_step(totp_secret: Option<&[u8]>, code: &str) -> Option<u64> {
+/// 调用方做 replay protection 时应检查所有返回 step，并在接受后把所有匹配
+/// step 标记为已用，避免 6 位码在相邻 step 碰撞时被重复使用。
+pub fn matching_totp_steps(totp_secret: Option<&[u8]>, code: &str) -> Vec<u64> {
     // 时钟回拨到 1970 之前 chrono 会返回负值;退化到 0 而不是 panic。
     let now_secs = Utc::now().timestamp().max(0) as u64;
     let now_step = now_secs / 30;
-    verify_totp_step_at(totp_secret, code, now_step)
+    matching_totp_steps_at(totp_secret, code, now_step)
 }
 
-fn verify_totp_step_at(totp_secret: Option<&[u8]>, code: &str, now_step: u64) -> Option<u64> {
-    let secret = totp_secret?;
+fn matching_totp_steps_at(totp_secret: Option<&[u8]>, code: &str, now_step: u64) -> Vec<u64> {
+    let Some(secret) = totp_secret else {
+        return Vec::new();
+    };
 
     // 验证码必须正好 6 位 ASCII 数字。
     if code.len() != 6 || !code.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
+        return Vec::new();
     }
 
-    let expected = totp_code_for_step(secret, now_step);
-    constant_time_compare_bytes(expected.as_bytes(), code.as_bytes()).then_some(now_step)
+    let candidate_steps = now_step
+        .checked_sub(1)
+        .into_iter()
+        .chain(std::iter::once(now_step))
+        .chain(now_step.checked_add(1));
+
+    candidate_steps
+        .filter(|step| {
+            let expected = totp_code_for_step(secret, *step);
+            constant_time_compare_bytes(expected.as_bytes(), code.as_bytes())
+        })
+        .collect()
 }
 
 fn totp_code_for_step(secret: &[u8], step: u64) -> String {
@@ -390,7 +401,7 @@ fn totp_code_for_step(secret: &[u8], step: u64) -> String {
 }
 
 /// 长度 + 内容都按常量时间比较,避免依据"首个不同字节位置"做旁路。
-/// 在 verify_totp_step 的调用点两边都已经被检查为 6 字节,但保留通用实现
+/// 在 TOTP 的调用点两边都已经被检查为 6 字节,但保留通用实现
 /// 以便未来其它处复用。
 pub fn constant_time_compare_bytes(left: &[u8], right: &[u8]) -> bool {
     left.ct_eq(right).into()
@@ -455,32 +466,67 @@ mod tests {
     }
 
     #[test]
-    fn verify_totp_step_accepts_only_current_step() {
+    fn matching_totp_steps_accept_adjacent_clock_drift_steps() {
         let secret = b"12345678901234567890";
         let current_step = (1_000_000..1_000_100)
             .find(|step| {
+                let previous_outside_window = totp_code_for_step(secret, step - 2);
                 let current = totp_code_for_step(secret, *step);
                 let previous = totp_code_for_step(secret, step - 1);
                 let next = totp_code_for_step(secret, step + 1);
-                current != previous && current != next
+                let next_outside_window = totp_code_for_step(secret, step + 2);
+                current != previous
+                    && current != next
+                    && previous_outside_window != previous
+                    && next_outside_window != next
             })
             .expect("fixture should find non-colliding adjacent TOTP codes");
 
         let current_code = totp_code_for_step(secret, current_step);
         let previous_code = totp_code_for_step(secret, current_step - 1);
         let next_code = totp_code_for_step(secret, current_step + 1);
+        let too_old_code = totp_code_for_step(secret, current_step - 2);
+        let too_new_code = totp_code_for_step(secret, current_step + 2);
 
         assert_eq!(
-            verify_totp_step_at(Some(secret), &current_code, current_step),
-            Some(current_step)
+            matching_totp_steps_at(Some(secret), &current_code, current_step),
+            vec![current_step]
         );
         assert_eq!(
-            verify_totp_step_at(Some(secret), &previous_code, current_step),
-            None
+            matching_totp_steps_at(Some(secret), &previous_code, current_step),
+            vec![current_step - 1]
         );
         assert_eq!(
-            verify_totp_step_at(Some(secret), &next_code, current_step),
-            None
+            matching_totp_steps_at(Some(secret), &next_code, current_step),
+            vec![current_step + 1]
+        );
+        assert_eq!(
+            matching_totp_steps_at(Some(secret), &too_old_code, current_step),
+            Vec::<u64>::new()
+        );
+        assert_eq!(
+            matching_totp_steps_at(Some(secret), &too_new_code, current_step),
+            Vec::<u64>::new()
+        );
+    }
+
+    #[test]
+    fn matching_totp_steps_include_unused_current_step_when_previous_collides() {
+        let secret = b"12345678901234567890";
+        let previous_step = 910_737;
+        let current_step = previous_step + 1;
+        let code = totp_code_for_step(secret, current_step);
+
+        assert_eq!(totp_code_for_step(secret, previous_step), code);
+        let matching_steps = matching_totp_steps_at(Some(secret), &code, current_step);
+
+        assert_eq!(matching_steps, vec![previous_step, current_step]);
+        assert!(
+            matching_steps
+                .iter()
+                .copied()
+                .any(|step| step == current_step && step != previous_step),
+            "current step should remain available even when previous step produced the same code",
         );
     }
 

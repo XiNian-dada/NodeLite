@@ -88,6 +88,20 @@ describe('useDetailHistoryStore', () => {
     await a;
   });
 
+  it('dedups concurrent fetches for the same node', async () => {
+    let resolve: (v: never[]) => void = () => {};
+    mockHistory.mockReturnValueOnce(new Promise((r) => (resolve = r)));
+    const store = useDetailHistoryStore();
+
+    const first = store.load('a');
+    const second = store.load('a');
+    expect(mockHistory).toHaveBeenCalledTimes(1);
+
+    resolve([]);
+    await Promise.all([first, second]);
+    expect(mockHistory).toHaveBeenCalledTimes(1);
+  });
+
   it('records non-abort errors and swallows ApiAbortError', async () => {
     mockHistory.mockRejectedValueOnce(new ApiError(503, 'down'));
     const store = useDetailHistoryStore();

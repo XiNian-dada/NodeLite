@@ -7,8 +7,8 @@ use tracing::error;
 use crate::AppState;
 use crate::auth::{
     ReadonlyRouteAuth, TWO_FACTOR_AUTH_COOKIE, TWO_FACTOR_AUTH_SECS, TWO_FACTOR_PENDING_COOKIE,
-    auth_cookie, constant_time_compare_bytes, decode_totp_secret, expire_cookie, secure_cookies,
-    verify_totp_step,
+    auth_cookie, constant_time_compare_bytes, decode_totp_secret, expire_cookie,
+    matching_totp_steps, secure_cookies,
 };
 use crate::qr::qr_svg_for_text;
 use nodelite_proto::ReadonlyAuthConfig;
@@ -107,20 +107,52 @@ pub(super) fn settings_confirmation_error_for_sensitive_action(
             "verification code is required",
         ));
     };
-    let Some(step) = verify_totp_step(Some(&secret), code) else {
-        return Some(settings_json_error(
-            StatusCode::UNAUTHORIZED,
-            "invalid verification code",
-        ));
+    let matching_steps = match unused_matching_totp_steps(state, &secret, code) {
+        Ok(steps) => steps,
+        Err(TotpVerificationError::Invalid) => {
+            return Some(settings_json_error(
+                StatusCode::UNAUTHORIZED,
+                "invalid verification code",
+            ));
+        }
+        Err(TotpVerificationError::AlreadyUsed) => {
+            return Some(settings_json_error(
+                StatusCode::UNAUTHORIZED,
+                "verification code already used",
+            ));
+        }
     };
-    if state.two_factor_sessions.is_totp_step_used(step) {
-        return Some(settings_json_error(
-            StatusCode::UNAUTHORIZED,
-            "verification code already used",
-        ));
-    }
-    state.two_factor_sessions.mark_totp_step_used(step);
+    mark_totp_steps_used(state, &matching_steps);
     None
+}
+
+enum TotpVerificationError {
+    Invalid,
+    AlreadyUsed,
+}
+
+fn unused_matching_totp_steps(
+    state: &AppState,
+    secret: &[u8],
+    code: &str,
+) -> Result<Vec<u64>, TotpVerificationError> {
+    let matching_steps = matching_totp_steps(Some(secret), code);
+    if matching_steps.is_empty() {
+        return Err(TotpVerificationError::Invalid);
+    }
+    if matching_steps
+        .iter()
+        .all(|step| state.two_factor_sessions.is_totp_step_used(*step))
+    {
+        return Err(TotpVerificationError::AlreadyUsed);
+    }
+    Ok(matching_steps)
+}
+
+fn mark_totp_steps_used(state: &AppState, steps: &[u64]) {
+    for step in steps {
+        state.two_factor_sessions.mark_totp_step_used(*step);
+    }
 }
 
 /// 开始网页端 2FA 绑定:生成一个新 TOTP secret 和本地 SVG 二维码。
@@ -199,13 +231,16 @@ pub(crate) async fn enable_two_factor(
     if secret_bytes.len() < 10 {
         return settings_json_error(StatusCode::BAD_REQUEST, "invalid TOTP secret");
     }
-    let Some(step) = verify_totp_step(Some(&secret_bytes), &request.code) else {
-        return settings_json_error(StatusCode::UNAUTHORIZED, "invalid verification code");
+    let matching_steps = match unused_matching_totp_steps(&state, &secret_bytes, &request.code) {
+        Ok(steps) => steps,
+        Err(TotpVerificationError::Invalid) => {
+            return settings_json_error(StatusCode::UNAUTHORIZED, "invalid verification code");
+        }
+        Err(TotpVerificationError::AlreadyUsed) => {
+            return settings_json_error(StatusCode::UNAUTHORIZED, "verification code already used");
+        }
     };
-    if state.two_factor_sessions.is_totp_step_used(step) {
-        return settings_json_error(StatusCode::UNAUTHORIZED, "verification code already used");
-    }
-    state.two_factor_sessions.mark_totp_step_used(step);
+    mark_totp_steps_used(&state, &matching_steps);
 
     let next_auth = ReadonlyAuthConfig {
         enable_2fa: true,
@@ -282,13 +317,16 @@ pub(crate) async fn disable_two_factor(
     else {
         return settings_json_error(StatusCode::CONFLICT, "2FA secret is not configured");
     };
-    let Some(step) = verify_totp_step(Some(&secret), &request.code) else {
-        return settings_json_error(StatusCode::UNAUTHORIZED, "invalid verification code");
+    let matching_steps = match unused_matching_totp_steps(&state, &secret, &request.code) {
+        Ok(steps) => steps,
+        Err(TotpVerificationError::Invalid) => {
+            return settings_json_error(StatusCode::UNAUTHORIZED, "invalid verification code");
+        }
+        Err(TotpVerificationError::AlreadyUsed) => {
+            return settings_json_error(StatusCode::UNAUTHORIZED, "verification code already used");
+        }
     };
-    if state.two_factor_sessions.is_totp_step_used(step) {
-        return settings_json_error(StatusCode::UNAUTHORIZED, "verification code already used");
-    }
-    state.two_factor_sessions.mark_totp_step_used(step);
+    mark_totp_steps_used(&state, &matching_steps);
 
     let next_auth = ReadonlyAuthConfig {
         enable_2fa: false,

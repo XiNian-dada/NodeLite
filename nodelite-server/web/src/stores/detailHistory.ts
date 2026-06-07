@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { ref, shallowRef } from 'vue';
 import { apiClient, type HistoryPoint } from '@/api';
 import { ApiAbortError } from '@/api/client';
+import { useDedupeAsync } from '@/composables/useDedupeAsync';
 
 /** Node-detail overview history window, matching legacy node.html:1414-1418. */
 export const RETENTION_WINDOW_HOURS = 24 * 14; // 336h / 14 days
@@ -20,34 +21,33 @@ export const useDetailHistoryStore = defineStore('detailHistory', () => {
   const loading = ref(false);
   const error = ref<Error | null>(null);
   const fetchedAt = ref(0);
-  const inFlightId = ref<string | null>(null);
+  const requests = useDedupeAsync<string>();
 
   async function fetchFor(id: string): Promise<void> {
-    if (inFlightId.value === id) return;
-    inFlightId.value = id;
-    loading.value = true;
-    error.value = null;
-    try {
-      const result = await apiClient.nodeHistory(id, {
-        windowHours: RETENTION_WINDOW_HOURS,
-        maxPoints: OVERVIEW_HISTORY_MAX_POINTS,
-      });
-      if (nodeId.value === id) {
-        points.value = result;
-        fetchedAt.value = Date.now();
+    await requests.run(id, async ({ isCurrent }) => {
+      loading.value = true;
+      error.value = null;
+      try {
+        const result = await apiClient.nodeHistory(id, {
+          windowHours: RETENTION_WINDOW_HOURS,
+          maxPoints: OVERVIEW_HISTORY_MAX_POINTS,
+        });
+        if (isCurrent() && nodeId.value === id) {
+          points.value = result;
+          fetchedAt.value = Date.now();
+        }
+      } catch (e) {
+        if (e instanceof ApiAbortError) return;
+        if (isCurrent() && nodeId.value === id) {
+          error.value = e instanceof Error ? e : new Error(String(e));
+          fetchedAt.value = Date.now();
+        }
+      } finally {
+        if (isCurrent()) {
+          loading.value = false;
+        }
       }
-    } catch (e) {
-      if (e instanceof ApiAbortError) return;
-      if (nodeId.value === id) {
-        error.value = e instanceof Error ? e : new Error(String(e));
-        fetchedAt.value = Date.now();
-      }
-    } finally {
-      if (inFlightId.value === id) {
-        inFlightId.value = null;
-        loading.value = false;
-      }
-    }
+    });
   }
 
   function switchTo(id: string): boolean {

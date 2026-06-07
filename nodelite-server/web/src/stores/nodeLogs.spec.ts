@@ -31,6 +31,24 @@ describe('useNodeLogsStore', () => {
     expect(store.entries.length).toBe(1);
   });
 
+  it('dedups concurrent fetches for the same node', async () => {
+    let resolve: (v: ReturnType<typeof makeLogEntry>[]) => void = () => {};
+    mockLogs.mockReturnValueOnce(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    const store = useNodeLogsStore();
+
+    const first = store.loadIfStale('a');
+    const second = store.loadIfStale('a');
+    expect(mockLogs).toHaveBeenCalledTimes(1);
+
+    resolve([makeLogEntry()]);
+    await Promise.all([first, second]);
+    expect(mockLogs).toHaveBeenCalledTimes(1);
+  });
+
   it('throttles same-node re-entry but fetches on switch', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000_000);

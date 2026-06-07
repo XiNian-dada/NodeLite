@@ -331,6 +331,27 @@ cargo test -p nodelite-server sanitize::tests
 cargo test -p nodelite-server registry::tests
 ```
 
+### Protocol Parser Fuzz Smoke
+
+`fuzz/` is an independent Cargo crate outside the default workspace, so normal
+`cargo test --workspace` does not compile it. It covers the JSON parsing entry
+points for external WebSocket text frames: `WireMessage` for the agent channel
+and `BrowserMessage` for the browser channel.
+
+Common manual checks:
+
+```bash
+cargo test --manifest-path fuzz/Cargo.toml
+cargo run --manifest-path fuzz/Cargo.toml --bin wire_message -- fuzz/corpus/protocol_messages
+cargo run --manifest-path fuzz/Cargo.toml --bin browser_message -- fuzz/corpus/protocol_messages
+cargo run --manifest-path fuzz/Cargo.toml --bin protocol_messages -- 10000
+```
+
+`protocol_messages` uses a fixed-seed pseudo-random input stream for the given
+iteration count, which is useful as a fast local or scheduled "arbitrary input
+does not crash" smoke. Real crashes should be reduced to reproducible corpus
+files under `fuzz/corpus/protocol_messages/`.
+
 ## Cross-Compilation Linux x86_64 / aarch64
 
 The repository includes `lld` linker configuration for musl targets, enabling static Linux binaries:

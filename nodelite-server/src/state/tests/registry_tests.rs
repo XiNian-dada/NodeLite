@@ -1,4 +1,5 @@
 use super::*;
+use nodelite_proto::NodeStatus;
 
 #[test]
 fn newer_session_replaces_older_one() {
@@ -184,6 +185,116 @@ fn mark_disconnected_clears_session_control() {
     registry.mark_disconnected("hk-01", 9);
 
     assert!(registry.session_control("hk-01").is_none());
+}
+
+#[test]
+fn runtime_entry_is_smaller_than_cached_external_models() {
+    assert!(
+        Registry::runtime_entry_inline_bytes_for_test()
+            < Registry::previous_external_model_inline_bytes_for_test(),
+        "registry entries should not inline-cache NodeStatus plus NodeListItem",
+    );
+}
+
+#[test]
+fn runtime_entry_retained_heap_is_lower_than_cached_external_models() {
+    let mut identity = sample_identity();
+    identity.node_id = "hong-kong-edge-node-0001".repeat(2);
+    identity.node_label = "Hong Kong Edge Node With Long Display Label".repeat(2);
+    identity.hostname = "hk-edge-node-0001.example.internal".repeat(2);
+    identity.os = "linux-production".repeat(2);
+    identity.kernel_version = Some("6.8.0-nodelite-production".repeat(2));
+    identity.cpu_model = Some("Example Compute Processor 9000".repeat(2));
+    identity.agent_version = "0.1.0-review-build".repeat(2);
+    identity.tags = (0..16)
+        .map(|index| format!("fleet:edge-region-hk-{index:02}"))
+        .collect();
+
+    let mut snapshot = sample_snapshot(Utc::now());
+    snapshot.disks = (0..128)
+        .map(|index| DiskUsage {
+            device: format!("/dev/disk/by-id/nodelite-review-device-{index:03}"),
+            mount_point: format!("/srv/nodelite/review/mount/{index:03}"),
+            fs_type: "ext4".to_string(),
+            total_bytes: 1024 * 1024 * 1024,
+            available_bytes: 512 * 1024 * 1024,
+            used_bytes: 512 * 1024 * 1024,
+            used_percent: 50.0,
+        })
+        .collect();
+    let status = NodeStatus {
+        identity,
+        remote_ip: Some("198.51.100.10".to_string()),
+        geoip_country: Some("HK".to_string()),
+        geoip_city: Some("Hong Kong".to_string()),
+        geoip_latitude: Some(22.3193),
+        geoip_longitude: Some(114.1694),
+        snapshot: Some(snapshot),
+        last_seen: Some(Utc::now()),
+        latency_ms: Some(42),
+        online: true,
+    };
+
+    let (runtime, previous) = Registry::retained_heap_estimates_for_test(status);
+
+    assert!(
+        runtime.bytes < previous.bytes,
+        "runtime entry retained heap bytes should be lower than cached external models: runtime={}, previous={}",
+        runtime.bytes,
+        previous.bytes,
+    );
+    assert!(
+        runtime.allocations < previous.allocations,
+        "runtime entry heap buffer count should be lower than cached external models: runtime={}, previous={}",
+        runtime.allocations,
+        previous.allocations,
+    );
+}
+
+#[tokio::test]
+async fn restore_statuses_reassembles_detail_and_lightweight_api_views() {
+    let shared = SharedState::new(Arc::new(sample_config()));
+    let mut snapshot = sample_snapshot(Utc::now());
+    snapshot.disks.resize_with(4, sample_disk_usage);
+    let restored = NodeStatus {
+        identity: sample_identity(),
+        remote_ip: Some("198.51.100.10".to_string()),
+        geoip_country: Some("HK".to_string()),
+        geoip_city: Some("Hong Kong".to_string()),
+        geoip_latitude: Some(22.3193),
+        geoip_longitude: Some(114.1694),
+        snapshot: Some(snapshot),
+        last_seen: Some(Utc::now()),
+        latency_ms: Some(42),
+        online: true,
+    };
+
+    shared.restore_statuses(vec![restored]).await;
+
+    let detail = shared.get_status("hk-01").await.expect("restored status");
+    assert!(
+        !detail.online,
+        "restored nodes stay offline until a new session connects"
+    );
+    assert_eq!(detail.remote_ip.as_deref(), Some("198.51.100.10"));
+    assert_eq!(
+        detail
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.disks.len()),
+        Some(4),
+    );
+
+    let nodes_body = shared
+        .nodes_json_bytes()
+        .await
+        .expect("nodes api body should serialize");
+    let nodes_body = std::str::from_utf8(&nodes_body).expect("nodes body should be utf-8");
+    assert!(nodes_body.contains("\"node_id\":\"hk-01\""));
+    assert!(
+        !nodes_body.contains("\"disks\""),
+        "list API should assemble NodeListItem instead of serializing full snapshots",
+    );
 }
 
 #[tokio::test]

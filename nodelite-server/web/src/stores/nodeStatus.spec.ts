@@ -124,6 +124,56 @@ describe('useNodeStatusStore', () => {
     expect(store.data?.identity.node_id).toBe('b');
   });
 
+  it('ignores an old same-id response after switching away and back', async () => {
+    const staleA = makeNodeStatus({
+      identity: { ...makeNodeStatus().identity, node_id: 'a' },
+      snapshot: { ...makeNodeStatus().snapshot!, cpu_usage_percent: 10 },
+    });
+    const freshA = makeNodeStatus({
+      identity: { ...makeNodeStatus().identity, node_id: 'a' },
+      snapshot: { ...makeNodeStatus().snapshot!, cpu_usage_percent: 80 },
+    });
+    let resolveStaleA: (v: ReturnType<typeof makeNodeStatus>) => void = () => {};
+    let resolveB: (v: ReturnType<typeof makeNodeStatus>) => void = () => {};
+    let resolveFreshA: (v: ReturnType<typeof makeNodeStatus>) => void = () => {};
+    mockStatus
+      .mockReturnValueOnce(
+        new Promise((r) => {
+          resolveStaleA = r;
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise((r) => {
+          resolveB = r;
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise((r) => {
+          resolveFreshA = r;
+        }),
+      );
+
+    const store = useNodeStatusStore();
+    const firstA = store.load('a');
+    const loadB = store.load('b');
+    const latestA = store.load('a');
+
+    resolveStaleA(staleA);
+    await firstA;
+    expect(store.data).toBeNull();
+    expect(store.loading).toBe(true);
+
+    resolveB(makeNodeStatus({ identity: { ...makeNodeStatus().identity, node_id: 'b' } }));
+    await loadB;
+    expect(store.data).toBeNull();
+    expect(store.loading).toBe(true);
+
+    resolveFreshA(freshA);
+    await latestA;
+    expect(store.data?.snapshot?.cpu_usage_percent).toBe(80);
+    expect(store.loading).toBe(false);
+  });
+
   it('dedups concurrent fetches for the same node', async () => {
     let resolve: (v: ReturnType<typeof makeNodeStatus>) => void = () => {};
     mockStatus.mockReturnValueOnce(
@@ -134,7 +184,7 @@ describe('useNodeStatusStore', () => {
     const store = useNodeStatusStore();
 
     const first = store.load('a');
-    const second = store.load('a'); // same id, in flight → no second request
+    const second = store.load('a'); // same id, in flight; no second request
     expect(mockStatus).toHaveBeenCalledTimes(1);
 
     resolve(makeNodeStatus());

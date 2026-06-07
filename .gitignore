@@ -1,4 +1,5 @@
 /target
+/fuzz/target/
 target/tarpaulin/
 *.log
 *.tmp

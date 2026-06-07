@@ -3,7 +3,9 @@ use std::fmt::Write;
 
 use crate::ServerReadiness;
 use crate::agent_logs::AgentLogStats;
-use nodelite_proto::{MetricsConfig, NodeSnapshot, NodeStatus, OverviewData};
+#[cfg(test)]
+use nodelite_proto::NodeStatus;
+use nodelite_proto::{MetricsConfig, NodeIdentity, NodeSnapshot, OverviewData};
 
 #[cfg(test)]
 pub(crate) fn render_prometheus_metrics(
@@ -13,7 +15,7 @@ pub(crate) fn render_prometheus_metrics(
 ) -> String {
     render_prometheus_metrics_from_iter(
         readiness,
-        statuses.iter(),
+        statuses.iter().map(PrometheusNode::from_status),
         overview,
         MetricsConfig::default(),
     )
@@ -21,7 +23,7 @@ pub(crate) fn render_prometheus_metrics(
 
 pub(crate) fn render_prometheus_metrics_from_iter<'a>(
     readiness: &ServerReadiness,
-    statuses: impl IntoIterator<Item = &'a NodeStatus>,
+    statuses: impl IntoIterator<Item = PrometheusNode<'a>>,
     overview: &OverviewData,
     metrics_config: MetricsConfig,
 ) -> String {
@@ -32,6 +34,28 @@ pub(crate) fn render_prometheus_metrics_from_iter<'a>(
         render_node_metrics(&mut emitter, status, metrics_config);
     }
     emitter.finish()
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct PrometheusNode<'a> {
+    pub(crate) identity: &'a NodeIdentity,
+    pub(crate) snapshot: Option<&'a NodeSnapshot>,
+    pub(crate) last_seen: Option<chrono::DateTime<chrono::Utc>>,
+    pub(crate) latency_ms: Option<u64>,
+    pub(crate) online: bool,
+}
+
+impl<'a> PrometheusNode<'a> {
+    #[cfg(test)]
+    pub(crate) fn from_status(status: &'a NodeStatus) -> Self {
+        Self {
+            identity: &status.identity,
+            snapshot: status.snapshot.as_ref(),
+            last_seen: status.last_seen,
+            latency_ms: status.latency_ms,
+            online: status.online,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -481,7 +505,11 @@ fn render_overview_metrics(emitter: &mut MetricEmitter, overview: &OverviewData)
     }
 }
 
-fn render_node_metrics(emitter: &mut MetricEmitter, status: &NodeStatus, config: MetricsConfig) {
+fn render_node_metrics(
+    emitter: &mut MetricEmitter,
+    status: PrometheusNode<'_>,
+    config: MetricsConfig,
+) {
     let node_id = status.identity.node_id.as_str();
     let node_labels = [("node_id", node_id)];
     let node_info_labels = [

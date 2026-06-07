@@ -20,6 +20,11 @@ pub enum RegistryError {
         message: String,
     },
     UnsupportedPublicBaseUrlScheme(String),
+    FileTooLarge {
+        path: PathBuf,
+        len: u64,
+        max_len: u64,
+    },
     Io {
         operation: &'static str,
         path: PathBuf,
@@ -72,6 +77,14 @@ impl RegistryError {
         }
     }
 
+    pub fn file_too_large(path: &Path, len: u64, max_len: u64) -> Self {
+        Self::FileTooLarge {
+            path: path.to_path_buf(),
+            len,
+            max_len,
+        }
+    }
+
     pub fn parse(path: &Path, source: serde_json::Error) -> Self {
         Self::Parse {
             path: path.to_path_buf(),
@@ -117,6 +130,11 @@ impl fmt::Display for RegistryError {
                     "unsupported public_base_url scheme for agent install: {scheme}"
                 )
             }
+            Self::FileTooLarge { path, len, max_len } => write!(
+                f,
+                "registry file {} is too large ({len} bytes > {max_len} bytes)",
+                path.display()
+            ),
             Self::Io {
                 operation, path, ..
             } => {
@@ -152,6 +170,7 @@ impl std::error::Error for RegistryError {
             Self::Serialize { source } => Some(source),
             Self::MutationTask { source } => Some(source),
             Self::BackgroundTask { source } => Some(source),
+            Self::FileTooLarge { .. } => None,
             Self::VersionConflict { .. } => None,
             Self::Internal { source, .. } => Some(source.root_cause()),
             Self::Unauthorized

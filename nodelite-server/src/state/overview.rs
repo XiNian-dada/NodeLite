@@ -1,10 +1,30 @@
 //! 概览聚合与数值安全辅助逻辑。
 
 use chrono::Utc;
-use nodelite_proto::{NodeStatus, OverviewData};
+#[cfg(test)]
+use nodelite_proto::NodeStatus;
+use nodelite_proto::{NodeSnapshot, OverviewData};
+
+#[derive(Clone, Copy)]
+pub(super) struct OverviewNode<'a> {
+    pub(super) online: bool,
+    pub(super) latency_ms: Option<u64>,
+    pub(super) snapshot: Option<&'a NodeSnapshot>,
+}
+
+impl<'a> OverviewNode<'a> {
+    #[cfg(test)]
+    pub(super) fn from_status(status: &'a NodeStatus) -> Self {
+        Self {
+            online: status.online,
+            latency_ms: status.latency_ms,
+            snapshot: status.snapshot.as_ref(),
+        }
+    }
+}
 
 pub(super) fn build_overview_from_iter<'a>(
-    statuses: impl IntoIterator<Item = &'a NodeStatus>,
+    statuses: impl IntoIterator<Item = OverviewNode<'a>>,
 ) -> OverviewData {
     let mut total_nodes = 0_usize;
     let mut online_nodes = 0_usize;
@@ -25,7 +45,7 @@ pub(super) fn build_overview_from_iter<'a>(
             }
         }
 
-        let Some(snapshot) = status.snapshot.as_ref() else {
+        let Some(snapshot) = status.snapshot else {
             continue;
         };
         total_rx_bytes = total_rx_bytes.saturating_add(snapshot.network.total_rx_bytes);
@@ -72,7 +92,7 @@ mod tests {
         LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot, NodeStatus,
     };
 
-    use super::build_overview_from_iter;
+    use super::{OverviewNode, build_overview_from_iter};
 
     fn status(
         node_id: &str,
@@ -155,7 +175,7 @@ mod tests {
             ),
         ];
 
-        let overview = build_overview_from_iter(statuses.iter());
+        let overview = build_overview_from_iter(statuses.iter().map(OverviewNode::from_status));
         assert_eq!(overview.total_nodes, 3);
         assert_eq!(overview.online_nodes, 2);
         assert_eq!(overview.offline_nodes, 1);
@@ -183,7 +203,7 @@ mod tests {
             ),
         ];
 
-        let overview = build_overview_from_iter(statuses.iter());
+        let overview = build_overview_from_iter(statuses.iter().map(OverviewNode::from_status));
         assert_eq!(overview.current_rx_bytes_per_sec, 0.0);
         assert_eq!(overview.current_tx_bytes_per_sec, f64::MAX);
         assert_eq!(overview.average_latency_ms, None);

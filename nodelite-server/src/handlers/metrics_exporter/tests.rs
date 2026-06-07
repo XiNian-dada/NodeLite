@@ -3,9 +3,9 @@
 use chrono::Utc;
 
 use super::{
-    ApiCacheMetrics, RuntimeMetrics, SqliteWalCheckpointMetrics, SqliteWalCheckpointStats,
-    WriterMetrics, WsMessageMetrics, render_agent_log_metrics, render_api_cache_metrics,
-    render_metrics_response_body_bytes, render_prometheus_metrics,
+    ApiCacheMetrics, PrometheusNode, RuntimeMetrics, SqliteWalCheckpointMetrics,
+    SqliteWalCheckpointStats, WriterMetrics, WsMessageMetrics, render_agent_log_metrics,
+    render_api_cache_metrics, render_metrics_response_body_bytes, render_prometheus_metrics,
     render_prometheus_metrics_from_iter, render_runtime_metrics, render_writer_metrics,
 };
 use crate::ServerReadiness;
@@ -86,7 +86,7 @@ fn exporter_omits_snapshot_resource_metrics_by_default() {
     let body = render_prometheus_metrics(&readiness, &statuses, &overview);
     let detailed_body = render_prometheus_metrics_from_iter(
         &readiness,
-        statuses.iter(),
+        statuses.iter().map(PrometheusNode::from_status),
         &overview,
         MetricsConfig {
             export_node_resource_metrics: true,
@@ -121,7 +121,7 @@ fn exporter_can_enable_disk_metrics_explicitly() {
     let statuses = sample_statuses();
     let body = render_prometheus_metrics_from_iter(
         &readiness,
-        statuses.iter(),
+        statuses.iter().map(PrometheusNode::from_status),
         &overview,
         MetricsConfig {
             export_node_disk_metrics: true,
@@ -150,7 +150,7 @@ fn exporter_skips_unknown_cpu_usage() {
 
     let body = render_prometheus_metrics_from_iter(
         &readiness,
-        statuses.iter(),
+        statuses.iter().map(PrometheusNode::from_status),
         &overview,
         MetricsConfig {
             export_node_resource_metrics: true,
@@ -174,7 +174,7 @@ fn render_detailed_prometheus_metrics() -> String {
     let statuses = sample_statuses();
     render_prometheus_metrics_from_iter(
         &readiness,
-        statuses.iter(),
+        statuses.iter().map(PrometheusNode::from_status),
         &overview,
         MetricsConfig {
             export_node_resource_metrics: true,
