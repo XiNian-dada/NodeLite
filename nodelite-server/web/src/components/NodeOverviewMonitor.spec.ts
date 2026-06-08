@@ -80,6 +80,17 @@ function mountOverview() {
   });
 }
 
+function mountOverviewWithHistory(history: HistoryPoint[]) {
+  return mount(NodeOverviewMonitor, {
+    props: {
+      node: makeNodeStatus(),
+      history,
+      activeKey: 'last_24h' as const,
+    },
+    global: { plugins: [getI18n()] },
+  });
+}
+
 describe('NodeOverviewMonitor', () => {
   beforeEach(async () => {
     __resetI18nForTest();
@@ -106,6 +117,12 @@ describe('NodeOverviewMonitor', () => {
     expect(wrapper.findAll('.summary-card')).toHaveLength(5);
     expect(wrapper.findAll('.chart-card')).toHaveLength(6);
     expect(wrapper.find('[data-test="summary-load"]').text()).toContain('0.30');
+  });
+
+  it('uses the current snapshot when history is empty', () => {
+    const wrapper = mountOverviewWithHistory([]);
+    expect(wrapper.findAll('[data-test="metric-chart-empty"]')).toHaveLength(0);
+    expect(wrapper.findAll('[data-test="metric-chart-svg"]')).toHaveLength(6);
   });
 
   it('renders preset buttons with the active one marked', () => {

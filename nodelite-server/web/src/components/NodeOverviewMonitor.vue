@@ -28,7 +28,39 @@ const { t } = useI18n();
 
 provideChartHoverGroup();
 
-const data = computed(() => buildChartData(props.history));
+function currentHistoryPoint(node: NodeStatus | null): HistoryPoint | null {
+  const snapshot = node?.snapshot;
+  if (!node || !snapshot) return null;
+  const disks = uniqueDisks(snapshot.disks);
+  const totalDisk = totalDiskBytes(disks);
+  const usedDisk = usedDiskBytes(disks);
+  const memoryTotal = snapshot.memory.total_bytes;
+  return {
+    node_id: node.identity.node_id,
+    recorded_at: snapshot.collected_at,
+    cpu_usage_percent: snapshot.cpu_usage_percent,
+    load_one: snapshot.load.one,
+    load_five: snapshot.load.five,
+    load_fifteen: snapshot.load.fifteen,
+    memory_used_percent: memoryTotal > 0 ? (snapshot.memory.used_bytes / memoryTotal) * 100 : 0,
+    rx_bytes_per_sec: snapshot.network.rx_bytes_per_sec,
+    tx_bytes_per_sec: snapshot.network.tx_bytes_per_sec,
+    latency_ms: node.latency_ms,
+    packet_loss_percent: snapshot.network.packet_loss_percent,
+    disk_used_percent: totalDisk > 0 ? (usedDisk / totalDisk) * 100 : null,
+  };
+}
+
+const effectiveHistory = computed(() => {
+  const current = currentHistoryPoint(props.node);
+  if (!current) return props.history;
+  if (props.history.some((point) => point.recorded_at === current.recorded_at)) {
+    return props.history;
+  }
+  return [...props.history, current];
+});
+
+const data = computed(() => buildChartData(effectiveHistory.value));
 const clipSpikes = reactive<Record<OverviewMonitorMetric, boolean>>({
   cpu: true,
   memory: true,

@@ -27,6 +27,16 @@ describe('buildAreaChart', () => {
     expect(model.timeTicks.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('renders a single numeric point as a horizontal line', () => {
+    const model = buildAreaChart(pts([42]), opts);
+    expect(model.empty).toBe(false);
+    expect(model.series[0]!.line).toContain(' L');
+    expect(model.series[0]!.points[0]!.x).toBeCloseTo(
+      model.padLeft + (model.width - model.padLeft - model.padRight) / 2,
+      5,
+    );
+  });
+
   it('positions the first point at padLeft and last at width-padRight', () => {
     const model = buildAreaChart(pts([10, 90]), opts);
     const s = model.series[0]!;
@@ -85,6 +95,22 @@ describe('buildMultiAreaChart', () => {
     for (const s of model.series) {
       expect(s.line.startsWith('M')).toBe(true);
       expect(s.area).toBeUndefined();
+    }
+  });
+
+  it('renders single-point multi-series as horizontal lines', () => {
+    const model = buildMultiAreaChart(
+      [
+        { label: 'down', color: 'var(--chart-network-down)', points: pts([100]) },
+        { label: 'up', color: 'var(--chart-network-up)', points: pts([10]) },
+      ],
+      opts,
+    );
+    expect(model.empty).toBe(false);
+    expect(model.series).toHaveLength(2);
+    for (const series of model.series) {
+      expect(series.line).toContain(' L');
+      expect(series.points).toHaveLength(1);
     }
   });
 
