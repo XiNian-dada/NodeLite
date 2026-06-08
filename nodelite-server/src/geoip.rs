@@ -106,7 +106,8 @@ impl GeoIpResolver {
 fn should_skip_download(config: &GeoIpConfig) -> bool {
     !config.auto_update
         || config.provider == GeoIpProvider::Custom
-        || database_is_fresh(&config.database_path, config.update_interval_days)
+        || (database_is_fresh(&config.database_path, config.update_interval_days)
+            && database_matches_edition(&config.database_path, config.edition))
 }
 
 fn database_is_fresh(path: &Path, update_interval_days: u64) -> bool {
@@ -120,6 +121,21 @@ fn database_is_fresh(path: &Path, update_interval_days: u64) -> bool {
         return false;
     };
     age.as_secs() < update_interval_days.saturating_mul(24 * 60 * 60)
+}
+
+fn database_matches_edition(path: &Path, edition: GeoIpEdition) -> bool {
+    let Ok(reader) = maxminddb::Reader::open_readfile(path) else {
+        return false;
+    };
+    database_type_matches_edition(&reader.metadata.database_type, edition)
+}
+
+fn database_type_matches_edition(database_type: &str, edition: GeoIpEdition) -> bool {
+    let database_type = database_type.to_ascii_lowercase();
+    match edition {
+        GeoIpEdition::CountryLite => database_type.contains("country"),
+        GeoIpEdition::CityLite => database_type.contains("city"),
+    }
 }
 
 async fn download_dbip_database(config: &GeoIpConfig) -> Result<()> {
@@ -316,7 +332,10 @@ mod tests {
 
     use std::path::Path;
 
-    use super::{dbip_download_url, dbip_download_urls, is_lan_ip, temporary_database_path};
+    use super::{
+        database_type_matches_edition, dbip_download_url, dbip_download_urls, is_lan_ip,
+        temporary_database_path,
+    };
 
     #[test]
     fn lan_ip_detection_covers_private_and_documentation_ranges() {
@@ -353,6 +372,26 @@ mod tests {
             dbip_download_url(GeoIpEdition::CityLite, 2026, 6)
                 .contains("dbip-city-lite-2026-06.mmdb.gz")
         );
+    }
+
+    #[test]
+    fn dbip_database_type_must_match_requested_edition() {
+        assert!(database_type_matches_edition(
+            "DBIP-Country-Lite",
+            GeoIpEdition::CountryLite
+        ));
+        assert!(database_type_matches_edition(
+            "DBIP-City-Lite",
+            GeoIpEdition::CityLite
+        ));
+        assert!(!database_type_matches_edition(
+            "DBIP-Country-Lite",
+            GeoIpEdition::CityLite
+        ));
+        assert!(!database_type_matches_edition(
+            "DBIP-City-Lite",
+            GeoIpEdition::CountryLite
+        ));
     }
 
     #[test]
