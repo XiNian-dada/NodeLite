@@ -37,6 +37,9 @@ GEOIP_UPDATE_INTERVAL_DAYS="${NODELITE_GEOIP_UPDATE_INTERVAL_DAYS:-30}"
 
 TMP_BIN=""
 TMP_SHA256=""
+TMP_HEADERS=""
+FAILURE_REPORTED=0
+LAST_STEP="startup"
 
 # 检测当前脚本是否跑在交互式终端中。这里不能主动触碰 `/dev/tty`,
 # 否则像网页触发升级这种无控制终端场景会在探测阶段就被 shell 报错打断。
@@ -44,12 +47,14 @@ has_tty() {
   [ -t 0 ] || [ -t 1 ] || [ -t 2 ]
 }
 
-# 统一的错误输出函数。stderr 被重定向时也尽量写回当前终端,避免用户只看到标题。
+# 统一的错误输出函数。优先写到当前终端,避免用户只看到标题。
 fail() {
   message="install-server: $*"
-  printf '%s\n' "$message" >&2
-  if has_tty && [ ! -t 2 ]; then
-    printf '%s\n' "$message" >/dev/tty 2>/dev/null || true
+  FAILURE_REPORTED=1
+  if has_tty && printf '%s\n' "$message" >/dev/tty 2>/dev/null; then
+    :
+  else
+    printf '%s\n' "$message" >&2
   fi
   exit 1
 }
@@ -63,9 +68,27 @@ need_cmd() {
 cleanup() {
   [ -n "$TMP_BIN" ] && rm -f "$TMP_BIN"
   [ -n "$TMP_SHA256" ] && rm -f "$TMP_SHA256"
+  [ -n "$TMP_HEADERS" ] && rm -f "$TMP_HEADERS"
 }
 
-trap cleanup EXIT HUP INT TERM
+mark_step() {
+  LAST_STEP="$1"
+}
+
+on_exit() {
+  status="$?"
+  cleanup
+  if [ "$status" -ne 0 ] && [ "$FAILURE_REPORTED" -ne 1 ]; then
+    if has_tty && printf '%s\n' "install-server: aborted during $LAST_STEP (exit status $status)" >/dev/tty 2>/dev/null; then
+      :
+    else
+      printf '%s\n' "install-server: aborted during $LAST_STEP (exit status $status)" >&2
+    fi
+  fi
+}
+
+trap on_exit EXIT
+trap 'exit 130' HUP INT TERM
 
 # 统一输出一整行文本。
 tty_println() {
@@ -277,8 +300,15 @@ resolve_release_base_url() {
   fi
   case "$BASE_URL" in
     https://github.com/*/releases/latest/download)
+      mark_step "resolving latest GitHub release"
       releases_root="${BASE_URL%/latest/download}"
-      redirect_location="$(curl -fsSI "$releases_root/latest" | awk '
+      TMP_HEADERS="$(mktemp "${TMPDIR:-/tmp}/nodelite-release-headers.XXXXXX")" \
+        || fail "failed to create temporary file for release headers"
+      tty_println "Resolving latest stable release from $releases_root/latest"
+      if ! curl -fsSI "$releases_root/latest" -o "$TMP_HEADERS"; then
+        fail "failed to resolve latest GitHub release"
+      fi
+      redirect_location="$(awk '
         tolower($1) == "location:" {
           value = $2
           sub(/\r$/, "", value)
@@ -289,15 +319,14 @@ resolve_release_base_url() {
             print location
           }
         }
-      ')" \
-        || fail "failed to resolve latest GitHub release"
+      ' "$TMP_HEADERS")"
       [ -n "$redirect_location" ] || fail "GitHub latest release redirect did not include a location"
       resolved_tag="${redirect_location##*/}"
       if ! is_stable_version "$resolved_tag"; then
         fail "resolved latest release '${resolved_tag}' is a pre-release. Set NODELITE_SERVER_VERSION=${resolved_tag} to install it explicitly."
       fi
       BASE_URL="${releases_root}/download/${resolved_tag}"
-      printf '%s\n' "Resolved GitHub latest release tag: $resolved_tag"
+      tty_println "Resolved GitHub latest release tag: $resolved_tag"
       ;;
   esac
 }
@@ -511,8 +540,10 @@ ignored_filesystems = ${IGNORED_FILESYSTEMS_RAW}
 EOF
 }
 
+mark_step "checking privileges"
 [ "$(id -u)" -eq 0 ] || fail "please run as root"
 
+mark_step "checking required commands"
 need_cmd awk
 need_cmd chmod
 need_cmd chown
@@ -539,8 +570,10 @@ tty_println ""
 
 validate_mode "$MODE"
 
+tty_println "Requested mode: $MODE"
 resolve_release_base_url
 
+mark_step "detecting existing installation"
 existing_install_root="$(detect_existing_install_root)"
 if [ -n "$existing_install_root" ]; then
   INSTALL_ROOT_DEFAULT="$existing_install_root"
@@ -558,8 +591,19 @@ if [ "$MODE" = "auto" ]; then
     MODE="install"
   fi
 fi
+tty_println "Detected mode: $MODE"
+if [ "$existing_install" -eq 1 ]; then
+  if [ -n "$existing_install_root" ]; then
+    tty_println "Detected install root: $existing_install_root"
+  else
+    tty_println "Detected existing NodeLite files but no install root in $UNIT_PATH"
+  fi
+else
+  tty_println "No existing NodeLite server installation detected"
+fi
 
 if [ "$MODE" = "upgrade" ] || [ "$MODE" = "migrate" ]; then
+  mark_step "validating existing installation"
   if [ "$existing_install" -ne 1 ]; then
     fail "$MODE mode requires an existing NodeLite server installation; expected $UNIT_PATH or $BIN_PATH. If this is a fresh install, rerun without NODELITE_SERVER_MODE=upgrade."
   fi
@@ -590,13 +634,20 @@ UI_REFRESH_INTERVAL_SECS="5"
 IGNORED_FILESYSTEMS_RAW='["tmpfs", "devtmpfs", "overlay"]'
 
 LISTEN_HOST_DEFAULT_VALUE="$LISTEN_HOST_DEFAULT"
-LISTEN_PORT_DEFAULT_VALUE="$(random_port)"
+LISTEN_PORT_DEFAULT_VALUE="20000"
 PUBLIC_HOST_DEFAULT_VALUE=""
 PUBLIC_SCHEME_DEFAULT_VALUE="https"
 READONLY_USERNAME_DEFAULT_VALUE="viewer"
-READONLY_PASSWORD_DEFAULT_VALUE="$(generate_strong_password)"
+READONLY_PASSWORD_DEFAULT_VALUE=""
+
+if [ "$MODE" != "upgrade" ]; then
+  mark_step "generating install defaults"
+  LISTEN_PORT_DEFAULT_VALUE="$(random_port)"
+  READONLY_PASSWORD_DEFAULT_VALUE="$(generate_strong_password)"
+fi
 
 if [ "$MODE" = "upgrade" ] || [ "$MODE" = "migrate" ]; then
+  mark_step "loading existing server defaults"
   load_existing_server_defaults "$CURRENT_CONFIG_PATH"
 fi
 
@@ -612,14 +663,17 @@ CONFIG_PATH="$CONFIG_DIR/server.toml"
 REGISTRY_PATH="$CONFIG_DIR/server.json"
 
 if [ "$MODE" = "install" ] && [ "$existing_install" -eq 1 ]; then
+  mark_step "confirming existing install overwrite"
   if ! confirm_default_no "Existing NodeLite files detected. Overwrite them?"; then
     fail "aborted by user"
   fi
 fi
 
 if [ "$MODE" = "upgrade" ]; then
+  mark_step "checking existing server config"
   [ -f "$CONFIG_PATH" ] || fail "existing server config not found at $CONFIG_PATH"
 else
+  mark_step "collecting install settings"
   LISTEN_HOST="$(prompt_required "Listen host" "$LISTEN_HOST_DEFAULT_VALUE")"
   LISTEN_PORT="$(prompt_required "Listen port" "$LISTEN_PORT_DEFAULT_VALUE")"
   PUBLIC_HOST="$(prompt_required "Public domain or IP" "$PUBLIC_HOST_DEFAULT_VALUE")"
@@ -633,6 +687,7 @@ else
   validate_no_whitespace "public host" "$PUBLIC_HOST"
 fi
 
+mark_step "checking target architecture"
 ARCH="$(uname -m)"
 case "$ARCH" in
   x86_64|amd64)
@@ -649,24 +704,31 @@ esac
 ARTIFACT_NAME="nodelite-server-$TARGET"
 DOWNLOAD_URL="$BASE_URL/$ARTIFACT_NAME"
 
+mark_step "preparing install directories"
 mkdir -p "$INSTALL_ROOT" "$CONFIG_DIR" "$DATA_DIR"
 chown root:root "$INSTALL_ROOT" "$CONFIG_DIR" "$DATA_DIR"
 chmod 0755 "$INSTALL_ROOT"
 chmod 0700 "$CONFIG_DIR" "$DATA_DIR"
 
+mark_step "creating temporary files"
 TMP_BIN="$(mktemp "$INSTALL_ROOT/nodelite-server.XXXXXX")"
 TMP_SHA256="$(mktemp "$INSTALL_ROOT/nodelite-sha256.XXXXXX")"
 
+mark_step "fetching release checksums"
 EXPECTED_SHA256="$(fetch_expected_sha256 "$ARTIFACT_NAME")"
 
 printf '%s\n' "Downloading $DOWNLOAD_URL"
+mark_step "downloading server binary"
 curl -fsSL "$DOWNLOAD_URL" -o "$TMP_BIN" || fail "failed to download server binary"
+mark_step "verifying server binary checksum"
 ACTUAL_SHA256="$(calculate_sha256 "$TMP_BIN")"
 [ "$ACTUAL_SHA256" = "$EXPECTED_SHA256" ] || fail "downloaded server checksum mismatch"
 
+mark_step "installing server binary"
 install -o root -g root -m 0755 "$TMP_BIN" "$BIN_PATH"
 
 if [ "$MODE" = "migrate" ] && [ "$CURRENT_INSTALL_ROOT" != "$INSTALL_ROOT" ]; then
+  mark_step "migrating server data"
   copy_tree_contents "$CURRENT_DATA_DIR" "$DATA_DIR"
   if [ -f "$CURRENT_REGISTRY_PATH" ]; then
     cp "$CURRENT_REGISTRY_PATH" "$REGISTRY_PATH"
@@ -674,6 +736,7 @@ if [ "$MODE" = "migrate" ] && [ "$CURRENT_INSTALL_ROOT" != "$INSTALL_ROOT" ]; th
 fi
 
 if [ "$MODE" != "upgrade" ]; then
+  mark_step "writing server config"
   render_server_config >"$CONFIG_PATH"
   chmod 0600 "$CONFIG_PATH"
 
@@ -683,6 +746,7 @@ if [ "$MODE" != "upgrade" ]; then
   chmod 0600 "$REGISTRY_PATH"
 fi
 
+mark_step "writing systemd unit"
 cat >"$UNIT_PATH" <<EOF
 [Unit]
 Description=NodeLite Server
@@ -722,10 +786,12 @@ ReadWritePaths=$INSTALL_ROOT
 WantedBy=multi-user.target
 EOF
 
+mark_step "restarting systemd service"
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME.service"
 systemctl restart "$SERVICE_NAME.service"
 
+mark_step "printing completion summary"
 clear_screen
 if [ "$MODE" = "upgrade" ]; then
   tty_println "NodeLite server upgraded and restarted."
