@@ -66,29 +66,69 @@ curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/inst
 
 ## 截图展示
 
-### 首页
+### 白天模式
+
+#### 首页
 ![首页](images/zh_cn/home_page.png)
 
-### 系统设置
+#### 系统设置
 ![系统设置页面](images/zh_cn/syssettings_page.png)
 
-### 节点详情
-![详情页面](images/zh_cn/detail_page.png)
+#### 告警设置
+![告警设置页面](images/zh_cn/alerts_page.png)
 
-### 实时监控
-![监控页面](images/zh_cn/monitor_page.png)
+#### 账户安全
+![账户安全页面](images/zh_cn/account_page.png)
 
-### 硬件信息
+#### 节点概览与监控
+![节点概览与监控页面](images/zh_cn/detail_page.png)
+
+#### 监控放大预览
+![监控放大预览](images/zh_cn/monitor_page.png)
+
+#### 硬件信息
 ![硬件页面](images/zh_cn/hardware_page.png)
 
-### 网络监控
+#### 网络监控
 ![网络页面](images/zh_cn/network_page.png)
 
-### Agent 日志
+#### Agent 日志
 ![Agent 日志页面](images/zh_cn/agentlog_page.png)
 
-### Agent 设置
+#### Agent 设置
 ![Agent 设置页面](images/zh_cn/agentsettings_page.png)
+
+### 黑夜模式
+
+#### 首页
+![首页（黑夜模式）](images/zh_cn/dark_home_page.png)
+
+#### 系统设置
+![系统设置页面（黑夜模式）](images/zh_cn/dark_syssettings_page.png)
+
+#### 告警设置
+![告警设置页面（黑夜模式）](images/zh_cn/dark_alerts_page.png)
+
+#### 账户安全
+![账户安全页面（黑夜模式）](images/zh_cn/dark_account_page.png)
+
+#### 节点概览与监控
+![节点概览与监控页面（黑夜模式）](images/zh_cn/dark_detail_page.png)
+
+#### 监控放大预览
+![监控放大预览（黑夜模式）](images/zh_cn/dark_monitor_page.png)
+
+#### 硬件信息
+![硬件页面（黑夜模式）](images/zh_cn/dark_hardware_page.png)
+
+#### 网络监控
+![网络页面（黑夜模式）](images/zh_cn/dark_network_page.png)
+
+#### Agent 日志
+![Agent 日志页面（黑夜模式）](images/zh_cn/dark_agentlog_page.png)
+
+#### Agent 设置
+![Agent 设置页面（黑夜模式）](images/zh_cn/dark_agentsettings_page.png)
 
 ## 性能表现
 

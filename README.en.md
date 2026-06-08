@@ -64,29 +64,69 @@ After installation:
 
 ## Screenshots
 
-### Home
+### Light Mode
+
+#### Home
 ![Home](images/en/home_page.png)
 
-### System Settings
+#### System Settings
 ![System Settings](images/en/syssettings_page.png)
 
-### Node Details
-![Node Details](images/en/detail_page.png)
+#### Alerts
+![Alerts](images/en/alerts_page.png)
 
-### Real-time Monitor
-![Real-time Monitor](images/en/monitor_page.png)
+#### Account
+![Account](images/en/account_page.png)
 
-### Hardware Info
+#### Node Overview & Monitor
+![Node Overview and Monitor](images/en/detail_page.png)
+
+#### Chart Zoom Preview
+![Chart Zoom Preview](images/en/monitor_page.png)
+
+#### Hardware Info
 ![Hardware Info](images/en/hardware_page.png)
 
-### Network Monitor
+#### Network Monitor
 ![Network Monitor](images/en/network_page.png)
 
-### Agent Logs
+#### Agent Logs
 ![Agent Logs](images/en/agentlog_page.png)
 
-### Agent Settings
+#### Agent Settings
 ![Agent Settings](images/en/agentsettings_page.png)
+
+### Dark Mode
+
+#### Home
+![Home - Dark Mode](images/en/dark_home_page.png)
+
+#### System Settings
+![System Settings - Dark Mode](images/en/dark_syssettings_page.png)
+
+#### Alerts
+![Alerts - Dark Mode](images/en/dark_alerts_page.png)
+
+#### Account
+![Account - Dark Mode](images/en/dark_account_page.png)
+
+#### Node Overview & Monitor
+![Node Overview and Monitor - Dark Mode](images/en/dark_detail_page.png)
+
+#### Chart Zoom Preview
+![Chart Zoom Preview - Dark Mode](images/en/dark_monitor_page.png)
+
+#### Hardware Info
+![Hardware Info - Dark Mode](images/en/dark_hardware_page.png)
+
+#### Network Monitor
+![Network Monitor - Dark Mode](images/en/dark_network_page.png)
+
+#### Agent Logs
+![Agent Logs - Dark Mode](images/en/dark_agentlog_page.png)
+
+#### Agent Settings
+![Agent Settings - Dark Mode](images/en/dark_agentsettings_page.png)
 
 ## Performance
 
