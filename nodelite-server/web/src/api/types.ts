@@ -178,6 +178,14 @@ export interface SettingsUpdates {
   agent_upgrade_command: string;
 }
 
+/** GET /api/settings/update/server/log — recent server update output. */
+export interface ServerUpdateLogResponse {
+  exists: boolean;
+  offset: number;
+  next_offset: number;
+  text: string;
+}
+
 export interface SettingsAgentToken {
   node_id: string;
   node_label: string;

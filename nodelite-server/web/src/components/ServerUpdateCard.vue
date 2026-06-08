@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue';
+import { computed, nextTick, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { SettingsResponse } from '@/api';
 import { apiClient } from '@/api';
@@ -8,6 +8,7 @@ import { isNewerVersion, normalizeVersionTag } from '@/lib/version';
 import { messageFromError } from '@/lib/apiError';
 import ReauthFields from './ReauthFields.vue';
 import SettingsMessage from './SettingsMessage.vue';
+import UpdateConsoleModal from './UpdateConsoleModal.vue';
 
 const props = defineProps<{ settings: SettingsResponse }>();
 const { t } = useI18n();
@@ -15,7 +16,10 @@ const { t } = useI18n();
 const twoFactor = computed(() => props.settings.auth.two_factor_enabled);
 
 // --- Check for update (direct GitHub call) ---
-const checkMsg = reactive<{ state: 'ok' | 'error' | null; text: string }>({ state: null, text: '' });
+const checkMsg = reactive<{ state: 'ok' | 'error' | null; text: string }>({
+  state: null,
+  text: '',
+});
 const checking = ref(false);
 
 function githubLatestUrl(): string | null {
@@ -52,13 +56,29 @@ async function checkForUpdate(): Promise<void> {
 
 // --- Manual server update (POST with reauth) ---
 const reauth = reactive({ currentPassword: '', code: '' });
-const updateMsg = reactive<{ state: 'ok' | 'error' | null; text: string }>({ state: null, text: '' });
+const updateMsg = reactive<{ state: 'ok' | 'error' | null; text: string }>({
+  state: null,
+  text: '',
+});
 const updating = ref(false);
+const consoleOpen = ref(false);
+const updateConsole = ref<InstanceType<typeof UpdateConsoleModal> | null>(null);
+
+async function openUpdateConsole(fetchNow = true): Promise<void> {
+  consoleOpen.value = true;
+  await nextTick();
+  if (fetchNow) void updateConsole.value?.fetchLog({ reset: true });
+}
 
 async function submitUpdate(): Promise<void> {
   updating.value = true;
   updateMsg.state = null;
   updateMsg.text = t('settings.version.update_starting');
+  await openUpdateConsole(false);
+  updateConsole.value?.reset();
+  updateConsole.value?.setStatus('waiting', t('settings.version.console_status_waiting'));
+  updateConsole.value?.setMeta(t('settings.version.console_preparing'));
+  updateConsole.value?.setText(`[client] ${t('settings.version.update_starting')}`);
   // server-update reauth: 2FA → code only; else current_password only.
   const payload = twoFactor.value
     ? { code: reauth.code }
@@ -70,11 +90,25 @@ async function submitUpdate(): Promise<void> {
     if (res.ok) {
       reauth.currentPassword = '';
       reauth.code = '';
+      updateConsole.value?.appendLine(`[client] ${t('settings.version.update_started')}`);
+      updateConsole.value?.setStatus('running', t('settings.version.console_status_running'));
+      updateConsole.value?.setMeta(t('settings.version.console_connecting'));
+      void updateConsole.value?.fetchLog({ reset: true });
+    } else {
+      updateConsole.value?.appendLine(`[client] ${res.message}`);
+      updateConsole.value?.setStatus('error', t('settings.version.console_status_error'));
+      updateConsole.value?.setMeta(t('settings.version.console_failed_to_start'));
     }
   } catch (e) {
     if (e instanceof ApiAbortError) return;
     updateMsg.state = 'error';
-    updateMsg.text = t('settings.version.update_failed', { error: messageFromError(e, 'unknown') });
+    const message = messageFromError(e, 'unknown');
+    updateMsg.text = t('settings.version.update_failed', { error: message });
+    updateConsole.value?.appendLine(
+      `[client] ${t('settings.version.update_failed', { error: message })}`,
+    );
+    updateConsole.value?.setStatus('error', t('settings.version.console_status_error'));
+    updateConsole.value?.setMeta(t('settings.version.console_failed_to_start'));
   } finally {
     updating.value = false;
   }
@@ -99,10 +133,29 @@ async function submitUpdate(): Promise<void> {
     </div>
 
     <div class="actions">
-      <button type="button" class="btn" :disabled="checking" data-test="check-update" @click="checkForUpdate">
+      <button
+        type="button"
+        class="btn"
+        :disabled="checking"
+        data-test="check-update"
+        @click="checkForUpdate"
+      >
         {{ t('settings.version.check_updates') }}
       </button>
-      <a class="btn btn--link" :href="settings.updates.latest_release_url" target="_blank" rel="noopener">
+      <button
+        type="button"
+        class="btn"
+        data-test="view-update-log"
+        @click="openUpdateConsole(true)"
+      >
+        {{ t('settings.version.view_update_log') }}
+      </button>
+      <a
+        class="btn btn--link"
+        :href="settings.updates.latest_release_url"
+        target="_blank"
+        rel="noopener"
+      >
         {{ t('settings.version.open_release') }}
       </a>
     </div>
@@ -110,7 +163,11 @@ async function submitUpdate(): Promise<void> {
 
     <form class="update-form" data-test="server-update-form" @submit.prevent="submitUpdate">
       <p class="note">
-        {{ twoFactor ? t('settings.version.manual_update_note_2fa') : t('settings.version.manual_update_note_password') }}
+        {{
+          twoFactor
+            ? t('settings.version.manual_update_note_2fa')
+            : t('settings.version.manual_update_note_password')
+        }}
       </p>
       <ReauthFields
         v-model:current-password="reauth.currentPassword"
@@ -118,11 +175,17 @@ async function submitUpdate(): Promise<void> {
         :two-factor-enabled="twoFactor"
         variant="server-update"
       />
-      <button type="submit" class="btn btn--primary" :disabled="updating" data-test="server-update-submit">
+      <button
+        type="submit"
+        class="btn btn--primary"
+        :disabled="updating"
+        data-test="server-update-submit"
+      >
         {{ t('settings.version.update_now') }}
       </button>
       <SettingsMessage :state="updateMsg.state" :text="updateMsg.text" />
     </form>
+    <UpdateConsoleModal ref="updateConsole" :open="consoleOpen" @close="consoleOpen = false" />
   </article>
 </template>
 

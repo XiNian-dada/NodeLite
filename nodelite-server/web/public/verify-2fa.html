@@ -3,319 +3,348 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="preload" as="image" href="/assets/brand-logo-dark.png" />
+    <link rel="preload" as="image" href="/assets/brand-logo-light.png" />
     <title>NodeLite 2FA</title>
+    <script>
+      (function () {
+        try {
+          var theme = localStorage.getItem('nodelite.ui.theme');
+          document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+        } catch (_e) {
+          document.documentElement.dataset.theme = 'dark';
+        }
+      })();
+    </script>
     <style>
       :root {
         color-scheme: dark;
-        --bg-app: #060912;
-        --bg-card: rgba(14, 20, 34, 0.72);
-        --bg-card-strong: rgba(15, 23, 42, 0.92);
-        --border-soft: rgba(148, 163, 184, 0.16);
-        --border-strong: rgba(148, 163, 184, 0.28);
-        --text-primary: #e6edf3;
-        --text-secondary: #b6bfcc;
-        --text-muted: #738195;
-        --accent-blue: #3b82f6;
-        --accent-blue-strong: #2563eb;
-        --accent-red: #ef4444;
-        --shadow-glow: 0 32px 120px rgba(37, 99, 235, 0.28);
-        font-family: "Inter", "PingFang SC", "Helvetica Neue", "Segoe UI", system-ui, -apple-system, sans-serif;
+        --brand-logo: url('/assets/brand-logo-dark.png');
+        --bg-app: #000000;
+        --bg-card: #080808;
+        --bg-card-soft: #101010;
+        --bg-elevated: #171717;
+        --border-soft: rgba(255, 255, 255, 0.08);
+        --border-strong: rgba(255, 255, 255, 0.16);
+        --text-primary: #f4f4f5;
+        --text-secondary: #d4d4d8;
+        --text-muted: #8b8b93;
+        --text-dim: #5d5d63;
+        --accent-red: #ff4d6d;
+        --panel-shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
+        font-family:
+          'Inter',
+          'PingFang SC',
+          'Helvetica Neue',
+          'Segoe UI',
+          system-ui,
+          -apple-system,
+          sans-serif;
       }
-      * { box-sizing: border-box; }
-      html, body { min-height: 100%; }
+      :root[data-theme='light'] {
+        color-scheme: light;
+        --brand-logo: url('/assets/brand-logo-light.png');
+        --bg-app: #f5f5f5;
+        --bg-card: #ffffff;
+        --bg-card-soft: #f7f7f7;
+        --bg-elevated: #eeeeee;
+        --border-soft: rgba(0, 0, 0, 0.08);
+        --border-strong: rgba(0, 0, 0, 0.16);
+        --text-primary: #111111;
+        --text-secondary: #333333;
+        --text-muted: #6b6b6b;
+        --text-dim: #9a9a9a;
+        --panel-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        min-height: 100%;
+      }
       body {
         margin: 0;
         min-height: 100vh;
-        overflow: hidden;
-        background:
-          radial-gradient(circle at 18% 12%, rgba(59, 130, 246, 0.18), transparent 28%),
-          radial-gradient(circle at 88% 82%, rgba(34, 197, 94, 0.14), transparent 30%),
-          linear-gradient(135deg, #070b14 0%, #111827 54%, #060912 100%);
         color: var(--text-primary);
+        background: var(--bg-app);
+        font-size: 14px;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
       }
-      .dashboard-ghost {
-        position: fixed;
-        inset: 0;
-        display: grid;
-        grid-template-columns: 96px minmax(0, 1fr);
-        gap: 28px;
-        padding: 28px;
-        opacity: 0.5;
-        filter: blur(8px);
-        transform: scale(1.02);
-        pointer-events: none;
-      }
-      .sidebar {
-        border: 1px solid var(--border-soft);
-        border-radius: 28px;
-        background: rgba(10, 15, 26, 0.82);
-      }
-      .ghost-main {
-        display: grid;
-        grid-template-rows: 86px 1fr 180px;
-        gap: 18px;
-      }
-      .ghost-header,
-      .ghost-card {
-        border: 1px solid var(--border-soft);
-        border-radius: 28px;
-        background: var(--bg-card);
-      }
-      .ghost-grid {
-        display: grid;
-        grid-template-columns: 1.45fr 1fr;
-        gap: 18px;
-      }
-      .ghost-map {
-        position: relative;
-        overflow: hidden;
-      }
-      .ghost-map::before {
-        content: "";
-        position: absolute;
-        inset: 36px;
-        background-image: radial-gradient(rgba(148, 163, 184, 0.42) 1px, transparent 1.5px);
-        background-size: 10px 10px;
-        mask-image: linear-gradient(90deg, transparent 6%, #000 18%, #000 82%, transparent 94%);
-      }
-      .ghost-stats {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 18px;
-      }
-      .ghost-line {
-        position: relative;
-        overflow: hidden;
-      }
-      .ghost-line::after {
-        content: "";
-        position: absolute;
-        left: 5%;
-        right: 5%;
-        bottom: 28px;
-        height: 42px;
-        border-radius: 50%;
-        border-top: 4px solid rgba(34, 197, 94, 0.75);
-      }
-      .veil {
-        position: fixed;
-        inset: 0;
-        background: rgba(3, 7, 18, 0.68);
-        backdrop-filter: blur(14px);
+      button,
+      input {
+        font: inherit;
       }
       .auth-shell {
-        position: relative;
-        z-index: 1;
         min-height: 100vh;
         display: grid;
         place-items: center;
-        padding: 28px;
+        padding: 32px;
+      }
+      .auth-frame {
+        width: min(960px, 100%);
+        display: grid;
+        grid-template-columns: minmax(260px, 0.9fr) minmax(320px, 430px);
+        gap: 28px;
+        align-items: center;
+      }
+      .brand-panel {
+        min-width: 0;
+      }
+      .brand-logo {
+        width: 172px;
+        height: 44px;
+        margin-bottom: 32px;
+        background: var(--brand-logo) left center / contain no-repeat;
+      }
+      .brand-panel h1 {
+        margin: 0;
+        max-width: 420px;
+        font-size: 30px;
+        font-weight: 600;
+        line-height: 1.18;
+        letter-spacing: 0;
+      }
+      .brand-panel p {
+        margin: 12px 0 0;
+        max-width: 420px;
+        color: var(--text-muted);
+        font-size: 13px;
+        line-height: 1.7;
       }
       .auth-card {
-        width: min(430px, 100%);
-        padding: 34px;
-        border: 1px solid var(--border-strong);
-        border-radius: 30px;
-        background:
-          linear-gradient(180deg, rgba(15, 23, 42, 0.88), rgba(15, 23, 42, 0.68)),
-          rgba(15, 23, 42, 0.72);
-        box-shadow: var(--shadow-glow), 0 24px 70px rgba(0, 0, 0, 0.38);
+        width: 100%;
+        padding: 24px;
+        border: 1px solid var(--border-soft);
+        border-radius: 8px;
+        background: var(--bg-card);
+        box-shadow: var(--panel-shadow);
       }
-      .auth-icon {
-        width: 96px;
-        height: 96px;
-        margin: 0 auto 22px;
-        display: grid;
-        place-items: center;
-        border-radius: 30px;
-        background:
-          radial-gradient(circle at 50% 62%, rgba(59, 130, 246, 0.9), transparent 30%),
-          linear-gradient(135deg, rgba(96, 165, 250, 0.28), rgba(168, 85, 247, 0.18));
-        border: 1px solid rgba(147, 197, 253, 0.24);
+      .auth-card__header {
+        margin-bottom: 20px;
       }
-      .auth-icon svg {
-        width: 56px;
-        height: 56px;
-        color: #dbeafe;
+      .auth-kicker {
+        display: block;
+        margin-bottom: 6px;
+        color: var(--text-muted);
+        font-size: 12px;
       }
-      h1 {
+      .auth-card h2 {
         margin: 0;
-        font-size: 24px;
-        line-height: 1.2;
-        letter-spacing: -0.02em;
-        text-align: center;
+        color: var(--text-primary);
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: 0;
       }
       .subtitle {
-        margin: 12px 0 24px;
+        margin: 8px 0 0;
         color: var(--text-muted);
-        font-size: 14px;
-        line-height: 1.7;
-        text-align: center;
+        font-size: 13px;
+        line-height: 1.6;
       }
       .otp-grid {
         display: grid;
-        grid-template-columns: repeat(6, 1fr);
-        gap: 10px;
-        margin: 22px 0;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        gap: 8px;
+        margin: 22px 0 18px;
       }
       .otp-cell {
         width: 100%;
-        height: 56px;
-        border: 1px solid var(--border-strong);
-        border-radius: 14px;
-        background: rgba(30, 41, 59, 0.9);
+        aspect-ratio: 1 / 1.08;
+        min-height: 48px;
+        border: 1px solid var(--border-soft);
+        border-radius: 8px;
+        background: var(--bg-card-soft);
         color: var(--text-primary);
         text-align: center;
-        font: 700 24px/1 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font:
+          600 23px/1 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          Monaco,
+          Consolas,
+          monospace;
         outline: none;
-        transition: border-color 0.16s, box-shadow 0.16s, background 0.16s;
+        transition:
+          border-color 0.16s,
+          background 0.16s,
+          box-shadow 0.16s;
       }
       .otp-cell:focus {
-        border-color: rgba(96, 165, 250, 0.92);
-        background: rgba(30, 41, 59, 1);
-        box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.18);
+        border-color: var(--border-strong);
+        background: var(--bg-elevated);
+        box-shadow: 0 0 0 3px var(--border-soft);
       }
       .auth-button {
         width: 100%;
-        height: 48px;
-        border: 0;
-        border-radius: 14px;
-        background: linear-gradient(135deg, var(--accent-blue), var(--accent-blue-strong));
-        color: #fff;
-        font-size: 15px;
-        font-weight: 700;
+        height: 42px;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        background: var(--text-primary);
+        color: var(--bg-app);
+        font-size: 14px;
+        font-weight: 600;
         cursor: pointer;
-        transition: transform 0.16s, opacity 0.16s, box-shadow 0.16s;
-        box-shadow: 0 16px 36px rgba(37, 99, 235, 0.34);
+        transition:
+          opacity 0.16s,
+          transform 0.16s;
       }
-      .auth-button:hover { transform: translateY(-1px); }
+      .auth-button:hover:not(:disabled) {
+        transform: translateY(-1px);
+      }
       .auth-button:disabled {
-        opacity: 0.52;
+        opacity: 0.45;
         cursor: not-allowed;
         transform: none;
-        box-shadow: none;
       }
       .error {
         min-height: 20px;
         margin-top: 14px;
-        color: #fecaca;
+        color: var(--accent-red);
         font-size: 13px;
         line-height: 1.5;
         text-align: center;
       }
       .expired-link {
-        color: #bfdbfe;
-        text-decoration: none;
-        font-weight: 700;
+        color: var(--text-primary);
+        text-decoration: underline;
+        text-underline-offset: 3px;
+        font-weight: 600;
       }
-      @media (max-width: 720px) {
-        .dashboard-ghost { grid-template-columns: 1fr; padding: 14px; }
-        .sidebar { display: none; }
-        .ghost-grid { grid-template-columns: 1fr; }
-        .auth-card { padding: 26px 20px; border-radius: 24px; }
-        .otp-grid { gap: 8px; }
-        .otp-cell { height: 50px; border-radius: 12px; font-size: 22px; }
+      @media (max-width: 780px) {
+        .auth-shell {
+          place-items: start center;
+          padding: 24px 16px;
+        }
+        .auth-frame {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 20px;
+        }
+        .brand-logo {
+          margin-bottom: 18px;
+        }
+        .brand-panel h1 {
+          font-size: 24px;
+        }
+      }
+      @media (max-width: 420px) {
+        .auth-card {
+          padding: 18px;
+        }
+        .otp-grid {
+          gap: 6px;
+        }
+        .otp-cell {
+          min-height: 42px;
+          font-size: 20px;
+        }
       }
     </style>
   </head>
   <body>
-    <div class="dashboard-ghost" aria-hidden="true">
-      <div class="sidebar"></div>
-      <main class="ghost-main">
-        <div class="ghost-header"></div>
-        <section class="ghost-grid">
-          <div class="ghost-card ghost-map"></div>
-          <div class="ghost-stats">
-            <div class="ghost-card"></div>
-            <div class="ghost-card"></div>
-            <div class="ghost-card ghost-line"></div>
-            <div class="ghost-card ghost-line"></div>
-          </div>
+    <main class="auth-shell">
+      <div class="auth-frame">
+        <section class="brand-panel" aria-labelledby="brand-title">
+          <div class="brand-logo" role="img" aria-label="NodeLite"></div>
+          <h1 id="brand-title" data-i18n="brand_title">NodeLite secure access</h1>
+          <p data-i18n="brand_subtitle">
+            Complete the second verification step before entering the monitoring console.
+          </p>
         </section>
-        <div class="ghost-card ghost-line"></div>
-      </main>
-    </div>
-    <div class="veil" aria-hidden="true"></div>
 
-    <section class="auth-shell">
-      <form class="auth-card" id="verify-form" autocomplete="off">
-        <div class="auth-icon" aria-hidden="true">
-          <svg viewBox="0 0 64 64" fill="none">
-            <rect x="20" y="6" width="24" height="52" rx="6" fill="currentColor" opacity="0.22"/>
-            <rect x="23" y="10" width="18" height="44" rx="4" stroke="currentColor" stroke-width="3"/>
-            <path d="M32 20a10 10 0 1 0 8.7 15" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
-            <path d="M32 30h13" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
-            <path d="M45 30l-4-4m4 4l-4 4" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-            <rect x="18" y="44" width="28" height="12" rx="5" fill="#3b82f6"/>
-            <circle cx="26" cy="50" r="2" fill="white"/>
-            <circle cx="32" cy="50" r="2" fill="white"/>
-            <circle cx="38" cy="50" r="2" fill="white"/>
-          </svg>
-        </div>
-        <h1 data-i18n="title">Verify your identity</h1>
-        <p class="subtitle" data-i18n="subtitle">Enter the 6-digit code from your authenticator app to continue.</p>
+        <form class="auth-card" id="verify-form" autocomplete="off">
+          <header class="auth-card__header">
+            <span class="auth-kicker" data-i18n="kicker">Two-factor authentication</span>
+            <h2 data-i18n="title">Verify your identity</h2>
+            <p class="subtitle" data-i18n="subtitle">
+              Enter the 6-digit code from your authenticator app to continue.
+            </p>
+          </header>
 
-        <div class="otp-grid" aria-label="Verification code">
-          <input class="otp-cell" inputmode="numeric" maxlength="1" pattern="[0-9]" autofocus />
-          <input class="otp-cell" inputmode="numeric" maxlength="1" pattern="[0-9]" />
-          <input class="otp-cell" inputmode="numeric" maxlength="1" pattern="[0-9]" />
-          <input class="otp-cell" inputmode="numeric" maxlength="1" pattern="[0-9]" />
-          <input class="otp-cell" inputmode="numeric" maxlength="1" pattern="[0-9]" />
-          <input class="otp-cell" inputmode="numeric" maxlength="1" pattern="[0-9]" />
-        </div>
+          <div class="otp-grid" aria-label="Verification code">
+            <input class="otp-cell" inputmode="numeric" maxlength="1" pattern="[0-9]" autofocus />
+            <input class="otp-cell" inputmode="numeric" maxlength="1" pattern="[0-9]" />
+            <input class="otp-cell" inputmode="numeric" maxlength="1" pattern="[0-9]" />
+            <input class="otp-cell" inputmode="numeric" maxlength="1" pattern="[0-9]" />
+            <input class="otp-cell" inputmode="numeric" maxlength="1" pattern="[0-9]" />
+            <input class="otp-cell" inputmode="numeric" maxlength="1" pattern="[0-9]" />
+          </div>
 
-        <button class="auth-button" type="submit" id="submit-btn" disabled data-i18n="button">Continue</button>
-        <div id="error" class="error" role="alert"></div>
-      </form>
-    </section>
+          <button class="auth-button" type="submit" id="submit-btn" disabled data-i18n="button">
+            Continue
+          </button>
+          <div id="error" class="error" role="alert"></div>
+        </form>
+      </div>
+    </main>
 
     <script>
       const messages = {
         en: {
-          title: "Verify your identity",
-          subtitle: "Enter the 6-digit code from your authenticator app to continue.",
-          button: "Continue",
-          verifying: "Verifying...",
-          incomplete: "Please enter the full 6-digit code.",
-          invalid: "Invalid code. Please try again.",
-          network: "Network error. Please try again.",
-          expired: "The verification session expired. Return to the dashboard and sign in again.",
-          back: "Return to dashboard",
+          brand_title: 'NodeLite secure access',
+          brand_subtitle:
+            'Complete the second verification step before entering the monitoring console.',
+          kicker: 'Two-factor authentication',
+          title: 'Verify your identity',
+          subtitle: 'Enter the 6-digit code from your authenticator app to continue.',
+          button: 'Continue',
+          verifying: 'Verifying...',
+          incomplete: 'Please enter the full 6-digit code.',
+          invalid: 'Invalid code. Please try again.',
+          network: 'Network error. Please try again.',
+          expired: 'The verification session expired. Return to the dashboard and sign in again.',
+          back: 'Return to dashboard',
         },
         zh: {
-          title: "使用验证器确认身份",
-          subtitle: "继续前，请输入验证器应用生成的 6 位验证码。",
-          button: "继续",
-          verifying: "正在验证...",
-          incomplete: "请输入完整的 6 位验证码。",
-          invalid: "验证码无效，请重试。",
-          network: "网络错误，请重试。",
-          expired: "验证会话已过期，请返回面板重新登录。",
-          back: "返回面板",
+          brand_title: 'NodeLite 安全访问',
+          brand_subtitle: '进入监控控制台前，请先完成第二步身份验证。',
+          kicker: '二步认证',
+          title: '确认你的身份',
+          subtitle: '请输入验证器应用生成的 6 位验证码以继续。',
+          button: '继续',
+          verifying: '正在验证...',
+          incomplete: '请输入完整的 6 位验证码。',
+          invalid: '验证码无效，请重试。',
+          network: '网络错误，请重试。',
+          expired: '验证会话已过期，请返回面板重新登录。',
+          back: '返回面板',
         },
       };
-      const lang = navigator.language && navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
+
+      function preferredLanguage() {
+        try {
+          const stored = window.localStorage.getItem('nodelite.ui.language');
+          if (stored === 'zh-CN') return 'zh';
+          if (stored === 'en') return 'en';
+        } catch (_e) {}
+        return navigator.language && navigator.language.toLowerCase().startsWith('zh')
+          ? 'zh'
+          : 'en';
+      }
+
+      const lang = preferredLanguage();
       const t = (key) => messages[lang][key] || messages.en[key] || key;
 
-      document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
-      document.querySelectorAll("[data-i18n]").forEach((el) => {
+      document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+      document.querySelectorAll('[data-i18n]').forEach((el) => {
         el.textContent = t(el.dataset.i18n);
       });
 
-      const form = document.getElementById("verify-form");
-      const cells = Array.from(document.querySelectorAll(".otp-cell"));
-      const submitBtn = document.getElementById("submit-btn");
-      const errorDiv = document.getElementById("error");
+      const form = document.getElementById('verify-form');
+      const cells = Array.from(document.querySelectorAll('.otp-cell'));
+      const submitBtn = document.getElementById('submit-btn');
+      const errorDiv = document.getElementById('error');
       let submitting = false;
 
       function codeValue() {
-        return cells.map((cell) => cell.value).join("");
+        return cells.map((cell) => cell.value).join('');
       }
 
       function setCode(value) {
-        const digits = String(value).replace(/\D/g, "").slice(0, 6);
+        const digits = String(value).replace(/\D/g, '').slice(0, 6);
         cells.forEach((cell, index) => {
-          cell.value = digits[index] || "";
+          cell.value = digits[index] || '';
         });
         const next = cells[Math.min(digits.length, 5)];
         next.focus();
@@ -324,7 +353,7 @@
 
       function clearCode() {
         cells.forEach((cell) => {
-          cell.value = "";
+          cell.value = '';
         });
         cells[0].focus();
         updateState();
@@ -336,8 +365,8 @@
       }
 
       cells.forEach((cell, index) => {
-        cell.addEventListener("input", () => {
-          cell.value = cell.value.replace(/\D/g, "").slice(-1);
+        cell.addEventListener('input', () => {
+          cell.value = cell.value.replace(/\D/g, '').slice(-1);
           if (cell.value && index < cells.length - 1) {
             cells[index + 1].focus();
           }
@@ -346,62 +375,64 @@
             window.setTimeout(() => form.requestSubmit(), 80);
           }
         });
-        cell.addEventListener("keydown", (event) => {
-          if (event.key === "Backspace" && !cell.value && index > 0) {
+        cell.addEventListener('keydown', (event) => {
+          if (event.key === 'Backspace' && !cell.value && index > 0) {
             cells[index - 1].focus();
           }
-          if (event.key === "ArrowLeft" && index > 0) {
+          if (event.key === 'ArrowLeft' && index > 0) {
             cells[index - 1].focus();
           }
-          if (event.key === "ArrowRight" && index < cells.length - 1) {
+          if (event.key === 'ArrowRight' && index < cells.length - 1) {
             cells[index + 1].focus();
           }
         });
-        cell.addEventListener("paste", (event) => {
+        cell.addEventListener('paste', (event) => {
           event.preventDefault();
-          setCode(event.clipboardData.getData("text"));
+          setCode(event.clipboardData.getData('text'));
         });
       });
 
-      form.addEventListener("submit", async (event) => {
+      form.addEventListener('submit', async (event) => {
         event.preventDefault();
         if (submitting) return;
         const code = codeValue();
         if (code.length !== 6) {
-          showError(t("incomplete"));
+          showError(t('incomplete'));
           return;
         }
 
         submitting = true;
         updateState();
-        submitBtn.textContent = t("verifying");
-        errorDiv.textContent = "";
+        submitBtn.textContent = t('verifying');
+        errorDiv.textContent = '';
 
         try {
-          const response = await fetch("/api/verify-2fa", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
+          const response = await fetch('/api/verify-2fa', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ code }),
           });
 
           if (response.ok) {
-            try { window.localStorage.setItem("nodelite.auth.timestamp", Date.now().toString()); } catch (_e) {}
-            window.location.replace("/");
+            try {
+              window.localStorage.setItem('nodelite.auth.timestamp', Date.now().toString());
+            } catch (_e) {}
+            window.location.replace('/');
             return;
           }
 
           const data = await response.json().catch(() => ({}));
-          if (response.status === 401 && /Verification failed/i.test(data.error || "")) {
-            showError(t("invalid"));
+          if (response.status === 401 && /Verification failed/i.test(data.error || '')) {
+            showError(t('invalid'));
           } else {
             showExpiredError();
           }
           clearCode();
         } catch (_error) {
-          showError(t("network"));
+          showError(t('network'));
         } finally {
           submitting = false;
-          submitBtn.textContent = t("button");
+          submitBtn.textContent = t('button');
           updateState();
         }
       });
@@ -411,12 +442,12 @@
       }
 
       function showExpiredError() {
-        errorDiv.textContent = "";
-        errorDiv.append(document.createTextNode(`${t("expired")} `));
-        const link = document.createElement("a");
-        link.className = "expired-link";
-        link.href = "/";
-        link.textContent = t("back");
+        errorDiv.textContent = '';
+        errorDiv.append(document.createTextNode(`${t('expired')} `));
+        const link = document.createElement('a');
+        link.className = 'expired-link';
+        link.href = '/';
+        link.textContent = t('back');
         errorDiv.append(link);
       }
 

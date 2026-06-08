@@ -21,6 +21,7 @@ import type {
   RefreshNodeTokenRequest,
   SettingsActionResponse,
   SettingsResponse,
+  ServerUpdateLogResponse,
   TwoFactorSetupResponse,
   UpdateAlertSettingsRequest,
   UpdateNodeServiceMetadataRequest,
@@ -66,6 +67,7 @@ export type {
   SettingsAuth,
   SettingsResponse,
   SettingsUpdates,
+  ServerUpdateLogResponse,
   TriggeredRulePreview,
   TwoFactorSetupResponse,
   UpdateAlertRuleRequest,
@@ -117,10 +119,13 @@ export const apiClient = {
   settings: () => api<SettingsResponse>('/api/settings'),
   updateServer: (body: ReauthPayload) =>
     postJson<SettingsActionResponse>('/api/settings/update/server', body),
+  serverUpdateLog: (offset = 0) => {
+    const params = new URLSearchParams({ offset: String(offset) });
+    return api<ServerUpdateLogResponse>(`/api/settings/update/server/log?${params.toString()}`);
+  },
 
   // --- Account / security ---
-  twoFactorStart: () =>
-    postJson<TwoFactorSetupResponse>('/api/settings/2fa/start', {}),
+  twoFactorStart: () => postJson<TwoFactorSetupResponse>('/api/settings/2fa/start', {}),
   twoFactorEnable: (body: EnableTwoFactorRequest) =>
     postJson<SettingsActionResponse>('/api/settings/2fa/enable', body),
   twoFactorDisable: (body: DisableTwoFactorRequest) =>
