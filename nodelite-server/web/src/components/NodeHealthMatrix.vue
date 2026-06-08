@@ -264,28 +264,44 @@ function usageTone(value: number | null): Tone {
 }
 .status-cell {
   align-items: center;
-  color: var(--text-secondary);
   display: inline-flex;
   font-size: 12px;
   gap: 7px;
   justify-content: center;
   min-width: 76px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
   white-space: nowrap;
 }
 .status-dot {
   border-radius: 50%;
-  box-shadow: 0 0 14px currentColor;
-  height: 8px;
-  width: 8px;
+  height: 6px;
+  width: 6px;
 }
 .status-cell.online {
+  background: color-mix(in srgb, var(--accent-green) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent-green) 22%, transparent);
   color: var(--accent-green);
 }
+.status-cell.online .status-dot {
+  background: var(--accent-green);
+}
 .status-cell.latency {
+  background: color-mix(in srgb, var(--accent-yellow) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent-yellow) 24%, transparent);
   color: var(--accent-yellow);
 }
+.status-cell.latency .status-dot {
+  background: var(--accent-yellow);
+}
 .status-cell.offline {
+  background: color-mix(in srgb, var(--accent-red) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent-red) 22%, transparent);
   color: var(--accent-red);
+}
+.status-cell.offline .status-dot {
+  background: var(--accent-red);
 }
 @media (max-width: 480px) {
   .panel {
