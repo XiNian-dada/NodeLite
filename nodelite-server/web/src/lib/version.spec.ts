@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compareVersions, isNewerVersion, normalizeVersionTag } from './version';
+import { compareVersions, isNewerVersion, isStableVersionTag, normalizeVersionTag } from './version';
 
 describe('compareVersions', () => {
   it('orders by numeric segments', () => {
@@ -22,7 +22,23 @@ describe('compareVersions', () => {
 describe('normalizeVersionTag', () => {
   it('strips a leading v', () => {
     expect(normalizeVersionTag('v2.3.0')).toBe('2.3.0');
+    expect(normalizeVersionTag(' V2.3.0 ')).toBe('2.3.0');
     expect(normalizeVersionTag('2.3.0')).toBe('2.3.0');
+  });
+});
+
+describe('isStableVersionTag', () => {
+  it('accepts stable release tags', () => {
+    expect(isStableVersionTag('v2.3.0')).toBe(true);
+    expect(isStableVersionTag('2.3')).toBe(true);
+    expect(isStableVersionTag('2.3.0+build.1')).toBe(true);
+  });
+
+  it('rejects prerelease and test tags', () => {
+    expect(isStableVersionTag('v2.4.0-rc.1')).toBe(false);
+    expect(isStableVersionTag('v2.4.0-beta.1')).toBe(false);
+    expect(isStableVersionTag('v2.4.0-test')).toBe(false);
+    expect(isStableVersionTag('latest')).toBe(false);
   });
 });
 

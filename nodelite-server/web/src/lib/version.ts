@@ -18,7 +18,12 @@ export function compareVersions(left: string, right: string): number {
 
 /** Strip a leading `v`/`V` from a release tag (e.g. "v2.3.0" → "2.3.0"). */
 export function normalizeVersionTag(tag: string): string {
-  return String(tag).replace(/^v/i, '').trim();
+  return String(tag).trim().replace(/^v/i, '');
+}
+
+/** True for stable release tags; prerelease/test suffixes require explicit install. */
+export function isStableVersionTag(tag: string): boolean {
+  return /^\d+(?:\.\d+)*(?:\+[0-9A-Za-z.-]+)?$/.test(normalizeVersionTag(tag));
 }
 
 /** True when `latest` is strictly newer than `current` (tags `v`-tolerant). */

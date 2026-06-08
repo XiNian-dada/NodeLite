@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n';
 import type { SettingsResponse } from '@/api';
 import { apiClient } from '@/api';
 import { ApiAbortError } from '@/api/client';
-import { isNewerVersion, normalizeVersionTag } from '@/lib/version';
+import { isNewerVersion, isStableVersionTag, normalizeVersionTag } from '@/lib/version';
 import { messageFromError } from '@/lib/apiError';
 import ReauthFields from './ReauthFields.vue';
 import SettingsMessage from './SettingsMessage.vue';
@@ -22,14 +22,30 @@ const checkMsg = reactive<{ state: 'ok' | 'error' | null; text: string }>({
 });
 const checking = ref(false);
 
-function githubLatestUrl(): string | null {
+type GithubRelease = {
+  tag_name?: string;
+  draft?: boolean;
+  prerelease?: boolean;
+};
+
+function githubReleasesUrl(): string | null {
   const repo = props.settings.repository.replace(/\/+$/, '');
   if (!repo.startsWith('https://github.com/')) return null;
-  return `${repo.replace('https://github.com/', 'https://api.github.com/repos/')}/releases/latest`;
+  return `${repo.replace('https://github.com/', 'https://api.github.com/repos/')}/releases?per_page=100`;
+}
+
+function latestStableReleaseTag(releases: GithubRelease[]): string | null {
+  const release = releases.find(
+    (candidate) =>
+      !candidate.draft &&
+      !candidate.prerelease &&
+      isStableVersionTag(candidate.tag_name ?? ''),
+  );
+  return release?.tag_name ? normalizeVersionTag(release.tag_name) : null;
 }
 
 async function checkForUpdate(): Promise<void> {
-  const url = githubLatestUrl();
+  const url = githubReleasesUrl();
   if (!url) return;
   checking.value = true;
   checkMsg.state = null;
@@ -37,8 +53,9 @@ async function checkForUpdate(): Promise<void> {
   try {
     const res = await fetch(url, { headers: { accept: 'application/vnd.github+json' } });
     if (!res.ok) throw new Error(`GitHub ${res.status}`);
-    const body = (await res.json()) as { tag_name?: string };
-    const latest = normalizeVersionTag(body.tag_name ?? '');
+    const body = (await res.json()) as GithubRelease[] | GithubRelease;
+    const releases = Array.isArray(body) ? body : [body];
+    const latest = latestStableReleaseTag(releases);
     if (latest && isNewerVersion(latest, props.settings.server_version)) {
       checkMsg.state = 'ok';
       checkMsg.text = t('settings.version.update_available', { version: latest });

@@ -66,8 +66,14 @@ const FAKE_DICT = {
 
 const Stub = defineComponent({ render: () => h('div') });
 
-// fetch routes: ui-i18n.json → dict; api.github.com → release.
-function routedFetch(release: { tag_name: string } | { fail: true }) {
+type GithubReleaseFixture = {
+  tag_name: string;
+  draft?: boolean;
+  prerelease?: boolean;
+};
+
+// fetch routes: ui-i18n.json → dict; api.github.com → release list.
+function routedFetch(releases: GithubReleaseFixture[] | { fail: true }) {
   return vi.fn().mockImplementation((url: string) => {
     if (String(url).includes('ui-i18n.json')) {
       return Promise.resolve({
@@ -76,21 +82,21 @@ function routedFetch(release: { tag_name: string } | { fail: true }) {
         json: () => Promise.resolve(FAKE_DICT),
       } as unknown as Response);
     }
-    if ('fail' in release)
+    if ('fail' in releases)
       return Promise.resolve({ ok: false, status: 503 } as unknown as Response);
     return Promise.resolve({
       ok: true,
       status: 200,
-      json: () => Promise.resolve(release),
+      json: () => Promise.resolve(releases),
     } as unknown as Response);
   });
 }
 
 async function mountCard(
   over = {},
-  release: { tag_name: string } | { fail: true } = { tag_name: 'v2.3.0' },
+  releases: GithubReleaseFixture[] | { fail: true } = [{ tag_name: 'v2.3.0' }],
 ) {
-  vi.stubGlobal('fetch', routedFetch(release));
+  vi.stubGlobal('fetch', routedFetch(releases));
   const dummy = createApp(Stub);
   await setupI18n(dummy);
   const settings = makeSettings({
@@ -125,17 +131,38 @@ describe('ServerUpdateCard', () => {
   });
 
   it('check-update reports up-to-date for an equal latest tag', async () => {
-    const wrapper = await mountCard({}, { tag_name: 'v2.3.0' });
+    const wrapper = await mountCard({}, [{ tag_name: 'v2.3.0' }]);
     await wrapper.find('[data-test="check-update"]').trigger('click');
     await flushPromises();
     expect(wrapper.find('[data-test="settings-message"]').text()).toContain('Up to date: 2.3.0');
   });
 
   it('check-update reports a newer release', async () => {
-    const wrapper = await mountCard({}, { tag_name: 'v2.4.0' });
+    const wrapper = await mountCard({}, [{ tag_name: 'v2.4.0' }]);
     await wrapper.find('[data-test="check-update"]').trigger('click');
     await flushPromises();
     expect(wrapper.find('[data-test="settings-message"]').text()).toContain('New: 2.4.0');
+  });
+
+  it('check-update skips prereleases and reports the newest stable tag', async () => {
+    const wrapper = await mountCard({}, [
+      { tag_name: 'v2.5.0-rc.1', prerelease: true },
+      { tag_name: 'v2.4.0-test' },
+      { tag_name: 'v2.3.1' },
+    ]);
+    await wrapper.find('[data-test="check-update"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-test="settings-message"]').text()).toContain('New: 2.3.1');
+  });
+
+  it('check-update does not offer prerelease-only updates', async () => {
+    const wrapper = await mountCard({}, [
+      { tag_name: 'v2.4.0-rc.1', prerelease: true },
+      { tag_name: 'v2.4.0-test' },
+    ]);
+    await wrapper.find('[data-test="check-update"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-test="settings-message"]').text()).toContain('Up to date: 2.3.0');
   });
 
   it('posts a server update with reauth and shows the started message', async () => {
