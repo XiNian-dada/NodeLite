@@ -138,8 +138,8 @@ watch([geojson, theme], repaint);
   width: 100%;
   aspect-ratio: 16 / 8;
   min-height: 280px;
-  background: linear-gradient(rgba(255, 255, 255, 0.018), rgba(255, 255, 255, 0)), #030303;
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: linear-gradient(var(--map-stage-sheen), transparent), var(--map-stage-bg);
+  border: 1px solid var(--map-stage-border);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -154,8 +154,8 @@ watch([geojson, theme], repaint);
   position: absolute;
   inset: 0;
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.026) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.026) 1px, transparent 1px);
+    linear-gradient(var(--map-grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--map-grid-line) 1px, transparent 1px);
   background-size: 5% 10%;
 }
 .map-canvas {
@@ -176,7 +176,7 @@ watch([geojson, theme], repaint);
   border-radius: 50%;
   transform: translate(-50%, -50%);
   box-shadow:
-    0 0 0 3px rgba(0, 0, 0, 0.75),
+    0 0 0 3px var(--map-dot-ring),
     0 0 18px currentColor;
 }
 .map-dot::after {

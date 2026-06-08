@@ -221,7 +221,7 @@ describe('DashboardView', () => {
     expect(nodesStore.lastGeneratedAt).toBe('2026-06-01T12:00:00Z');
   });
 
-  it('falls back to REST if WebSocket does not deliver InitialState within 3s', async () => {
+  it('falls back to REST if WebSocket does not deliver InitialState promptly', async () => {
     vi.useFakeTimers();
 
     const pinia = createPinia();
@@ -241,8 +241,7 @@ describe('DashboardView', () => {
 
     await flushPromises();
 
-    // Fast-forward 3s
-    vi.advanceTimersByTime(3000);
+    vi.advanceTimersByTime(500);
     await flushPromises();
 
     expect(refreshOverviewSpy).toHaveBeenCalledTimes(1);
@@ -274,7 +273,7 @@ describe('DashboardView', () => {
 
     await flushPromises();
 
-    // Simulate InitialState before 3s timeout
+    // Simulate InitialState before the REST fallback timeout.
     const msg: BrowserMessage = {
       type: 'initial_state',
       generated_at: '2026-06-01T12:00:00Z',
@@ -297,8 +296,7 @@ describe('DashboardView', () => {
       handlers.forEach((handler) => handler(msg));
     }
 
-    // Fast-forward 3s
-    vi.advanceTimersByTime(3000);
+    vi.advanceTimersByTime(500);
     await flushPromises();
 
     // REST should NOT be called because WS delivered data

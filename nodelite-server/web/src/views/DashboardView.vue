@@ -14,6 +14,7 @@ const bootstrapStore = useBootstrapStore();
 const overviewStore = useOverviewStore();
 const nodesStore = useNodesStore();
 const ws = useWebSocket();
+const DASHBOARD_REST_FALLBACK_MS = 500;
 
 const onlineCount = computed(() => overviewStore.data?.online_nodes ?? 0);
 
@@ -38,12 +39,13 @@ onMounted(() => {
     nodesStore.removeNode(msg.node_id, msg.generated_at);
   });
 
-  // Fallback: if WS hasn't delivered InitialState within 3s, fetch via REST
+  // Fallback quickly so the dashboard does not sit in an empty shell while
+  // the websocket reconnects; later WS messages still replace this baseline.
   const fallbackTimer = window.setTimeout(() => {
     if (!nodesStore.lastGeneratedAt) {
       void Promise.all([overviewStore.refresh(), nodesStore.refresh()]);
     }
-  }, 3000);
+  }, DASHBOARD_REST_FALLBACK_MS);
 
   onUnmounted(() => {
     offInitial();
