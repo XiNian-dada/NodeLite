@@ -16,9 +16,10 @@ use super::security::settings_confirmation_error_for_sensitive_action;
 use super::{
     MAX_UPDATE_LOG_CHUNK_BYTES, NodeTokenRefreshResponse, ServerUpdateLogQuery,
     ServerUpdateLogResponse, SettingsActionResponse, StartServerUpdateRequest, UpdateLaunchMode,
-    is_writable_paths_subset_of_install_root, server_update_cache_dir, server_update_install_root,
-    server_update_log_path, server_update_shell_command, server_update_writable_paths,
-    settings_json_error, spawn_server_update_subprocess,
+    UpdateNodeServiceMetadataRequest, is_writable_paths_subset_of_install_root,
+    server_update_cache_dir, server_update_install_root, server_update_log_path,
+    server_update_shell_command, server_update_writable_paths, settings_json_error,
+    spawn_server_update_subprocess,
 };
 
 #[cfg(not(test))]
@@ -174,6 +175,31 @@ pub(crate) async fn refresh_node_token(
         }),
     )
         .into_response()
+}
+
+pub(crate) async fn update_node_service_metadata(
+    State(state): State<AppState>,
+    AxumPath(node_id): AxumPath<String>,
+    Json(request): Json<UpdateNodeServiceMetadataRequest>,
+) -> Response {
+    match state
+        .registry
+        .update_service_metadata(&node_id, request.service_expires_at, request.renewal_price)
+        .await
+    {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(SettingsActionResponse {
+                ok: true,
+                message: "node service metadata saved".to_string(),
+            }),
+        )
+            .into_response(),
+        Err(crate::registry::RegistryError::NodeNotFound(_)) => {
+            settings_json_error(StatusCode::NOT_FOUND, "node not found")
+        }
+        Err(error) => settings_json_error(StatusCode::BAD_REQUEST, error.to_string()),
+    }
 }
 
 pub(crate) async fn server_update_log(

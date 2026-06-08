@@ -23,6 +23,7 @@ import type {
   SettingsResponse,
   TwoFactorSetupResponse,
   UpdateAlertSettingsRequest,
+  UpdateNodeServiceMetadataRequest,
 } from './types';
 
 export type {
@@ -72,6 +73,7 @@ export type {
   UpdateAlertSmtpSettingsRequest,
   UpdateAlertWebhookSettingsRequest,
   UpdateInspectionSettingsRequest,
+  UpdateNodeServiceMetadataRequest,
 } from './types';
 
 function postJson<T>(path: string, body: unknown): Promise<T> {
@@ -134,4 +136,6 @@ export const apiClient = {
   // --- Per-node token refresh ---
   refreshNodeToken: (id: string, body: RefreshNodeTokenRequest) =>
     postJson<NodeTokenRefreshResponse>(`/api/nodes/${encodeURIComponent(id)}/refresh-token`, body),
+  updateNodeServiceMetadata: (id: string, body: UpdateNodeServiceMetadataRequest) =>
+    postJson<SettingsActionResponse>(`/api/nodes/${encodeURIComponent(id)}/service-meta`, body),
 };

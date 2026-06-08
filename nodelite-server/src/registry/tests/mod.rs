@@ -36,6 +36,8 @@ fn legacy_node(
         tags: Vec::new(),
         created_at: Utc::now(),
         token_expires_at,
+        service_expires_at: None,
+        renewal_price: None,
     }
 }
 

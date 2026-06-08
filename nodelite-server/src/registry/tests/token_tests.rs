@@ -91,6 +91,8 @@ fn token_is_expired_at_exact_expiry_moment() {
         tags: Vec::new(),
         created_at: expires_at - ChronoDuration::minutes(5),
         token_expires_at: Some(expires_at),
+        service_expires_at: None,
+        renewal_price: None,
     };
 
     assert!(!token_is_unexpired(&entry, expires_at));

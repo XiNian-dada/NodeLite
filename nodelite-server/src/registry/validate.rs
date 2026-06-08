@@ -6,6 +6,8 @@ use nodelite_proto::{
     validate_tag_list,
 };
 
+use crate::sanitize::validate_renewal_price;
+
 use super::{InstallSession, RegisteredNode, RegistryError, RegistryFile, RegistryResult};
 
 pub(super) fn validate_registry_file(path: &Path, file: &RegistryFile) -> RegistryResult<()> {
@@ -53,6 +55,9 @@ pub(super) fn validate_registered_node(node: &RegisteredNode) -> RegistryResult<
     }
     validate_tag_list("node.tags", &node.tags, MAX_NODE_TAGS, MAX_NODE_TAG_BYTES)
         .map_err(RegistryError::validation)?;
+    if let Some(price) = node.renewal_price.as_deref() {
+        validate_renewal_price(price).map_err(RegistryError::validation)?;
+    }
     Ok(())
 }
 

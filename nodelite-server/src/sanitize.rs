@@ -22,6 +22,8 @@ pub const MAX_SANITIZED_STRING_BYTES: usize = 256;
 pub const MAX_SANITIZED_RATE_BYTES_PER_SEC: f64 = 1_000_000_000_000.0;
 /// 负载平均数的合法上限。
 pub const MAX_SANITIZED_LOAD: f64 = 1_000_000.0;
+/// 续费价格只用于 UI 展示,限制长度避免污染设置页或注册表。
+pub const MAX_RENEWAL_PRICE_BYTES: usize = 64;
 /// 一个 WebSocket 会话在 `METRIC_ANOMALY_WINDOW_SECS` 窗口内允许出现的异常
 /// metrics 报告次数,超过即主动断开。
 /// 滑动窗口的设计避免了"长会话偶发异常累积"造成的误判:任何 anomaly 在窗口
@@ -129,6 +131,33 @@ pub fn update_metric_anomaly_window(
 
 pub fn should_disconnect_for_metric_anomalies(window: &VecDeque<Instant>) -> bool {
     window.len() >= METRIC_ANOMALY_SESSION_LIMIT
+}
+
+pub fn sanitize_renewal_price(value: Option<String>) -> Result<Option<String>, &'static str> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    if value.len() > MAX_RENEWAL_PRICE_BYTES {
+        return Err("renewal price is too long");
+    }
+    if value.chars().any(char::is_control) {
+        return Err("renewal price contains control characters");
+    }
+    Ok(Some(value.to_string()))
+}
+
+pub fn validate_renewal_price(value: &str) -> Result<(), &'static str> {
+    if value.trim() != value {
+        return Err("renewal price must not include surrounding whitespace");
+    }
+    if value.is_empty() {
+        return Err("renewal price must not be empty");
+    }
+    sanitize_renewal_price(Some(value.to_string())).map(|_| ())
 }
 
 fn sanitize_percentage(value: f64, counter: &mut u32) -> f64 {
@@ -276,8 +305,23 @@ mod tests {
     use super::{
         MAX_SANITIZED_RATE_BYTES_PER_SEC, MAX_SANITIZED_STRING_BYTES, SanitizationReport,
         sanitize_disk_usage, sanitize_memory_usage, sanitize_non_negative_f64,
-        sanitize_optional_rate,
+        sanitize_optional_rate, sanitize_renewal_price, validate_renewal_price,
     };
+
+    #[test]
+    fn renewal_price_is_trimmed_and_limited() {
+        assert_eq!(
+            sanitize_renewal_price(Some("  $5/mo  ".to_string())).expect("valid price"),
+            Some("$5/mo".to_string())
+        );
+        assert_eq!(
+            sanitize_renewal_price(Some("   ".to_string())).expect("blank clears"),
+            None
+        );
+        assert!(sanitize_renewal_price(Some("bad\nprice".to_string())).is_err());
+        assert!(sanitize_renewal_price(Some("x".repeat(65))).is_err());
+        assert!(validate_renewal_price(" $5/mo").is_err());
+    }
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(64))]

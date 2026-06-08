@@ -91,7 +91,7 @@ const summaryTiles = computed(() => {
           <ServerUpdateCard class="settings__card" :settings="store.data" />
           <OpsCard class="settings__card" :settings="store.data" />
         </div>
-        <TokenTable class="settings__tokens" :agents="store.data.agents" />
+        <TokenTable class="settings__tokens" :agents="store.data.agents" @saved="store.refresh()" />
       </template>
       <SettingsMessage
         v-else-if="store.error"

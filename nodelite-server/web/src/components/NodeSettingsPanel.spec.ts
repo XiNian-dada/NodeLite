@@ -15,12 +15,14 @@ vi.mock('@/api', async () => {
       ...actual.apiClient,
       settings: vi.fn(),
       refreshNodeToken: vi.fn(),
+      updateNodeServiceMetadata: vi.fn(),
     },
   };
 });
 
 const mockSettings = vi.mocked(apiClient.settings);
 const mockRefresh = vi.mocked(apiClient.refreshNodeToken);
+const mockUpdateMeta = vi.mocked(apiClient.updateNodeServiceMetadata);
 
 const FAKE_DICT = {
   en: {
@@ -31,6 +33,13 @@ const FAKE_DICT = {
     'node.settings.token_expired': 'Expired',
     'node.settings.token_expires_in_days': '{days} days',
     'node.settings.token_expires_in_hours': '{hours} hours',
+    'node.settings.service_meta': 'Service Renewal',
+    'node.settings.service_expires_at': 'Service expiry',
+    'node.settings.renewal_price': 'Renewal price',
+    'node.settings.service_meta_save': 'Save',
+    'node.settings.service_meta_saving': 'Saving…',
+    'node.settings.service_meta_saved': 'Saved',
+    'node.settings.service_meta_failed': 'Save failed: {error}',
     'node.settings.refresh_token': 'Refresh Token',
     'node.settings.refresh_note': 'Generate a new token for this node',
     'node.settings.refresh_button': 'Refresh',
@@ -40,6 +49,7 @@ const FAKE_DICT = {
     'common.waiting_for_data': 'Waiting…',
     'settings.password.current': 'Current password',
     'settings.security.verification_code': 'Code',
+    'settings.tokens.renewal_price_placeholder': '$5/mo',
   },
   'zh-CN': {},
 };
@@ -61,6 +71,8 @@ describe('NodeSettingsPanel', () => {
             tags: [],
             token_expires_at: '2026-06-15T00:00:00Z',
             token_expires_in_secs: 1296000, // 15 days
+            service_expires_at: '2026-12-31T00:00:00Z',
+            renewal_price: '$4/mo',
           },
           {
             node_id: 'node-b',
@@ -71,6 +83,8 @@ describe('NodeSettingsPanel', () => {
             tags: [],
             token_expires_at: null,
             token_expires_in_secs: null,
+            service_expires_at: null,
+            renewal_price: null,
           },
         ],
       }),
@@ -80,6 +94,10 @@ describe('NodeSettingsPanel', () => {
       message: 'Token refreshed successfully',
       token_expires_at: '2026-07-01T00:00:00Z',
       token_expires_in_secs: 2592000,
+    });
+    mockUpdateMeta.mockResolvedValue({
+      ok: true,
+      message: 'Saved',
     });
     vi.stubGlobal(
       'fetch',
@@ -151,6 +169,21 @@ describe('NodeSettingsPanel', () => {
     expect(mockRefresh.mock.calls[0]?.[1]).toMatchObject({ current_password: 'hunter2' });
     expect(mockSettings).toHaveBeenCalledTimes(2); // initial load + refresh after success
     expect(wrapper.find('[data-test="settings-message"]').text()).toBe('Token refreshed successfully');
+  });
+
+  it('saves editable service expiry and renewal price', async () => {
+    const wrapper = await mountPanel('node-a');
+    await wrapper.find('[data-test="node-service-expiry-input"]').setValue('2027-01-15');
+    await wrapper.find('[data-test="node-renewal-price-input"]').setValue('  $5/mo  ');
+    await wrapper.find('[data-test="node-service-meta-save"]').trigger('click');
+    await flushPromises();
+
+    expect(mockUpdateMeta).toHaveBeenCalledWith('node-a', {
+      service_expires_at: '2027-01-15T00:00:00Z',
+      renewal_price: '$5/mo',
+    });
+    expect(mockSettings).toHaveBeenCalledTimes(2);
+    expect(wrapper.find('[data-test="settings-message"]').text()).toBe('Saved');
   });
 
   it('surfaces the server error message when refresh fails', async () => {

@@ -98,6 +98,8 @@ pub async fn issue_node(path: &Path, request: IssueNodeRequest) -> RegistryResul
             tags: normalized_tags.clone(),
             created_at: now,
             token_expires_at: Some(now + ChronoDuration::days(DEFAULT_TOKEN_VALIDITY_DAYS)),
+            service_expires_at: None,
+            renewal_price: None,
         };
         validate_registered_node(&node)?;
 

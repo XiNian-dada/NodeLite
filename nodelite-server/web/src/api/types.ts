@@ -187,6 +187,8 @@ export interface SettingsAgentToken {
   tags: string[];
   token_expires_at: string | null;
   token_expires_in_secs: number | null;
+  service_expires_at: string | null;
+  renewal_price: string | null;
 }
 
 /** GET /api/settings — SettingsResponse (flat + nested) */
@@ -217,6 +219,12 @@ export interface SettingsActionResponse {
 export interface ReauthPayload {
   current_password?: string;
   code?: string;
+}
+
+/** POST /api/nodes/{id}/service-meta */
+export interface UpdateNodeServiceMetadataRequest {
+  service_expires_at: string | null;
+  renewal_price: string | null;
 }
 
 /** GET /api/settings/2fa/start — TwoFactorSetupResponse */

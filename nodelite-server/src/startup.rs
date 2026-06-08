@@ -39,7 +39,8 @@ use crate::handlers::{
     enable_two_factor, healthz, index, install_agent_script, install_bootstrap, logout_and_reauth,
     metrics, node_detail, node_history, node_logs, node_status, nodes, overview, readyz,
     refresh_node_token, require_readonly_auth, server_update_log, settings, start_server_update,
-    start_two_factor_setup, static_asset, update_alert_settings, verify_2fa_api, verify_2fa_page,
+    start_two_factor_setup, static_asset, update_alert_settings, update_node_service_metadata,
+    verify_2fa_api, verify_2fa_page,
 };
 use crate::history::HistoryStore;
 use crate::registry::NodeRegistry;
@@ -342,6 +343,10 @@ pub(crate) fn build_router(state: AppState) -> Router {
         .route(
             "/api/nodes/{node_id}/refresh-token",
             post(refresh_node_token),
+        )
+        .route(
+            "/api/nodes/{node_id}/service-meta",
+            post(update_node_service_metadata),
         )
         .route("/api/settings/password", post(change_readonly_password))
         .route("/api/settings/alerts", post(update_alert_settings))

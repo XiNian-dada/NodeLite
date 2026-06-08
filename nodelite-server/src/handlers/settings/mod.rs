@@ -17,7 +17,9 @@ pub(crate) use query::settings;
 pub(crate) use security::{
     change_readonly_password, disable_two_factor, enable_two_factor, start_two_factor_setup,
 };
-pub(crate) use updates::{refresh_node_token, server_update_log, start_server_update};
+pub(crate) use updates::{
+    refresh_node_token, server_update_log, start_server_update, update_node_service_metadata,
+};
 
 use config_edit::{persist_auth_2fa_change, persist_auth_password_change};
 use helpers::{
@@ -31,7 +33,7 @@ use types::{
     ChangePasswordRequest, DisableTwoFactorRequest, EnableTwoFactorRequest,
     NodeTokenRefreshResponse, ServerUpdateLogQuery, ServerUpdateLogResponse,
     SettingsActionResponse, SettingsAgentToken, SettingsAuth, SettingsResponse, SettingsUpdates,
-    StartServerUpdateRequest, TwoFactorSetupResponse,
+    StartServerUpdateRequest, TwoFactorSetupResponse, UpdateNodeServiceMetadataRequest,
 };
 
 pub(super) const MAX_UPDATE_LOG_CHUNK_BYTES: u64 = 128 * 1024;

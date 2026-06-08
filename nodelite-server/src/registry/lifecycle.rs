@@ -3,8 +3,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use nodelite_proto::validate_non_empty;
+use nodelite_proto::{validate_identifier, validate_non_empty};
 use tokio::sync::{RwLock, Semaphore};
+
+use crate::sanitize::sanitize_renewal_price;
 
 use super::auth::default_token_verify_limit;
 use super::storage::{
@@ -132,6 +134,33 @@ impl NodeRegistry {
                 .then_with(|| left.node_id.cmp(&right.node_id))
         });
         nodes
+    }
+
+    /// 更新设置页展示用的节点运营元数据。
+    pub async fn update_service_metadata(
+        &self,
+        node_id: &str,
+        service_expires_at: Option<DateTime<Utc>>,
+        renewal_price: Option<String>,
+    ) -> RegistryResult<RegisteredNode> {
+        validate_identifier("node_id", node_id).map_err(RegistryError::validation)?;
+        let renewal_price =
+            sanitize_renewal_price(renewal_price).map_err(RegistryError::validation)?;
+        let node_id = node_id.to_string();
+        let path = Arc::clone(&self.path);
+        let (node, file) = mutate_registry_file(path.as_ref(), move |file| {
+            let Some(node) = file.nodes.iter_mut().find(|node| node.node_id == node_id) else {
+                return Err(RegistryError::NodeNotFound(node_id.clone()));
+            };
+            node.service_expires_at = service_expires_at;
+            node.renewal_price = renewal_price.clone();
+            super::validate::validate_registered_node(node)?;
+            Ok((node.clone(), true))
+        })
+        .await?;
+
+        self.replace_state_from_file(file).await?;
+        Ok(node)
     }
 
     /// 返回当前注册表里的全部 node_id,用于跨模块做被动清理。
