@@ -485,7 +485,7 @@ snapshot_path = "/opt/nodelite/data/snapshot.json"
 
 [auth]
 username = "viewer"
-password = "change-this-password"
+password = "Str0ng#Passphrase!2026"
 # Disabled by default; must configure totp_secret when enabled.
 enable_2fa = false
 # totp_secret = "JBSWY3DPEHPK3PXP"
@@ -556,7 +556,7 @@ NodeLite's default security model: the dashboard is read-only by default, agents
 
 - `/`, `/nodes/*`, `/api/*` are protected by read-only Basic Auth.
 - If `server.listen` is not a loopback address, the config file must provide `[auth] username/password`, or the server will refuse to start.
-- `READONLY_PASSWORD` or `auth.password` in config must be at least 8 characters; if it does not contain both letters and digits, the server logs a weak password warning at startup.
+- `READONLY_PASSWORD` or `auth.password` in config must be a strong password between 12 and 128 chars that includes uppercase and lowercase letters, digits, and special characters; common weak passwords are rejected. If startup validation fails, the server refuses to start instead of only logging a warning. Prefer a randomly generated strong password, for example: `export READONLY_PASSWORD="$(openssl rand -base64 24)"`.
 - Sensitive operations on the settings page (password change, 2FA toggle, manual update) require the current password or 2FA verification again, not just frontend button visibility.
 - The frontend records login time in the browser; after 24 hours it redirects to `/logout-and-reauth`, triggering browser re-authentication. This is a browser-side convenience (JS + localStorage), not a security boundary — attackers disabling JS or tampering with localStorage can bypass it. True expiry is enforced jointly by the server-side cookie `Max-Age` and the server-side session store: the cookie is discarded by the browser at expiry, and store tickets are pruned, so protected endpoints still return 401.
 
@@ -567,7 +567,7 @@ TOTP is disabled by default. To enable two-factor authentication, set in `server
 ```toml
 [auth]
 username = "viewer"
-password = "a-strong-password-123"
+password = "Str0ng#Passphrase!2026"
 enable_2fa = true
 totp_secret = "JBSWY3DPEHPK3PXP"
 ```
