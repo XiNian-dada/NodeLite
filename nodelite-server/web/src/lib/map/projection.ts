@@ -96,10 +96,37 @@ export const COUNTRY_FLAGS: Record<string, string> = {
 };
 
 const REGION_ALIASES: Record<string, string> = {
+  argentina: 'ar',
+  australia: 'au',
+  brazil: 'br',
+  britain: 'gb',
+  canada: 'ca',
+  china: 'cn',
+  egypt: 'eg',
+  england: 'gb',
+  france: 'fr',
+  frankfurt: 'de',
+  germany: 'de',
+  greatbritain: 'gb',
   hongkong: 'hk',
   hongkongchina: 'hk',
   hksar: 'hk',
-  香港: 'hk',
+  india: 'in',
+  italy: 'it',
+  japan: 'jp',
+  korea: 'kr',
+  mexico: 'mx',
+  netherlands: 'nl',
+  newyork: 'us',
+  nigeria: 'ng',
+  russia: 'ru',
+  singapore: 'sg',
+  southafrica: 'za',
+  spain: 'es',
+  unitedkingdom: 'gb',
+  unitedstates: 'us',
+  unitedstatesofamerica: 'us',
+  usa: 'us',
   日本: 'jp',
   东京: 'jp',
   東京: 'jp',
@@ -112,7 +139,7 @@ const REGION_ALIASES: Record<string, string> = {
   沈阳: 'cn',
   瀋陽: 'cn',
   新加坡: 'sg',
-  singapore: 'sg',
+  香港: 'hk',
 };
 
 export function hashString(value: string): number {
@@ -133,8 +160,7 @@ function normalizeRegionHint(value: string | null | undefined): string | null {
     .toLowerCase()
     .replace(/[\s._-]+/g, '');
   if (!normalized) return null;
-  if (REGION_HINTS[normalized]) return normalized;
-  return REGION_ALIASES[normalized] ?? null;
+  return REGION_ALIASES[normalized] ?? (REGION_HINTS[normalized] ? normalized : null);
 }
 
 export function nodeRegionKey(node: NodeListItem): string | null {

@@ -75,6 +75,14 @@ describe('nodeRegionKey', () => {
     expect(nodeRegionKey(node)).toBe('us');
   });
 
+  it('normalizes geoip country names to country codes', () => {
+    const node = makeNode({
+      identity: { node_id: 'x', node_label: 'X', hostname: 'h', tags: [] },
+      geoip_country: 'United States',
+    });
+    expect(nodeRegionKey(node)).toBe('us');
+  });
+
   it('keeps explicit tags ahead of geoip country', () => {
     const node = makeNode({
       identity: { node_id: 'x', node_label: 'X', hostname: 'h', tags: ['country:de'] },
@@ -109,6 +117,15 @@ describe('nodeRegionKey', () => {
       location_override_city: 'Osaka',
     });
     expect(nodeRegionKey(node)).toBe('jp');
+  });
+
+  it('normalizes manual country names before resolving flags', () => {
+    const node = makeNode({
+      identity: { node_id: 'x', node_label: 'X', hostname: 'h', tags: [] },
+      location_override_country: 'Germany',
+    });
+    expect(nodeRegionKey(node)).toBe('de');
+    expect(nodeFlag(node)).toBe('🇩🇪');
   });
 
   it('does not fall back to geoip country when a manual location is unknown', () => {
