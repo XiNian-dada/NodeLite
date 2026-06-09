@@ -616,6 +616,13 @@ otpauth://totp/NodeLite:viewer?secret=<totp_secret>&issuer=NodeLite
 /api/audit-log?event_type=login_failure&success=false&limit=100
 ```
 
+### 节点定位 / GeoIP
+
+- 默认使用 `provider = "ipwhois"` 在线查询，不需要下载本地 DB-IP 数据库。
+- 如果切到 `provider = "dbip"`，才会启用 DB-IP Lite 数据库下载，右下角的 DB-IP attribution 也只在这个模式下显示。
+- 如果在节点设置页手动指定了位置，手动位置会优先于 GeoIP 自动结果。
+- 如果你想离线使用本地数据库，可以把 `provider` 设为 `custom`，再指定自己的 `database_path`。
+
 ## 告警与巡检
 
 - 服务端配置支持 `[alerts]` 段，用于声明 SMTP、WebHook、规则式告警和每日巡检摘要。

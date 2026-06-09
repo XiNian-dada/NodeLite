@@ -616,6 +616,13 @@ For example, view the last 100 failed authentication events:
 /api/audit-log?event_type=login_failure&success=false&limit=100
 ```
 
+### Node Location / GeoIP
+
+- The default `provider = "ipwhois"` performs online lookup and does not require downloading a local DB-IP database.
+- Switching to `provider = "dbip"` enables DB-IP Lite database downloads, and the DB-IP attribution footer only appears in that mode.
+- Manual node location overrides from the settings page take precedence over automatic GeoIP results.
+- If you need offline lookup, set `provider = "custom"` and point `database_path` at your own `.mmdb` file.
+
 ## Alerts and Daily Inspection
 
 - The server config now supports an `[alerts]` section for SMTP, WebHook, rule-based alerts, and a daily inspection digest.

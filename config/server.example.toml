@@ -51,7 +51,7 @@ export_node_disk_metrics = false
 # 前端只读访问用的基本认证用户名。
 username = "viewer"
 # 对应密码,生产环境务必修改,不要沿用默认值。
-password = "change-this-password"
+password = "Str0ng#Passphrase!2026"
 # 可选:开启 TOTP 二次验证。开启后需要先通过 Basic Auth,再输入 6 位动态码。
 enable_2fa = false
 # 可选:TOTP base32 secret。仅在 enable_2fa = true 时必须配置。
