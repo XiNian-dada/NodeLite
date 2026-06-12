@@ -115,20 +115,43 @@ async fn run_browser_session(shared: SharedState, socket: WebSocket) -> anyhow::
     }
 }
 
-/// 处理客户端发来的消息。返回 `true` 表示应结束会话。
-///
-/// 浏览器只会发应用层 `Ping`;其它文本消息一律忽略(协议向前兼容)。协议级
-/// Ping/Pong 帧由底层自动应答,这里收到也忽略。
-async fn handle_client_message(sender: &mut BrowserSink, message: Message) -> anyhow::Result<bool> {
+/// 客户端入站消息的处理决策,由 [`classify_client_message`] 纯函数推导。
+#[derive(Debug, PartialEq, Eq)]
+enum ClientAction {
+    /// 应用层 `Ping` → 回 `Pong`。
+    ReplyPong,
+    /// 客户端发起关闭 → 结束会话。
+    End,
+    /// 其它消息一律忽略(协议向前兼容;协议级 Ping/Pong 帧由底层自动应答)。
+    Ignore,
+}
+
+fn classify_client_message(message: &Message) -> ClientAction {
     match message {
         Message::Text(text) => {
-            if let Ok(BrowserMessage::Ping) = serde_json::from_str::<BrowserMessage>(&text) {
-                send_browser_message(sender, &BrowserMessage::Pong).await?;
+            if matches!(
+                serde_json::from_str::<BrowserMessage>(text.as_str()),
+                Ok(BrowserMessage::Ping)
+            ) {
+                ClientAction::ReplyPong
+            } else {
+                ClientAction::Ignore
             }
+        }
+        Message::Close(_) => ClientAction::End,
+        _ => ClientAction::Ignore,
+    }
+}
+
+/// 处理客户端发来的消息。返回 `true` 表示应结束会话。
+async fn handle_client_message(sender: &mut BrowserSink, message: Message) -> anyhow::Result<bool> {
+    match classify_client_message(&message) {
+        ClientAction::ReplyPong => {
+            send_browser_message(sender, &BrowserMessage::Pong).await?;
             Ok(false)
         }
-        Message::Close(_) => Ok(true),
-        _ => Ok(false),
+        ClientAction::End => Ok(true),
+        ClientAction::Ignore => Ok(false),
     }
 }
 
@@ -148,6 +171,34 @@ async fn send_initial_state(
     Ok(index_by_node_id(nodes))
 }
 
+/// 一次重算相对上次发送快照的增量:新增/变更的行 + 消失的行 id。
+struct NodeListDiff<'a> {
+    upserts: Vec<&'a NodeListItem>,
+    removed: Vec<String>,
+}
+
+/// 与上次发送的快照逐行对比:内容不同(或新出现)的行进 `upserts`,
+/// 上次有、这次没有的 id 进 `removed`。行内容未变时不产生任何输出。
+fn diff_node_lists<'a>(
+    last_nodes: &HashMap<String, NodeListItem>,
+    current: &'a [NodeListItem],
+) -> NodeListDiff<'a> {
+    let mut seen: HashSet<&str> = HashSet::with_capacity(current.len());
+    let mut upserts = Vec::new();
+    for node in current {
+        seen.insert(node.identity.node_id.as_str());
+        if last_nodes.get(&node.identity.node_id) != Some(node) {
+            upserts.push(node);
+        }
+    }
+    let removed = last_nodes
+        .keys()
+        .filter(|id| !seen.contains(id.as_str()))
+        .cloned()
+        .collect();
+    NodeListDiff { upserts, removed }
+}
+
 /// 重算当前节点列表,与上次发送的快照 diff,发出增量 + 概览更新。
 async fn push_incremental_updates(
     shared: &SharedState,
@@ -157,28 +208,17 @@ async fn push_incremental_updates(
     let current = shared.list_node_summaries().await;
     let generated_at = Utc::now();
 
-    // 新增 / 变更的行 → NodeUpsert。
-    let mut seen: HashSet<String> = HashSet::with_capacity(current.len());
-    for node in &current {
-        seen.insert(node.identity.node_id.clone());
-        if last_nodes.get(&node.identity.node_id) != Some(node) {
-            send_browser_message(
-                sender,
-                &BrowserMessage::NodeUpsert {
-                    generated_at,
-                    node: Box::new(node.clone()),
-                },
-            )
-            .await?;
-        }
+    let NodeListDiff { upserts, removed } = diff_node_lists(last_nodes, &current);
+    for node in upserts {
+        send_browser_message(
+            sender,
+            &BrowserMessage::NodeUpsert {
+                generated_at,
+                node: Box::new(node.clone()),
+            },
+        )
+        .await?;
     }
-
-    // 上次有、这次没有的行 → NodeRemoved。
-    let removed: Vec<String> = last_nodes
-        .keys()
-        .filter(|id| !seen.contains(*id))
-        .cloned()
-        .collect();
     for node_id in removed {
         send_browser_message(
             sender,
@@ -221,4 +261,159 @@ async fn send_browser_message(
         .send(Message::Text(payload.into()))
         .await
         .map_err(|error| anyhow!("failed to send browser message: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use nodelite_proto::NodeListIdentity;
+
+    use super::*;
+
+    fn list_item(node_id: &str) -> NodeListItem {
+        NodeListItem {
+            identity: NodeListIdentity {
+                node_id: node_id.to_string(),
+                node_label: format!("{node_id} label"),
+                hostname: format!("{node_id}.internal"),
+                tags: Vec::new(),
+            },
+            geoip_country: None,
+            geoip_city: None,
+            geoip_latitude: None,
+            geoip_longitude: None,
+            location_override_country: None,
+            location_override_city: None,
+            location_override_latitude: None,
+            location_override_longitude: None,
+            snapshot: None,
+            latency_ms: None,
+            online: true,
+        }
+    }
+
+    fn upsert_ids<'a>(diff: &NodeListDiff<'a>) -> Vec<&'a str> {
+        diff.upserts
+            .iter()
+            .map(|node| node.identity.node_id.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn diff_reports_new_node_as_upsert() {
+        let last = HashMap::new();
+        let current = vec![list_item("hk-01")];
+
+        let diff = diff_node_lists(&last, &current);
+
+        assert_eq!(upsert_ids(&diff), vec!["hk-01"]);
+        assert!(diff.removed.is_empty());
+    }
+
+    #[test]
+    fn diff_reports_changed_node_as_upsert() {
+        let last = index_by_node_id(vec![list_item("hk-01")]);
+        let mut changed = list_item("hk-01");
+        changed.latency_ms = Some(42);
+        let current = vec![changed];
+
+        let diff = diff_node_lists(&last, &current);
+
+        assert_eq!(upsert_ids(&diff), vec!["hk-01"]);
+        assert!(diff.removed.is_empty());
+    }
+
+    #[test]
+    fn diff_skips_unchanged_node() {
+        let last = index_by_node_id(vec![list_item("hk-01")]);
+        let current = vec![list_item("hk-01")];
+
+        let diff = diff_node_lists(&last, &current);
+
+        assert!(diff.upserts.is_empty());
+        assert!(diff.removed.is_empty());
+    }
+
+    #[test]
+    fn diff_reports_missing_node_as_removed() {
+        let last = index_by_node_id(vec![list_item("hk-01"), list_item("jp-01")]);
+        let current = vec![list_item("hk-01")];
+
+        let diff = diff_node_lists(&last, &current);
+
+        assert!(diff.upserts.is_empty());
+        assert_eq!(diff.removed, vec!["jp-01".to_string()]);
+    }
+
+    #[test]
+    fn diff_handles_mixed_changes_in_one_pass() {
+        let last = index_by_node_id(vec![
+            list_item("unchanged"),
+            list_item("changed"),
+            list_item("removed"),
+        ]);
+        let mut changed = list_item("changed");
+        changed.online = false;
+        let current = vec![list_item("unchanged"), changed, list_item("added")];
+
+        let diff = diff_node_lists(&last, &current);
+
+        assert_eq!(upsert_ids(&diff), vec!["changed", "added"]);
+        assert_eq!(diff.removed, vec!["removed".to_string()]);
+    }
+
+    #[test]
+    fn diff_of_two_empty_lists_is_empty() {
+        let diff = diff_node_lists(&HashMap::new(), &[]);
+
+        assert!(diff.upserts.is_empty());
+        assert!(diff.removed.is_empty());
+    }
+
+    #[test]
+    fn index_by_node_id_keys_each_item_by_its_id() {
+        let indexed = index_by_node_id(vec![list_item("hk-01"), list_item("jp-01")]);
+
+        assert_eq!(indexed.len(), 2);
+        assert_eq!(indexed["hk-01"].identity.node_id, "hk-01");
+        assert_eq!(indexed["jp-01"].identity.node_id, "jp-01");
+    }
+
+    #[test]
+    fn classify_replies_pong_to_app_level_ping() {
+        let payload = serde_json::to_string(&BrowserMessage::Ping).expect("ping should serialize");
+
+        let action = classify_client_message(&Message::Text(payload.into()));
+
+        assert_eq!(action, ClientAction::ReplyPong);
+    }
+
+    #[test]
+    fn classify_ignores_other_browser_messages() {
+        let payload = serde_json::to_string(&BrowserMessage::Pong).expect("pong should serialize");
+
+        let action = classify_client_message(&Message::Text(payload.into()));
+
+        assert_eq!(action, ClientAction::Ignore);
+    }
+
+    #[test]
+    fn classify_ignores_invalid_json_text() {
+        let action = classify_client_message(&Message::Text("{not-json}".into()));
+
+        assert_eq!(action, ClientAction::Ignore);
+    }
+
+    #[test]
+    fn classify_ignores_binary_frames() {
+        let action = classify_client_message(&Message::Binary(vec![1, 2, 3].into()));
+
+        assert_eq!(action, ClientAction::Ignore);
+    }
+
+    #[test]
+    fn classify_ends_session_on_close_frame() {
+        let action = classify_client_message(&Message::Close(None));
+
+        assert_eq!(action, ClientAction::End);
+    }
 }

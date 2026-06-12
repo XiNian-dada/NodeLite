@@ -632,6 +632,15 @@ impl TestBrowserClient {
         .context("timed out waiting for matching browser message")?
     }
 
+    /// 断言给定窗口内服务端没有推送任何 `BrowserMessage`(用于静默期验证)。
+    pub async fn expect_no_message(&mut self, window: Duration) -> Result<()> {
+        match timeout(window, self.next_message(window * 2)).await {
+            Err(_) => Ok(()),
+            Ok(Ok(message)) => bail!("expected no browser message within window, got {message:?}"),
+            Ok(Err(error)) => Err(error).context("browser ws failed while expecting silence"),
+        }
+    }
+
     /// 发送应用层 `Ping`。
     pub async fn send_ping(&mut self) -> Result<()> {
         let payload = serde_json::to_string(&BrowserMessage::Ping).context("encode ping")?;
