@@ -14,6 +14,7 @@ mod session_control;
 mod sqlite_wal;
 mod view_cache;
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -57,6 +58,11 @@ pub(crate) struct BrowserViewDirty;
 /// 约 1.3 秒(256 / 200)就会 Lagged,届时会话回退到重发 InitialState 全量同步。
 const BROWSER_VIEW_DIRTY_CHANNEL_CAPACITY: usize = 256;
 
+/// 浏览器增量消息广播通道容量。集中 diff 任务每秒最多广播 ~400 条消息(200 节点
+/// 全变 × 每节点 1 upsert + 1 overview),慢连接若落后超过 256 条会收到 Lagged,
+/// 届时重发 InitialState 全量同步。
+const BROWSER_INCREMENTAL_CHANNEL_CAPACITY: usize = 256;
+
 /// 共享状态的对外句柄,可以低成本地克隆给每个异步任务。
 #[derive(Clone)]
 pub struct SharedState {
@@ -89,6 +95,8 @@ pub struct SharedState {
     session_control_queue_full_total: Arc<AtomicU64>,
     /// 节点视图变化时向所有浏览器 WebSocket 会话广播脏信号。
     browser_view_dirty_tx: broadcast::Sender<BrowserViewDirty>,
+    /// 集中 diff 任务计算出的增量消息,广播给所有浏览器会话直接转发(零锁、零 diff)。
+    browser_incremental_tx: broadcast::Sender<Arc<nodelite_proto::BrowserMessage>>,
     #[cfg(test)]
     metrics_cache_builds: Arc<AtomicU64>,
 }
@@ -124,6 +132,7 @@ impl SharedState {
             ws_messages_refresh_token_request_total: Arc::new(AtomicU64::new(0)),
             session_control_queue_full_total: Arc::new(AtomicU64::new(0)),
             browser_view_dirty_tx: broadcast::channel(BROWSER_VIEW_DIRTY_CHANNEL_CAPACITY).0,
+            browser_incremental_tx: broadcast::channel(BROWSER_INCREMENTAL_CHANNEL_CAPACITY).0,
             #[cfg(test)]
             metrics_cache_builds: Arc::new(AtomicU64::new(0)),
         }
@@ -451,6 +460,13 @@ impl SharedState {
         self.browser_view_dirty_tx.subscribe()
     }
 
+    /// 订阅集中 diff 任务广播的增量消息。浏览器会话直接转发收到的消息(零锁、零 diff)。
+    pub(crate) fn subscribe_browser_incremental(
+        &self,
+    ) -> broadcast::Receiver<Arc<nodelite_proto::BrowserMessage>> {
+        self.browser_incremental_tx.subscribe()
+    }
+
     /// 广播一次浏览器视图脏信号。没有订阅者(无浏览器连接)时 `send` 返回
     /// `Err`,直接忽略即可。
     fn notify_browser_view_dirty(&self) {
@@ -609,6 +625,101 @@ impl SharedState {
     fn metrics_cache_build_count(&self) -> u64 {
         self.metrics_cache_builds.load(Ordering::Relaxed)
     }
+}
+
+/// 启动集中 diff 后台任务,订阅脏信号、去抖并广播增量消息给所有浏览器会话。
+pub(crate) fn spawn_browser_incremental_task(shared: SharedState) {
+    tokio::spawn(async move {
+        run_browser_incremental_task(shared).await;
+    });
+}
+
+async fn run_browser_incremental_task(shared: SharedState) {
+    use tokio::time::{MissedTickBehavior, interval};
+
+    let mut updates = shared.subscribe_browser_updates();
+    let mut debounce = interval(Duration::from_secs(1));
+    debounce.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let mut dirty = false;
+    let mut last_nodes: HashMap<String, NodeListItem> = HashMap::new();
+
+    loop {
+        tokio::select! {
+            recv = updates.recv() => {
+                match recv {
+                    Ok(_) => dirty = true,
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        // 落后丢信号:强制下次 tick 重算并广播完整增量
+                        dirty = true;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => return,
+                }
+            }
+            _ = debounce.tick() => {
+                if dirty {
+                    dirty = false;
+                    if let Err(error) = broadcast_incremental_updates(&shared, &mut last_nodes).await {
+                        tracing::warn!(error = %error, "browser incremental task failed to broadcast updates");
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn broadcast_incremental_updates(
+    shared: &SharedState,
+    last_nodes: &mut HashMap<String, NodeListItem>,
+) -> anyhow::Result<()> {
+    let current = shared.list_node_summaries().await;
+    let generated_at = Utc::now();
+
+    // Diff: 与上次快照逐行对比,找出变更/新增/移除的节点
+    let mut seen: HashSet<&str> = HashSet::with_capacity(current.len());
+    let mut upserts = Vec::new();
+    for node in &current {
+        seen.insert(node.identity.node_id.as_str());
+        if last_nodes.get(&node.identity.node_id) != Some(node) {
+            upserts.push(node.clone());
+        }
+    }
+    let removed: Vec<String> = last_nodes
+        .keys()
+        .filter(|id: &&String| !seen.contains(id.as_str()))
+        .cloned()
+        .collect();
+
+    // 广播增量消息
+    for node in upserts {
+        let msg = Arc::new(nodelite_proto::BrowserMessage::NodeUpsert {
+            generated_at,
+            node: Box::new(node),
+        });
+        let _ = shared.browser_incremental_tx.send(msg);
+    }
+    for node_id in removed {
+        let msg = Arc::new(nodelite_proto::BrowserMessage::NodeRemoved {
+            generated_at,
+            node_id,
+        });
+        let _ = shared.browser_incremental_tx.send(msg);
+    }
+
+    // 更新快照
+    *last_nodes = current
+        .into_iter()
+        .map(|node| (node.identity.node_id.clone(), node))
+        .collect();
+
+    // 广播概览更新
+    let overview = shared.overview_snapshot().await;
+    let msg = Arc::new(nodelite_proto::BrowserMessage::OverviewUpdate {
+        generated_at,
+        overview,
+    });
+    let _ = shared.browser_incremental_tx.send(msg);
+
+    Ok(())
 }
 
 #[cfg(test)]
