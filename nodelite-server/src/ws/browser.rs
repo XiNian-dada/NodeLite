@@ -21,7 +21,6 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
-use chrono::Utc;
 use futures::stream::SplitSink;
 use futures::{SinkExt, StreamExt};
 use nodelite_proto::BrowserMessage;
@@ -65,13 +64,10 @@ pub async fn ws_browser_handler(
 async fn run_browser_session(shared: SharedState, socket: WebSocket) -> anyhow::Result<()> {
     let (mut sender, mut receiver) = socket.split();
 
-    // 1. 先订阅增量流,再 drain 所有排队消息,最后发 InitialState。
-    //    这保证 InitialState 之后收到的增量都严格晚于 InitialState 数据。
+    // 1. 先订阅增量流,再发 InitialState 并记录其 revision baseline。
+    //    已排队但不晚于该 baseline 的增量会被丢弃,避免旧 diff 覆盖新快照。
     let mut incremental_rx = shared.subscribe_browser_incremental();
-    // Drain: 新订阅者可能已有排队消息(集中任务在我们订阅前就广播了),全部丢弃
-    while incremental_rx.try_recv().is_ok() {}
-
-    send_initial_state(&shared, &mut sender).await?;
+    let mut baseline_revision = send_initial_state(&shared, &mut sender).await?;
 
     loop {
         tokio::select! {
@@ -88,14 +84,15 @@ async fn run_browser_session(shared: SharedState, socket: WebSocket) -> anyhow::
             }
             incremental = incremental_rx.recv() => {
                 match incremental {
-                    Ok(msg) => {
+                    Ok(update) => {
                         // 集中任务已计算好的增量消息,直接转发(零锁、零 diff)
-                        send_browser_message(&mut sender, &msg).await?;
+                        if should_forward_incremental(update.revision, baseline_revision) {
+                            send_browser_message(&mut sender, &update.message).await?;
+                        }
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
-                        // 落后丢消息:客户端状态可能不一致 → drain + 重发 InitialState 强制重同步
-                        while incremental_rx.try_recv().is_ok() {}
-                        send_initial_state(&shared, &mut sender).await?;
+                        // 落后丢消息:客户端状态可能不一致 → 重发 InitialState 强制重同步
+                        baseline_revision = send_initial_state(&shared, &mut sender).await?;
                     }
                     Err(broadcast::error::RecvError::Closed) => return Ok(()),
                 }
@@ -145,15 +142,19 @@ async fn handle_client_message(sender: &mut BrowserSink, message: Message) -> an
 }
 
 /// 发送全量 `InitialState`。连接建立或 Lagged 重同步时调用。
-async fn send_initial_state(shared: &SharedState, sender: &mut BrowserSink) -> anyhow::Result<()> {
-    let nodes = shared.list_node_summaries().await;
-    let overview = shared.overview_snapshot().await;
+async fn send_initial_state(shared: &SharedState, sender: &mut BrowserSink) -> anyhow::Result<u64> {
+    let snapshot = shared.browser_snapshot().await;
     let message = BrowserMessage::InitialState {
-        generated_at: Utc::now(),
-        overview,
-        nodes,
+        generated_at: snapshot.generated_at,
+        overview: snapshot.overview,
+        nodes: snapshot.nodes,
     };
-    send_browser_message(sender, &message).await
+    send_browser_message(sender, &message).await?;
+    Ok(snapshot.revision)
+}
+
+fn should_forward_incremental(update_revision: u64, baseline_revision: u64) -> bool {
+    update_revision > baseline_revision
 }
 
 async fn send_browser_message(
@@ -318,6 +319,13 @@ mod tests {
         assert_eq!(indexed.len(), 2);
         assert_eq!(indexed["hk-01"].identity.node_id, "hk-01");
         assert_eq!(indexed["jp-01"].identity.node_id, "jp-01");
+    }
+
+    #[test]
+    fn drops_incremental_messages_at_or_before_initial_state_revision() {
+        assert!(!should_forward_incremental(41, 42));
+        assert!(!should_forward_incremental(42, 42));
+        assert!(should_forward_incremental(43, 42));
     }
 
     #[test]

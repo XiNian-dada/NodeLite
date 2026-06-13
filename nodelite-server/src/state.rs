@@ -20,9 +20,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use axum::body::Bytes;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use nodelite_proto::{
-    GeoIpLocation, NodeIdentity, NodeListItem, NodeSnapshot, NodeStatus, OverviewData, ServerConfig,
+    BrowserMessage, GeoIpLocation, NodeIdentity, NodeListItem, NodeSnapshot, NodeStatus,
+    OverviewData, ServerConfig,
 };
 use tokio::sync::{Mutex, RwLock, broadcast, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -50,10 +51,24 @@ use crate::handlers::metrics_exporter::{
 };
 
 /// 浏览器视图脏信号。节点视图发生任意变化(注册 / 快照 / 延迟 / 离线 / 批量过期)时
-/// 广播一次,促使每个浏览器 WebSocket 会话重算节点列表、与上次发送的快照做 diff,
-/// 再发出增量。无 payload:会话总是重新读取完整视图,不需要携带变化详情。
+/// 广播一次,促使集中 diff 任务重新读取完整视图并广播增量。
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct BrowserViewDirty;
+
+/// 浏览器全量快照及其对应的节点视图 revision。
+pub(crate) struct BrowserSnapshot {
+    pub(crate) revision: u64,
+    pub(crate) generated_at: DateTime<Utc>,
+    pub(crate) overview: OverviewData,
+    pub(crate) nodes: Vec<NodeListItem>,
+}
+
+/// 集中 diff 任务广播给浏览器会话的增量消息。
+#[derive(Clone)]
+pub(crate) struct BrowserIncrementalUpdate {
+    pub(crate) revision: u64,
+    pub(crate) message: Arc<BrowserMessage>,
+}
 
 /// 浏览器脏信号广播通道容量。200 节点 × 1Hz ≈ 200 信号/秒;某个会话若停顿超过
 /// 约 1.3 秒(256 / 200)就会 Lagged,届时会话回退到重发 InitialState 全量同步。
@@ -97,7 +112,7 @@ pub struct SharedState {
     /// 节点视图变化时向所有浏览器 WebSocket 会话广播脏信号。
     browser_view_dirty_tx: broadcast::Sender<BrowserViewDirty>,
     /// 集中 diff 任务计算出的增量消息,广播给所有浏览器会话直接转发(零锁、零 diff)。
-    browser_incremental_tx: broadcast::Sender<Arc<nodelite_proto::BrowserMessage>>,
+    browser_incremental_tx: broadcast::Sender<BrowserIncrementalUpdate>,
     #[cfg(test)]
     metrics_cache_builds: Arc<AtomicU64>,
 }
@@ -247,6 +262,22 @@ impl SharedState {
     pub async fn list_node_summaries(&self) -> Vec<NodeListItem> {
         let registry = self.registry.read().await;
         registry.list_node_summaries()
+    }
+
+    /// 返回浏览器全量视图和对应 revision。revision 在持有 registry 读锁时读取:
+    /// 若某次写入尚未进入快照,它也不可能已经 bump revision。
+    pub(crate) async fn browser_snapshot(&self) -> BrowserSnapshot {
+        let generated_at = Utc::now();
+        let registry = self.registry.read().await;
+        let nodes = registry.list_node_summaries();
+        let overview = registry.overview();
+        let revision = self.nodes_revision.load(Ordering::Acquire);
+        BrowserSnapshot {
+            revision,
+            generated_at,
+            overview,
+            nodes,
+        }
     }
 
     pub async fn get_status(&self, node_id: &str) -> Option<NodeStatus> {
@@ -450,13 +481,8 @@ impl SharedState {
         registry.overview()
     }
 
-    /// 供浏览器 WebSocket 会话读取当前概览聚合(在准备发送 OverviewUpdate 时惰性调用)。
-    pub(crate) async fn overview_snapshot(&self) -> OverviewData {
-        self.overview_data().await
-    }
-
-    /// 订阅浏览器视图脏信号。每个浏览器会话持有一个 receiver,在信号到达后
-    /// 重算节点列表并发出增量。
+    /// 订阅浏览器视图脏信号。集中 diff 任务持有 receiver,在信号到达后
+    /// 重算节点列表并广播增量。
     pub(crate) fn subscribe_browser_updates(&self) -> broadcast::Receiver<BrowserViewDirty> {
         self.browser_view_dirty_tx.subscribe()
     }
@@ -464,7 +490,7 @@ impl SharedState {
     /// 订阅集中 diff 任务广播的增量消息。浏览器会话直接转发收到的消息(零锁、零 diff)。
     pub(crate) fn subscribe_browser_incremental(
         &self,
-    ) -> broadcast::Receiver<Arc<nodelite_proto::BrowserMessage>> {
+    ) -> broadcast::Receiver<BrowserIncrementalUpdate> {
         self.browser_incremental_tx.subscribe()
     }
 
@@ -677,8 +703,10 @@ async fn broadcast_incremental_updates(
     shared: &SharedState,
     last_nodes: &mut HashMap<String, NodeListItem>,
 ) -> anyhow::Result<()> {
-    let current = shared.list_node_summaries().await;
-    let generated_at = Utc::now();
+    let snapshot = shared.browser_snapshot().await;
+    let current = snapshot.nodes;
+    let generated_at = snapshot.generated_at;
+    let revision = snapshot.revision;
 
     // Diff: 与上次快照逐行对比,找出变更/新增/移除的节点
     let mut seen: HashSet<&str> = HashSet::with_capacity(current.len());
@@ -697,18 +725,28 @@ async fn broadcast_incremental_updates(
 
     // 广播增量消息
     for node in upserts {
-        let msg = Arc::new(nodelite_proto::BrowserMessage::NodeUpsert {
+        let msg = Arc::new(BrowserMessage::NodeUpsert {
             generated_at,
             node: Box::new(node),
         });
-        let _ = shared.browser_incremental_tx.send(msg);
+        let _ = shared
+            .browser_incremental_tx
+            .send(BrowserIncrementalUpdate {
+                revision,
+                message: msg,
+            });
     }
     for node_id in removed {
-        let msg = Arc::new(nodelite_proto::BrowserMessage::NodeRemoved {
+        let msg = Arc::new(BrowserMessage::NodeRemoved {
             generated_at,
             node_id,
         });
-        let _ = shared.browser_incremental_tx.send(msg);
+        let _ = shared
+            .browser_incremental_tx
+            .send(BrowserIncrementalUpdate {
+                revision,
+                message: msg,
+            });
     }
 
     // 更新快照
@@ -718,12 +756,16 @@ async fn broadcast_incremental_updates(
         .collect();
 
     // 广播概览更新
-    let overview = shared.overview_snapshot().await;
-    let msg = Arc::new(nodelite_proto::BrowserMessage::OverviewUpdate {
+    let msg = Arc::new(BrowserMessage::OverviewUpdate {
         generated_at,
-        overview,
+        overview: snapshot.overview,
     });
-    let _ = shared.browser_incremental_tx.send(msg);
+    let _ = shared
+        .browser_incremental_tx
+        .send(BrowserIncrementalUpdate {
+            revision,
+            message: msg,
+        });
 
     Ok(())
 }
