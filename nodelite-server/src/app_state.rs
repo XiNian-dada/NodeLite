@@ -109,8 +109,10 @@ impl AppState {
         let geoip = GeoIpResolver::new(config.geoip.clone()).await;
         let registry = NodeRegistry::load(config.node_registry_path.as_path()).await?;
 
+        let shutdown = CancellationToken::new();
         let shared = SharedState::new(config.clone());
-        crate::state::spawn_browser_incremental_task(shared.clone());
+        // 测试环境也启动集中 diff 任务,但 JoinHandle 不纳入管理(测试结束时自然退出)
+        let _ = crate::state::spawn_browser_incremental_task(shared.clone(), shutdown.clone());
 
         Ok(Self {
             history,
@@ -140,7 +142,7 @@ impl AppState {
             alerting: Arc::new(RwLock::new(Arc::new(config.alerting.clone()))),
             two_factor_sessions: TwoFactorSessions::new(),
             config_path,
-            shutdown: CancellationToken::new(),
+            shutdown,
         })
     }
 }

@@ -16,7 +16,7 @@
 广播到专用 channel；各浏览器会话订阅该 channel，直接转发收到的消息(零锁、零 diff)。
 
 ```
-[SharedState 脏信号] 
+[SharedState 脏信号]
        ↓
 [集中 diff 任务] ← 1× list_node_summaries (去抖 1s)
        ↓ diff_node_lists → Vec<BrowserMessage>

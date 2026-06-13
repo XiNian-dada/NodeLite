@@ -25,6 +25,7 @@ use nodelite_proto::{
     GeoIpLocation, NodeIdentity, NodeListItem, NodeSnapshot, NodeStatus, OverviewData, ServerConfig,
 };
 use tokio::sync::{Mutex, RwLock, broadcast, oneshot};
+use tokio_util::sync::CancellationToken;
 
 use self::registry::Registry;
 pub(crate) use self::session_control::{
@@ -628,13 +629,17 @@ impl SharedState {
 }
 
 /// 启动集中 diff 后台任务,订阅脏信号、去抖并广播增量消息给所有浏览器会话。
-pub(crate) fn spawn_browser_incremental_task(shared: SharedState) {
+/// 返回 JoinHandle 供调用者纳入 shutdown 生命周期。
+pub(crate) fn spawn_browser_incremental_task(
+    shared: SharedState,
+    shutdown: CancellationToken,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        run_browser_incremental_task(shared).await;
-    });
+        run_browser_incremental_task(shared, shutdown).await;
+    })
 }
 
-async fn run_browser_incremental_task(shared: SharedState) {
+async fn run_browser_incremental_task(shared: SharedState, shutdown: CancellationToken) {
     use tokio::time::{MissedTickBehavior, interval};
 
     let mut updates = shared.subscribe_browser_updates();
@@ -645,6 +650,7 @@ async fn run_browser_incremental_task(shared: SharedState) {
 
     loop {
         tokio::select! {
+            _ = shutdown.cancelled() => return,
             recv = updates.recv() => {
                 match recv {
                     Ok(_) => dirty = true,

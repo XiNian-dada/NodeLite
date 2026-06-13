@@ -64,10 +64,15 @@ pub async fn ws_browser_handler(
 /// 单个浏览器会话主循环。
 async fn run_browser_session(shared: SharedState, socket: WebSocket) -> anyhow::Result<()> {
     let (mut sender, mut receiver) = socket.split();
-    let mut incremental_rx = shared.subscribe_browser_incremental();
 
     // 1. 立即发送全量 InitialState(连接建立时机各不同,无法集中)。
     send_initial_state(&shared, &mut sender).await?;
+
+    // 2. InitialState 发送后再订阅增量流,保证订阅后的所有增量都晚于 InitialState。
+    //    若先订阅再发 InitialState,则 send_initial_state() await 期间集中任务广播的
+    //    增量会进队列,但其 generated_at 可能早于随后的 InitialState.generated_at,
+    //    前端会当 stale 丢掉,导致新打开的 dashboard 停在旧数据。
+    let mut incremental_rx = shared.subscribe_browser_incremental();
 
     loop {
         tokio::select! {
