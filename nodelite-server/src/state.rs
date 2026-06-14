@@ -25,7 +25,7 @@ use nodelite_proto::{
     AlertRuleConfig, BrowserMessage, GeoIpLocation, InspectionConfig, NodeIdentity, NodeListItem,
     NodeSnapshot, NodeStatus, OverviewData, ServerConfig,
 };
-use tokio::sync::{Mutex, RwLock, broadcast, oneshot};
+use tokio::sync::{Mutex, broadcast, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use self::registry::Registry;
@@ -84,7 +84,7 @@ const BROWSER_INCREMENTAL_CHANNEL_CAPACITY: usize = 256;
 #[derive(Clone)]
 pub struct SharedState {
     config: Arc<ServerConfig>,
-    registry: Arc<RwLock<Registry>>,
+    registry: Arc<Registry>,
     next_session_id: Arc<AtomicU64>,
     overview_revision: Arc<AtomicU64>,
     nodes_revision: Arc<AtomicU64>,
@@ -122,7 +122,7 @@ impl SharedState {
     pub fn new(config: Arc<ServerConfig>) -> Self {
         Self {
             config: Arc::clone(&config),
-            registry: Arc::new(RwLock::new(Registry::default())),
+            registry: Arc::new(Registry::default()),
             next_session_id: Arc::new(AtomicU64::new(1)),
             overview_revision: Arc::new(AtomicU64::new(1)),
             nodes_revision: Arc::new(AtomicU64::new(1)),
@@ -174,8 +174,7 @@ impl SharedState {
     ) -> u64 {
         let session_id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
         let now = Utc::now();
-        let mut registry = self.registry.write().await;
-        registry.register_node(
+        self.registry.register_node(
             session_id,
             identity,
             remote_ip,
@@ -198,8 +197,9 @@ impl SharedState {
         session_id: u64,
         snapshot: NodeSnapshot,
     ) -> Option<NodeStatus> {
-        let mut registry = self.registry.write().await;
-        let status = registry.update_snapshot(node_id, session_id, snapshot, Utc::now());
+        let status = self
+            .registry
+            .update_snapshot(node_id, session_id, snapshot, Utc::now());
         if status.is_some() {
             self.bump_nodes_revision_only();
         }
@@ -208,8 +208,9 @@ impl SharedState {
 
     /// 更新某节点的最新延迟值,语义同 `update_snapshot`(只 bump nodes_revision)。
     pub async fn update_latency(&self, node_id: &str, session_id: u64, latency_ms: u64) -> bool {
-        let mut registry = self.registry.write().await;
-        let updated = registry.update_latency(node_id, session_id, latency_ms, Utc::now());
+        let updated = self
+            .registry
+            .update_latency(node_id, session_id, latency_ms, Utc::now());
         if updated {
             self.bump_nodes_revision_only();
         }
@@ -218,8 +219,7 @@ impl SharedState {
 
     /// 标记某会话的连接已断开。如果当前活跃 ID 不再等于该会话,则什么也不做。
     pub async fn mark_disconnected(&self, node_id: &str, session_id: u64) {
-        let mut registry = self.registry.write().await;
-        if registry.mark_disconnected(node_id, session_id) {
+        if self.registry.mark_disconnected(node_id, session_id) {
             self.bump_view_revision();
         }
     }
@@ -231,14 +231,13 @@ impl SharedState {
         session_id: u64,
         control: SessionControlHandle,
     ) -> bool {
-        let mut registry = self.registry.write().await;
-        registry.attach_session_control(node_id, session_id, control)
+        self.registry
+            .attach_session_control(node_id, session_id, control)
     }
 
     /// 把超时(超过 `stale_after_secs`)的节点统一标记为离线,返回受影响节点数。
     pub async fn mark_stale(&self) -> usize {
-        let mut registry = self.registry.write().await;
-        let marked = registry.mark_stale(
+        let marked = self.registry.mark_stale(
             Duration::from_secs(self.config.stale_after_secs),
             Utc::now(),
         );
@@ -250,19 +249,16 @@ impl SharedState {
 
     /// 判断给定 `session_id` 是否仍是该节点的当前会话。
     pub async fn is_current_session(&self, node_id: &str, session_id: u64) -> bool {
-        let registry = self.registry.read().await;
-        registry.is_current_session(node_id, session_id)
+        self.registry.is_current_session(node_id, session_id)
     }
 
     /// 列出所有节点的状态(按 `node_label`、`node_id` 升序)。
     pub async fn list_statuses(&self) -> Vec<NodeStatus> {
-        let registry = self.registry.read().await;
-        registry.list_statuses()
+        self.registry.list_statuses()
     }
 
     pub async fn list_node_summaries(&self) -> Vec<NodeListItem> {
-        let registry = self.registry.read().await;
-        registry.list_node_summaries()
+        self.registry.list_node_summaries()
     }
 
     pub(crate) async fn evaluate_alert_rules(
@@ -270,8 +266,7 @@ impl SharedState {
         rules: &[AlertRuleConfig],
         now: DateTime<Utc>,
     ) -> Vec<EvaluatedRule> {
-        let registry = self.registry.read().await;
-        registry.evaluate_alert_rules(rules, now)
+        self.registry.evaluate_alert_rules(rules, now)
     }
 
     pub(crate) async fn build_alert_inspection_report(
@@ -279,17 +274,14 @@ impl SharedState {
         inspection: &InspectionConfig,
         now: DateTime<Utc>,
     ) -> InspectionReport {
-        let registry = self.registry.read().await;
-        registry.build_alert_inspection_report(inspection, now)
+        self.registry.build_alert_inspection_report(inspection, now)
     }
 
-    /// 返回浏览器全量视图和对应 revision。revision 在持有 registry 读锁时读取:
-    /// 若某次写入尚未进入快照,它也不可能已经 bump revision。
+    /// 返回浏览器全量视图和对应 revision。nodes/overview 来自同一组 registry 分片读视图,
+    /// revision 用于让浏览器端识别后续增量是否基于同一代节点视图。
     pub(crate) async fn browser_snapshot(&self) -> BrowserSnapshot {
         let generated_at = Utc::now();
-        let registry = self.registry.read().await;
-        let nodes = registry.list_node_summaries();
-        let overview = registry.overview();
+        let (nodes, overview) = self.registry.browser_view();
         let revision = self.nodes_revision.load(Ordering::Acquire);
         BrowserSnapshot {
             revision,
@@ -300,23 +292,20 @@ impl SharedState {
     }
 
     pub async fn get_status(&self, node_id: &str) -> Option<NodeStatus> {
-        let registry = self.registry.read().await;
-        registry.get_status(node_id)
+        self.registry.get_status(node_id)
     }
 
     pub(crate) async fn geoip_refresh_candidates(&self) -> Vec<(String, String)> {
-        let registry = self.registry.read().await;
-        registry.geoip_refresh_candidates()
+        self.registry.geoip_refresh_candidates()
     }
 
     pub(crate) async fn refresh_geoip_locations(
         &self,
         updates: Vec<(String, String, GeoIpLocation)>,
     ) -> usize {
-        let mut registry = self.registry.write().await;
         let mut updated = 0;
         for (node_id, remote_ip, geoip) in updates {
-            if registry.update_geoip(&node_id, &remote_ip, geoip) {
+            if self.registry.update_geoip(&node_id, &remote_ip, geoip) {
                 updated += 1;
             }
         }
@@ -331,8 +320,9 @@ impl SharedState {
         node_id: &str,
         location_override: Option<GeoIpLocation>,
     ) -> bool {
-        let mut registry = self.registry.write().await;
-        let updated = registry.update_location_override(node_id, location_override);
+        let updated = self
+            .registry
+            .update_location_override(node_id, location_override);
         if updated {
             self.bump_view_revision();
         }
@@ -344,9 +334,11 @@ impl SharedState {
         overrides: Vec<(String, Option<GeoIpLocation>)>,
     ) -> usize {
         let mut updated = 0;
-        let mut registry = self.registry.write().await;
         for (node_id, location_override) in overrides {
-            if registry.update_location_override(&node_id, location_override) {
+            if self
+                .registry
+                .update_location_override(&node_id, location_override)
+            {
                 updated += 1;
             }
         }
@@ -361,12 +353,10 @@ impl SharedState {
         &self,
         node_id: &str,
     ) -> Result<oneshot::Receiver<Result<SessionRefreshReply, String>>, SessionCommandError> {
-        let control_tx = {
-            let registry = self.registry.read().await;
-            registry
-                .session_control(node_id)
-                .ok_or(SessionCommandError::NodeOffline)?
-        };
+        let control_tx = self
+            .registry
+            .session_control(node_id)
+            .ok_or(SessionCommandError::NodeOffline)?;
 
         let (response_tx, response_rx) = oneshot::channel();
         if let Err(error) = control_tx.try_enqueue_refresh(response_tx) {
@@ -445,8 +435,7 @@ impl SharedState {
     }
 
     pub(crate) async fn registry_disk_entries_total(&self) -> u64 {
-        let registry = self.registry.read().await;
-        registry.disk_entries_total()
+        self.registry.disk_entries_total()
     }
 
     /// 返回缓存后的 `/metrics` 响应体。
@@ -481,8 +470,10 @@ impl SharedState {
         self.metrics_cache_builds.fetch_add(1, Ordering::Relaxed);
 
         let body = {
-            let registry = self.registry.read().await;
-            Bytes::from(registry.render_metrics_body(readiness, self.config.metrics))
+            Bytes::from(
+                self.registry
+                    .render_metrics_body(readiness, self.config.metrics),
+            )
         };
         self.metrics_body_bytes
             .store(body.len() as u64, Ordering::Relaxed);
@@ -496,8 +487,7 @@ impl SharedState {
     }
 
     async fn overview_data(&self) -> OverviewData {
-        let registry = self.registry.read().await;
-        registry.overview()
+        self.registry.overview()
     }
 
     /// 订阅浏览器视图脏信号。集中 diff 任务持有 receiver,在信号到达后
@@ -521,8 +511,7 @@ impl SharedState {
 
     /// 启动时从磁盘快照恢复状态,所有节点都视为离线直至首次心跳到达。
     pub async fn restore_statuses(&self, statuses: Vec<NodeStatus>) {
-        let mut registry = self.registry.write().await;
-        registry.restore_statuses(statuses);
+        self.registry.restore_statuses(statuses);
         self.bump_view_revision();
     }
 
