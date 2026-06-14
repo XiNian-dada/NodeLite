@@ -337,6 +337,79 @@ fn consume_pong_latency(
         .map(|sent_at| now.duration_since(sent_at).as_millis() as u64)
 }
 
+async fn handle_session_command(
+    state: &AppState,
+    session: &mut ActiveSession,
+    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
+    command: SessionCommand,
+) -> Result<LoopAction, super::ProtocolError> {
+    match command {
+        SessionCommand::RefreshToken {
+            response,
+            refresh_permit: _refresh_permit,
+        } => match refresh_session_token(sender, &state.registry, session, "manual").await {
+            Ok(expires_at) => {
+                let _ = response.send(Ok(SessionRefreshReply {
+                    token_expires_at: expires_at,
+                }));
+                Ok(LoopAction::Continue)
+            }
+            Err(error) => {
+                let message = error.to_string();
+                let _ = response.send(Err(message));
+                Err(super::ProtocolError::Server(error))
+            }
+        },
+    }
+}
+
+async fn handle_ping_tick(
+    state: &AppState,
+    shared: &crate::state::SharedState,
+    session: &mut ActiveSession,
+    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
+    loop_state: &mut SessionLoopState,
+) -> Result<LoopAction, super::ProtocolError> {
+    if !shared
+        .is_current_session(&session.node_id, session.session_id)
+        .await
+    {
+        warn!(
+            node_id = %session.node_id,
+            session_id = session.session_id,
+            "closing superseded websocket session"
+        );
+        return Ok(LoopAction::Break);
+    }
+    if !ensure_current_token(
+        state,
+        session,
+        "closing websocket session after registry token change",
+    )
+    .await
+    {
+        return Ok(LoopAction::Break);
+    }
+    if should_refresh_agent_token(&state.registry, session).await? {
+        refresh_session_token(sender, &state.registry, session, "pre-expiry").await?;
+    }
+
+    prune_outstanding_pings(
+        &mut loop_state.outstanding_pings,
+        loop_state.ping_expiry,
+        shared.config().max_outstanding_pings,
+    );
+    let nonce = loop_state.next_ping_nonce;
+    loop_state.next_ping_nonce = loop_state.next_ping_nonce.saturating_add(1);
+    loop_state.outstanding_pings.insert(nonce, Instant::now());
+    let ping = encode_ping_message(nonce)?;
+    sender
+        .send(Message::Text(ping.into()))
+        .await
+        .map_err(|error| anyhow!("failed to send ping: {error}"))?;
+    Ok(LoopAction::Continue)
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, Instant};
@@ -455,77 +528,4 @@ mod tests {
             Ok(super::super::protocol::ParsedFrame::Close)
         ));
     }
-}
-
-async fn handle_session_command(
-    state: &AppState,
-    session: &mut ActiveSession,
-    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
-    command: SessionCommand,
-) -> Result<LoopAction, super::ProtocolError> {
-    match command {
-        SessionCommand::RefreshToken {
-            response,
-            refresh_permit: _refresh_permit,
-        } => match refresh_session_token(sender, &state.registry, session, "manual").await {
-            Ok(expires_at) => {
-                let _ = response.send(Ok(SessionRefreshReply {
-                    token_expires_at: expires_at,
-                }));
-                Ok(LoopAction::Continue)
-            }
-            Err(error) => {
-                let message = error.to_string();
-                let _ = response.send(Err(message));
-                Err(super::ProtocolError::Server(error))
-            }
-        },
-    }
-}
-
-async fn handle_ping_tick(
-    state: &AppState,
-    shared: &crate::state::SharedState,
-    session: &mut ActiveSession,
-    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
-    loop_state: &mut SessionLoopState,
-) -> Result<LoopAction, super::ProtocolError> {
-    if !shared
-        .is_current_session(&session.node_id, session.session_id)
-        .await
-    {
-        warn!(
-            node_id = %session.node_id,
-            session_id = session.session_id,
-            "closing superseded websocket session"
-        );
-        return Ok(LoopAction::Break);
-    }
-    if !ensure_current_token(
-        state,
-        session,
-        "closing websocket session after registry token change",
-    )
-    .await
-    {
-        return Ok(LoopAction::Break);
-    }
-    if should_refresh_agent_token(&state.registry, session).await? {
-        refresh_session_token(sender, &state.registry, session, "pre-expiry").await?;
-    }
-
-    prune_outstanding_pings(
-        &mut loop_state.outstanding_pings,
-        loop_state.ping_expiry,
-        shared.config().max_outstanding_pings,
-    );
-    let nonce = loop_state.next_ping_nonce;
-    loop_state.next_ping_nonce = loop_state.next_ping_nonce.saturating_add(1);
-    loop_state.outstanding_pings.insert(nonce, Instant::now());
-    let ping = encode_ping_message(nonce)?;
-    sender
-        .send(Message::Text(ping.into()))
-        .await
-        .map_err(|error| anyhow!("failed to send ping: {error}"))?;
-    Ok(LoopAction::Continue)
 }

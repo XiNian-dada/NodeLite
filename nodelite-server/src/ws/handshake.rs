@@ -175,9 +175,7 @@ struct ProtocolVersionRejection {
 }
 
 fn protocol_version_rejection(protocol_version: u16) -> Option<ProtocolVersionRejection> {
-    if protocol_version >= MIN_SUPPORTED_WIRE_PROTOCOL_VERSION
-        && protocol_version <= WIRE_PROTOCOL_VERSION
-    {
+    if (MIN_SUPPORTED_WIRE_PROTOCOL_VERSION..=WIRE_PROTOCOL_VERSION).contains(&protocol_version) {
         return None;
     }
 
