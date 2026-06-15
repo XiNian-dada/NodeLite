@@ -50,10 +50,10 @@
 
 **实施步骤**:
 - [x] 检查现有索引（已确认索引良好）
-- [ ] 添加查询分析日志
-- [ ] 实现 LRU 缓存层
+- [x] 实现 LRU 缓存层（容量 200，TTL 30s）
+- [x] Commit: "perf(history): add LRU cache for history queries"
 - [ ] 运行性能测试对比
-- [ ] Commit: "perf(history): add LRU cache for history queries"
+- [ ] 记录优化效果到 PERF_OPTIMIZATION_RESULTS.md
 
 ---
 
