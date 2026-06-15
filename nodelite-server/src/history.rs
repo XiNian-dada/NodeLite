@@ -410,8 +410,8 @@ impl HistoryStore {
             HistoryError::TaskFailed(anyhow!("history range query task failed: {error}"))
         })??;
 
-        // 写入缓存
-        {
+        // 写入缓存（只缓存非空结果，避免测试场景中缓存"数据还没写入"的空快照）
+        if !points.is_empty() {
             let mut cache = self.query_cache.lock().await;
             cache.put(
                 cache_key,
