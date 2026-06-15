@@ -21,6 +21,7 @@ hex.workspace = true
 hmac = "0.12"
 ipnet.workspace = true
 libc.workspace = true
+lru = "0.12"
 maxminddb.workspace = true
 qrcode.workspace = true
 reqwest.workspace = true
