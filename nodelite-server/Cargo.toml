@@ -23,6 +23,7 @@ ipnet.workspace = true
 libc.workspace = true
 lru = "0.12"
 maxminddb.workspace = true
+parking_lot = "0.12"
 qrcode.workspace = true
 reqwest.workspace = true
 rusqlite.workspace = true

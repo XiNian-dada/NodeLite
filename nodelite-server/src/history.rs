@@ -27,6 +27,7 @@ use lru::LruCache;
 use nodelite_proto::{
     DEFAULT_HISTORY_RETENTION_HOURS, DEFAULT_HISTORY_WRITE_INTERVAL_SECS, HistoryPoint, NodeStatus,
 };
+use parking_lot::Mutex as ParkingLotMutex;
 use rusqlite::Connection;
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::task::JoinHandle;
@@ -132,8 +133,8 @@ pub struct HistoryStore {
     writer_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     /// 历史写入被静默丢弃的总数(channel 满或已关闭)。监控该值可观察反压。
     dropped_writes: Arc<AtomicU64>,
-    /// 查询结果 LRU 缓存,减少重复聚合的开销。
-    query_cache: Arc<Mutex<LruCache<CacheKey, CacheEntry>>>,
+    /// 查询结果 LRU 缓存,减少重复聚合的开销。使用 parking_lot::Mutex 降低锁竞争。
+    query_cache: Arc<ParkingLotMutex<LruCache<CacheKey, CacheEntry>>>,
 }
 
 impl HistoryStore {
@@ -149,7 +150,7 @@ impl HistoryStore {
             writer_tx: Arc::new(RwLock::new(None)),
             writer_handle: Arc::new(Mutex::new(None)),
             dropped_writes: Arc::new(AtomicU64::new(0)),
-            query_cache: Arc::new(Mutex::new(LruCache::new(
+            query_cache: Arc::new(ParkingLotMutex::new(LruCache::new(
                 std::num::NonZeroUsize::new(HISTORY_CACHE_CAPACITY).expect("cache capacity > 0"),
             ))),
         }
@@ -377,9 +378,9 @@ impl HistoryStore {
             max_points,
         );
 
-        // 先尝试从缓存读取
+        // 先尝试从缓存读取（parking_lot::Mutex 是同步的，不需要 await）
         {
-            let mut cache = self.query_cache.lock().await;
+            let mut cache = self.query_cache.lock();
             if let Some(entry) = cache.get(&cache_key) {
                 let age = entry.cached_at.elapsed();
                 if age < HISTORY_CACHE_TTL {
@@ -414,7 +415,7 @@ impl HistoryStore {
 
         // 写入缓存（只缓存非空结果，避免测试场景中缓存"数据还没写入"的空快照）
         if !points.is_empty() {
-            let mut cache = self.query_cache.lock().await;
+            let mut cache = self.query_cache.lock();
             cache.put(
                 cache_key,
                 CacheEntry {

@@ -1203,6 +1203,7 @@ dependencies = [
  "lru",
  "maxminddb",
  "nodelite-proto",
+ "parking_lot",
  "proptest",
  "qrcode",
  "reqwest",
