@@ -194,17 +194,17 @@ pub struct NodeListItem {
 #[derive(Debug, Clone, Serialize)]
 pub struct NodeListItemView {
     pub identity: NodeListIdentity,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub geoip_country: Option<Arc<str>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub geoip_city: Option<Arc<str>>,
     #[serde(default)]
     pub geoip_latitude: Option<f64>,
     #[serde(default)]
     pub geoip_longitude: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub location_override_country: Option<Arc<str>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub location_override_city: Option<Arc<str>>,
     #[serde(default)]
     pub location_override_latitude: Option<f64>,

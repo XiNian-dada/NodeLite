@@ -12,8 +12,8 @@ use chrono::{DateTime, Utc};
 use nodelite_proto::DiskUsage;
 use nodelite_proto::{
     AlertRuleConfig, GeoIpLocation, InspectionConfig, MetricsConfig, NodeIdentity,
-    NodeListIdentity, NodeListItem, NodeListItemView, NodeListSnapshot, NodeSnapshot,
-    NodeStatus, OverviewData,
+    NodeListIdentity, NodeListItem, NodeListItemView, NodeListSnapshot, NodeSnapshot, NodeStatus,
+    OverviewData,
 };
 
 use super::overview::{OverviewNode, build_overview_from_iter};
@@ -460,6 +460,7 @@ impl Registry {
             .collect()
     }
 
+    #[cfg(test)]
     pub(super) fn list_node_summaries(&self) -> Vec<NodeListItem> {
         let shards = self.read_all_shards();
         sorted_entries(&shards)

@@ -103,7 +103,7 @@ fn node_list_item_view_shares_arc_references() {
 }
 
 #[test]
-fn node_list_item_view_omits_none_fields() {
+fn node_list_item_view_serializes_none_as_null() {
     let view = NodeListItemView {
         identity: sample_identity(),
         geoip_country: None,
@@ -119,11 +119,31 @@ fn node_list_item_view_omits_none_fields() {
         online: true,
     };
 
-    let json = serde_json::to_string(&view).expect("should serialize");
+    let item = NodeListItem {
+        identity: sample_identity(),
+        geoip_country: None,
+        geoip_city: Some("Tokyo".to_string()),
+        geoip_latitude: None,
+        geoip_longitude: None,
+        location_override_country: None,
+        location_override_city: None,
+        location_override_latitude: None,
+        location_override_longitude: None,
+        snapshot: Some(sample_snapshot()),
+        latency_ms: Some(10),
+        online: true,
+    };
 
-    // skip_serializing_if = "Option::is_none" 应该省略 None 字段
-    assert!(!json.contains("\"geoip_country\""), "None fields should be omitted");
-    assert!(json.contains("\"geoip_city\":\"Tokyo\""), "Some fields should be present");
+    let view_json = serde_json::to_value(&view).expect("view should serialize");
+    let item_json = serde_json::to_value(&item).expect("item should serialize");
+
+    // None 字段应该序列化为 null,与 NodeListItem 一致
+    assert_eq!(
+        view_json, item_json,
+        "None fields should serialize as null, matching NodeListItem"
+    );
+    assert_eq!(view_json["geoip_country"], serde_json::Value::Null);
+    assert_eq!(view_json["geoip_city"], "Tokyo");
 }
 
 #[test]

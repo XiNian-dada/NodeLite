@@ -257,6 +257,7 @@ impl SharedState {
         self.registry.list_statuses()
     }
 
+    #[cfg(test)]
     pub async fn list_node_summaries(&self) -> Vec<NodeListItem> {
         self.registry.list_node_summaries()
     }
