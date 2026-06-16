@@ -62,8 +62,10 @@ const HISTORY_BATCH_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 const HISTORY_PRUNE_MIN_INTERVAL: Duration = Duration::from_secs(300);
 /// 查询缓存容量:缓存最近 N 次查询结果。假设 50 个节点被高频查看,每节点最多缓存 4 次不同窗口查询。
 const HISTORY_CACHE_CAPACITY: usize = 200;
-/// 缓存条目有效期:30 秒内的重复查询直接返回缓存,避免重复聚合。
-const HISTORY_CACHE_TTL: Duration = Duration::from_secs(30);
+/// 缓存条目有效期:1 秒内的重复查询直接返回缓存。
+/// 短 TTL 确保快速写入场景（如测试 seed）能及时看到新数据,
+/// 同时仍能为真实高频刷新（浏览器每秒轮询）提供缓存收益。
+const HISTORY_CACHE_TTL: Duration = Duration::from_secs(1);
 
 pub type HistoryResult<T> = std::result::Result<T, HistoryError>;
 
