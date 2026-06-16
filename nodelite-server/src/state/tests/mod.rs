@@ -15,6 +15,7 @@ use super::{Registry, SessionControlHandle, SharedState};
 
 mod overview_tests;
 mod registry_tests;
+mod string_pool_tests;
 mod view_cache_tests;
 
 fn sample_identity() -> NodeIdentity {
