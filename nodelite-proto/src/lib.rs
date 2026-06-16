@@ -34,8 +34,8 @@ pub use message::{
 };
 pub use model::{
     DiskUsage, GeoIpLocation, HistoryPoint, LoadAverage, MemoryUsage, NetworkCounters,
-    NodeIdentity, NodeListIdentity, NodeListItem, NodeListLoadAverage, NodeListMemoryUsage,
-    NodeListSnapshot, NodeSnapshot, NodeStatus, OverviewData, percentage,
+    NodeIdentity, NodeListIdentity, NodeListItem, NodeListItemView, NodeListLoadAverage,
+    NodeListMemoryUsage, NodeListSnapshot, NodeSnapshot, NodeStatus, OverviewData, percentage,
 };
 pub use netutil::{host_is_local, uses_insecure_remote_url};
 pub use text::{truncate_string_to_byte_boundary, truncate_to_byte_boundary};

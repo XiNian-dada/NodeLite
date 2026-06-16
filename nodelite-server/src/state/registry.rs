@@ -12,7 +12,8 @@ use chrono::{DateTime, Utc};
 use nodelite_proto::DiskUsage;
 use nodelite_proto::{
     AlertRuleConfig, GeoIpLocation, InspectionConfig, MetricsConfig, NodeIdentity,
-    NodeListIdentity, NodeListItem, NodeListSnapshot, NodeSnapshot, NodeStatus, OverviewData,
+    NodeListIdentity, NodeListItem, NodeListItemView, NodeListSnapshot, NodeSnapshot,
+    NodeStatus, OverviewData,
 };
 
 use super::overview::{OverviewNode, build_overview_from_iter};
@@ -211,6 +212,29 @@ impl NodeEntry {
                 .as_ref()
                 .map(|s| s.to_string()),
             location_override_city: self.location_override_city.as_ref().map(|s| s.to_string()),
+            location_override_latitude: self.location_override_latitude,
+            location_override_longitude: self.location_override_longitude,
+            snapshot: self.snapshot.as_ref().map(NodeListSnapshot::from),
+            latency_ms: self.latency_ms,
+            online: self.online,
+        }
+    }
+
+    /// 零拷贝构建视图 (Phase 3.2 优化)。
+    ///
+    /// 与 `to_summary()` 的区别:
+    /// - 直接克隆 `Arc<str>` (只增加引用计数,不复制字符串)
+    /// - 序列化时 serde 直接访问 Arc 内部的 str
+    /// - 避免 ~80 KB 字符串克隆 (1000 节点 × 4 字段 × 20 bytes)
+    fn to_summary_view(&self) -> NodeListItemView {
+        NodeListItemView {
+            identity: NodeListIdentity::from(&self.identity),
+            geoip_country: self.geoip_country.clone(),
+            geoip_city: self.geoip_city.clone(),
+            geoip_latitude: self.geoip_latitude,
+            geoip_longitude: self.geoip_longitude,
+            location_override_country: self.location_override_country.clone(),
+            location_override_city: self.location_override_city.clone(),
             location_override_latitude: self.location_override_latitude,
             location_override_longitude: self.location_override_longitude,
             snapshot: self.snapshot.as_ref().map(NodeListSnapshot::from),
@@ -441,6 +465,17 @@ impl Registry {
         sorted_entries(&shards)
             .into_iter()
             .map(NodeEntry::to_summary)
+            .collect()
+    }
+
+    /// 零拷贝版本的 `list_node_summaries` (Phase 3.2 优化)。
+    ///
+    /// 返回 `NodeListItemView` 避免从 `Arc<str>` 克隆字符串,减少 API 响应延迟。
+    pub(super) fn list_node_summaries_view(&self) -> Vec<NodeListItemView> {
+        let shards = self.read_all_shards();
+        sorted_entries(&shards)
+            .into_iter()
+            .map(NodeEntry::to_summary_view)
             .collect()
     }
 
