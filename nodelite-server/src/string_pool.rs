@@ -5,8 +5,8 @@
 //! - 1000 个节点都在同一个国家/城市 → 1000 份 String 克隆 → 1 份 Arc<str> + 1000 个 Arc 指针
 //! - 所有节点使用同一 Agent 版本 → 内存占用从 ~20KB 降到 ~20 字节
 
-use std::sync::Arc;
 use dashmap::DashMap;
+use std::sync::Arc;
 
 /// 字符串池:自动去重高重复度字符串。
 ///
@@ -40,7 +40,8 @@ impl StringPool {
         let arc: Arc<str> = Arc::from(owned.as_str());
 
         // 使用 entry API 避免竞争:如果另一个线程同时插入了,使用它的
-        self.pool.entry(owned)
+        self.pool
+            .entry(owned)
             .or_insert_with(|| Arc::clone(&arc))
             .value()
             .clone()
@@ -101,9 +102,7 @@ mod tests {
         // 10 个线程同时 intern 相同的字符串
         for _ in 0..10 {
             let pool_clone = StdArc::clone(&pool);
-            handles.push(thread::spawn(move || {
-                pool_clone.intern("Linux")
-            }));
+            handles.push(thread::spawn(move || pool_clone.intern("Linux")));
         }
 
         let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();

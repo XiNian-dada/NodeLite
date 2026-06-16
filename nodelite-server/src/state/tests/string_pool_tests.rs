@@ -2,18 +2,32 @@
 //!
 //! 模拟真实生产场景: 1000 节点分布在少数几个国家和城市
 
+use crate::state::SharedState;
+use nodelite_proto::{GeoIpLocation, NodeIdentity};
 use std::sync::Arc;
 use std::time::Duration;
-use nodelite_proto::{NodeIdentity, GeoIpLocation};
-use crate::state::SharedState;
 
 #[tokio::test]
 async fn string_pool_saves_memory_in_realistic_geoip_distribution() {
     // 模拟真实场景: 1000 节点，80% 在 5 个国家，50% 在 10 个城市
-    let countries = vec!["China", "United States", "Japan", "Germany", "United Kingdom"];
+    let countries = vec![
+        "China",
+        "United States",
+        "Japan",
+        "Germany",
+        "United Kingdom",
+    ];
     let cities = vec![
-        "Beijing", "Shanghai", "New York", "Tokyo", "London",
-        "Berlin", "Paris", "Seoul", "Singapore", "Sydney",
+        "Beijing",
+        "Shanghai",
+        "New York",
+        "Tokyo",
+        "London",
+        "Berlin",
+        "Paris",
+        "Seoul",
+        "Singapore",
+        "Sydney",
     ];
 
     let config = Arc::new(super::sample_config());
@@ -51,12 +65,14 @@ async fn string_pool_saves_memory_in_realistic_geoip_distribution() {
             longitude: Some(116.0),
         };
 
-        shared.register_node(
-            identity,
-            Some(format!("192.168.1.{}", i % 256)),
-            Some(geoip),
-            None,
-        ).await;
+        shared
+            .register_node(
+                identity,
+                Some(format!("192.168.1.{}", i % 256)),
+                Some(geoip),
+                None,
+            )
+            .await;
     }
 
     // 等待后台任务稳定
@@ -67,16 +83,31 @@ async fn string_pool_saves_memory_in_realistic_geoip_distribution() {
     assert_eq!(statuses.len(), 1000, "应该有 1000 个节点");
 
     // 验证 GeoIP 数据被正确设置
-    let china_count = statuses.iter().filter(|s| s.geoip_country.as_deref() == Some("China")).count();
-    let us_count = statuses.iter().filter(|s| s.geoip_country.as_deref() == Some("United States")).count();
+    let china_count = statuses
+        .iter()
+        .filter(|s| s.geoip_country.as_deref() == Some("China"))
+        .count();
+    let us_count = statuses
+        .iter()
+        .filter(|s| s.geoip_country.as_deref() == Some("United States"))
+        .count();
 
-    assert!(china_count >= 150, "应该有大量中国节点，实际: {}", china_count);
+    assert!(
+        china_count >= 150,
+        "应该有大量中国节点，实际: {}",
+        china_count
+    );
     assert!(us_count >= 150, "应该有大量美国节点，实际: {}", us_count);
 
     println!("✅ String pool test: 1000 nodes registered");
-    println!("   - Countries: {} unique values, {} nodes with GeoIP",
-             countries.len(),
-             statuses.iter().filter(|s| s.geoip_country.is_some()).count());
+    println!(
+        "   - Countries: {} unique values, {} nodes with GeoIP",
+        countries.len(),
+        statuses
+            .iter()
+            .filter(|s| s.geoip_country.is_some())
+            .count()
+    );
     println!("   - China nodes: {}, US nodes: {}", china_count, us_count);
 
     // 在真实场景中，字符串池应该只存储 5 个 country 字符串 + 10 个 city 字符串
@@ -98,10 +129,12 @@ fn string_pool_benchmark_memory_estimate() {
     let string_overhead = 24;
     let option_overhead = 8; // Option<T> discriminant
 
-    let without_pool = node_count * (
-        (option_overhead + string_overhead + avg_country_len) + // geoip_country
-        (option_overhead + string_overhead + avg_city_len)      // geoip_city
-    );
+    let without_pool = node_count
+        * (
+            (option_overhead + string_overhead + avg_country_len) + // geoip_country
+        (option_overhead + string_overhead + avg_city_len)
+            // geoip_city
+        );
 
     // 使用字符串池的内存估算
     let country_variants = 5;
@@ -123,9 +156,21 @@ fn string_pool_benchmark_memory_estimate() {
     let saved_per_node = saved / node_count as i64;
 
     println!("Memory estimate for 1000 nodes:");
-    println!("  Without pool: {} bytes ({} KB)", without_pool, without_pool / 1024);
-    println!("  With pool:    {} bytes ({} KB)", with_pool, with_pool / 1024);
-    println!("  Saved:        {} bytes ({} KB)", saved, saved.abs() / 1024);
+    println!(
+        "  Without pool: {} bytes ({} KB)",
+        without_pool,
+        without_pool / 1024
+    );
+    println!(
+        "  With pool:    {} bytes ({} KB)",
+        with_pool,
+        with_pool / 1024
+    );
+    println!(
+        "  Saved:        {} bytes ({} KB)",
+        saved,
+        saved.abs() / 1024
+    );
     println!("  Per node:     {} bytes", saved_per_node);
 
     assert!(saved > 0, "字符串池应该节省内存");

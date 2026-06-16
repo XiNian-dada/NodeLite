@@ -110,7 +110,10 @@ impl NodeEntry {
         }
     }
 
-    fn from_restored_status(mut status: NodeStatus, string_pool: &crate::string_pool::StringPool) -> Self {
+    fn from_restored_status(
+        mut status: NodeStatus,
+        string_pool: &crate::string_pool::StringPool,
+    ) -> Self {
         status.online = false;
         Self {
             identity: status.identity,
@@ -119,8 +122,14 @@ impl NodeEntry {
             geoip_city: status.geoip_city.as_ref().map(|s| string_pool.intern(s)),
             geoip_latitude: status.geoip_latitude,
             geoip_longitude: status.geoip_longitude,
-            location_override_country: status.location_override_country.as_ref().map(|s| string_pool.intern(s)),
-            location_override_city: status.location_override_city.as_ref().map(|s| string_pool.intern(s)),
+            location_override_country: status
+                .location_override_country
+                .as_ref()
+                .map(|s| string_pool.intern(s)),
+            location_override_city: status
+                .location_override_city
+                .as_ref()
+                .map(|s| string_pool.intern(s)),
             location_override_latitude: status.location_override_latitude,
             location_override_longitude: status.location_override_longitude,
             snapshot: status.snapshot,
@@ -175,7 +184,10 @@ impl NodeEntry {
             geoip_city: self.geoip_city.as_ref().map(|s| s.to_string()),
             geoip_latitude: self.geoip_latitude,
             geoip_longitude: self.geoip_longitude,
-            location_override_country: self.location_override_country.as_ref().map(|s| s.to_string()),
+            location_override_country: self
+                .location_override_country
+                .as_ref()
+                .map(|s| s.to_string()),
             location_override_city: self.location_override_city.as_ref().map(|s| s.to_string()),
             location_override_latitude: self.location_override_latitude,
             location_override_longitude: self.location_override_longitude,
@@ -193,7 +205,10 @@ impl NodeEntry {
             geoip_city: self.geoip_city.as_ref().map(|s| s.to_string()),
             geoip_latitude: self.geoip_latitude,
             geoip_longitude: self.geoip_longitude,
-            location_override_country: self.location_override_country.as_ref().map(|s| s.to_string()),
+            location_override_country: self
+                .location_override_country
+                .as_ref()
+                .map(|s| s.to_string()),
             location_override_city: self.location_override_city.as_ref().map(|s| s.to_string()),
             location_override_latitude: self.location_override_latitude,
             location_override_longitude: self.location_override_longitude,
@@ -495,11 +510,16 @@ impl Registry {
         }
 
         let geoip_country = Some(self.string_pool.intern(&geoip.country));
-        let geoip_city = geoip.city.as_ref().map(|city| self.string_pool.intern(city));
+        let geoip_city = geoip
+            .city
+            .as_ref()
+            .map(|city| self.string_pool.intern(city));
         let geoip_latitude = geoip.latitude;
         let geoip_longitude = geoip.longitude;
-        if entry.geoip_country.as_ref().map(|s| s.as_ref()) == geoip_country.as_ref().map(|s| s.as_ref())
-            && entry.geoip_city.as_ref().map(|s| s.as_ref()) == geoip_city.as_ref().map(|s| s.as_ref())
+        if entry.geoip_country.as_ref().map(|s| s.as_ref())
+            == geoip_country.as_ref().map(|s| s.as_ref())
+            && entry.geoip_city.as_ref().map(|s| s.as_ref())
+                == geoip_city.as_ref().map(|s| s.as_ref())
             && entry.geoip_latitude == geoip_latitude
             && entry.geoip_longitude == geoip_longitude
         {
@@ -528,8 +548,10 @@ impl Registry {
             location_override_latitude,
             location_override_longitude,
         ) = geoip_fields_from_location(location_override.as_ref(), &self.string_pool);
-        if entry.location_override_country.as_ref().map(|s| s.as_ref()) == location_override_country.as_ref().map(|s| s.as_ref())
-            && entry.location_override_city.as_ref().map(|s| s.as_ref()) == location_override_city.as_ref().map(|s| s.as_ref())
+        if entry.location_override_country.as_ref().map(|s| s.as_ref())
+            == location_override_country.as_ref().map(|s| s.as_ref())
+            && entry.location_override_city.as_ref().map(|s| s.as_ref())
+                == location_override_city.as_ref().map(|s| s.as_ref())
             && entry.location_override_latitude == location_override_latitude
             && entry.location_override_longitude == location_override_longitude
         {
@@ -593,9 +615,10 @@ impl Registry {
         }
         for status in statuses {
             let node_id = status.identity.node_id.clone();
-            write_lock(self.shard_for(&node_id))
-                .nodes
-                .insert(node_id, NodeEntry::from_restored_status(status, &self.string_pool));
+            write_lock(self.shard_for(&node_id)).nodes.insert(
+                node_id,
+                NodeEntry::from_restored_status(status, &self.string_pool),
+            );
         }
     }
 
@@ -651,7 +674,8 @@ impl Registry {
         let previous_summary = NodeListItem::from(&status);
         let previous =
             node_status_heap_estimate(&status) + node_list_item_heap_estimate(&previous_summary);
-        let runtime = node_entry_heap_estimate(&NodeEntry::from_restored_status(status, &string_pool));
+        let runtime =
+            node_entry_heap_estimate(&NodeEntry::from_restored_status(status, &string_pool));
         (runtime, previous)
     }
 }
@@ -800,7 +824,10 @@ fn option_string_heap_estimate(value: &Option<String>) -> RetainedHeapEstimate {
 
 #[cfg(test)]
 fn option_arc_str_heap_estimate(value: &Option<Arc<str>>) -> RetainedHeapEstimate {
-    value.as_ref().map(arc_str_heap_estimate).unwrap_or_default()
+    value
+        .as_ref()
+        .map(arc_str_heap_estimate)
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
