@@ -18,8 +18,8 @@ use super::storage::{
 use super::token::{constant_time_eq, generate_token, hash_token, prune_expired_install_sessions};
 use super::{
     ConsumedInstall, DEFAULT_TOKEN_VALIDITY_DAYS, NodeRegistry, RegisteredNode, RegistryError,
-    RegistryFile, RegistryReloadCheckpoint, RegistryResult, coordinate_to_microdegrees,
-    TOKEN_CACHE_CAPACITY,
+    RegistryFile, RegistryReloadCheckpoint, RegistryResult, TOKEN_CACHE_CAPACITY,
+    coordinate_to_microdegrees,
 };
 
 impl NodeRegistry {

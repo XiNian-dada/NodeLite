@@ -17,8 +17,8 @@ use super::token::{authorized_node_from_entry, constant_time_eq, verify_token};
 use super::validate::validate_runtime_identity;
 use super::{
     AuthorizedNode, NodeRegistry, RegisteredNode, RegistryError, RegistryResult,
-    RegistryTokenStatus, TOKEN_CACHE_TTL, TOKEN_VERIFY_MAX_PARALLELISM, TOKEN_VERIFY_WAIT_WARN_AFTER,
-    TokenCacheEntry,
+    RegistryTokenStatus, TOKEN_CACHE_TTL, TOKEN_VERIFY_MAX_PARALLELISM,
+    TOKEN_VERIFY_WAIT_WARN_AFTER, TokenCacheEntry,
 };
 
 impl NodeRegistry {
@@ -244,6 +244,7 @@ fn token_material_matches(left: &RegisteredNode, right: &RegisteredNode) -> bool
 pub(super) struct TokenVerifyProbe {
     active: AtomicUsize,
     max_active: AtomicUsize,
+    total_entered: AtomicUsize,
     delay: Duration,
 }
 
@@ -253,6 +254,7 @@ impl TokenVerifyProbe {
         Self {
             active: AtomicUsize::new(0),
             max_active: AtomicUsize::new(0),
+            total_entered: AtomicUsize::new(0),
             delay,
         }
     }
@@ -261,7 +263,12 @@ impl TokenVerifyProbe {
         self.max_active.load(Ordering::SeqCst)
     }
 
+    pub(super) fn total_entered(&self) -> usize {
+        self.total_entered.load(Ordering::SeqCst)
+    }
+
     fn enter(&self) -> TokenVerifyProbeGuard<'_> {
+        self.total_entered.fetch_add(1, Ordering::SeqCst);
         let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
         self.record_max_active(active);
         if !self.delay.is_zero() {

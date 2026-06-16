@@ -60,6 +60,14 @@ async fn token_cache_prevents_redundant_argon2_verifies_on_concurrent_requests()
         "expected at most 2 concurrent Argon2 verifies due to semaphore limit, got {max_active}"
     );
 
+    // Verify total Argon2 verifications is much less than 10 (the number of requests)
+    // With double-check pattern, expect 1-3 verifies (small race window before cache populated)
+    let total_verifies = probe.total_entered();
+    assert!(
+        total_verifies <= 3,
+        "expected at most 3 total Argon2 verifies due to cache, got {total_verifies} (without cache would be 10)"
+    );
+
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_dir(&temp_dir);
 }
@@ -97,17 +105,25 @@ async fn token_cache_respects_ttl_and_evicts_expired_entries() {
         .authorize(&identity, &issued.node_session_token)
         .await
         .expect("first authorize should succeed");
-    assert_eq!(probe.max_active(), 1);
+    assert_eq!(
+        probe.total_entered(),
+        1,
+        "first authorization should verify token"
+    );
 
-    // Second authorization immediately: cache hit, no Argon2
+    // Second authorization immediately: cache hit, no new Argon2
     registry
         .authorize(&identity, &issued.node_session_token)
         .await
         .expect("second authorize should succeed");
-    assert_eq!(probe.max_active(), 1, "cache hit should not trigger new Argon2 verify");
+    assert_eq!(
+        probe.total_entered(),
+        1,
+        "cache hit should not trigger new Argon2 verify"
+    );
 
     // Note: Testing TTL expiration would require tokio::time::sleep(TOKEN_CACHE_TTL + margin)
-    // which is 5+ minutes. We verify the double-check logic prevents redundant verifies instead.
+    // which is 5+ minutes. We verify the cache hit logic prevents redundant verifies instead.
 
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_dir(&temp_dir);
@@ -154,8 +170,13 @@ async fn token_cache_invalidates_on_token_rotation() {
     assert_eq!(new_generation, 2);
 
     // Old token should no longer authorize (cache cleared)
-    let result = registry.authorize(&identity, &issued.node_session_token).await;
-    assert!(result.is_err(), "old token should not authorize after rotation");
+    let result = registry
+        .authorize(&identity, &issued.node_session_token)
+        .await;
+    assert!(
+        result.is_err(),
+        "old token should not authorize after rotation"
+    );
 
     // New token should authorize with updated generation
     let authorized = registry

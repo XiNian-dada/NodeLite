@@ -397,14 +397,8 @@ impl HistoryStore {
         let points = tokio::task::spawn_blocking(move || {
             let connection = open_read_connection(db_path.as_ref(), sqlite_busy_timeout_secs)
                 .map_err(HistoryError::Query)?;
-            query_history_between(
-                &connection,
-                &node_id,
-                since,
-                until,
-                max_points,
-            )
-            .map_err(HistoryError::from)
+            query_history_between(&connection, &node_id, since, until, max_points)
+                .map_err(HistoryError::from)
         })
         .await
         .map_err(|error| {
