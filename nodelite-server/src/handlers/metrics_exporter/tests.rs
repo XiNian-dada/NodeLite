@@ -93,6 +93,7 @@ fn exporter_omits_snapshot_resource_metrics_by_default() {
             export_node_resource_metrics: true,
             export_node_disk_metrics: true,
         },
+        None,
     );
 
     assert!(body.contains("nodelite_node_info{"));
@@ -129,6 +130,7 @@ fn exporter_can_enable_disk_metrics_explicitly() {
             export_node_disk_metrics: true,
             ..MetricsConfig::default()
         },
+        None,
     );
 
     assert!(body.contains(
@@ -158,6 +160,7 @@ fn exporter_skips_unknown_cpu_usage() {
             export_node_resource_metrics: true,
             ..MetricsConfig::default()
         },
+        None,
     );
 
     assert_eq!(
@@ -182,6 +185,7 @@ fn render_detailed_prometheus_metrics() -> String {
             export_node_resource_metrics: true,
             ..MetricsConfig::default()
         },
+        None,
     )
 }
 
@@ -434,3 +438,32 @@ fn sample_overview() -> OverviewData {
         average_latency_ms: Some(12.0),
     }
 }
+
+#[test]
+fn exporter_exposes_string_pool_size_when_provided() {
+    let readiness = ServerReadiness::new(true);
+    let overview = sample_overview();
+    let statuses = sample_statuses();
+
+    // Without string pool size
+    let body_without = render_prometheus_metrics_from_iter(
+        &readiness,
+        statuses.iter().map(PrometheusNode::from_status),
+        &overview,
+        MetricsConfig::default(),
+        None,
+    );
+    assert!(!body_without.contains("nodelite_string_pool_entries"));
+
+    // With string pool size
+    let body_with = render_prometheus_metrics_from_iter(
+        &readiness,
+        statuses.iter().map(PrometheusNode::from_status),
+        &overview,
+        MetricsConfig::default(),
+        Some(42),
+    );
+    assert!(body_with.contains("# TYPE nodelite_string_pool_entries gauge"));
+    assert!(body_with.contains("nodelite_string_pool_entries 42"));
+}
+

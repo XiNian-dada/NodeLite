@@ -54,9 +54,18 @@ impl StringPool {
     }
 
     /// 返回池中当前条目数(用于监控)。
-    #[cfg(test)]
+    ///
+    /// 注意:池会单调增长(只增不减),历史上出现过的字符串会一直保留到服务重启。
+    /// 对于当前 intern 的低基数字段(GeoIP 国家/城市),这不是问题,但如果后续
+    /// intern 高基数字段(如节点标签、主机名),需要考虑池大小监控或清理策略。
     pub fn len(&self) -> usize {
         self.pool.len()
+    }
+
+    /// 检查池是否为空(用于测试)。
+    #[cfg(test)]
+    pub fn is_empty(&self) -> bool {
+        self.pool.is_empty()
     }
 }
 
