@@ -141,6 +141,7 @@ impl NodeEntry {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn register_session(
         &mut self,
         session_id: u64,
@@ -267,10 +268,13 @@ impl AlertStatusView for NodeEntry {
     }
 }
 
+type GeoIpFields = (Option<Arc<str>>, Option<Arc<str>>, Option<f64>, Option<f64>);
+
+#[allow(clippy::type_complexity)]
 fn geoip_fields_from_location(
     geoip: Option<&GeoIpLocation>,
     string_pool: &crate::string_pool::StringPool,
-) -> (Option<Arc<str>>, Option<Arc<str>>, Option<f64>, Option<f64>) {
+) -> GeoIpFields {
     match geoip {
         Some(location) => (
             Some(string_pool.intern(&location.country)),

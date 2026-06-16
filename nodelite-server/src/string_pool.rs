@@ -48,6 +48,7 @@ impl StringPool {
     }
 
     /// 将 Option<String> intern 为 Option<Arc<str>>。
+    #[allow(dead_code)]
     pub fn intern_option(&self, value: Option<&String>) -> Option<Arc<str>> {
         value.map(|s| self.intern(s))
     }

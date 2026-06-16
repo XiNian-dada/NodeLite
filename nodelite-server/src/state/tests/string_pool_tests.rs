@@ -10,14 +10,14 @@ use std::time::Duration;
 #[tokio::test]
 async fn string_pool_saves_memory_in_realistic_geoip_distribution() {
     // 模拟真实场景: 1000 节点，80% 在 5 个国家，50% 在 10 个城市
-    let countries = vec![
+    let countries = [
         "China",
         "United States",
         "Japan",
         "Germany",
         "United Kingdom",
     ];
-    let cities = vec![
+    let cities = [
         "Beijing",
         "Shanghai",
         "New York",
