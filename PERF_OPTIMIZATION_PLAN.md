@@ -234,54 +234,347 @@ CREATE TABLE history_aggregated (
 
 ---
 
-## 🔬 Phase 3: 高级优化（长期）
+## 🔬 Phase 3: 结构优化（预计 2-3 周）
 
-### 3.1 时序数据库评估
+### Phase 2 回顾
+- ✅ String Pool 实现完成，但收益有限（-5% 内存）
+- ❌ History 预聚合评估后取消
+- 🔍 **根因**: 优化范围太窄，只针对 4 个 GeoIP 字段
 
-**考虑场景**: 如果历史数据规模继续增长（10K+ 节点，数月保留）
+### 3.1 扩大字符串池范围
 
-**候选方案**:
-1. **TimescaleDB**（PostgreSQL 扩展）
-   - 优势：SQL 兼容，自动分区，压缩
-   - 缺点：需要 PostgreSQL
+**当前问题**: Phase 2 只优化了 4 个 GeoIP 字段
 
-2. **ClickHouse**
-   - 优势：极快的聚合查询
-   - 缺点：学习曲线，运维复杂
-
-3. **保持 SQLite + 优化**
-   - 优势：零依赖，简单
-   - 缺点：性能上限
-
-**决策点**: 当 History API p95 > 50ms 或数据库 > 10GB 时重新评估
-
----
-
-### 3.2 前端虚拟滚动
-
-**场景**: 1000+ 节点时 DOM 渲染性能
-
-**优化方向**:
-```typescript
-// 使用 vue-virtual-scroller
-// 只渲染可见区域的节点（~20-30 个）
-// 预期：1000 节点渲染时间从 5s → < 1s
-```
-
-**前提**: 需要先运行前端 DOM 性能测试确认是否需要
-
----
-
-### 3.3 WebSocket 消息批处理
-
-**场景**: 极高频率更新（每节点 > 1Hz）
-
-**优化方向**:
+**优化范围扩展**:
 ```rust
-// 批量发送 WebSocket 消息
-// 100ms 窗口内的多个 NodeUpsert 合并为一条消息
-// 减少网络往返和前端解析开销
+// NodeIdentity 中的高重复字段：
+pub struct NodeIdentity {
+    node_id: String,          // ❌ 保持唯一，不 intern
+    node_label: String,       // ❌ 保持唯一，不 intern
+    hostname: String,         // ❌ 保持唯一，不 intern
+    os: String,               // ✅ "Linux", "Darwin", "Windows" (3种)
+    kernel_version: Option<String>,  // ✅ "6.1.0", "5.15.0" (10-20种)
+    cpu_model: Option<String>,       // ✅ "Intel Xeon", "AMD EPYC" (20-30种)
+    agent_version: String,    // ✅ "1.0.0" (1-3种版本)
+    // ...
+}
+
+// 预期节省：
+// 1000 节点 × 4 字段 × 平均 20 字节 = 80 KB (不用池)
+// vs 50 种字符串 × 20 字节 + 1000 × 16 字节 Arc = 17 KB
+// 节省：63 KB per 1000 nodes
 ```
+
+**总节省预期**: 
+- Phase 2: 17 KB (GeoIP)
+- Phase 3.1: 63 KB (Identity)
+- **合计**: 80 KB per 1000 nodes (**-8% 内存**)
+
+**实施步骤**:
+- [ ] 修改 NodeIdentity 字段类型: String → Arc<str>
+- [ ] 更新 node registration 流程
+- [ ] 更新 session restore 流程
+- [ ] 添加真实场景测试
+- [ ] Commit: "perf(memory): extend string pool to NodeIdentity fields"
+
+**性价比**: ⭐⭐⭐ (低难度，中等收益)
+
+---
+
+### 3.2 NodeStatusView 轻量级视图 ⭐⭐⭐⭐⭐
+
+**当前问题**: `/api/overview` 克隆所有 NodeEntry，导致序列化开销巨大
+
+```rust
+// 当前：
+pub async fn list_statuses(&self) -> Vec<NodeStatus> {
+    // 克隆所有 NodeEntry，包含大量不必要字段
+    registry.read().iter().map(|entry| entry.to_status()).collect()
+}
+
+// 问题：
+// 1. NodeEntry 包含 token_hash, session_id 等后端字段
+// 2. 每次请求都完整克隆 ~337 KB × 1000 = 337 MB
+// 3. serde_json 序列化开销大
+```
+
+**优化方案**:
+```rust
+// 新增轻量级视图
+#[derive(Serialize)]
+pub struct NodeStatusView {
+    node_id: Arc<str>,           // 共享，零拷贝
+    node_label: Arc<str>,        // 共享
+    status: NodeStatus,          // 8 字节枚举
+    last_seen: i64,             // 8 字节
+    cpu_percent: Option<f32>,   // 4 字节
+    memory_percent: Option<f32>,// 4 字节
+    uptime_secs: u64,           // 8 字节
+    // 总共 ~48 字节 vs 337 字节
+}
+
+impl NodeEntry {
+    pub fn to_status_view(&self) -> NodeStatusView {
+        // 零拷贝构建视图
+        NodeStatusView {
+            node_id: Arc::clone(&self.identity.node_id),
+            // ...
+        }
+    }
+}
+```
+
+**预期收益**:
+- API 响应时间: -50% (减少序列化开销)
+- 内存峰值: -30% (减少临时克隆)
+- p95 延迟: 5.44ms → < 3ms
+
+**实施步骤**:
+- [ ] 设计 NodeStatusView 结构
+- [ ] 实现 to_status_view() 方法
+- [ ] 修改 /api/overview 使用新视图
+- [ ] 修改 /api/nodes 使用新视图
+- [ ] 运行 load_test_large_fleet_scores 对比
+- [ ] Commit: "perf(api): add lightweight NodeStatusView"
+
+**性价比**: ⭐⭐⭐⭐⭐ (中等难度，**高收益**，用户可感知)
+
+---
+
+### 3.3 History SQLite 压缩存储
+
+**当前问题**: 每个指标存储为独立行，行数过多
+
+```sql
+-- 当前方案：
+CREATE TABLE history_points (
+    node_id TEXT,
+    collected_at INTEGER,
+    metric_name TEXT,
+    value REAL,
+    PRIMARY KEY (node_id, collected_at, metric_name)
+);
+
+-- 存储密度：
+-- 5 指标 × 240 时间点 = 1,200 行/节点
+-- 1000 节点 = 120 万行
+-- 平均行大小：~50 字节
+-- 总大小：60 MB
+```
+
+**优化方案**: JSONB 批量存储
+
+```sql
+-- 新方案：
+CREATE TABLE history_points_v2 (
+    node_id TEXT NOT NULL,
+    bucket_start INTEGER NOT NULL,  -- 5分钟桶起始时间
+    bucket_end INTEGER NOT NULL,    -- 5分钟桶结束时间
+    metrics_json TEXT NOT NULL,     -- {"cpu": [1.2,1.5,...], "mem": [45.3,46.1,...]}
+    sample_count INTEGER NOT NULL,
+    PRIMARY KEY (node_id, bucket_start)
+);
+
+CREATE INDEX idx_history_v2_node_time 
+    ON history_points_v2(node_id, bucket_start);
+
+-- 存储密度：
+-- 240 时间点 / 12 采样点 per 桶 = 20 桶/节点
+-- 1000 节点 = 2 万行
+-- 平均行大小：~300 字节 (压缩后的 JSON)
+-- 总大小：6 MB
+-- **节省 90%**
+```
+
+**查询逻辑**:
+```rust
+// 解析 JSON 并重建时间序列
+let buckets: Vec<HistoryBucket> = 
+    conn.query_map("SELECT * FROM history_points_v2 WHERE ...", ...)?;
+
+for bucket in buckets {
+    let metrics: HashMap<String, Vec<f64>> = 
+        serde_json::from_str(&bucket.metrics_json)?;
+    // 线性插值重建时间点
+}
+```
+
+**预期收益**:
+- 数据库大小: -60%
+- 查询速度: +40% (减少行扫描)
+- 写入吞吐: +20% (批量 INSERT)
+
+**权衡**:
+- ✅ 存储效率大幅提升
+- ✅ 减少 SQLite 页开销
+- ⚠️ 需要迁移脚本（history_points → history_points_v2）
+- ⚠️ 查询需要 JSON 解析（但比行扫描快）
+
+**实施步骤**:
+- [ ] 设计 history_points_v2 schema
+- [ ] 实现 JSON 编码/解码逻辑
+- [ ] 实现数据迁移脚本
+- [ ] 修改 writer 写入逻辑（批量 JSON）
+- [ ] 修改 query 读取逻辑（JSON 解析）
+- [ ] 运行 load_test_history_pressure_scores 对比
+- [ ] Commit: "perf(history): compress storage with JSONB batching"
+
+**性价比**: ⭐⭐⭐ (中高难度，高收益，但需要迁移)
+
+---
+
+## 🚀 Phase 4: 架构级优化（预计 4-6 周）
+
+### 4.1 Copy-on-Write 共享状态 ⭐⭐⭐⭐⭐
+
+**当前问题**: 每次更新需要写锁整个 RegistryShard
+
+```rust
+// 当前架构：
+pub struct Registry {
+    shards: Vec<RwLock<RegistryShard>>,  // 写锁阻塞所有读取
+}
+
+// 更新流程：
+let mut shard = registry.shards[idx].write();  // 独占写锁
+shard.update_node(...);                        // 修改数据
+drop(shard);                                    // 释放锁
+
+// 问题：
+// 1. 写锁阻塞所有读取（/api/overview, /api/nodes）
+// 2. 大规模场景下锁竞争严重
+// 3. 延迟尖刺（p99 vs p95 差距大）
+```
+
+**优化方案**: 不可变数据 + Arc 共享
+
+```rust
+// 新架构：
+pub struct Registry {
+    shards: Vec<Arc<DashMap<String, Arc<NodeEntry>>>>,
+}
+
+// 更新流程（无锁）：
+let new_entry = Arc::new(updated_node_entry);
+registry.shards[idx].insert(node_id, new_entry);  // 原子操作
+
+// 读取流程（零拷贝）：
+if let Some(entry) = registry.shards[idx].get(&node_id) {
+    let entry_ref: Arc<NodeEntry> = entry.value().clone();  // 只递增引用计数
+}
+
+// 优势：
+// ✅ 读写完全无锁（DashMap 内部分片锁）
+// ✅ 读取零拷贝（Arc 克隆只是原子递增）
+// ✅ 写入不阻塞读取
+// ✅ 自动内存回收（Arc drop 时释放）
+```
+
+**设计权衡**:
+```rust
+// 问题：NodeEntry 需要变为不可变
+// 解决：每次更新创建新 NodeEntry
+
+// Before:
+entry.last_seen = now;
+entry.snapshot = new_snapshot;
+
+// After:
+let new_entry = NodeEntry {
+    last_seen: now,
+    snapshot: new_snapshot,
+    ..entry.as_ref().clone()  // 复用不变字段
+};
+registry.insert(node_id, Arc::new(new_entry));
+```
+
+**预期收益**:
+- 并发读取性能: +100% (完全无锁)
+- p99 延迟: -50% (消除锁竞争尖刺)
+- 写入吞吐: +30% (无写锁阻塞)
+
+**实施步骤**:
+- [ ] 将 NodeEntry 改为不可变结构
+- [ ] 使用 DashMap 替代 RwLock<HashMap>
+- [ ] 修改所有更新逻辑为 insert 新 Arc
+- [ ] 添加并发压力测试
+- [ ] 运行 load_test_concurrent_read_write_scores 对比
+- [ ] Commit: "perf(registry): migrate to CoW with Arc + DashMap"
+
+**性价比**: ⭐⭐⭐⭐ (高难度，**极高收益**，架构级改进)
+
+---
+
+### 4.2 冷热数据分离
+
+**当前问题**: NodeEntry 包含高频和低频字段混合
+
+```rust
+// 当前：所有字段在一起
+pub struct NodeEntry {
+    // 高频访问（每秒）
+    status: NodeStatus,
+    last_seen: i64,
+    snapshot: Option<NodeSnapshot>,
+    
+    // 低频访问（注册时一次）
+    identity: NodeIdentity,
+    token_hash: String,
+    registered_at: i64,
+    remote_ip: Option<String>,
+    
+    // 中频访问（偶尔）
+    geoip_country: Option<Arc<str>>,
+    session_id: Option<u64>,
+}
+
+// 问题：
+// 1. 缓存局部性差（热数据分散）
+// 2. 克隆开销大（包含不必要的冷数据）
+```
+
+**优化方案**: 分离为 Hot/Cold 结构
+
+```rust
+// 热数据（每秒访问）
+pub struct NodeHotData {
+    node_id: Arc<str>,
+    status: NodeStatus,              // 8 字节
+    last_seen: i64,                  // 8 字节
+    snapshot: Option<NodeSnapshot>,  // 32 字节
+    // 总共 ~64 字节
+}
+
+// 冷数据（注册时访问）
+pub struct NodeColdData {
+    identity: NodeIdentity,          // 256 字节
+    token_hash: String,              // 64 字节
+    registered_at: i64,
+    remote_ip: Option<String>,
+    geoip: GeoIpData,
+    // 总共 ~400 字节
+}
+
+// Registry 分离存储
+pub struct Registry {
+    hot: Arc<DashMap<String, Arc<NodeHotData>>>,   // 高频访问
+    cold: Arc<DashMap<String, Arc<NodeColdData>>>, // 低频访问
+}
+```
+
+**预期收益**:
+- 热数据缓存命中率: +50% (更好的局部性)
+- /api/overview 响应: -30% (只克隆热数据)
+- 内存占用: -20% (冷数据可 swap out)
+
+**实施步骤**:
+- [ ] 设计 Hot/Cold 数据结构
+- [ ] 分离 Registry 存储
+- [ ] 修改查询逻辑（按需 JOIN）
+- [ ] 运行性能测试对比
+- [ ] Commit: "perf(registry): separate hot and cold data"
+
+**性价比**: ⭐⭐⭐ (高难度，中高收益，架构改动大)
 
 ---
 
@@ -317,14 +610,42 @@ cargo test -p nodelite-server --release load_test_reconnect_storm_scores -- --ig
 
 - [x] **Milestone 1**: History API p95 < 35ms（达成：31.86ms）
 - [x] **Milestone 2**: 重连场景大幅优化（20-100节点 p50 < 20ms，达成：93-98% 改进）
-- [ ] **Milestone 3**: 1000节点内存 < 250 MB（当前：358 MB）
+- [ ] **Milestone 3**: 1000节点内存 < 250 MB（当前：337 MB，Phase 2 后预期 320 MB）
 - [ ] **Milestone 4**: 所有 API p95 < 5ms
+- [ ] **Milestone 5**: 并发读取性能 +100%（Phase 4.1 CoW 架构）
 
 **Phase 1 完成状态**: 4/4 完成 ✅
 - ✅ 1.1: History Query LRU Cache (-14.8%)
 - ✅ 1.2: parking_lot::RwLock for SharedState (混合结果)
 - ✅ 1.3: Brotli 压缩（已启用，跳过）
 - ✅ 1.4: Token 验证缓存 (-93.7% ~ -97.9% 重连延迟)
+
+**Phase 2 完成状态**: 1/2 完成 ⚠️
+- ✅ 2.2: String Pool (GeoIP 字段，-5% 内存)
+- ❌ 2.3: History 预聚合（评估后取消）
+
+**Phase 3 计划**: 3项优化，预期 2-3 周
+- 3.1: 扩大字符串池范围（+Identity 字段，额外 -3% 内存）
+- 3.2: NodeStatusView 轻量级视图（**-50% API 响应时间**）⭐⭐⭐⭐⭐
+- 3.3: History SQLite JSONB 压缩（-60% 数据库大小）
+
+**Phase 4 计划**: 2项架构级优化，预期 4-6 周
+- 4.1: Copy-on-Write 共享状态（**+100% 并发性能**）⭐⭐⭐⭐⭐
+- 4.2: 冷热数据分离（-20% 内存占用）
+
+---
+
+## 📊 优化性价比排序
+
+| Phase | 优化项 | 预期收益 | 实施难度 | 工期 | 性价比 | 优先级 |
+|-------|--------|---------|---------|------|--------|--------|
+| 3.2 | NodeStatusView | 响应 -50% | 中 | 3天 | ⭐⭐⭐⭐⭐ | **最高** |
+| 4.1 | CoW 架构 | 并发 +100% | 高 | 2周 | ⭐⭐⭐⭐⭐ | 高 |
+| 3.3 | History 压缩 | 数据库 -60% | 中高 | 1周 | ⭐⭐⭐ | 中 |
+| 3.1 | 扩展字符串池 | 内存 -3% | 低 | 2天 | ⭐⭐⭐ | 中 |
+| 4.2 | 冷热分离 | 内存 -20% | 高 | 2周 | ⭐⭐⭐ | 中低 |
+
+**推荐实施顺序**: Phase 3.2 → Phase 3.1 → Phase 4.1 → Phase 3.3 → Phase 4.2
 
 ---
 
@@ -367,5 +688,5 @@ git revert <commit-hash>
 
 ---
 
-**最后更新**: 2026-06-15  
-**状态**: Phase 1 进行中
+**最后更新**: 2026-06-16  
+**状态**: Phase 2 完成，Phase 3/4 规划完成
