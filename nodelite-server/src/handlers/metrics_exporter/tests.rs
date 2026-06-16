@@ -466,4 +466,3 @@ fn exporter_exposes_string_pool_size_when_provided() {
     assert!(body_with.contains("# TYPE nodelite_string_pool_entries gauge"));
     assert!(body_with.contains("nodelite_string_pool_entries 42"));
 }
-
