@@ -42,7 +42,34 @@
 
 **实测结果**:
 
-*等待测试完成...*
+```
+HISTORY_PRESSURE_RESULT nodes=1000 history_readers=20 history_points_per_node=240
+connect_ms=9292.1 settle_ms=54.3 metrics_total=4000 metrics_per_sec=73692.5
+history_p95_ms=38.71
+history_body_bytes=69063/69063/69063
+rss_bytes=358891520 history_queue_depth=0 history_dropped_writes=0
+db_bytes=4096 wal_bytes=3708032 shm_bytes=32768
+```
+
+| 指标 | 基线 v3.0.1 | + LRU cache | 变化 |
+|------|-------------|-------------|------|
+| History p50 | 9.54ms | ? | ? |
+| History p95 | 20.91ms | **38.71ms** | **+85% (⚠️ 退化)** |
+| History p99 | 24.31ms | ? | ? |
+
+**⚠️ 性能退化分析**:
+
+LRU 缓存反而导致 p95 从 20.91ms 升至 38.71ms（+85%）。可能原因：
+
+1. **Mutex 竞争**: 每次查询都要获取 `Arc<Mutex<LruCache>>` 锁，20 个并发读者争抢同一把锁
+2. **缓存未命中开销**: 测试场景中每个节点只查询 4 次，缓存命中率低，额外的锁开销没有被缓存收益抵消
+3. **1秒 TTL 过短**: 查询间隔可能 > 1s，导致缓存总是过期
+4. **测试场景不代表生产**: 测试是 20 个独立节点各查 4 次，生产场景是多用户反复查同一节点
+
+**后续行动**:
+- [ ] 运行 API surface 测试对比（包含重复查询场景）
+- [ ] 考虑使用 `parking_lot::Mutex` 替代 `tokio::sync::Mutex`
+- [ ] 或者移除缓存，转而优化 SQLite 查询本身
 
 ---
 
@@ -51,7 +78,8 @@
 | 优化项 | History p50 | History p95 | History p99 | 连接时间 | 内存占用 |
 |--------|-------------|-------------|-------------|----------|----------|
 | 基线 v3.0.1 | 9.54ms | 20.91ms | 24.31ms | 7,916ms | 337 MB |
-| + LRU cache | ? | ? | ? | - | - |
+| + LRU cache | ? | **38.71ms** | ? | - | 358 MB |
+| **退化** | ? | **+85%** ⚠️ | ? | - | +6% |
 
 ---
 
