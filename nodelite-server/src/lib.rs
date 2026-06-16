@@ -39,6 +39,7 @@ mod sanitize;
 mod snapshot;
 mod startup;
 mod state;
+mod string_pool;
 #[cfg(test)]
 mod test_support;
 mod web_assets;
