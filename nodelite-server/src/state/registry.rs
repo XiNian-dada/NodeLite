@@ -614,14 +614,6 @@ impl Registry {
             .sum()
     }
 
-    /// 返回字符串池中的条目数(用于监控)。
-    ///
-    /// 字符串池单调增长,历史上出现过的所有唯一字符串会一直保留到服务重启。
-    /// 当前 intern 的字段(GeoIP 国家/城市)基数很低,池大小通常在几十到几百之间。
-    pub(super) fn string_pool_size(&self) -> usize {
-        self.string_pool.len()
-    }
-
     pub(super) fn restore_statuses(&self, statuses: Vec<NodeStatus>) {
         for shard in &self.shards {
             write_lock(shard).nodes.clear();

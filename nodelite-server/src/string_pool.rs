@@ -64,6 +64,7 @@ impl StringPool {
 
     /// 检查池是否为空(用于测试)。
     #[cfg(test)]
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.pool.is_empty()
     }
