@@ -37,8 +37,6 @@ use self::init::{initialize_database, open_read_connection};
 #[cfg(test)]
 use self::query::HISTORY_QUERY_SQL;
 use self::query::{HistoryQueryError, query_history_between};
-#[cfg(test)]
-use self::query::query_history;
 use self::writer::{WriterContext, build_history_point, run_history_writer};
 #[cfg(test)]
 use self::writer::{sqlite_busy_retry_delay, write_history_point};

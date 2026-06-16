@@ -119,7 +119,7 @@ impl NodeRegistry {
             hasher.update(token_hash.as_bytes());
             hex::encode(hasher.finalize())
         };
-        let cache_key = (cache_key_hash, self.registry_revision());
+        let cache_key = (cache_key_hash.clone(), self.registry_revision());
 
         // 检查缓存（parking_lot::Mutex 是同步的）
         {
@@ -134,7 +134,7 @@ impl NodeRegistry {
             }
         }
 
-        // 缓存未命中,执行实际的 Argon2id 验证
+        // 缓存未命中,获取 semaphore 进行验证
         let wait_started = Instant::now();
         let permit = Arc::clone(&self.token_verify_limiter)
             .acquire_owned()
@@ -151,6 +151,18 @@ impl NodeRegistry {
             );
         }
 
+        // 获取 permit 后再次检查缓存（并发场景下可能已经被其他请求填充）
+        {
+            let mut cache = self.token_cache.lock();
+            if let Some(entry) = cache.get(&cache_key) {
+                let age = entry.cached_at.elapsed();
+                if age < TOKEN_CACHE_TTL {
+                    return Ok(entry.verified);
+                }
+            }
+        }
+
+        // 执行实际的 Argon2id 验证
         let input = input.to_string();
         let token_hash = token_hash.to_string();
         #[cfg(test)]

@@ -32,6 +32,7 @@ pub(crate) const HISTORY_QUERY_SQL: &str = r#"
         LIMIT ?5
         "#;
 
+#[allow(dead_code)]
 pub(super) fn query_history(
     connection: &Connection,
     node_id: &str,
