@@ -3,7 +3,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use lru::LruCache;
 use nodelite_proto::{validate_identifier, validate_non_empty};
+use parking_lot::Mutex as ParkingLotMutex;
 use tokio::sync::{RwLock, Semaphore};
 
 use crate::sanitize::{sanitize_location_override, sanitize_renewal_price};
@@ -17,6 +19,7 @@ use super::token::{constant_time_eq, generate_token, hash_token, prune_expired_i
 use super::{
     ConsumedInstall, DEFAULT_TOKEN_VALIDITY_DAYS, NodeRegistry, RegisteredNode, RegistryError,
     RegistryFile, RegistryReloadCheckpoint, RegistryResult, coordinate_to_microdegrees,
+    TOKEN_CACHE_CAPACITY,
 };
 
 impl NodeRegistry {
@@ -34,6 +37,9 @@ impl NodeRegistry {
             registry_revision: Arc::new(AtomicU64::new(1)),
             token_verify_limit,
             token_verify_limiter: Arc::new(Semaphore::new(token_verify_limit)),
+            token_cache: Arc::new(ParkingLotMutex::new(LruCache::new(
+                std::num::NonZeroUsize::new(TOKEN_CACHE_CAPACITY).expect("cache capacity > 0"),
+            ))),
             #[cfg(test)]
             token_verify_probe: None,
         })
@@ -75,6 +81,8 @@ impl NodeRegistry {
             .await?;
 
         self.reload().await?;
+        // Token 轮换后清空整个缓存,避免旧 token 验证缓存残留。
+        self.token_cache.lock().clear();
 
         Ok((new_token, expires_at, generation))
     }

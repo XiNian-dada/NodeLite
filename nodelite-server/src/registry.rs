@@ -23,10 +23,12 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
+use lru::LruCache;
 use nodelite_proto::{GeoIpLocation, NodeIdentity};
+use parking_lot::Mutex as ParkingLotMutex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, Semaphore};
 
@@ -70,6 +72,11 @@ const INSTALL_TOKEN_TTL_MINUTES: i64 = 15;
 const TOKEN_VERIFY_MAX_PARALLELISM: usize = 2;
 const TOKEN_VERIFY_WAIT_WARN_AFTER: Duration = Duration::from_millis(100);
 const LOCATION_COORDINATE_SCALE: f64 = 1_000_000.0;
+
+/// Token 验证结果缓存容量:假设 100 个节点频繁重连。
+const TOKEN_CACHE_CAPACITY: usize = 128;
+/// Token 验证结果缓存 TTL:5 分钟。重连场景下可直接命中缓存,避免 Argon2id 开销。
+const TOKEN_CACHE_TTL: Duration = Duration::from_secs(300);
 
 /// 已登记节点的持久化条目。
 ///
@@ -178,6 +185,16 @@ pub struct InstallSession {
     pub node_session_token: String,
 }
 
+/// Token 验证缓存键:(token_hash_hex, registry_revision)。
+/// 使用 token 的 SHA256 哈希作为缓存键,避免存储明文。
+type TokenCacheKey = (String, u64);
+
+/// Token 验证缓存值:(验证结果, 缓存时间戳)。
+struct TokenCacheEntry {
+    verified: bool,
+    cached_at: Instant,
+}
+
 /// 注册表的运行期视图:进程内部以 HashMap 形式持有,便于鉴权 / 查询。
 #[derive(Debug, Clone)]
 pub struct NodeRegistry {
@@ -187,6 +204,8 @@ pub struct NodeRegistry {
     registry_revision: Arc<AtomicU64>,
     token_verify_limit: usize,
     token_verify_limiter: Arc<Semaphore>,
+    /// Token 验证结果缓存:减少重连场景的 Argon2id 开销。
+    token_cache: Arc<ParkingLotMutex<LruCache<TokenCacheKey, TokenCacheEntry>>>,
     #[cfg(test)]
     token_verify_probe: Option<Arc<TokenVerifyProbe>>,
 }

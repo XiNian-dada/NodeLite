@@ -97,31 +97,27 @@
 
 ### 1.3 启用 HTTP Brotli 压缩
 
-**当前状态**: 可能只启用了 gzip
+**当前状态**: ✅ **已启用**
 
-**优化方向**:
-```rust
-// tower-http 已经在依赖中，检查是否启用 Brotli
-// Brotli 对 JSON 的压缩率比 gzip 高 15-20%
+检查结果：
+- `tower-http` features: `["compression-br", "compression-gzip"]` ✅
+- `CompressionLayer::new().no_deflate().no_zstd()` - 启用 gzip 和 brotli ✅
+- 无需额外优化
 
-// 250KB JSON → ~75KB (gzip) → ~60KB (brotli)
-```
-
-**预期收益**: 大负载响应时间降低 20-30%
-
-**实施步骤**:
-- [ ] 检查 `tower-http` compression 配置
-- [ ] 确保 Brotli 已启用
-- [ ] 测试不同压缩级别的性能
-- [ ] Commit: "perf: ensure brotli compression is enabled"
+**结论**: Brotli 压缩已经正确配置并工作，此项跳过。
 
 ---
 
-## 🚀 Phase 2: 结构性优化（预计 3-4 周）
-
-### 2.1 Token 验证缓存
+### 1.4 Token 验证缓存
 
 **当前状态**: 每次连接都运行 Argon2id 验证（CPU 密集）
+
+**问题分析**:
+```
+1000 节点连接测试: connect_ms ≈ 9,000ms
+每节点平均: ~9ms
+其中 Argon2id 验证: ~5-7ms (估计占 60-80%)
+```
 
 **优化方向**:
 ```rust
@@ -138,15 +134,22 @@ struct TokenCache {
 // 3. TTL 过期：重新验证 + 刷新缓存
 ```
 
-**预期收益**: 1000节点连接时间降到 < 5s
+**预期收益**: 1000节点连接时间从 9s 降到 < 3s（重连场景）
 
 **实施步骤**:
+- [ ] 找到 Token 验证代码位置
 - [ ] 设计 TokenCache 结构
 - [ ] 实现 LRU 缓存逻辑
-- [ ] 集成到 registry::authorize_identity
+- [ ] 集成到 authorize_identity
 - [ ] 添加监控指标（缓存命中率）
-- [ ] 运行重连风暴测试对比
+- [ ] 运行连接测试对比
 - [ ] Commit: "perf(auth): add token verification cache"
+
+---
+
+## 🚀 Phase 2: 结构性优化（预计 3-4 周）
+
+### 2.1 并发连接处理优化
 
 ---
 
