@@ -31,8 +31,7 @@ export function checkAuthExpiry(): boolean {
     window.localStorage.setItem(AUTH_TIMESTAMP_KEY, now.toString());
     return true;
   } catch {
-    // localStorage unavailable — fail open (don't lock the user out of a
-    // working session because of private-browsing mode).
-    return true;
+    window.location.assign(LOGOUT_PATH);
+    return false;
   }
 }

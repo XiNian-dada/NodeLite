@@ -1,189 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { DiskUsage, NodeStatus } from '@/api';
-import { totalDiskBytes, uniqueDisks, usedDiskBytes } from '@/lib/disks';
-import { fmtBytes, fmtLatency, uptimeParts } from '@/lib/format';
+import type { NodeStatus } from '@/api';
+import { buildNodeHardwareModel } from '@/lib/nodeHardwareModel';
 
 const props = defineProps<{ node: NodeStatus | null }>();
 
 const { t } = useI18n();
 
-function fallback(value: string | null | undefined): string {
-  return value || t('common.not_available');
-}
-
-function percentText(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(Number(value))) return '—';
-  return `${Math.round(Number(value))}%`;
-}
-
-function clampPercent(value: number | null | undefined): number {
-  if (value == null || !Number.isFinite(Number(value))) return 0;
-  return Math.max(0, Math.min(100, Number(value)));
-}
-
-function uptimeText(seconds: number | null | undefined): string {
-  const parts = uptimeParts(seconds);
-  if (!parts) return t('common.not_available');
-  const named = { days: parts.days, hours: parts.hours, minutes: parts.minutes };
-  if (parts.days > 0) return t('node.uptime.days_hours', named);
-  if (parts.hours > 0) return t('node.uptime.hours_minutes', named);
-  return t('node.uptime.minutes', named);
-}
-
-function severity(value: number | null | undefined): 'ok' | 'warn' | 'bad' {
-  if (value == null || !Number.isFinite(Number(value))) return 'ok';
-  if (value >= 90) return 'bad';
-  if (value >= 75) return 'warn';
-  return 'ok';
-}
-
-function diskCapacity(disk: DiskUsage): string {
-  return `${fmtBytes(disk.used_bytes) ?? '—'} / ${fmtBytes(disk.total_bytes) ?? '—'}`;
-}
-
-const snapshot = computed(() => props.node?.snapshot ?? null);
-const identity = computed(() => props.node?.identity ?? null);
-const disks = computed(() => uniqueDisks(snapshot.value?.disks));
-const totalDisk = computed(() => totalDiskBytes(disks.value));
-const usedDisk = computed(() => usedDiskBytes(disks.value));
-const availableDisk = computed(() => Math.max(0, totalDisk.value - usedDisk.value));
-const diskPercent = computed(() => (totalDisk.value ? (usedDisk.value / totalDisk.value) * 100 : null));
-const memoryPercent = computed(() => {
-  const memory = snapshot.value?.memory;
-  return memory?.total_bytes ? (memory.used_bytes / memory.total_bytes) * 100 : null;
-});
-const swapPercent = computed(() => {
-  const memory = snapshot.value?.memory;
-  return memory?.swap_total_bytes ? (memory.swap_used_bytes / memory.swap_total_bytes) * 100 : null;
-});
-
-const filesystemRows = computed(() => {
-  const totals = new Map<string, { total: number; used: number; count: number }>();
-  for (const disk of disks.value) {
-    const key = disk.fs_type || t('common.unknown');
-    const current = totals.get(key) ?? { total: 0, used: 0, count: 0 };
-    current.total += disk.total_bytes || 0;
-    current.used += disk.used_bytes || 0;
-    current.count += 1;
-    totals.set(key, current);
-  }
-  return [...totals.entries()].map(([name, row]) => ({
-    name,
-    count: row.count,
-    total: fmtBytes(row.total) ?? '—',
-    pct: totalDisk.value ? (row.total / totalDisk.value) * 100 : 0,
-  }));
-});
-
-const specRows = computed(() => [
-  { label: t('node.info.os'), value: identity.value?.os || t('common.unknown_os') },
-  { label: t('node.info.kernel'), value: fallback(identity.value?.kernel_version) },
-  {
-    label: t('node.info.cpu'),
-    value: identity.value?.cpu_model
-      ? `${identity.value.cpu_cores} ${t('node.hardware.cores')} · ${identity.value.cpu_model}`
-      : t('common.unknown'),
-  },
-  {
-    label: t('node.info.memory'),
-    value: fmtBytes(snapshot.value?.memory.total_bytes) ?? t('common.not_available'),
-  },
-  { label: t('node.info.virtualization'), value: fallback(identity.value?.agent_version) },
-  { label: t('node.info.uptime'), value: uptimeText(snapshot.value?.uptime_secs) },
-]);
-
-const summaryCards = computed(() => [
-  {
-    key: 'cpu',
-    label: t('node.stats.cpu'),
-    value: identity.value?.cpu_model ?? t('common.unknown'),
-    sub: `${identity.value?.cpu_cores ?? 0} ${t('node.hardware.cores')} · ${percentText(snapshot.value?.cpu_usage_percent)}`,
-    tone: 'blue',
-    bar: clampPercent(snapshot.value?.cpu_usage_percent),
-  },
-  {
-    key: 'memory',
-    label: t('node.stats.memory'),
-    value: fmtBytes(snapshot.value?.memory.total_bytes) ?? '—',
-    sub: `${fmtBytes(snapshot.value?.memory.used_bytes) ?? '—'} ${t('node.hardware.used')} · ${percentText(memoryPercent.value)}`,
-    tone: 'green',
-    bar: clampPercent(memoryPercent.value),
-  },
-  {
-    key: 'swap',
-    label: t('node.stats.swap'),
-    value: fmtBytes(snapshot.value?.memory.swap_total_bytes) ?? '—',
-    sub: snapshot.value?.memory.swap_total_bytes
-      ? `${fmtBytes(snapshot.value.memory.swap_used_bytes) ?? '—'} ${t('node.hardware.used')} · ${percentText(swapPercent.value)}`
-      : t('common.not_available'),
-    tone: 'neutral',
-    bar: clampPercent(swapPercent.value),
-  },
-  {
-    key: 'load',
-    label: t('node.stats.load'),
-    value: snapshot.value
-      ? `${snapshot.value.load.one.toFixed(2)} / ${snapshot.value.load.five.toFixed(2)} / ${snapshot.value.load.fifteen.toFixed(2)}`
-      : '—',
-    sub: t('node.hardware.load_hint'),
-    tone: 'neutral',
-    bar: null,
-  },
-  {
-    key: 'latency',
-    label: t('node.stats.latency'),
-    value: fmtLatency(props.node?.latency_ms) ?? '—',
-    sub: props.node?.online ? t('common.online') : t('common.offline'),
-    tone: props.node?.online ? 'green' : 'red',
-    bar: null,
-  },
-]);
-
-const diskRows = computed(() =>
-  disks.value.map((disk) => ({
-    device: disk.device,
-    mount: disk.mount_point || '—',
-    fs: disk.fs_type || '—',
-    pct: disk.used_percent ?? 0,
-    capacity: diskCapacity(disk),
-    severity: severity(disk.used_percent),
-  })),
-);
-
-const healthRows = computed(() => [
-  {
-    label: t('node.hardware.health.status'),
-    value: props.node?.online ? t('common.online') : t('common.offline'),
-    state: props.node?.online ? 'ok' : 'bad',
-  },
-  {
-    label: t('node.cpu_usage'),
-    value: percentText(snapshot.value?.cpu_usage_percent),
-    state: severity(snapshot.value?.cpu_usage_percent),
-  },
-  {
-    label: t('node.memory_usage'),
-    value: percentText(memoryPercent.value),
-    state: severity(memoryPercent.value),
-  },
-  {
-    label: t('node.disk_usage'),
-    value: percentText(diskPercent.value),
-    state: severity(diskPercent.value),
-  },
-  {
-    label: t('node.stats.latency'),
-    value: fmtLatency(props.node?.latency_ms) ?? '—',
-    state: props.node?.latency_ms != null && props.node.latency_ms > 200 ? 'warn' : 'ok',
-  },
-  {
-    label: t('node.hardware.partitions'),
-    value: `${disks.value.length}`,
-    state: 'ok',
-  },
-]);
+const model = computed(() => buildNodeHardwareModel(props.node, t));
 </script>
 
 <template>
@@ -195,7 +20,7 @@ const healthRows = computed(() => [
           <strong>{{ t('node.info.title') }}</strong>
         </header>
         <div class="spec-rows">
-          <template v-for="row in specRows" :key="row.label">
+          <template v-for="row in model.specRows" :key="row.label">
             <span class="spec-label">{{ row.label }}</span>
             <strong class="spec-value">{{ row.value }}</strong>
           </template>
@@ -210,21 +35,21 @@ const healthRows = computed(() => [
         <div class="storage-body">
           <div
             class="donut"
-            :style="{ '--pct': `${clampPercent(diskPercent)}%` }"
-            :aria-label="percentText(diskPercent)"
+            :style="{ '--pct': `${model.diskPercentBar}%` }"
+            :aria-label="model.diskPercentText"
           >
             <div class="donut__content">
-              <strong>{{ percentText(diskPercent) }}</strong>
+              <strong>{{ model.diskPercentText }}</strong>
               <span>{{ t('node.hardware.used') }}</span>
             </div>
           </div>
           <div class="storage-stats">
             <span>{{ t('node.hardware.total') }}</span>
-            <strong>{{ fmtBytes(totalDisk) ?? '—' }}</strong>
+            <strong>{{ model.totalDiskText }}</strong>
             <span>{{ t('node.hardware.used') }}</span>
-            <strong>{{ fmtBytes(usedDisk) ?? '—' }}</strong>
+            <strong>{{ model.usedDiskText }}</strong>
             <span>{{ t('node.hardware.available') }}</span>
-            <strong>{{ fmtBytes(availableDisk) ?? '—' }}</strong>
+            <strong>{{ model.availableDiskText }}</strong>
           </div>
         </div>
       </article>
@@ -234,8 +59,8 @@ const healthRows = computed(() => [
           <span class="card-kicker">{{ t('node.hardware.filesystems') }}</span>
           <strong>{{ t('node.disk.filesystem') }}</strong>
         </header>
-        <div v-if="filesystemRows.length" class="filesystem-list">
-          <div v-for="row in filesystemRows" :key="row.name" class="filesystem-row">
+        <div v-if="model.filesystemRows.length" class="filesystem-list">
+          <div v-for="row in model.filesystemRows" :key="row.name" class="filesystem-row">
             <span class="dot" />
             <strong>{{ row.name }}</strong>
             <span>{{ row.total }}</span>
@@ -245,14 +70,14 @@ const healthRows = computed(() => [
         <p v-else class="placeholder">{{ t('node.no_disks') }}</p>
         <div class="partition-count">
           <span>{{ t('node.hardware.partitions') }}</span>
-          <strong>{{ disks.length }}</strong>
+          <strong>{{ model.disks.length }}</strong>
         </div>
       </article>
     </section>
 
     <section class="summary-strip" data-test="hardware-summary-cards">
       <article
-        v-for="card in summaryCards"
+        v-for="card in model.summaryCards"
         :key="card.key"
         class="summary-card"
         :class="`summary-card--${card.tone}`"
@@ -273,9 +98,11 @@ const healthRows = computed(() => [
             <span class="card-kicker">{{ t('node.hardware.partitions') }}</span>
             <strong>{{ t('node.mounted_disks') }}</strong>
           </div>
-          <span class="card-count">{{ t('node.hardware.partition_count', { count: disks.length }) }}</span>
+          <span class="card-count">{{
+            t('node.hardware.partition_count', { count: model.disks.length })
+          }}</span>
         </header>
-        <p v-if="diskRows.length === 0" class="placeholder" data-test="node-disks-empty">
+        <p v-if="model.diskRows.length === 0" class="placeholder" data-test="node-disks-empty">
           {{ t('node.no_disks') }}
         </p>
         <div v-else class="disk-table">
@@ -287,17 +114,19 @@ const healthRows = computed(() => [
             <span>{{ t('node.disk.capacity') }}</span>
           </div>
           <div
-            v-for="row in diskRows"
+            v-for="row in model.diskRows"
             :key="`${row.device}:${row.mount}`"
             class="disk-row"
             data-test="disk-row"
           >
             <span class="device" :data-label="t('node.disk.device')">{{ row.device }}</span>
             <span :data-label="t('node.disk.mount')">{{ row.mount }}</span>
-            <span :data-label="t('node.disk.filesystem')"><em>{{ row.fs }}</em></span>
+            <span :data-label="t('node.disk.filesystem')"
+              ><em>{{ row.fs }}</em></span
+            >
             <span class="usage-cell" :data-label="t('node.disk.usage')">
               <span class="usage-track">
-                <span :class="row.severity" :style="{ width: `${clampPercent(row.pct)}%` }" />
+                <span :class="row.severity" :style="{ width: `${row.bar}%` }" />
               </span>
               <span class="usage-value">{{ Math.round(row.pct) }}%</span>
             </span>
@@ -312,7 +141,7 @@ const healthRows = computed(() => [
           <strong>{{ t('node.hardware.health.summary') }}</strong>
         </header>
         <div class="health-list">
-          <div v-for="row in healthRows" :key="row.label" class="health-row">
+          <div v-for="row in model.healthRows" :key="row.label" class="health-row">
             <span>{{ row.label }}</span>
             <strong :class="row.state">{{ row.value }}</strong>
           </div>
@@ -572,7 +401,10 @@ const healthRows = computed(() => [
 .disk-head,
 .disk-row {
   display: grid;
-  grid-template-columns: minmax(140px, 1.1fr) minmax(80px, 0.7fr) minmax(84px, 0.6fr) minmax(160px, 1fr) minmax(120px, 0.8fr);
+  grid-template-columns: minmax(140px, 1.1fr) minmax(80px, 0.7fr) minmax(84px, 0.6fr) minmax(
+      160px,
+      1fr
+    ) minmax(120px, 0.8fr);
   gap: 12px;
   align-items: center;
   min-width: 720px;

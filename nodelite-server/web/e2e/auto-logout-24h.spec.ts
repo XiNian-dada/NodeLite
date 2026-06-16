@@ -17,3 +17,19 @@ test('client triggers logout-and-reauth after 24h', async ({ page }) => {
   await page.waitForURL('**/logout-and-reauth', { timeout: 5000 });
   await expect(page).toHaveURL(/\/logout-and-reauth$/);
 });
+
+test('client triggers logout-and-reauth when auth storage is unavailable', async ({ page }) => {
+  await page.addInitScript(() => {
+    const storageBlocked = () => {
+      throw new Error('storage blocked');
+    };
+
+    Storage.prototype.getItem = storageBlocked;
+    Storage.prototype.setItem = storageBlocked;
+    Storage.prototype.removeItem = storageBlocked;
+  });
+
+  await page.goto('/', { waitUntil: 'commit' });
+  await page.waitForURL('**/logout-and-reauth', { timeout: 5000 });
+  await expect(page).toHaveURL(/\/logout-and-reauth$/);
+});

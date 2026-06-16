@@ -13,6 +13,52 @@ type MessageHandler<T extends BrowserMessage['type']> = (
 
 type UnsubscribeFn = () => void;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function hasStringField(value: Record<string, unknown>, key: string): boolean {
+  return typeof value[key] === 'string';
+}
+
+function hasRecordField(value: Record<string, unknown>, key: string): boolean {
+  return isRecord(value[key]);
+}
+
+function hasArrayField(value: Record<string, unknown>, key: string): boolean {
+  return Array.isArray(value[key]);
+}
+
+export function parseBrowserMessage(value: unknown): BrowserMessage | null {
+  if (!isRecord(value) || typeof value.type !== 'string') return null;
+
+  switch (value.type) {
+    case 'initial_state':
+      return hasStringField(value, 'generated_at') &&
+        hasRecordField(value, 'overview') &&
+        hasArrayField(value, 'nodes')
+        ? (value as BrowserMessage)
+        : null;
+    case 'overview_update':
+      return hasStringField(value, 'generated_at') && hasRecordField(value, 'overview')
+        ? (value as BrowserMessage)
+        : null;
+    case 'node_upsert':
+      return hasStringField(value, 'generated_at') && hasRecordField(value, 'node')
+        ? (value as BrowserMessage)
+        : null;
+    case 'node_removed':
+      return hasStringField(value, 'generated_at') && hasStringField(value, 'node_id')
+        ? (value as BrowserMessage)
+        : null;
+    case 'ping':
+    case 'pong':
+      return value as BrowserMessage;
+    default:
+      return null;
+  }
+}
+
 export class WsClient {
   private ws: WebSocket | null = null;
   private state: ConnectionState = { kind: 'idle' };
@@ -61,10 +107,7 @@ export class WsClient {
     }
   }
 
-  on<T extends BrowserMessage['type']>(
-    type: T,
-    handler: MessageHandler<T>,
-  ): UnsubscribeFn {
+  on<T extends BrowserMessage['type']>(type: T, handler: MessageHandler<T>): UnsubscribeFn {
     if (!this.handlers.has(type)) {
       this.handlers.set(type, new Set());
     }
@@ -102,7 +145,11 @@ export class WsClient {
 
   private onMessage(event: MessageEvent): void {
     try {
-      const msg = JSON.parse(event.data) as BrowserMessage;
+      const msg = parseBrowserMessage(JSON.parse(event.data));
+      if (!msg) {
+        console.warn('Ignoring invalid WebSocket browser message');
+        return;
+      }
 
       if (msg.type === 'pong') {
         this.clearPongTimer();
@@ -240,7 +287,11 @@ export class WsClient {
         this.ws.close();
       }
     } else {
-      if (this.state.kind === 'failed' || this.state.kind === 'idle' || this.state.kind === 'reconnecting') {
+      if (
+        this.state.kind === 'failed' ||
+        this.state.kind === 'idle' ||
+        this.state.kind === 'reconnecting'
+      ) {
         console.log('Tab visible, reconnecting');
         this.clearReconnectTimer();
         this.handshakeFailures = 0;

@@ -109,6 +109,14 @@ impl AppState {
         let geoip = GeoIpResolver::new(config.geoip.clone()).await;
         let registry = NodeRegistry::load(config.node_registry_path.as_path()).await?;
 
+        let shutdown = CancellationToken::new();
+        let shared = SharedState::new(config.clone());
+        // 测试环境也启动集中 diff 任务,JoinHandle detach(测试结束时 shutdown token 取消)
+        std::mem::drop(crate::state::spawn_browser_incremental_task(
+            shared.clone(),
+            shutdown.clone(),
+        ));
+
         Ok(Self {
             history,
             agent_logs: AgentLogStore::new(),
@@ -128,7 +136,7 @@ impl AppState {
             ),
             readiness,
             registry,
-            shared: SharedState::new(config.clone()),
+            shared,
             ws_admission: WsAdmissionController::new(&config.ws),
             browser_ws_admission: WsAdmissionController::new(&config.ws),
             readonly_auth: Arc::new(RwLock::new(ReadonlyRouteAuth::from_config(
@@ -137,7 +145,7 @@ impl AppState {
             alerting: Arc::new(RwLock::new(Arc::new(config.alerting.clone()))),
             two_factor_sessions: TwoFactorSessions::new(),
             config_path,
-            shutdown: CancellationToken::new(),
+            shutdown,
         })
     }
 }

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WS } from 'vitest-websocket-mock';
-import { WsClient } from './client';
+import { parseBrowserMessage, WsClient } from './client';
 import type { BrowserMessage } from '@/api/types';
 
 describe('WsClient', () => {
@@ -157,6 +157,16 @@ describe('WsClient', () => {
   });
 
   describe('message handling', () => {
+    it('parses only known browser message shapes', () => {
+      expect(parseBrowserMessage({ type: 'pong' })).toEqual({ type: 'pong' });
+      expect(
+        parseBrowserMessage({ type: 'node_removed', generated_at: 'now', node_id: 'node-a' }),
+      ).toEqual({ type: 'node_removed', generated_at: 'now', node_id: 'node-a' });
+      expect(parseBrowserMessage({ type: 'node_removed', generated_at: 'now' })).toBeNull();
+      expect(parseBrowserMessage({ type: 'future_message', generated_at: 'now' })).toBeNull();
+      expect(parseBrowserMessage(null)).toBeNull();
+    });
+
     it('delivers InitialState to registered handlers', async () => {
       server = new WS('ws://localhost:1234/ws/browser');
       client = new WsClient('ws://localhost:1234/ws/browser');
@@ -232,6 +242,66 @@ describe('WsClient', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       expect(handler).toHaveBeenCalledWith(msg);
+    });
+
+    it('ignores malformed JSON without dispatching handlers', async () => {
+      server = new WS('ws://localhost:1234/ws/browser');
+      client = new WsClient('ws://localhost:1234/ws/browser');
+
+      const handler = vi.fn();
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      client.on('initial_state', handler);
+
+      client.connect();
+      await server.connected;
+
+      server.send('{not-json');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(handler).not.toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalledWith(
+        'Failed to parse WebSocket message',
+        expect.any(SyntaxError),
+      );
+      errorSpy.mockRestore();
+    });
+
+    it('ignores unknown message types without dispatching handlers', async () => {
+      server = new WS('ws://localhost:1234/ws/browser');
+      client = new WsClient('ws://localhost:1234/ws/browser');
+
+      const handler = vi.fn();
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      client.on('overview_update', handler);
+
+      client.connect();
+      await server.connected;
+
+      server.send(JSON.stringify({ type: 'future_message', generated_at: '2026-06-01T12:00:00Z' }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(handler).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith('Ignoring invalid WebSocket browser message');
+      warnSpy.mockRestore();
+    });
+
+    it('ignores known message types with missing required fields', async () => {
+      server = new WS('ws://localhost:1234/ws/browser');
+      client = new WsClient('ws://localhost:1234/ws/browser');
+
+      const handler = vi.fn();
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      client.on('node_removed', handler);
+
+      client.connect();
+      await server.connected;
+
+      server.send(JSON.stringify({ type: 'node_removed', generated_at: '2026-06-01T12:00:00Z' }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(handler).not.toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith('Ignoring invalid WebSocket browser message');
+      warnSpy.mockRestore();
     });
 
     it('unsubscribes handlers via returned function', async () => {

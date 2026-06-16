@@ -14,16 +14,19 @@ mod session_control;
 mod sqlite_wal;
 mod view_cache;
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use axum::body::Bytes;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use nodelite_proto::{
-    GeoIpLocation, NodeIdentity, NodeListItem, NodeSnapshot, NodeStatus, OverviewData, ServerConfig,
+    AlertRuleConfig, BrowserMessage, GeoIpLocation, InspectionConfig, NodeIdentity, NodeListItem,
+    NodeSnapshot, NodeStatus, OverviewData, ServerConfig,
 };
-use tokio::sync::{Mutex, RwLock, broadcast, oneshot};
+use tokio::sync::{Mutex, broadcast, oneshot};
+use tokio_util::sync::CancellationToken;
 
 use self::registry::Registry;
 pub(crate) use self::session_control::{
@@ -43,25 +46,45 @@ enum ApiBodyKind {
 /// 的 revision 影响范围收窄到 nodes,避免聚合数据无限期不刷新。
 const OVERVIEW_CACHE_MAX_STALE: Duration = Duration::from_secs(1);
 use crate::ServerReadiness;
+use crate::alerts::{EvaluatedRule, InspectionReport};
 use crate::handlers::metrics_exporter::{
     ApiCacheMetrics, SqliteWalCheckpointMetrics, WsMessageMetrics,
 };
 
 /// 浏览器视图脏信号。节点视图发生任意变化(注册 / 快照 / 延迟 / 离线 / 批量过期)时
-/// 广播一次,促使每个浏览器 WebSocket 会话重算节点列表、与上次发送的快照做 diff,
-/// 再发出增量。无 payload:会话总是重新读取完整视图,不需要携带变化详情。
+/// 广播一次,促使集中 diff 任务重新读取完整视图并广播增量。
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct BrowserViewDirty;
+
+/// 浏览器全量快照及其对应的节点视图 revision。
+pub(crate) struct BrowserSnapshot {
+    pub(crate) revision: u64,
+    pub(crate) generated_at: DateTime<Utc>,
+    pub(crate) overview: OverviewData,
+    pub(crate) nodes: Vec<NodeListItem>,
+}
+
+/// 集中 diff 任务广播给浏览器会话的增量消息。
+#[derive(Clone)]
+pub(crate) struct BrowserIncrementalUpdate {
+    pub(crate) revision: u64,
+    pub(crate) message: Arc<BrowserMessage>,
+}
 
 /// 浏览器脏信号广播通道容量。200 节点 × 1Hz ≈ 200 信号/秒;某个会话若停顿超过
 /// 约 1.3 秒(256 / 200)就会 Lagged,届时会话回退到重发 InitialState 全量同步。
 const BROWSER_VIEW_DIRTY_CHANNEL_CAPACITY: usize = 256;
 
+/// 浏览器增量消息广播通道容量。集中 diff 任务每秒最多广播 ~400 条消息(200 节点
+/// 全变 × 每节点 1 upsert + 1 overview),慢连接若落后超过 256 条会收到 Lagged,
+/// 届时重发 InitialState 全量同步。
+const BROWSER_INCREMENTAL_CHANNEL_CAPACITY: usize = 256;
+
 /// 共享状态的对外句柄,可以低成本地克隆给每个异步任务。
 #[derive(Clone)]
 pub struct SharedState {
     config: Arc<ServerConfig>,
-    registry: Arc<RwLock<Registry>>,
+    registry: Arc<Registry>,
     next_session_id: Arc<AtomicU64>,
     overview_revision: Arc<AtomicU64>,
     nodes_revision: Arc<AtomicU64>,
@@ -89,6 +112,8 @@ pub struct SharedState {
     session_control_queue_full_total: Arc<AtomicU64>,
     /// 节点视图变化时向所有浏览器 WebSocket 会话广播脏信号。
     browser_view_dirty_tx: broadcast::Sender<BrowserViewDirty>,
+    /// 集中 diff 任务计算出的增量消息,广播给所有浏览器会话直接转发(零锁、零 diff)。
+    browser_incremental_tx: broadcast::Sender<BrowserIncrementalUpdate>,
     #[cfg(test)]
     metrics_cache_builds: Arc<AtomicU64>,
 }
@@ -97,7 +122,7 @@ impl SharedState {
     pub fn new(config: Arc<ServerConfig>) -> Self {
         Self {
             config: Arc::clone(&config),
-            registry: Arc::new(RwLock::new(Registry::default())),
+            registry: Arc::new(Registry::default()),
             next_session_id: Arc::new(AtomicU64::new(1)),
             overview_revision: Arc::new(AtomicU64::new(1)),
             nodes_revision: Arc::new(AtomicU64::new(1)),
@@ -124,6 +149,7 @@ impl SharedState {
             ws_messages_refresh_token_request_total: Arc::new(AtomicU64::new(0)),
             session_control_queue_full_total: Arc::new(AtomicU64::new(0)),
             browser_view_dirty_tx: broadcast::channel(BROWSER_VIEW_DIRTY_CHANNEL_CAPACITY).0,
+            browser_incremental_tx: broadcast::channel(BROWSER_INCREMENTAL_CHANNEL_CAPACITY).0,
             #[cfg(test)]
             metrics_cache_builds: Arc::new(AtomicU64::new(0)),
         }
@@ -148,8 +174,7 @@ impl SharedState {
     ) -> u64 {
         let session_id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
         let now = Utc::now();
-        let mut registry = self.registry.write().await;
-        registry.register_node(
+        self.registry.register_node(
             session_id,
             identity,
             remote_ip,
@@ -172,8 +197,9 @@ impl SharedState {
         session_id: u64,
         snapshot: NodeSnapshot,
     ) -> Option<NodeStatus> {
-        let mut registry = self.registry.write().await;
-        let status = registry.update_snapshot(node_id, session_id, snapshot, Utc::now());
+        let status = self
+            .registry
+            .update_snapshot(node_id, session_id, snapshot, Utc::now());
         if status.is_some() {
             self.bump_nodes_revision_only();
         }
@@ -182,8 +208,9 @@ impl SharedState {
 
     /// 更新某节点的最新延迟值,语义同 `update_snapshot`(只 bump nodes_revision)。
     pub async fn update_latency(&self, node_id: &str, session_id: u64, latency_ms: u64) -> bool {
-        let mut registry = self.registry.write().await;
-        let updated = registry.update_latency(node_id, session_id, latency_ms, Utc::now());
+        let updated = self
+            .registry
+            .update_latency(node_id, session_id, latency_ms, Utc::now());
         if updated {
             self.bump_nodes_revision_only();
         }
@@ -192,8 +219,7 @@ impl SharedState {
 
     /// 标记某会话的连接已断开。如果当前活跃 ID 不再等于该会话,则什么也不做。
     pub async fn mark_disconnected(&self, node_id: &str, session_id: u64) {
-        let mut registry = self.registry.write().await;
-        if registry.mark_disconnected(node_id, session_id) {
+        if self.registry.mark_disconnected(node_id, session_id) {
             self.bump_view_revision();
         }
     }
@@ -205,14 +231,13 @@ impl SharedState {
         session_id: u64,
         control: SessionControlHandle,
     ) -> bool {
-        let mut registry = self.registry.write().await;
-        registry.attach_session_control(node_id, session_id, control)
+        self.registry
+            .attach_session_control(node_id, session_id, control)
     }
 
     /// 把超时(超过 `stale_after_secs`)的节点统一标记为离线,返回受影响节点数。
     pub async fn mark_stale(&self) -> usize {
-        let mut registry = self.registry.write().await;
-        let marked = registry.mark_stale(
+        let marked = self.registry.mark_stale(
             Duration::from_secs(self.config.stale_after_secs),
             Utc::now(),
         );
@@ -224,39 +249,64 @@ impl SharedState {
 
     /// 判断给定 `session_id` 是否仍是该节点的当前会话。
     pub async fn is_current_session(&self, node_id: &str, session_id: u64) -> bool {
-        let registry = self.registry.read().await;
-        registry.is_current_session(node_id, session_id)
+        self.registry.is_current_session(node_id, session_id)
     }
 
     /// 列出所有节点的状态(按 `node_label`、`node_id` 升序)。
     pub async fn list_statuses(&self) -> Vec<NodeStatus> {
-        let registry = self.registry.read().await;
-        registry.list_statuses()
+        self.registry.list_statuses()
     }
 
     pub async fn list_node_summaries(&self) -> Vec<NodeListItem> {
-        let registry = self.registry.read().await;
-        registry.list_node_summaries()
+        self.registry.list_node_summaries()
+    }
+
+    pub(crate) async fn evaluate_alert_rules(
+        &self,
+        rules: &[AlertRuleConfig],
+        now: DateTime<Utc>,
+    ) -> Vec<EvaluatedRule> {
+        self.registry.evaluate_alert_rules(rules, now)
+    }
+
+    pub(crate) async fn build_alert_inspection_report(
+        &self,
+        inspection: &InspectionConfig,
+        now: DateTime<Utc>,
+    ) -> InspectionReport {
+        self.registry.build_alert_inspection_report(inspection, now)
+    }
+
+    /// 返回浏览器全量视图和对应 revision。nodes/overview 来自同一组 registry 分片读视图,
+    /// revision 用于让浏览器端识别后续增量是否基于同一代节点视图。
+    pub(crate) async fn browser_snapshot(&self) -> BrowserSnapshot {
+        let generated_at = Utc::now();
+        let (nodes, overview, revision) = self
+            .registry
+            .browser_view_with_revision(|| self.nodes_revision.load(Ordering::Acquire));
+        BrowserSnapshot {
+            revision,
+            generated_at,
+            overview,
+            nodes,
+        }
     }
 
     pub async fn get_status(&self, node_id: &str) -> Option<NodeStatus> {
-        let registry = self.registry.read().await;
-        registry.get_status(node_id)
+        self.registry.get_status(node_id)
     }
 
     pub(crate) async fn geoip_refresh_candidates(&self) -> Vec<(String, String)> {
-        let registry = self.registry.read().await;
-        registry.geoip_refresh_candidates()
+        self.registry.geoip_refresh_candidates()
     }
 
     pub(crate) async fn refresh_geoip_locations(
         &self,
         updates: Vec<(String, String, GeoIpLocation)>,
     ) -> usize {
-        let mut registry = self.registry.write().await;
         let mut updated = 0;
         for (node_id, remote_ip, geoip) in updates {
-            if registry.update_geoip(&node_id, &remote_ip, geoip) {
+            if self.registry.update_geoip(&node_id, &remote_ip, geoip) {
                 updated += 1;
             }
         }
@@ -271,8 +321,9 @@ impl SharedState {
         node_id: &str,
         location_override: Option<GeoIpLocation>,
     ) -> bool {
-        let mut registry = self.registry.write().await;
-        let updated = registry.update_location_override(node_id, location_override);
+        let updated = self
+            .registry
+            .update_location_override(node_id, location_override);
         if updated {
             self.bump_view_revision();
         }
@@ -284,9 +335,11 @@ impl SharedState {
         overrides: Vec<(String, Option<GeoIpLocation>)>,
     ) -> usize {
         let mut updated = 0;
-        let mut registry = self.registry.write().await;
         for (node_id, location_override) in overrides {
-            if registry.update_location_override(&node_id, location_override) {
+            if self
+                .registry
+                .update_location_override(&node_id, location_override)
+            {
                 updated += 1;
             }
         }
@@ -301,12 +354,10 @@ impl SharedState {
         &self,
         node_id: &str,
     ) -> Result<oneshot::Receiver<Result<SessionRefreshReply, String>>, SessionCommandError> {
-        let control_tx = {
-            let registry = self.registry.read().await;
-            registry
-                .session_control(node_id)
-                .ok_or(SessionCommandError::NodeOffline)?
-        };
+        let control_tx = self
+            .registry
+            .session_control(node_id)
+            .ok_or(SessionCommandError::NodeOffline)?;
 
         let (response_tx, response_rx) = oneshot::channel();
         if let Err(error) = control_tx.try_enqueue_refresh(response_tx) {
@@ -385,8 +436,7 @@ impl SharedState {
     }
 
     pub(crate) async fn registry_disk_entries_total(&self) -> u64 {
-        let registry = self.registry.read().await;
-        registry.disk_entries_total()
+        self.registry.disk_entries_total()
     }
 
     /// 返回缓存后的 `/metrics` 响应体。
@@ -421,8 +471,10 @@ impl SharedState {
         self.metrics_cache_builds.fetch_add(1, Ordering::Relaxed);
 
         let body = {
-            let registry = self.registry.read().await;
-            Bytes::from(registry.render_metrics_body(readiness, self.config.metrics))
+            Bytes::from(
+                self.registry
+                    .render_metrics_body(readiness, self.config.metrics),
+            )
         };
         self.metrics_body_bytes
             .store(body.len() as u64, Ordering::Relaxed);
@@ -436,19 +488,20 @@ impl SharedState {
     }
 
     async fn overview_data(&self) -> OverviewData {
-        let registry = self.registry.read().await;
-        registry.overview()
+        self.registry.overview()
     }
 
-    /// 供浏览器 WebSocket 会话读取当前概览聚合(在准备发送 OverviewUpdate 时惰性调用)。
-    pub(crate) async fn overview_snapshot(&self) -> OverviewData {
-        self.overview_data().await
-    }
-
-    /// 订阅浏览器视图脏信号。每个浏览器会话持有一个 receiver,在信号到达后
-    /// 重算节点列表并发出增量。
+    /// 订阅浏览器视图脏信号。集中 diff 任务持有 receiver,在信号到达后
+    /// 重算节点列表并广播增量。
     pub(crate) fn subscribe_browser_updates(&self) -> broadcast::Receiver<BrowserViewDirty> {
         self.browser_view_dirty_tx.subscribe()
+    }
+
+    /// 订阅集中 diff 任务广播的增量消息。浏览器会话直接转发收到的消息(零锁、零 diff)。
+    pub(crate) fn subscribe_browser_incremental(
+        &self,
+    ) -> broadcast::Receiver<BrowserIncrementalUpdate> {
+        self.browser_incremental_tx.subscribe()
     }
 
     /// 广播一次浏览器视图脏信号。没有订阅者(无浏览器连接)时 `send` 返回
@@ -459,8 +512,7 @@ impl SharedState {
 
     /// 启动时从磁盘快照恢复状态,所有节点都视为离线直至首次心跳到达。
     pub async fn restore_statuses(&self, statuses: Vec<NodeStatus>) {
-        let mut registry = self.registry.write().await;
-        registry.restore_statuses(statuses);
+        self.registry.restore_statuses(statuses);
         self.bump_view_revision();
     }
 
@@ -609,6 +661,122 @@ impl SharedState {
     fn metrics_cache_build_count(&self) -> u64 {
         self.metrics_cache_builds.load(Ordering::Relaxed)
     }
+}
+
+/// 启动集中 diff 后台任务,订阅脏信号、去抖并广播增量消息给所有浏览器会话。
+/// 返回 JoinHandle 供调用者纳入 shutdown 生命周期。
+pub(crate) fn spawn_browser_incremental_task(
+    shared: SharedState,
+    shutdown: CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        run_browser_incremental_task(shared, shutdown).await;
+    })
+}
+
+async fn run_browser_incremental_task(shared: SharedState, shutdown: CancellationToken) {
+    use tokio::time::{MissedTickBehavior, interval};
+
+    let mut updates = shared.subscribe_browser_updates();
+    let mut debounce = interval(Duration::from_secs(1));
+    debounce.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let mut dirty = false;
+    let mut last_nodes: HashMap<String, NodeListItem> = HashMap::new();
+
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => return,
+            recv = updates.recv() => {
+                match recv {
+                    Ok(_) => dirty = true,
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        // 落后丢信号:强制下次 tick 重算并广播完整增量
+                        dirty = true;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => return,
+                }
+            }
+            _ = debounce.tick() => {
+                if dirty {
+                    dirty = false;
+                    if let Err(error) = broadcast_incremental_updates(&shared, &mut last_nodes).await {
+                        tracing::warn!(error = %error, "browser incremental task failed to broadcast updates");
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn broadcast_incremental_updates(
+    shared: &SharedState,
+    last_nodes: &mut HashMap<String, NodeListItem>,
+) -> anyhow::Result<()> {
+    let snapshot = shared.browser_snapshot().await;
+    let current = snapshot.nodes;
+    let generated_at = snapshot.generated_at;
+    let revision = snapshot.revision;
+
+    // Diff: 与上次快照逐行对比,找出变更/新增/移除的节点
+    let mut seen: HashSet<&str> = HashSet::with_capacity(current.len());
+    let mut upserts = Vec::new();
+    for node in &current {
+        seen.insert(node.identity.node_id.as_str());
+        if last_nodes.get(&node.identity.node_id) != Some(node) {
+            upserts.push(node.clone());
+        }
+    }
+    let removed: Vec<String> = last_nodes
+        .keys()
+        .filter(|id: &&String| !seen.contains(id.as_str()))
+        .cloned()
+        .collect();
+
+    // 广播增量消息
+    for node in upserts {
+        let msg = Arc::new(BrowserMessage::NodeUpsert {
+            generated_at,
+            node: Box::new(node),
+        });
+        let _ = shared
+            .browser_incremental_tx
+            .send(BrowserIncrementalUpdate {
+                revision,
+                message: msg,
+            });
+    }
+    for node_id in removed {
+        let msg = Arc::new(BrowserMessage::NodeRemoved {
+            generated_at,
+            node_id,
+        });
+        let _ = shared
+            .browser_incremental_tx
+            .send(BrowserIncrementalUpdate {
+                revision,
+                message: msg,
+            });
+    }
+
+    // 更新快照
+    *last_nodes = current
+        .into_iter()
+        .map(|node| (node.identity.node_id.clone(), node))
+        .collect();
+
+    // 广播概览更新
+    let msg = Arc::new(BrowserMessage::OverviewUpdate {
+        generated_at,
+        overview: snapshot.overview,
+    });
+    let _ = shared
+        .browser_incremental_tx
+        .send(BrowserIncrementalUpdate {
+            revision,
+            message: msg,
+        });
+
+    Ok(())
 }
 
 #[cfg(test)]

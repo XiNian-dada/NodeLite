@@ -15,8 +15,7 @@ use crate::state::SharedState;
 use super::delivery::AlertDeliveryError;
 use super::{
     AlertEvent, AlertEventKind, AlertStateTracker, InspectionReport, InspectionSummary,
-    build_inspection_report, deliver_alert_event, deliver_inspection_summary, evaluate_rules,
-    smtp_endpoint_label, webhook_endpoint_label,
+    deliver_alert_event, deliver_inspection_summary, smtp_endpoint_label, webhook_endpoint_label,
 };
 
 const ALERT_EVALUATION_INTERVAL_SECS: u64 = 30;
@@ -98,11 +97,10 @@ async fn run_alert_runtime(
                 }
 
                 let now = Utc::now();
-                let statuses = shared.list_statuses().await;
                 if config.rules.is_empty() {
                     tracker.clear();
                 } else {
-                    let matches = evaluate_rules(&config.rules, &statuses, now);
+                    let matches = shared.evaluate_alert_rules(&config.rules, now).await;
                     for event in tracker.update(&config.rules, &matches, now) {
                         log_alert_event(&event);
                         enqueue_alert_delivery(&delivery_tx, &mut tracker, &config, &event, now);
@@ -113,7 +111,9 @@ async fn run_alert_runtime(
                     && let Some(local_date) =
                         inspection_dispatch.due_date(&config.inspection.local_time, Local::now(), now)
                 {
-                    let report = build_inspection_report(&config.inspection, &statuses, now);
+                    let report = shared
+                        .build_alert_inspection_report(&config.inspection, now)
+                        .await;
                     enqueue_inspection_delivery(
                         &delivery_tx,
                         &mut inspection_dispatch,
@@ -449,107 +449,4 @@ fn parse_inspection_local_time(value: &str) -> Option<NaiveTime> {
 }
 
 #[cfg(test)]
-mod tests {
-    use chrono::{Duration, NaiveDate, NaiveTime, Utc};
-    use nodelite_proto::{AlertChannel, AlertingConfig};
-
-    use super::{InspectionDispatchState, parse_inspection_local_time, should_check_inspection};
-
-    #[test]
-    fn inspection_dispatch_waits_until_configured_time() {
-        let state = InspectionDispatchState::new();
-        let date = NaiveDate::from_ymd_opt(2026, 5, 27).expect("date should be valid");
-        let scheduled = NaiveTime::from_hms_opt(9, 0, 0).expect("time should be valid");
-
-        assert!(
-            state
-                .due_date_for(
-                    date,
-                    NaiveTime::from_hms_opt(8, 59, 0).expect("time should be valid"),
-                    scheduled,
-                    Utc::now(),
-                )
-                .is_none()
-        );
-        assert_eq!(
-            state.due_date_for(date, scheduled, scheduled, Utc::now()),
-            Some(date)
-        );
-    }
-
-    #[test]
-    fn inspection_dispatch_sends_once_per_local_date() {
-        let mut state = InspectionDispatchState::new();
-        let date = NaiveDate::from_ymd_opt(2026, 5, 27).expect("date should be valid");
-        let time = NaiveTime::from_hms_opt(9, 0, 0).expect("time should be valid");
-
-        state.mark_sent(date);
-
-        assert!(state.due_date_for(date, time, time, Utc::now()).is_none());
-        assert_eq!(
-            state.due_date_for(
-                date.succ_opt().expect("next day should exist"),
-                time,
-                time,
-                Utc::now()
-            ),
-            Some(date.succ_opt().expect("next day should exist"))
-        );
-    }
-
-    #[test]
-    fn inspection_dispatch_delays_retry_after_failure() {
-        let mut state = InspectionDispatchState::new();
-        let date = NaiveDate::from_ymd_opt(2026, 5, 27).expect("date should be valid");
-        let time = NaiveTime::from_hms_opt(9, 0, 0).expect("time should be valid");
-        let now = Utc::now();
-        state.mark_failed(now);
-
-        assert!(
-            state
-                .due_date_for(date, time, time, now + Duration::minutes(1))
-                .is_none()
-        );
-        assert_eq!(
-            state.due_date_for(date, time, time, now + Duration::minutes(6)),
-            Some(date)
-        );
-    }
-
-    #[test]
-    fn inspection_dispatch_suppresses_duplicate_while_pending() {
-        let mut state = InspectionDispatchState::new();
-        let date = NaiveDate::from_ymd_opt(2026, 5, 27).expect("date should be valid");
-        let time = NaiveTime::from_hms_opt(9, 0, 0).expect("time should be valid");
-
-        state.mark_pending(date);
-
-        assert!(state.due_date_for(date, time, time, Utc::now()).is_none());
-    }
-
-    #[test]
-    fn parse_inspection_time_accepts_valid_hh_mm() {
-        assert_eq!(
-            parse_inspection_local_time("09:30"),
-            NaiveTime::from_hms_opt(9, 30, 0)
-        );
-        assert!(parse_inspection_local_time("24:61").is_none());
-    }
-
-    #[test]
-    fn inspection_requires_enabled_delivery_channel() {
-        let mut config = AlertingConfig {
-            enabled: true,
-            inspection: nodelite_proto::InspectionConfig {
-                enabled: true,
-                delivery: vec![AlertChannel::Webhook],
-                ..nodelite_proto::InspectionConfig::default()
-            },
-            ..AlertingConfig::default()
-        };
-
-        assert!(!should_check_inspection(&config));
-        config.webhook.enabled = true;
-        assert!(should_check_inspection(&config));
-    }
-}
+mod tests;

@@ -178,9 +178,14 @@ async fn initialize_server_runtime(
         alerting: Arc::new(RwLock::new(Arc::new(config.alerting.clone()))),
         two_factor_sessions: TwoFactorSessions::new(),
         config_path: Arc::new(config_path.to_path_buf()),
-        shutdown,
+        shutdown: shutdown.clone(),
     };
-    let background_tasks = spawn_server_background_tasks(&config, &state);
+    let mut background_tasks = spawn_server_background_tasks(&config, &state);
+    // 集中 diff 任务纳入 shutdown 生命周期
+    background_tasks.push(crate::state::spawn_browser_incremental_task(
+        state.shared.clone(),
+        shutdown,
+    ));
     log_registry_loaded(&config, &state.registry).await;
     let shutdown_artifacts = ShutdownArtifacts {
         shared: state.shared.clone(),

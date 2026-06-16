@@ -7,7 +7,8 @@ use anyhow::{Result, anyhow};
 use axum::extract::ws::{CloseFrame, Message, WebSocket, close_code};
 use futures::{SinkExt, StreamExt};
 use nodelite_proto::{
-    AgentLogsMessage, MetricsMessage, PongMessage, ServerNoticeMessage, WireMessage,
+    AgentLogEntry, AgentLogsMessage, MetricsMessage, NodeSnapshot, PongMessage,
+    RefreshTokenRequestMessage, ServerNoticeMessage, WireMessage,
 };
 use tokio::time::{MissedTickBehavior, interval};
 use tracing::{info, warn};
@@ -155,35 +156,50 @@ async fn handle_wire_message(
     loop_state: &mut SessionLoopState,
     message: WireMessage,
 ) -> Result<LoopAction, super::ProtocolError> {
-    match message {
-        WireMessage::Metrics(MetricsMessage { snapshot }) => {
+    match classify_agent_wire_message(message) {
+        AgentWireAction::Metrics(snapshot) => {
             shared.record_ws_metrics_message();
             handle_metrics_message(state, shared, session, loop_state, snapshot).await
         }
-        WireMessage::AgentLogs(AgentLogsMessage { entries }) => {
+        AgentWireAction::AgentLogs(entries) => {
             shared.record_ws_agent_logs_message();
             handle_agent_logs_message(state, session, entries).await
         }
-        WireMessage::Pong(PongMessage { nonce }) => {
+        AgentWireAction::Pong(nonce) => {
             shared.record_ws_pong_message();
             handle_pong_message(shared, state, session, loop_state, nonce).await
         }
-        WireMessage::RefreshTokenRequest(request) => {
+        AgentWireAction::RefreshTokenRequest(request) => {
             shared.record_ws_refresh_token_request_message();
             handle_refresh_request(state, session, sender, request).await
         }
-        WireMessage::Hello(_) => Err(super::ProtocolError::Client(
-            "duplicate hello message".to_string(),
-        )),
-        WireMessage::Ping(_) => Err(super::ProtocolError::Client(
-            "agent must not send ping messages".to_string(),
-        )),
-        WireMessage::ServerNotice(_) => Err(super::ProtocolError::Client(
-            "agent must not send server_notice messages".to_string(),
-        )),
-        WireMessage::RefreshTokenResponse(_) => Err(super::ProtocolError::Client(
-            "agent must not send refresh_token_response messages".to_string(),
-        )),
+        AgentWireAction::Reject(message) => Err(super::ProtocolError::Client(message.to_string())),
+    }
+}
+
+#[derive(Debug)]
+enum AgentWireAction {
+    Metrics(NodeSnapshot),
+    AgentLogs(Vec<AgentLogEntry>),
+    Pong(u64),
+    RefreshTokenRequest(RefreshTokenRequestMessage),
+    Reject(&'static str),
+}
+
+fn classify_agent_wire_message(message: WireMessage) -> AgentWireAction {
+    match message {
+        WireMessage::Metrics(MetricsMessage { snapshot }) => AgentWireAction::Metrics(snapshot),
+        WireMessage::AgentLogs(AgentLogsMessage { entries }) => AgentWireAction::AgentLogs(entries),
+        WireMessage::Pong(PongMessage { nonce }) => AgentWireAction::Pong(nonce),
+        WireMessage::RefreshTokenRequest(request) => AgentWireAction::RefreshTokenRequest(request),
+        WireMessage::Hello(_) => AgentWireAction::Reject("duplicate hello message"),
+        WireMessage::Ping(_) => AgentWireAction::Reject("agent must not send ping messages"),
+        WireMessage::ServerNotice(_) => {
+            AgentWireAction::Reject("agent must not send server_notice messages")
+        }
+        WireMessage::RefreshTokenResponse(_) => {
+            AgentWireAction::Reject("agent must not send refresh_token_response messages")
+        }
     }
 }
 
@@ -293,10 +309,9 @@ async fn handle_pong_message(
     {
         return Ok(LoopAction::Break);
     }
-    let Some(sent_at) = loop_state.outstanding_pings.remove(&nonce) else {
+    let Some(latency_ms) = consume_pong_latency(loop_state, nonce, Instant::now()) else {
         return Ok(LoopAction::Continue);
     };
-    let latency_ms = sent_at.elapsed().as_millis() as u64;
     if !shared
         .update_latency(&session.node_id, session.session_id, latency_ms)
         .await
@@ -309,6 +324,17 @@ async fn handle_pong_message(
         return Ok(LoopAction::Break);
     }
     Ok(LoopAction::Continue)
+}
+
+fn consume_pong_latency(
+    loop_state: &mut SessionLoopState,
+    nonce: u64,
+    now: Instant,
+) -> Option<u64> {
+    loop_state
+        .outstanding_pings
+        .remove(&nonce)
+        .map(|sent_at| now.duration_since(sent_at).as_millis() as u64)
 }
 
 async fn handle_session_command(
@@ -382,4 +408,124 @@ async fn handle_ping_tick(
         .await
         .map_err(|error| anyhow!("failed to send ping: {error}"))?;
     Ok(LoopAction::Continue)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use axum::extract::ws::Message;
+    use nodelite_proto::{
+        HelloMessage, NodeIdentity, NoticeLevel, PingMessage, PongMessage,
+        RefreshTokenResponseMessage, ServerNoticeMessage, WIRE_PROTOCOL_VERSION, WireMessage,
+    };
+
+    use super::{
+        AgentWireAction, SessionLoopState, classify_agent_wire_message, consume_pong_latency,
+    };
+
+    fn identity() -> NodeIdentity {
+        NodeIdentity {
+            node_id: "hk-01".to_string(),
+            node_label: "Hong Kong 01".to_string(),
+            hostname: "hk-01.internal".to_string(),
+            os: "Linux".to_string(),
+            kernel_version: None,
+            cpu_model: None,
+            cpu_cores: 2,
+            agent_version: "0.1.0-test".to_string(),
+            boot_time: None,
+            tags: Vec::new(),
+        }
+    }
+
+    fn hello_message() -> HelloMessage {
+        HelloMessage {
+            protocol_version: WIRE_PROTOCOL_VERSION,
+            identity: identity(),
+            token: "secret".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn session_loop_state_sets_ping_expiry_from_interval() {
+        let state = SessionLoopState::new(7);
+
+        assert_eq!(state.ping_expiry, Duration::from_secs(21));
+        assert_eq!(state.next_ping_nonce, 1);
+        assert!(state.outstanding_pings.is_empty());
+    }
+
+    #[test]
+    fn classify_routes_agent_business_messages() {
+        let pong = classify_agent_wire_message(WireMessage::Pong(PongMessage { nonce: 42 }));
+
+        assert!(matches!(pong, AgentWireAction::Pong(42)));
+    }
+
+    #[test]
+    fn classify_rejects_agent_forbidden_messages() {
+        let cases = [
+            (
+                WireMessage::Hello(hello_message()),
+                "duplicate hello message",
+            ),
+            (
+                WireMessage::Ping(PingMessage { nonce: 1 }),
+                "agent must not send ping messages",
+            ),
+            (
+                WireMessage::ServerNotice(ServerNoticeMessage {
+                    level: NoticeLevel::Info,
+                    message: "server-only".to_string(),
+                }),
+                "agent must not send server_notice messages",
+            ),
+            (
+                WireMessage::RefreshTokenResponse(RefreshTokenResponseMessage {
+                    new_token: "new-token".to_string(),
+                    expires_at: "2026-01-01T00:00:00Z".to_string(),
+                }),
+                "agent must not send refresh_token_response messages",
+            ),
+        ];
+
+        for (message, expected) in cases {
+            let action = classify_agent_wire_message(message);
+            assert!(matches!(action, AgentWireAction::Reject(actual) if actual == expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn consume_pong_latency_removes_known_nonce() {
+        let mut state = SessionLoopState::new(10);
+        let now = Instant::now();
+        state
+            .outstanding_pings
+            .insert(7, now - Duration::from_millis(42));
+
+        let latency = consume_pong_latency(&mut state, 7, now);
+
+        assert_eq!(latency, Some(42));
+        assert!(state.outstanding_pings.is_empty());
+    }
+
+    #[tokio::test]
+    async fn consume_pong_latency_ignores_unknown_nonce() {
+        let mut state = SessionLoopState::new(10);
+        state.outstanding_pings.insert(7, Instant::now());
+
+        let latency = consume_pong_latency(&mut state, 8, Instant::now());
+
+        assert_eq!(latency, None);
+        assert!(state.outstanding_pings.contains_key(&7));
+    }
+
+    #[test]
+    fn close_frames_break_before_wire_classification() {
+        assert!(matches!(
+            super::super::protocol::parse_wire_message(Message::Close(None)),
+            Ok(super::super::protocol::ParsedFrame::Close)
+        ));
+    }
 }

@@ -10,7 +10,8 @@ pub(crate) use delivery::{
     webhook_endpoint_label,
 };
 pub(crate) use evaluator::{
-    AlertMetricReading, EvaluatedRule, InspectionReport, build_inspection_report, evaluate_rules,
+    AlertMetricReading, AlertStatusView, EvaluatedRule, InspectionReport, build_inspection_report,
+    evaluate_rules,
 };
 pub(crate) use runtime::spawn_alert_runtime;
 pub(crate) use tracker::{AlertEvent, AlertEventKind, AlertStateTracker};

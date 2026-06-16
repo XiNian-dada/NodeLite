@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use nodelite_proto::{
-    AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode, InspectionConfig, NodeStatus,
+    AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode, InspectionConfig, NodeSnapshot,
+    NodeStatus,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,35 +36,84 @@ pub(crate) struct InspectionHighlight {
     pub(crate) reasons: Vec<String>,
 }
 
-pub(crate) fn evaluate_rules(
+pub(crate) trait AlertStatusView {
+    fn node_id(&self) -> &str;
+    fn node_label(&self) -> &str;
+    fn tags(&self) -> &[String];
+    fn snapshot(&self) -> Option<&NodeSnapshot>;
+    fn last_seen(&self) -> Option<DateTime<Utc>>;
+    fn latency_ms(&self) -> Option<u64>;
+    fn online(&self) -> bool;
+}
+
+impl AlertStatusView for NodeStatus {
+    fn node_id(&self) -> &str {
+        &self.identity.node_id
+    }
+
+    fn node_label(&self) -> &str {
+        &self.identity.node_label
+    }
+
+    fn tags(&self) -> &[String] {
+        &self.identity.tags
+    }
+
+    fn snapshot(&self) -> Option<&NodeSnapshot> {
+        self.snapshot.as_ref()
+    }
+
+    fn last_seen(&self) -> Option<DateTime<Utc>> {
+        self.last_seen
+    }
+
+    fn latency_ms(&self) -> Option<u64> {
+        self.latency_ms
+    }
+
+    fn online(&self) -> bool {
+        self.online
+    }
+}
+
+pub(crate) fn evaluate_rules<'a, I, S>(
     rules: &[AlertRuleConfig],
-    statuses: &[NodeStatus],
+    statuses: I,
     now: DateTime<Utc>,
-) -> Vec<EvaluatedRule> {
+) -> Vec<EvaluatedRule>
+where
+    I: IntoIterator<Item = &'a S>,
+    S: AlertStatusView + 'a,
+{
+    let statuses: Vec<&S> = statuses.into_iter().collect();
     let mut matches = Vec::new();
     for rule in rules.iter().filter(|rule| rule.enabled) {
         matches.extend(
             statuses
                 .iter()
+                .copied()
                 .filter_map(|status| evaluate_rule(rule, status, now)),
         );
     }
     matches
 }
 
-pub(crate) fn evaluate_rule(
+pub(crate) fn evaluate_rule<S>(
     rule: &AlertRuleConfig,
-    status: &NodeStatus,
+    status: &S,
     now: DateTime<Utc>,
-) -> Option<EvaluatedRule> {
+) -> Option<EvaluatedRule>
+where
+    S: AlertStatusView + ?Sized,
+{
     let value = rule_metric_value(rule, status, now)?;
     if !comparator_matches(rule.comparator.clone(), value, rule.threshold) {
         return None;
     }
     Some(EvaluatedRule {
         rule_id: rule.id.clone(),
-        node_id: status.identity.node_id.clone(),
-        node_label: status.identity.node_label.clone(),
+        node_id: status.node_id().to_string(),
+        node_label: status.node_label().to_string(),
         reading: AlertMetricReading {
             metric: rule.metric.clone(),
             value,
@@ -72,11 +122,16 @@ pub(crate) fn evaluate_rule(
     })
 }
 
-pub(crate) fn build_inspection_report(
+pub(crate) fn build_inspection_report<'a, I, S>(
     inspection: &InspectionConfig,
-    statuses: &[NodeStatus],
+    statuses: I,
     now: DateTime<Utc>,
-) -> InspectionReport {
+) -> InspectionReport
+where
+    I: IntoIterator<Item = &'a S>,
+    S: AlertStatusView + 'a,
+{
+    let mut total_nodes = 0;
     let mut offline_nodes = 0;
     let mut latency_nodes = 0;
     let mut cpu_hot_nodes = 0;
@@ -84,6 +139,7 @@ pub(crate) fn build_inspection_report(
     let mut highlights = Vec::new();
 
     for status in statuses {
+        total_nodes += 1;
         let mut reasons = Vec::new();
         if offline_minutes(status, now)
             .is_some_and(|minutes| minutes >= inspection.offline_grace_minutes)
@@ -92,15 +148,14 @@ pub(crate) fn build_inspection_report(
             reasons.push("offline".to_string());
         }
         if status
-            .latency_ms
+            .latency_ms()
             .is_some_and(|latency| latency >= inspection.latency_warn_ms)
         {
             latency_nodes += 1;
             reasons.push("latency".to_string());
         }
         if status
-            .snapshot
-            .as_ref()
+            .snapshot()
             .and_then(|snapshot| snapshot.cpu_usage_percent)
             .is_some_and(|cpu| cpu >= inspection.cpu_warn_percent as f64)
         {
@@ -116,14 +171,14 @@ pub(crate) fn build_inspection_report(
             continue;
         }
         highlights.push(InspectionHighlight {
-            node_id: status.identity.node_id.clone(),
-            node_label: status.identity.node_label.clone(),
+            node_id: status.node_id().to_string(),
+            node_label: status.node_label().to_string(),
             reasons,
         });
     }
 
     InspectionReport {
-        total_nodes: statuses.len(),
+        total_nodes,
         offline_nodes,
         latency_nodes,
         cpu_hot_nodes,
@@ -132,41 +187,44 @@ pub(crate) fn build_inspection_report(
     }
 }
 
-fn rule_metric_value(
-    rule: &AlertRuleConfig,
-    status: &NodeStatus,
-    now: DateTime<Utc>,
-) -> Option<u64> {
+fn rule_metric_value<S>(rule: &AlertRuleConfig, status: &S, now: DateTime<Utc>) -> Option<u64>
+where
+    S: AlertStatusView + ?Sized,
+{
     if !rule_matches_scope(rule, status) {
         return None;
     }
     metric_value(rule.metric.clone(), status, now)
 }
 
-fn rule_matches_scope(rule: &AlertRuleConfig, status: &NodeStatus) -> bool {
+fn rule_matches_scope<S>(rule: &AlertRuleConfig, status: &S) -> bool
+where
+    S: AlertStatusView + ?Sized,
+{
     match rule.scope_mode {
         AlertScopeMode::All => true,
         AlertScopeMode::NodeIds => rule
             .node_ids
             .iter()
-            .any(|node_id| node_id == &status.identity.node_id),
+            .any(|node_id| node_id == status.node_id()),
         AlertScopeMode::Tags => status
-            .identity
-            .tags
+            .tags()
             .iter()
             .any(|tag| rule.tags.iter().any(|rule_tag| rule_tag == tag)),
     }
 }
 
-fn metric_value(metric: AlertMetric, status: &NodeStatus, now: DateTime<Utc>) -> Option<u64> {
+fn metric_value<S>(metric: AlertMetric, status: &S, now: DateTime<Utc>) -> Option<u64>
+where
+    S: AlertStatusView + ?Sized,
+{
     match metric {
         AlertMetric::CpuUsagePercent => status
-            .snapshot
-            .as_ref()
+            .snapshot()
             .and_then(|snapshot| snapshot.cpu_usage_percent.map(|value| value.round() as u64)),
         AlertMetric::MemoryUsagePercent => memory_percent(status),
         AlertMetric::DiskUsagePercent => max_disk_percent(status),
-        AlertMetric::LatencyMs => status.latency_ms,
+        AlertMetric::LatencyMs => status.latency_ms(),
         AlertMetric::OfflineMinutes => offline_minutes(status, now),
     }
 }
@@ -178,18 +236,23 @@ fn comparator_matches(comparator: AlertComparator, left: u64, right: u64) -> boo
     }
 }
 
-fn memory_percent(status: &NodeStatus) -> Option<u64> {
-    let memory = &status.snapshot.as_ref()?.memory;
+fn memory_percent<S>(status: &S) -> Option<u64>
+where
+    S: AlertStatusView + ?Sized,
+{
+    let memory = &status.snapshot()?.memory;
     if memory.total_bytes == 0 {
         return None;
     }
     Some(((memory.used_bytes.saturating_mul(100)) / memory.total_bytes).min(100))
 }
 
-fn max_disk_percent(status: &NodeStatus) -> Option<u64> {
+fn max_disk_percent<S>(status: &S) -> Option<u64>
+where
+    S: AlertStatusView + ?Sized,
+{
     status
-        .snapshot
-        .as_ref()?
+        .snapshot()?
         .disks
         .iter()
         .filter(|disk| disk.total_bytes > 0)
@@ -197,11 +260,14 @@ fn max_disk_percent(status: &NodeStatus) -> Option<u64> {
         .max()
 }
 
-fn offline_minutes(status: &NodeStatus, now: DateTime<Utc>) -> Option<u64> {
-    if status.online {
+fn offline_minutes<S>(status: &S, now: DateTime<Utc>) -> Option<u64>
+where
+    S: AlertStatusView + ?Sized,
+{
+    if status.online() {
         return None;
     }
-    let minutes = (now - status.last_seen?).num_minutes();
+    let minutes = (now - status.last_seen()?).num_minutes();
     Some(minutes.max(0) as u64)
 }
 

@@ -1,10 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  AUTH_EXPIRY_MS,
-  AUTH_TIMESTAMP_KEY,
-  LOGOUT_PATH,
-  checkAuthExpiry,
-} from './expiry';
+import { AUTH_EXPIRY_MS, AUTH_TIMESTAMP_KEY, LOGOUT_PATH, checkAuthExpiry } from './expiry';
 
 describe('checkAuthExpiry', () => {
   let assignSpy: ReturnType<typeof vi.fn>;
@@ -22,6 +17,7 @@ describe('checkAuthExpiry', () => {
 
   afterEach(() => {
     window.localStorage.clear();
+    vi.restoreAllMocks();
     Object.defineProperty(window, 'location', {
       configurable: true,
       value: originalLocation,
@@ -70,5 +66,23 @@ describe('checkAuthExpiry', () => {
     expect(checkAuthExpiry()).toBe(true);
     expect(window.localStorage.getItem(AUTH_TIMESTAMP_KEY)).toBe('1700000000000');
     expect(assignSpy).not.toHaveBeenCalled();
+  });
+
+  it('redirects when localStorage cannot be read', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('storage blocked');
+    });
+
+    expect(checkAuthExpiry()).toBe(false);
+    expect(assignSpy).toHaveBeenCalledWith(LOGOUT_PATH);
+  });
+
+  it('redirects when localStorage cannot be updated', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('storage blocked');
+    });
+
+    expect(checkAuthExpiry()).toBe(false);
+    expect(assignSpy).toHaveBeenCalledWith(LOGOUT_PATH);
   });
 });

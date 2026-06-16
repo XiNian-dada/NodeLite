@@ -321,7 +321,15 @@ mod tests {
             .expect("systemd launch should succeed");
 
         assert_eq!(mode, UpdateLaunchMode::Systemd);
-        let captured = wait_for_file(&marker).await;
+        let captured = wait_for_file_containing(
+            &marker,
+            &[
+                "--unit=nodelite-test-unit",
+                "--property=ReadWritePaths=/opt/nodelite",
+                "--property=ReadWritePaths=/usr/local/bin",
+            ],
+        )
+        .await;
         assert!(captured.contains("--unit=nodelite-test-unit"));
         assert!(captured.contains("--property=ReadWritePaths=/opt/nodelite"));
         assert!(captured.contains("--property=ReadWritePaths=/usr/local/bin"));
@@ -353,13 +361,25 @@ mod tests {
         );
     }
 
-    async fn wait_for_file(path: &Path) -> String {
+    async fn wait_for_file_containing(path: &Path, required: &[&str]) -> String {
         let deadline = tokio::time::Instant::now() + TEST_LAUNCH_WAIT_TIMEOUT;
+        let mut last_seen = None;
         while tokio::time::Instant::now() < deadline {
             if let Ok(text) = tokio::fs::read_to_string(path).await {
-                return text;
+                if required.iter().all(|needle| text.contains(needle)) {
+                    return text;
+                }
+                last_seen = Some(text);
             }
             sleep(Duration::from_millis(10)).await;
+        }
+        if let Some(text) = last_seen {
+            panic!(
+                "timed out waiting for {} to contain {:?}; saw {:?}",
+                path.display(),
+                required,
+                text
+            );
         }
         panic!("timed out waiting for {}", path.display());
     }

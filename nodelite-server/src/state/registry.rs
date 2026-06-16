@@ -1,25 +1,49 @@
 //! 节点运行态注册表与会话生命周期。
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 #[cfg(test)]
 use nodelite_proto::DiskUsage;
 use nodelite_proto::{
-    GeoIpLocation, MetricsConfig, NodeIdentity, NodeListIdentity, NodeListItem, NodeListSnapshot,
-    NodeSnapshot, NodeStatus, OverviewData,
+    AlertRuleConfig, GeoIpLocation, InspectionConfig, MetricsConfig, NodeIdentity,
+    NodeListIdentity, NodeListItem, NodeListSnapshot, NodeSnapshot, NodeStatus, OverviewData,
 };
 
 use super::overview::{OverviewNode, build_overview_from_iter};
 use super::session_control::SessionControlHandle;
 use crate::ServerReadiness;
+use crate::alerts::{
+    AlertStatusView, EvaluatedRule, InspectionReport,
+    build_inspection_report as build_alert_inspection_report, evaluate_rules,
+};
 use crate::handlers::metrics_exporter::{PrometheusNode, render_prometheus_metrics_from_iter};
 
-#[derive(Debug, Default)]
+const REGISTRY_SHARD_COUNT: usize = 32;
+
+#[derive(Debug)]
 pub(super) struct Registry {
+    shards: Vec<RwLock<RegistryShard>>,
+}
+
+impl Default for Registry {
+    fn default() -> Self {
+        Self {
+            shards: (0..REGISTRY_SHARD_COUNT)
+                .map(|_| RwLock::new(RegistryShard::default()))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct RegistryShard {
     nodes: HashMap<String, NodeEntry>,
-    sorted_node_ids: Vec<String>,
 }
 
 /// 单节点的运行态条目。外部响应模型只在 API / snapshot 边界按需组装。
@@ -191,6 +215,36 @@ impl NodeEntry {
     }
 }
 
+impl AlertStatusView for NodeEntry {
+    fn node_id(&self) -> &str {
+        &self.identity.node_id
+    }
+
+    fn node_label(&self) -> &str {
+        &self.identity.node_label
+    }
+
+    fn tags(&self) -> &[String] {
+        &self.identity.tags
+    }
+
+    fn snapshot(&self) -> Option<&NodeSnapshot> {
+        self.snapshot.as_ref()
+    }
+
+    fn last_seen(&self) -> Option<DateTime<Utc>> {
+        self.last_seen
+    }
+
+    fn latency_ms(&self) -> Option<u64> {
+        self.latency_ms
+    }
+
+    fn online(&self) -> bool {
+        self.online
+    }
+}
+
 fn geoip_fields_from_location(
     geoip: Option<&GeoIpLocation>,
 ) -> (Option<String>, Option<String>, Option<f64>, Option<f64>) {
@@ -204,7 +258,7 @@ fn geoip_fields_from_location(
 
 impl Registry {
     pub(super) fn register_node(
-        &mut self,
+        &self,
         session_id: u64,
         identity: NodeIdentity,
         remote_ip: Option<String>,
@@ -213,7 +267,8 @@ impl Registry {
         now: DateTime<Utc>,
     ) {
         let node_id = identity.node_id.clone();
-        if let Some(entry) = self.nodes.get_mut(&node_id) {
+        let mut shard = write_lock(self.shard_for(&node_id));
+        if let Some(entry) = shard.nodes.get_mut(&node_id) {
             entry.register_session(
                 session_id,
                 identity,
@@ -223,8 +278,8 @@ impl Registry {
                 now,
             );
         } else {
-            self.nodes.insert(
-                node_id.clone(),
+            shard.nodes.insert(
+                node_id,
                 NodeEntry::new(
                     session_id,
                     identity,
@@ -234,19 +289,18 @@ impl Registry {
                     now,
                 ),
             );
-            self.sorted_node_ids.push(node_id);
         }
-        self.resort_node_ids();
     }
 
     pub(super) fn update_snapshot(
-        &mut self,
+        &self,
         node_id: &str,
         session_id: u64,
         snapshot: NodeSnapshot,
         now: DateTime<Utc>,
     ) -> Option<NodeStatus> {
-        let entry = self.nodes.get_mut(node_id)?;
+        let mut shard = write_lock(self.shard_for(node_id));
+        let entry = shard.nodes.get_mut(node_id)?;
         if entry.active_session_id != Some(session_id) {
             return None;
         }
@@ -258,13 +312,14 @@ impl Registry {
     }
 
     pub(super) fn update_latency(
-        &mut self,
+        &self,
         node_id: &str,
         session_id: u64,
         latency_ms: u64,
         now: DateTime<Utc>,
     ) -> bool {
-        let Some(entry) = self.nodes.get_mut(node_id) else {
+        let mut shard = write_lock(self.shard_for(node_id));
+        let Some(entry) = shard.nodes.get_mut(node_id) else {
             return false;
         };
         if entry.active_session_id != Some(session_id) {
@@ -277,8 +332,9 @@ impl Registry {
         true
     }
 
-    pub(super) fn mark_disconnected(&mut self, node_id: &str, session_id: u64) -> bool {
-        let Some(entry) = self.nodes.get_mut(node_id) else {
+    pub(super) fn mark_disconnected(&self, node_id: &str, session_id: u64) -> bool {
+        let mut shard = write_lock(self.shard_for(node_id));
+        let Some(entry) = shard.nodes.get_mut(node_id) else {
             return false;
         };
         if entry.active_session_id == Some(session_id) {
@@ -291,12 +347,13 @@ impl Registry {
     }
 
     pub(super) fn attach_session_control(
-        &mut self,
+        &self,
         node_id: &str,
         session_id: u64,
         control: SessionControlHandle,
     ) -> bool {
-        let Some(entry) = self.nodes.get_mut(node_id) else {
+        let mut shard = write_lock(self.shard_for(node_id));
+        let Some(entry) = shard.nodes.get_mut(node_id) else {
             return false;
         };
         if entry.active_session_id != Some(session_id) {
@@ -307,21 +364,24 @@ impl Registry {
         true
     }
 
-    pub(super) fn mark_stale(&mut self, threshold: Duration, now: DateTime<Utc>) -> usize {
+    pub(super) fn mark_stale(&self, threshold: Duration, now: DateTime<Utc>) -> usize {
         let mut marked = 0;
 
-        for entry in self.nodes.values_mut() {
-            let Some(last_seen) = entry.last_seen else {
-                continue;
-            };
-            let Ok(elapsed) = (now - last_seen).to_std() else {
-                continue;
-            };
-            if elapsed >= threshold && entry.online {
-                entry.online = false;
-                entry.active_session_id = None;
-                entry.control = None;
-                marked += 1;
+        for shard in &self.shards {
+            let mut shard = write_lock(shard);
+            for entry in shard.nodes.values_mut() {
+                let Some(last_seen) = entry.last_seen else {
+                    continue;
+                };
+                let Ok(elapsed) = (now - last_seen).to_std() else {
+                    continue;
+                };
+                if elapsed >= threshold && entry.online {
+                    entry.online = false;
+                    entry.active_session_id = None;
+                    entry.control = None;
+                    marked += 1;
+                }
             }
         }
 
@@ -329,55 +389,92 @@ impl Registry {
     }
 
     pub(super) fn is_current_session(&self, node_id: &str, session_id: u64) -> bool {
-        self.nodes
+        read_lock(self.shard_for(node_id))
+            .nodes
             .get(node_id)
             .and_then(|entry| entry.active_session_id)
             == Some(session_id)
     }
 
     pub(super) fn list_statuses(&self) -> Vec<NodeStatus> {
-        self.sorted_node_ids
-            .iter()
-            .filter_map(|node_id| self.nodes.get(node_id))
+        let shards = self.read_all_shards();
+        sorted_entries(&shards)
+            .into_iter()
             .map(NodeEntry::to_status)
             .collect()
     }
 
     pub(super) fn list_node_summaries(&self) -> Vec<NodeListItem> {
-        self.sorted_node_ids
-            .iter()
-            .filter_map(|node_id| self.nodes.get(node_id))
+        let shards = self.read_all_shards();
+        sorted_entries(&shards)
+            .into_iter()
             .map(NodeEntry::to_summary)
             .collect()
     }
 
+    pub(super) fn browser_view_with_revision<R>(
+        &self,
+        load_revision: impl FnOnce() -> R,
+    ) -> (Vec<NodeListItem>, OverviewData, R) {
+        let shards = self.read_all_shards();
+        let nodes = sorted_entries(&shards)
+            .into_iter()
+            .map(NodeEntry::to_summary)
+            .collect();
+        let overview = overview_from_shards(&shards);
+        let revision = load_revision();
+        (nodes, overview, revision)
+    }
+
+    pub(super) fn evaluate_alert_rules(
+        &self,
+        rules: &[AlertRuleConfig],
+        now: DateTime<Utc>,
+    ) -> Vec<EvaluatedRule> {
+        let shards = self.read_all_shards();
+        evaluate_rules(rules, sorted_entries(&shards), now)
+    }
+
+    pub(super) fn build_alert_inspection_report(
+        &self,
+        inspection: &InspectionConfig,
+        now: DateTime<Utc>,
+    ) -> InspectionReport {
+        let shards = self.read_all_shards();
+        build_alert_inspection_report(inspection, sorted_entries(&shards), now)
+    }
+
     pub(super) fn get_status(&self, node_id: &str) -> Option<NodeStatus> {
-        self.nodes.get(node_id).map(NodeEntry::to_status)
+        read_lock(self.shard_for(node_id))
+            .nodes
+            .get(node_id)
+            .map(NodeEntry::to_status)
     }
 
     pub(super) fn geoip_refresh_candidates(&self) -> Vec<(String, String)> {
-        self.sorted_node_ids
-            .iter()
-            .filter_map(|node_id| {
-                let entry = self.nodes.get(node_id)?;
+        let shards = self.read_all_shards();
+        sorted_entries(&shards)
+            .into_iter()
+            .filter_map(|entry| {
                 if !entry.online || entry.active_session_id.is_none() {
                     return None;
                 }
                 entry
                     .remote_ip
                     .as_ref()
-                    .map(|remote_ip| (node_id.clone(), remote_ip.clone()))
+                    .map(|remote_ip| (entry.identity.node_id.clone(), remote_ip.clone()))
             })
             .collect()
     }
 
     pub(super) fn update_geoip(
-        &mut self,
+        &self,
         node_id: &str,
         expected_remote_ip: &str,
         geoip: GeoIpLocation,
     ) -> bool {
-        let Some(entry) = self.nodes.get_mut(node_id) else {
+        let mut shard = write_lock(self.shard_for(node_id));
+        let Some(entry) = shard.nodes.get_mut(node_id) else {
             return false;
         };
         if entry.remote_ip.as_deref() != Some(expected_remote_ip) {
@@ -404,11 +501,12 @@ impl Registry {
     }
 
     pub(super) fn update_location_override(
-        &mut self,
+        &self,
         node_id: &str,
         location_override: Option<GeoIpLocation>,
     ) -> bool {
-        let Some(entry) = self.nodes.get_mut(node_id) else {
+        let mut shard = write_lock(self.shard_for(node_id));
+        let Some(entry) = shard.nodes.get_mut(node_id) else {
             return false;
         };
         let (
@@ -433,7 +531,8 @@ impl Registry {
     }
 
     pub(super) fn session_control(&self, node_id: &str) -> Option<SessionControlHandle> {
-        let entry = self.nodes.get(node_id)?;
+        let shard = read_lock(self.shard_for(node_id));
+        let entry = shard.nodes.get(node_id)?;
         if entry.active_session_id.is_none() || !entry.online {
             return None;
         }
@@ -441,7 +540,8 @@ impl Registry {
     }
 
     pub(super) fn overview(&self) -> OverviewData {
-        build_overview_from_iter(self.nodes.values().map(NodeEntry::overview_node))
+        let shards = self.read_all_shards();
+        overview_from_shards(&shards)
     }
 
     pub(super) fn render_metrics_body(
@@ -449,36 +549,72 @@ impl Registry {
         readiness: &ServerReadiness,
         metrics_config: MetricsConfig,
     ) -> String {
-        let overview = self.overview();
+        let shards = self.read_all_shards();
+        let overview = overview_from_shards(&shards);
+        let entries = sorted_entries(&shards);
         render_prometheus_metrics_from_iter(
             readiness,
-            self.sorted_node_ids
-                .iter()
-                .filter_map(|node_id| self.nodes.get(node_id))
-                .map(NodeEntry::prometheus_node),
+            entries.into_iter().map(NodeEntry::prometheus_node),
             &overview,
             metrics_config,
         )
     }
 
     pub(super) fn disk_entries_total(&self) -> u64 {
-        self.nodes
-            .values()
-            .filter_map(|entry| entry.snapshot.as_ref())
-            .map(|snapshot| snapshot.disks.len() as u64)
+        self.shards
+            .iter()
+            .map(|shard| {
+                read_lock(shard)
+                    .nodes
+                    .values()
+                    .filter_map(|entry| entry.snapshot.as_ref())
+                    .map(|snapshot| snapshot.disks.len() as u64)
+                    .sum::<u64>()
+            })
             .sum()
     }
 
-    pub(super) fn restore_statuses(&mut self, statuses: Vec<NodeStatus>) {
-        self.nodes.clear();
-        self.sorted_node_ids.clear();
+    pub(super) fn restore_statuses(&self, statuses: Vec<NodeStatus>) {
+        for shard in &self.shards {
+            write_lock(shard).nodes.clear();
+        }
         for status in statuses {
             let node_id = status.identity.node_id.clone();
-            self.nodes
-                .insert(node_id.clone(), NodeEntry::from_restored_status(status));
-            self.sorted_node_ids.push(node_id);
+            write_lock(self.shard_for(&node_id))
+                .nodes
+                .insert(node_id, NodeEntry::from_restored_status(status));
         }
-        self.resort_node_ids();
+    }
+
+    fn read_all_shards(&self) -> Vec<RwLockReadGuard<'_, RegistryShard>> {
+        self.shards.iter().map(read_lock).collect()
+    }
+
+    fn shard_for(&self, node_id: &str) -> &RwLock<RegistryShard> {
+        &self.shards[shard_index(node_id)]
+    }
+
+    #[cfg(test)]
+    pub(super) fn shard_index_for_test(node_id: &str) -> usize {
+        shard_index(node_id)
+    }
+
+    #[cfg(test)]
+    pub(super) fn shard_count_for_test() -> usize {
+        REGISTRY_SHARD_COUNT
+    }
+
+    #[cfg(test)]
+    pub(super) fn nodes_per_shard_for_test(&self) -> Vec<usize> {
+        self.shards
+            .iter()
+            .map(|shard| read_lock(shard).nodes.len())
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(super) fn shard_is_read_locked_for_test(&self, node_id: &str) -> bool {
+        self.shard_for(node_id).try_write().is_err()
     }
 
     #[cfg(test)]
@@ -504,19 +640,45 @@ impl Registry {
         let runtime = node_entry_heap_estimate(&NodeEntry::from_restored_status(status));
         (runtime, previous)
     }
+}
 
-    fn resort_node_ids(&mut self) {
-        self.sorted_node_ids.sort_by(|left_id, right_id| {
-            let (Some(left), Some(right)) = (self.nodes.get(left_id), self.nodes.get(right_id))
-            else {
-                return left_id.cmp(right_id);
-            };
-            left.identity
-                .node_label
-                .cmp(&right.identity.node_label)
-                .then_with(|| left.identity.node_id.cmp(&right.identity.node_id))
-        });
-    }
+fn sorted_entries<'a>(shards: &'a [RwLockReadGuard<'_, RegistryShard>]) -> Vec<&'a NodeEntry> {
+    let mut entries = shards
+        .iter()
+        .flat_map(|shard| shard.nodes.values())
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| compare_node_entries(left, right));
+    entries
+}
+
+fn compare_node_entries(left: &NodeEntry, right: &NodeEntry) -> Ordering {
+    left.identity
+        .node_label
+        .cmp(&right.identity.node_label)
+        .then_with(|| left.identity.node_id.cmp(&right.identity.node_id))
+}
+
+fn overview_from_shards(shards: &[RwLockReadGuard<'_, RegistryShard>]) -> OverviewData {
+    build_overview_from_iter(
+        shards
+            .iter()
+            .flat_map(|shard| shard.nodes.values().map(NodeEntry::overview_node)),
+    )
+}
+
+fn shard_index(node_id: &str) -> usize {
+    let mut hasher = DefaultHasher::new();
+    node_id.hash(&mut hasher);
+    (hasher.finish() as usize) % REGISTRY_SHARD_COUNT
+}
+
+fn read_lock<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn write_lock<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
+    lock.write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg(test)]

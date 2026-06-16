@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn overview_saturates_totals_and_skips_invalid_rates() {
-    let mut registry = Registry::default();
+    let registry = Registry::default();
     let now = Utc
         .with_ymd_and_hms(2026, 5, 7, 0, 0, 0)
         .single()
@@ -52,7 +52,7 @@ fn overview_saturates_totals_and_skips_invalid_rates() {
 
 #[test]
 fn overview_avoids_overflow_when_summing_latency() {
-    let mut registry = Registry::default();
+    let registry = Registry::default();
     let now = Utc
         .with_ymd_and_hms(2026, 5, 7, 0, 0, 0)
         .single()

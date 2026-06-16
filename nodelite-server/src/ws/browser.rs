@@ -5,30 +5,26 @@
 //!   1. 准入:每 IP 并发上限(RAII permit,与 agent 连接各自计数);
 //!   2. 升级为 WebSocket;
 //!   3. 立即下发全量 `InitialState`;
-//!   4. 订阅 `SharedState` 脏信号,去抖(≤1/秒)后重算节点列表、与上次发送的
-//!      快照做 diff,发出 `NodeUpsert` / `NodeRemoved` 增量 + `OverviewUpdate`;
+//!   4. 订阅集中 diff 任务广播的增量消息(`Arc<BrowserMessage>`),直接转发
+//!      (零锁、零 diff);落后时(`Lagged`)重发全量 `InitialState` 强制重同步;
 //!   5. 处理客户端应用层 `Ping`(回 `Pong`);
 //!   6. 连接关闭时 RAII permit 自动归还配额、广播订阅自动退订。
 //!
-//! 增量(而非全量)是带宽收益的来源:单节点变化只发该节点一行。服务端用
-//! "重算 + diff" 推导出变化行 —— 既无需注册表暴露细粒度变更钩子,也天然覆盖
-//! 节点移除(diff 发现某 id 消失即发 `NodeRemoved`)。
+//! 增量(而非全量)是带宽收益的来源:单节点变化只发该节点一行。服务端用集中任务
+//! "重算 + diff" 推导出变化行并广播给所有会话 —— 既无需注册表暴露细粒度变更钩子,
+//! 也天然覆盖节点移除(diff 发现某 id 消失即发 `NodeRemoved`)。
 
-use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use std::time::Duration;
 
 use anyhow::anyhow;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
-use chrono::Utc;
 use futures::stream::SplitSink;
 use futures::{SinkExt, StreamExt};
-use nodelite_proto::{BrowserMessage, NodeListItem};
+use nodelite_proto::BrowserMessage;
 use tokio::sync::broadcast;
-use tokio::time::{MissedTickBehavior, interval};
 use tracing::warn;
 
 use crate::AppState;
@@ -36,9 +32,6 @@ use crate::admission::{resolve_client_ip, ws_admission_error_response};
 use crate::state::SharedState;
 
 type BrowserSink = SplitSink<WebSocket, Message>;
-
-/// 浏览器视图增量去抖间隔:脏信号到达后最多每秒重算一次并发出增量。
-const BROWSER_PUSH_DEBOUNCE: Duration = Duration::from_secs(1);
 
 /// `/ws/browser` 入口。认证已由 `require_readonly_auth` 中间件完成;这里只做
 /// 并发准入(每 IP 上限)与协议升级。
@@ -70,16 +63,11 @@ pub async fn ws_browser_handler(
 /// 单个浏览器会话主循环。
 async fn run_browser_session(shared: SharedState, socket: WebSocket) -> anyhow::Result<()> {
     let (mut sender, mut receiver) = socket.split();
-    let mut updates = shared.subscribe_browser_updates();
 
-    // 1. 立即发送全量 InitialState,并记录"上次发送的快照"用于后续 diff。
-    let mut last_nodes = send_initial_state(&shared, &mut sender).await?;
-
-    // 2. 去抖计时器:脏信号只置 `dirty`,真正的重算 + 发送推迟到下一次 tick。
-    //    `interval` 首个 tick 立即触发,此时 dirty=false 是无害空转。
-    let mut debounce = interval(BROWSER_PUSH_DEBOUNCE);
-    debounce.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    let mut dirty = false;
+    // 1. 先订阅增量流,再发 InitialState 并记录其 revision baseline。
+    //    已排队但不晚于该 baseline 的增量会被丢弃,避免旧 diff 覆盖新快照。
+    let mut incremental_rx = shared.subscribe_browser_incremental();
+    let mut baseline_revision = send_initial_state(&shared, &mut sender).await?;
 
     loop {
         tokio::select! {
@@ -94,21 +82,19 @@ async fn run_browser_session(shared: SharedState, socket: WebSocket) -> anyhow::
                     }
                 }
             }
-            recv = updates.recv() => {
-                match recv {
-                    Ok(_) => dirty = true,
+            incremental = incremental_rx.recv() => {
+                match incremental {
+                    Ok(update) => {
+                        // 集中任务已计算好的增量消息,直接转发(零锁、零 diff)
+                        if should_forward_incremental(update.revision, baseline_revision) {
+                            send_browser_message(&mut sender, &update.message).await?;
+                        }
+                    }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
-                        // 落后丢信号:客户端状态可能不一致 → 重发全量 InitialState 强制重同步。
-                        last_nodes = send_initial_state(&shared, &mut sender).await?;
-                        dirty = false;
+                        // 落后丢消息:客户端状态可能不一致 → 重发 InitialState 强制重同步
+                        baseline_revision = send_initial_state(&shared, &mut sender).await?;
                     }
                     Err(broadcast::error::RecvError::Closed) => return Ok(()),
-                }
-            }
-            _ = debounce.tick() => {
-                if dirty {
-                    dirty = false;
-                    push_incremental_updates(&shared, &mut sender, &mut last_nodes).await?;
                 }
             }
         }
@@ -155,100 +141,20 @@ async fn handle_client_message(sender: &mut BrowserSink, message: Message) -> an
     }
 }
 
-/// 发送全量 `InitialState`,返回按 `node_id` 索引的"已发送快照",供后续 diff。
-async fn send_initial_state(
-    shared: &SharedState,
-    sender: &mut BrowserSink,
-) -> anyhow::Result<HashMap<String, NodeListItem>> {
-    let nodes = shared.list_node_summaries().await;
-    let overview = shared.overview_snapshot().await;
+/// 发送全量 `InitialState`。连接建立或 Lagged 重同步时调用。
+async fn send_initial_state(shared: &SharedState, sender: &mut BrowserSink) -> anyhow::Result<u64> {
+    let snapshot = shared.browser_snapshot().await;
     let message = BrowserMessage::InitialState {
-        generated_at: Utc::now(),
-        overview,
-        nodes: nodes.clone(),
+        generated_at: snapshot.generated_at,
+        overview: snapshot.overview,
+        nodes: snapshot.nodes,
     };
     send_browser_message(sender, &message).await?;
-    Ok(index_by_node_id(nodes))
+    Ok(snapshot.revision)
 }
 
-/// 一次重算相对上次发送快照的增量:新增/变更的行 + 消失的行 id。
-struct NodeListDiff<'a> {
-    upserts: Vec<&'a NodeListItem>,
-    removed: Vec<String>,
-}
-
-/// 与上次发送的快照逐行对比:内容不同(或新出现)的行进 `upserts`,
-/// 上次有、这次没有的 id 进 `removed`。行内容未变时不产生任何输出。
-fn diff_node_lists<'a>(
-    last_nodes: &HashMap<String, NodeListItem>,
-    current: &'a [NodeListItem],
-) -> NodeListDiff<'a> {
-    let mut seen: HashSet<&str> = HashSet::with_capacity(current.len());
-    let mut upserts = Vec::new();
-    for node in current {
-        seen.insert(node.identity.node_id.as_str());
-        if last_nodes.get(&node.identity.node_id) != Some(node) {
-            upserts.push(node);
-        }
-    }
-    let removed = last_nodes
-        .keys()
-        .filter(|id| !seen.contains(id.as_str()))
-        .cloned()
-        .collect();
-    NodeListDiff { upserts, removed }
-}
-
-/// 重算当前节点列表,与上次发送的快照 diff,发出增量 + 概览更新。
-async fn push_incremental_updates(
-    shared: &SharedState,
-    sender: &mut BrowserSink,
-    last_nodes: &mut HashMap<String, NodeListItem>,
-) -> anyhow::Result<()> {
-    let current = shared.list_node_summaries().await;
-    let generated_at = Utc::now();
-
-    let NodeListDiff { upserts, removed } = diff_node_lists(last_nodes, &current);
-    for node in upserts {
-        send_browser_message(
-            sender,
-            &BrowserMessage::NodeUpsert {
-                generated_at,
-                node: Box::new(node.clone()),
-            },
-        )
-        .await?;
-    }
-    for node_id in removed {
-        send_browser_message(
-            sender,
-            &BrowserMessage::NodeRemoved {
-                generated_at,
-                node_id,
-            },
-        )
-        .await?;
-    }
-
-    *last_nodes = index_by_node_id(current);
-
-    // 概览聚合每次脏 tick 重算一次(已被去抖到 ≤1/秒),惰性计算避免高频重算。
-    let overview = shared.overview_snapshot().await;
-    send_browser_message(
-        sender,
-        &BrowserMessage::OverviewUpdate {
-            generated_at,
-            overview,
-        },
-    )
-    .await
-}
-
-fn index_by_node_id(nodes: Vec<NodeListItem>) -> HashMap<String, NodeListItem> {
-    nodes
-        .into_iter()
-        .map(|node| (node.identity.node_id.clone(), node))
-        .collect()
+fn should_forward_incremental(update_revision: u64, baseline_revision: u64) -> bool {
+    update_revision > baseline_revision
 }
 
 async fn send_browser_message(
@@ -265,9 +171,46 @@ async fn send_browser_message(
 
 #[cfg(test)]
 mod tests {
-    use nodelite_proto::NodeListIdentity;
+    use std::collections::{HashMap, HashSet};
+
+    use nodelite_proto::{NodeListIdentity, NodeListItem};
 
     use super::*;
+
+    /// 一次重算相对上次发送快照的增量:新增/变更的行 + 消失的行 id。
+    struct NodeListDiff<'a> {
+        upserts: Vec<&'a NodeListItem>,
+        removed: Vec<String>,
+    }
+
+    /// 与上次发送的快照逐行对比:内容不同(或新出现)的行进 `upserts`,
+    /// 上次有、这次没有的 id 进 `removed`。行内容未变时不产生任何输出。
+    fn diff_node_lists<'a>(
+        last_nodes: &HashMap<String, NodeListItem>,
+        current: &'a [NodeListItem],
+    ) -> NodeListDiff<'a> {
+        let mut seen: HashSet<&str> = HashSet::with_capacity(current.len());
+        let mut upserts = Vec::new();
+        for node in current {
+            seen.insert(node.identity.node_id.as_str());
+            if last_nodes.get(&node.identity.node_id) != Some(node) {
+                upserts.push(node);
+            }
+        }
+        let removed = last_nodes
+            .keys()
+            .filter(|id| !seen.contains(id.as_str()))
+            .cloned()
+            .collect();
+        NodeListDiff { upserts, removed }
+    }
+
+    fn index_by_node_id(nodes: Vec<NodeListItem>) -> HashMap<String, NodeListItem> {
+        nodes
+            .into_iter()
+            .map(|node| (node.identity.node_id.clone(), node))
+            .collect()
+    }
 
     fn list_item(node_id: &str) -> NodeListItem {
         NodeListItem {
@@ -376,6 +319,13 @@ mod tests {
         assert_eq!(indexed.len(), 2);
         assert_eq!(indexed["hk-01"].identity.node_id, "hk-01");
         assert_eq!(indexed["jp-01"].identity.node_id, "jp-01");
+    }
+
+    #[test]
+    fn drops_incremental_messages_at_or_before_initial_state_revision() {
+        assert!(!should_forward_incremental(41, 42));
+        assert!(!should_forward_incremental(42, 42));
+        assert!(should_forward_incremental(43, 42));
     }
 
     #[test]
