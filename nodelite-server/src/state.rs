@@ -23,7 +23,7 @@ use axum::body::Bytes;
 use chrono::{DateTime, Utc};
 use nodelite_proto::{
     AlertRuleConfig, BrowserMessage, GeoIpLocation, InspectionConfig, NodeIdentity, NodeListItem,
-    NodeSnapshot, NodeStatus, OverviewData, ServerConfig,
+    NodeListItemView, NodeSnapshot, NodeStatus, OverviewData, ServerConfig,
 };
 use tokio::sync::{Mutex, broadcast, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -257,8 +257,13 @@ impl SharedState {
         self.registry.list_statuses()
     }
 
+    #[cfg(test)]
     pub async fn list_node_summaries(&self) -> Vec<NodeListItem> {
         self.registry.list_node_summaries()
+    }
+
+    pub async fn list_node_summaries_view(&self) -> Vec<NodeListItemView> {
+        self.registry.list_node_summaries_view()
     }
 
     pub(crate) async fn evaluate_alert_rules(
@@ -585,7 +590,7 @@ impl SharedState {
 
         let body = match kind {
             ApiBodyKind::Nodes => {
-                let summaries = self.list_node_summaries().await;
+                let summaries = self.list_node_summaries_view().await;
                 Bytes::from(serde_json::to_vec(&summaries)?)
             }
             ApiBodyKind::Overview => {
