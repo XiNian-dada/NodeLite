@@ -21,16 +21,41 @@ const MAX_REGISTRY_WRITE_RETRIES: usize = 32;
 pub(super) const MAX_REGISTRY_FILE_BYTES: u64 = 4 * 1024 * 1024;
 
 #[cfg(test)]
-static REGISTRY_FILE_READS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+type RegistryFileReadCounts = std::collections::HashMap<std::path::PathBuf, u64>;
 
 #[cfg(test)]
-pub(super) fn reset_registry_file_read_count() {
-    REGISTRY_FILE_READS.store(0, std::sync::atomic::Ordering::Relaxed);
+static REGISTRY_FILE_READS: std::sync::OnceLock<std::sync::Mutex<RegistryFileReadCounts>> =
+    std::sync::OnceLock::new();
+
+#[cfg(test)]
+fn registry_file_reads() -> &'static std::sync::Mutex<RegistryFileReadCounts> {
+    REGISTRY_FILE_READS.get_or_init(|| std::sync::Mutex::new(RegistryFileReadCounts::new()))
 }
 
 #[cfg(test)]
-pub(super) fn registry_file_read_count() -> u64 {
-    REGISTRY_FILE_READS.load(std::sync::atomic::Ordering::Relaxed)
+pub(super) fn reset_registry_file_read_count(path: &Path) {
+    registry_file_reads()
+        .lock()
+        .expect("registry read count mutex should not be poisoned")
+        .remove(path);
+}
+
+#[cfg(test)]
+pub(super) fn registry_file_read_count(path: &Path) -> u64 {
+    registry_file_reads()
+        .lock()
+        .expect("registry read count mutex should not be poisoned")
+        .get(path)
+        .copied()
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+fn record_registry_file_read(path: &Path) {
+    let mut counts = registry_file_reads()
+        .lock()
+        .expect("registry read count mutex should not be poisoned");
+    *counts.entry(path.to_path_buf()).or_default() += 1;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,7 +141,7 @@ async fn load_registry_file(path: &Path) -> RegistryResult<RegistryFile> {
         Err(error) => return Err(RegistryError::io("reading", path, error)),
     };
     #[cfg(test)]
-    REGISTRY_FILE_READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    record_registry_file_read(path);
 
     let file: RegistryFile =
         serde_json::from_str(&content).map_err(|error| RegistryError::parse(path, error))?;

@@ -99,7 +99,7 @@ fn registry_reload_skips_full_read_when_metadata_is_unchanged() {
             .await
             .expect("registry should load");
 
-        reset_registry_file_read_count();
+        reset_registry_file_read_count(&path);
         assert!(
             !registry
                 .reload_if_file_changed()
@@ -107,7 +107,7 @@ fn registry_reload_skips_full_read_when_metadata_is_unchanged() {
                 .expect("unchanged registry should skip reload")
         );
         assert_eq!(
-            registry_file_read_count(),
+            registry_file_read_count(&path),
             0,
             "unchanged metadata should avoid full JSON reads",
         );
@@ -160,7 +160,7 @@ fn registry_reload_if_file_changed_picks_up_external_changes() {
         .await
         .expect("node token should rotate");
 
-        reset_registry_file_read_count();
+        reset_registry_file_read_count(&path);
         assert!(
             registry
                 .reload_if_file_changed()
@@ -168,7 +168,7 @@ fn registry_reload_if_file_changed_picks_up_external_changes() {
                 .expect("changed registry should reload")
         );
         assert!(
-            registry_file_read_count() > 0,
+            registry_file_read_count(&path) > 0,
             "changed metadata should trigger a full JSON read",
         );
         assert!(

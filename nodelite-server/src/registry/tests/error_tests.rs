@@ -42,7 +42,7 @@ async fn registry_load_rejects_oversized_files_before_reading_json() {
     file.set_len(MAX_REGISTRY_FILE_BYTES + 1)
         .expect("registry fixture should be expanded");
 
-    reset_registry_file_read_count();
+    reset_registry_file_read_count(&path);
     let error = NodeRegistry::load(&path)
         .await
         .expect_err("oversized registry files should fail before JSON parsing");
@@ -61,7 +61,7 @@ async fn registry_load_rejects_oversized_files_before_reading_json() {
         "unexpected error: {error:?}"
     );
     assert_eq!(
-        registry_file_read_count(),
+        registry_file_read_count(&path),
         0,
         "oversized registry files should be rejected before read_to_string"
     );
