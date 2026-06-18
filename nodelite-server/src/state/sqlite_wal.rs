@@ -8,7 +8,7 @@ use nodelite_proto::ServerConfig;
 use rusqlite::{Connection, OpenFlags};
 use tokio::sync::Mutex;
 
-use crate::handlers::metrics_exporter::{SqliteWalCheckpointMetrics, SqliteWalCheckpointStats};
+use crate::handlers::metrics_routes::{SqliteWalCheckpointMetrics, SqliteWalCheckpointStats};
 
 const SQLITE_WAL_CHECKPOINT_METRICS_TTL: Duration = Duration::from_secs(60);
 const SQLITE_WAL_CHECKPOINT_BUSY_TIMEOUT: Duration = Duration::from_millis(100);

@@ -47,7 +47,7 @@ enum ApiBodyKind {
 const OVERVIEW_CACHE_MAX_STALE: Duration = Duration::from_secs(1);
 use crate::ServerReadiness;
 use crate::alerts::{EvaluatedRule, InspectionReport};
-use crate::handlers::metrics_exporter::{
+use crate::handlers::metrics_routes::{
     ApiCacheMetrics, SqliteWalCheckpointMetrics, WsMessageMetrics,
 };
 

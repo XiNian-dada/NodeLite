@@ -23,7 +23,7 @@ use crate::alerts::{
     AlertStatusView, EvaluatedRule, InspectionReport,
     build_inspection_report as build_alert_inspection_report, evaluate_rules,
 };
-use crate::handlers::metrics_exporter::{PrometheusNode, render_prometheus_metrics_from_iter};
+use crate::handlers::metrics_routes::{PrometheusNode, render_prometheus_metrics_from_iter};
 
 const REGISTRY_SHARD_COUNT: usize = 32;
 

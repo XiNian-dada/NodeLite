@@ -11,7 +11,7 @@ use tracing::error;
 
 use crate::AppState;
 use crate::audit::{AuditEventType, AuditLogError, AuditQuery};
-use crate::handlers::metrics_exporter::{
+use crate::handlers::metrics_routes::{
     RuntimeMetrics, WriterMetrics, render_agent_log_metrics, render_api_cache_metrics,
     render_metrics_response_body_bytes, render_runtime_metrics, render_writer_metrics,
 };
