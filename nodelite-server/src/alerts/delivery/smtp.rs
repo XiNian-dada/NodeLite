@@ -23,9 +23,7 @@ pub(super) async fn send_alert_event(
     event: &AlertEvent,
 ) -> Result<(), AlertDeliveryError> {
     let message = build_alert_message(config, event)?;
-    timeout(SMTP_TIMEOUT, send_smtp_inner(config, message))
-        .await
-        .map_err(|_| AlertDeliveryError::SmtpTimeout)?
+    send_smtp_with_timeout(config, message, SMTP_TIMEOUT).await
 }
 
 pub(super) async fn send_inspection_summary(
@@ -33,7 +31,15 @@ pub(super) async fn send_inspection_summary(
     summary: &InspectionSummary<'_>,
 ) -> Result<(), AlertDeliveryError> {
     let message = build_inspection_message(config, summary)?;
-    timeout(SMTP_TIMEOUT, send_smtp_inner(config, message))
+    send_smtp_with_timeout(config, message, SMTP_TIMEOUT).await
+}
+
+async fn send_smtp_with_timeout(
+    config: &AlertSmtpConfig,
+    message: String,
+    delivery_timeout: Duration,
+) -> Result<(), AlertDeliveryError> {
+    timeout(delivery_timeout, send_smtp_inner(config, message))
         .await
         .map_err(|_| AlertDeliveryError::SmtpTimeout)?
 }
@@ -106,9 +112,41 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let password = config.password.as_deref().unwrap_or_default();
-    let payload = STANDARD.encode(format!("\0{}\0{password}", config.username));
-    send_command(stream, &format!("AUTH PLAIN {payload}")).await?;
+    let mut raw_auth = auth_plain_bytes(&config.username, password);
+    let mut payload = encode_auth_plain_payload(&mut raw_auth);
+    let send_result = send_auth_plain_command(stream, &payload).await;
+    payload.fill(0);
+    send_result?;
     expect_response(stream, &[235]).await
+}
+
+fn auth_plain_bytes(username: &str, password: &str) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(username.len() + password.len() + 2);
+    bytes.push(0);
+    bytes.extend_from_slice(username.as_bytes());
+    bytes.push(0);
+    bytes.extend_from_slice(password.as_bytes());
+    bytes
+}
+
+fn encode_auth_plain_payload(raw_auth: &mut [u8]) -> Vec<u8> {
+    let payload = STANDARD.encode(&raw_auth[..]).into_bytes();
+    raw_auth.fill(0);
+    payload
+}
+
+async fn send_auth_plain_command<S>(
+    stream: &mut S,
+    payload: &[u8],
+) -> Result<(), AlertDeliveryError>
+where
+    S: AsyncWrite + Unpin,
+{
+    stream.write_all(b"AUTH PLAIN ").await?;
+    stream.write_all(payload).await?;
+    stream.write_all(b"\r\n").await?;
+    stream.flush().await?;
+    Ok(())
 }
 
 async fn send_ehlo<S>(stream: &mut S) -> Result<(), AlertDeliveryError>
@@ -474,6 +512,7 @@ fn dot_stuff(message: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
     use chrono::Utc;
     use nodelite_proto::{
         AlertChannel, AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode, AlertSeverity,
@@ -483,7 +522,8 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::{
-        SMTP_TIMEOUT, build_alert_message, build_inspection_message, dot_stuff, send_alert_event,
+        auth_plain_bytes, build_alert_message, build_inspection_message, dot_stuff,
+        encode_auth_plain_payload, send_alert_event, send_smtp_with_timeout,
     };
     use crate::alerts::delivery::AlertDeliveryError;
     use crate::alerts::evaluator::InspectionHighlight;
@@ -533,6 +573,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn send_smtp_uses_compatible_auth_plain_payload() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("listener should expose addr");
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.expect("smtp client should connect");
+            run_fake_smtp(socket).await
+        });
+        let mut config = smtp_config(addr.port());
+        config.username = "ops@example.com".to_string();
+        config.password = Some("smtp-secret".to_string());
+        let expected_payload = STANDARD.encode(b"\0ops@example.com\0smtp-secret");
+
+        send_alert_event(&config, &sample_event())
+            .await
+            .expect("authenticated smtp should send");
+        let session = server.await.expect("fake smtp should join");
+
+        assert!(
+            session
+                .commands
+                .iter()
+                .any(|line| line == &format!("AUTH PLAIN {expected_payload}"))
+        );
+    }
+
+    #[test]
+    fn auth_plain_payload_matches_smtp_format_and_clears_raw_buffer() {
+        let mut raw_auth = auth_plain_bytes("ops@example.com", "smtp-secret");
+
+        let payload = encode_auth_plain_payload(&mut raw_auth);
+
+        let decoded = STANDARD
+            .decode(&payload)
+            .expect("auth payload should decode");
+        assert_eq!(decoded, b"\0ops@example.com\0smtp-secret");
+        assert!(raw_auth.iter().all(|byte| *byte == 0));
+    }
+
+    #[tokio::test]
     async fn send_smtp_reports_protocol_error() {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -557,7 +638,7 @@ mod tests {
         );
     }
 
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn send_smtp_times_out_waiting_for_greeting() {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -573,15 +654,18 @@ mod tests {
             std::future::pending::<()>().await;
         });
         let config = smtp_config(addr.port());
-        let delivery =
-            tokio::spawn(async move { send_alert_event(&config, &sample_event()).await });
+        let message = build_alert_message(&config, &sample_event()).expect("message should build");
+        let delivery = tokio::spawn(async move {
+            send_smtp_with_timeout(&config, message, std::time::Duration::from_millis(50)).await
+        });
 
-        accepted_rx
+        tokio::time::timeout(std::time::Duration::from_secs(1), accepted_rx)
             .await
+            .expect("smtp server should accept connection promptly")
             .expect("smtp server should accept connection");
-        tokio::time::advance(SMTP_TIMEOUT + std::time::Duration::from_millis(1)).await;
-        let error = delivery
+        let error = tokio::time::timeout(std::time::Duration::from_secs(1), delivery)
             .await
+            .expect("delivery should finish after timeout")
             .expect("delivery task should join")
             .expect_err("smtp greeting should time out");
         server.abort();
@@ -661,6 +745,11 @@ mod tests {
                     .write_all(b"250-fake.smtp\r\n250 AUTH PLAIN\r\n")
                     .await
                     .expect("ehlo response should write");
+            } else if command.starts_with("AUTH PLAIN ") {
+                write_half
+                    .write_all(b"235 2.7.0 Authentication successful\r\n")
+                    .await
+                    .expect("auth response should write");
             } else if command.starts_with("MAIL FROM:") || command.starts_with("RCPT TO:") {
                 write_half
                     .write_all(b"250 OK\r\n")
