@@ -72,6 +72,7 @@ const title = computed(
   () => node.value?.identity.node_label || node.value?.identity.node_id || nodeId.value,
 );
 const ip = computed(() => (node.value ? ipFromNode(node.value) : null));
+const ipRevealed = ref(false);
 const location = computed(() => (node.value ? locationFromNode(node.value) : null));
 const isLan = computed(() =>
   node.value ? effectiveGeoLocation(node.value).country === 'LAN' : false,
@@ -210,9 +211,13 @@ const modalConfig = computed(() => {
           {{ $t(statusLabelKey) }}
         </span>
         <div class="node-title__meta" data-test="node-meta">
-          <span v-if="ip"
-            >{{ $t('node.meta.ip', { ip }) }}<template v-if="isLan"> (LAN)</template></span
-          >
+          <span
+            v-if="ip"
+            class="node-ip-toggle"
+            :title="$t(ipRevealed ? 'node.meta.ip_hide' : 'node.meta.ip_reveal')"
+            data-test="node-ip-toggle"
+            @click="ipRevealed = !ipRevealed"
+          >IP: <span class="node-ip-value" :class="{ 'node-ip-value--revealed': ipRevealed }">{{ ip }}</span><template v-if="isLan"> (LAN)</template></span>
           <span v-if="location && !isLan">{{ location }}</span>
           <span v-if="uptime && uptime.days > 0">{{
             $t('node.meta.uptime_days', { days: uptime.days })
@@ -317,6 +322,19 @@ const modalConfig = computed(() => {
   color: var(--text-muted);
   font-size: 13px;
   width: 100%;
+}
+.node-ip-toggle {
+  cursor: pointer;
+}
+.node-ip-value {
+  display: inline-block;
+  filter: blur(4px);
+  user-select: none;
+  transition: filter 0.2s ease;
+}
+.node-ip-value--revealed {
+  filter: none;
+  user-select: text;
 }
 .badge {
   display: inline-flex;
