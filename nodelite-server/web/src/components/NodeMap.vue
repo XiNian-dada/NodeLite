@@ -17,11 +17,22 @@ const { t } = useI18n();
 const canvas = ref<HTMLCanvasElement | null>(null);
 const activeDotId = ref<string | null>(null);
 
-const dots = computed(() =>
-  nodesStore.nodes.map((node) => {
+const CROWD_THRESHOLD = 3;
+
+const dots = computed(() => {
+  const positions = nodesStore.nodes.map((node) => {
     const pos = nodePosition(node);
-    const x = pos.x * 100;
-    const y = pos.y * 100;
+    return { x: pos.x * 100, y: pos.y * 100 };
+  });
+
+  return nodesStore.nodes.map((node, i) => {
+    const { x, y } = positions[i]!;
+    const crowded = positions.some(
+      (other, j) =>
+        j !== i &&
+        Math.abs(other.x - x) < CROWD_THRESHOLD &&
+        Math.abs(other.y - y) < CROWD_THRESHOLD,
+    );
     return {
       id: node.identity.node_id,
       label: node.identity.node_label || node.identity.node_id,
@@ -34,9 +45,10 @@ const dots = computed(() =>
       top: `${y.toFixed(2)}%`,
       edgeX: x > 72 ? 'right' : x < 28 ? 'left' : 'center',
       edgeY: y < 28 ? 'bottom' : 'top',
+      crowded,
     };
-  }),
-);
+  });
+});
 
 const activeDot = computed(() => dots.value.find((dot) => dot.id === activeDotId.value) ?? null);
 
@@ -107,7 +119,7 @@ watch([geojson, theme], repaint);
           v-for="dot in dots"
           :key="dot.id"
           class="map-dot"
-          :class="dot.status"
+          :class="[dot.status, { 'map-dot--small': dot.crowded }]"
           :style="{ left: dot.left, top: dot.top }"
           :title="dot.label"
           tabindex="0"
@@ -242,6 +254,27 @@ watch([geojson, theme], repaint);
   box-shadow:
     0 0 0 3px var(--map-dot-ring),
     0 0 18px currentColor;
+}
+.map-dot--small {
+  width: 4px;
+  height: 4px;
+  box-shadow:
+    0 0 0 2px var(--map-dot-ring),
+    0 0 12px currentColor;
+}
+.map-dot--small::after {
+  inset: -3px;
+  animation-name: dotPulseSmall;
+}
+@keyframes dotPulseSmall {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.35;
+  }
+  100% {
+    transform: scale(1.3);
+    opacity: 0;
+  }
 }
 .map-dot:hover,
 .map-dot:focus-visible {
