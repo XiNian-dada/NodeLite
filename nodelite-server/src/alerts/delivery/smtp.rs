@@ -1,4 +1,6 @@
 use std::sync::Arc;
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -23,9 +25,7 @@ pub(super) async fn send_alert_event(
     event: &AlertEvent,
 ) -> Result<(), AlertDeliveryError> {
     let message = build_alert_message(config, event)?;
-    timeout(SMTP_TIMEOUT, send_smtp_inner(config, message))
-        .await
-        .map_err(|_| AlertDeliveryError::SmtpTimeout)?
+    send_smtp_with_timeout(config, message, SMTP_TIMEOUT).await
 }
 
 pub(super) async fn send_inspection_summary(
@@ -33,7 +33,15 @@ pub(super) async fn send_inspection_summary(
     summary: &InspectionSummary<'_>,
 ) -> Result<(), AlertDeliveryError> {
     let message = build_inspection_message(config, summary)?;
-    timeout(SMTP_TIMEOUT, send_smtp_inner(config, message))
+    send_smtp_with_timeout(config, message, SMTP_TIMEOUT).await
+}
+
+async fn send_smtp_with_timeout(
+    config: &AlertSmtpConfig,
+    message: String,
+    delivery_timeout: Duration,
+) -> Result<(), AlertDeliveryError> {
+    timeout(delivery_timeout, send_smtp_inner(config, message))
         .await
         .map_err(|_| AlertDeliveryError::SmtpTimeout)?
 }
@@ -106,9 +114,77 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let password = config.password.as_deref().unwrap_or_default();
-    let payload = STANDARD.encode(format!("\0{}\0{password}", config.username));
-    send_command(stream, &format!("AUTH PLAIN {payload}")).await?;
+    let mut raw_auth = auth_plain_bytes(&config.username, password);
+    let payload = encode_auth_plain_payload(&mut raw_auth);
+    let send_result = send_auth_plain_command(stream, payload.as_slice()).await;
+    drop(payload);
+    send_result?;
     expect_response(stream, &[235]).await
+}
+
+fn auth_plain_bytes(username: &str, password: &str) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(username.len() + password.len() + 2);
+    bytes.push(0);
+    bytes.extend_from_slice(username.as_bytes());
+    bytes.push(0);
+    bytes.extend_from_slice(password.as_bytes());
+    bytes
+}
+
+fn encode_auth_plain_payload(raw_auth: &mut [u8]) -> AuthPlainPayload {
+    let payload = STANDARD.encode(&raw_auth[..]).into_bytes();
+    raw_auth.fill(0);
+    AuthPlainPayload::new(payload)
+}
+
+struct AuthPlainPayload {
+    bytes: Vec<u8>,
+    #[cfg(test)]
+    drop_marker: Option<Arc<AtomicBool>>,
+}
+
+impl AuthPlainPayload {
+    fn new(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            #[cfg(test)]
+            drop_marker: None,
+        }
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    #[cfg(test)]
+    fn with_drop_marker(mut self, marker: Arc<AtomicBool>) -> Self {
+        self.drop_marker = Some(marker);
+        self
+    }
+}
+
+impl Drop for AuthPlainPayload {
+    fn drop(&mut self) {
+        self.bytes.fill(0);
+        #[cfg(test)]
+        if let Some(marker) = &self.drop_marker {
+            marker.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
+async fn send_auth_plain_command<S>(
+    stream: &mut S,
+    payload: &[u8],
+) -> Result<(), AlertDeliveryError>
+where
+    S: AsyncWrite + Unpin,
+{
+    stream.write_all(b"AUTH PLAIN ").await?;
+    stream.write_all(payload).await?;
+    stream.write_all(b"\r\n").await?;
+    stream.flush().await?;
+    Ok(())
 }
 
 async fn send_ehlo<S>(stream: &mut S) -> Result<(), AlertDeliveryError>
@@ -473,282 +549,4 @@ fn dot_stuff(message: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use chrono::Utc;
-    use nodelite_proto::{
-        AlertChannel, AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode, AlertSeverity,
-        AlertSmtpConfig, AlertSmtpTransport,
-    };
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use tokio::net::TcpListener;
-
-    use super::{
-        SMTP_TIMEOUT, build_alert_message, build_inspection_message, dot_stuff, send_alert_event,
-    };
-    use crate::alerts::delivery::AlertDeliveryError;
-    use crate::alerts::evaluator::InspectionHighlight;
-    use crate::alerts::{AlertEvent, AlertEventKind, AlertMetricReading};
-
-    #[tokio::test]
-    async fn send_smtp_delivers_plain_message() {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener should bind");
-        let addr = listener.local_addr().expect("listener should expose addr");
-        let server = tokio::spawn(async move {
-            let (socket, _) = listener.accept().await.expect("smtp client should connect");
-            run_fake_smtp(socket).await
-        });
-        let config = smtp_config(addr.port());
-
-        send_alert_event(&config, &sample_event())
-            .await
-            .expect("smtp should send");
-        let session = server.await.expect("fake smtp should join");
-
-        assert!(
-            session
-                .commands
-                .iter()
-                .any(|line| line == "EHLO nodelite.local")
-        );
-        assert!(
-            session
-                .commands
-                .iter()
-                .any(|line| line == "MAIL FROM:<ops@example.com>")
-        );
-        assert!(
-            session
-                .commands
-                .iter()
-                .any(|line| line == "RCPT TO:<oncall@example.com>")
-        );
-        assert!(
-            session
-                .message
-                .contains("Subject: [NodeLite] triggered CPU hot on Hong Kong")
-        );
-        assert!(session.message.contains("Metric: CpuUsagePercent"));
-    }
-
-    #[tokio::test]
-    async fn send_smtp_reports_protocol_error() {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener should bind");
-        let addr = listener.local_addr().expect("listener should expose addr");
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.expect("smtp client should connect");
-            socket
-                .write_all(b"421 fake.smtp unavailable\r\n")
-                .await
-                .expect("error response should write");
-        });
-        let config = smtp_config(addr.port());
-
-        let error = send_alert_event(&config, &sample_event())
-            .await
-            .expect_err("smtp protocol error should fail delivery");
-        server.await.expect("fake smtp should join");
-
-        assert!(
-            matches!(error, AlertDeliveryError::Smtp(message) if message.contains("421 fake.smtp unavailable"))
-        );
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn send_smtp_times_out_waiting_for_greeting() {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener should bind");
-        let addr = listener.local_addr().expect("listener should expose addr");
-        let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
-        let server = tokio::spawn(async move {
-            let (socket, _) = listener.accept().await.expect("smtp client should connect");
-            accepted_tx
-                .send(())
-                .expect("test should await accept signal");
-            let _hold_open = socket;
-            std::future::pending::<()>().await;
-        });
-        let config = smtp_config(addr.port());
-        let delivery =
-            tokio::spawn(async move { send_alert_event(&config, &sample_event()).await });
-
-        accepted_rx
-            .await
-            .expect("smtp server should accept connection");
-        tokio::time::advance(SMTP_TIMEOUT + std::time::Duration::from_millis(1)).await;
-        let error = delivery
-            .await
-            .expect("delivery task should join")
-            .expect_err("smtp greeting should time out");
-        server.abort();
-
-        assert!(matches!(error, AlertDeliveryError::SmtpTimeout));
-    }
-
-    #[test]
-    fn build_message_rejects_header_injection() {
-        let mut event = sample_event();
-        event.node_label = "good\r\nBcc: bad@example.com".to_string();
-
-        assert!(build_alert_message(&smtp_config(25), &event).is_err());
-    }
-
-    #[test]
-    fn dot_stuff_prefixes_lines_starting_with_dot() {
-        assert_eq!(dot_stuff("first\n.second"), "first\r\n..second");
-    }
-
-    #[test]
-    fn build_inspection_message_includes_totals_and_highlights() {
-        let report = crate::alerts::InspectionReport {
-            total_nodes: 2,
-            offline_nodes: 1,
-            latency_nodes: 1,
-            cpu_hot_nodes: 0,
-            memory_hot_nodes: 0,
-            highlights: vec![InspectionHighlight {
-                node_id: "hk-01".to_string(),
-                node_label: "Hong Kong <edge>".to_string(),
-                reasons: vec!["offline".to_string(), "latency & jitter".to_string()],
-            }],
-        };
-        let summary = super::InspectionSummary {
-            occurred_at: Utc::now(),
-            local_date: chrono::NaiveDate::from_ymd_opt(2026, 5, 27).expect("date should be valid"),
-            lookback_hours: 24,
-            report: &report,
-        };
-
-        let message =
-            build_inspection_message(&smtp_config(25), &summary).expect("message should build");
-
-        assert!(message.contains("Subject: [NodeLite] Daily inspection 2026-05-27"));
-        assert!(message.contains("Content-Type: multipart/alternative"));
-        assert!(message.contains("Content-Type: text/plain; charset=utf-8"));
-        assert!(message.contains("Content-Type: text/html; charset=utf-8"));
-        assert!(message.contains("Total nodes: 2"));
-        assert!(message.contains("- Hong Kong <edge> (hk-01): offline, latency & jitter"));
-        assert!(message.contains("NodeLite Daily Inspection"));
-        assert!(message.contains("High latency"));
-        assert!(message.contains("Hong Kong &lt;edge&gt;"));
-        assert!(message.contains("latency &amp; jitter"));
-    }
-
-    async fn run_fake_smtp(socket: tokio::net::TcpStream) -> SmtpSession {
-        let (read_half, mut write_half) = socket.into_split();
-        let mut reader = BufReader::new(read_half);
-        let mut commands = Vec::new();
-        let mut message = String::new();
-
-        write_half
-            .write_all(b"220 fake.smtp ESMTP\r\n")
-            .await
-            .expect("greeting should write");
-        loop {
-            let mut line = String::new();
-            reader
-                .read_line(&mut line)
-                .await
-                .expect("command should read");
-            let command = line.trim_end_matches(['\r', '\n']).to_string();
-            commands.push(command.clone());
-            if command.starts_with("EHLO ") {
-                write_half
-                    .write_all(b"250-fake.smtp\r\n250 AUTH PLAIN\r\n")
-                    .await
-                    .expect("ehlo response should write");
-            } else if command.starts_with("MAIL FROM:") || command.starts_with("RCPT TO:") {
-                write_half
-                    .write_all(b"250 OK\r\n")
-                    .await
-                    .expect("mail response should write");
-            } else if command == "DATA" {
-                write_half
-                    .write_all(b"354 End data with <CR><LF>.<CR><LF>\r\n")
-                    .await
-                    .expect("data response should write");
-                loop {
-                    let mut body_line = String::new();
-                    reader
-                        .read_line(&mut body_line)
-                        .await
-                        .expect("message should read");
-                    if body_line == ".\r\n" {
-                        break;
-                    }
-                    message.push_str(&body_line);
-                }
-                write_half
-                    .write_all(b"250 Queued\r\n")
-                    .await
-                    .expect("queued response should write");
-            } else if command == "QUIT" {
-                write_half
-                    .write_all(b"221 Bye\r\n")
-                    .await
-                    .expect("quit response should write");
-                break;
-            } else {
-                write_half
-                    .write_all(b"250 OK\r\n")
-                    .await
-                    .expect("generic response should write");
-            }
-        }
-
-        SmtpSession { commands, message }
-    }
-
-    struct SmtpSession {
-        commands: Vec<String>,
-        message: String,
-    }
-
-    fn smtp_config(port: u16) -> AlertSmtpConfig {
-        AlertSmtpConfig {
-            enabled: true,
-            host: "127.0.0.1".to_string(),
-            port,
-            username: String::new(),
-            password: None,
-            sender: "ops@example.com".to_string(),
-            recipients: vec!["oncall@example.com".to_string()],
-            transport: AlertSmtpTransport::Plain,
-            send_resolved: true,
-        }
-    }
-
-    fn sample_event() -> AlertEvent {
-        AlertEvent {
-            kind: AlertEventKind::Triggered,
-            occurred_at: Utc::now(),
-            rule: AlertRuleConfig {
-                id: "cpu-hot".to_string(),
-                name: "CPU hot".to_string(),
-                enabled: true,
-                metric: AlertMetric::CpuUsagePercent,
-                comparator: AlertComparator::Gt,
-                threshold: 90,
-                window_minutes: 5,
-                severity: AlertSeverity::Critical,
-                scope_mode: AlertScopeMode::All,
-                node_ids: Vec::new(),
-                tags: Vec::new(),
-                delivery: vec![AlertChannel::Smtp],
-                cooldown_minutes: 30,
-                send_resolved: true,
-            },
-            node_id: "hk-01".to_string(),
-            node_label: "Hong Kong".to_string(),
-            reading: Some(AlertMetricReading {
-                metric: AlertMetric::CpuUsagePercent,
-                value: 91,
-                threshold: 90,
-            }),
-        }
-    }
-}
+mod tests;
