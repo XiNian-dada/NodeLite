@@ -270,12 +270,66 @@ jobs:
             dist/nodelite-agent-${{ matrix.target }}
             dist/SHA256SUMS-${{ matrix.target }}.txt
 
+  sbom:
+    # 生成 workspace 级 CycloneDX SBOM,随 Release 一起发布。
+    name: Generate SBOM
+    needs: validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-sbom
+          workspaces: |
+            . -> target
+
+      - name: Install cargo-cyclonedx
+        # 固定 cargo-cyclonedx 版本,避免 release 产物随工具默认行为漂移。
+        run: cargo install cargo-cyclonedx --version 0.5.9 --locked
+
+      - name: Generate CycloneDX SBOM
+        run: |
+          mkdir -p dist
+          cargo cyclonedx \
+            --format json \
+            --spec-version 1.5 \
+            --target all \
+            --all \
+            --all-features
+          cp nodelite-proto/nodelite-proto.cdx.json dist/
+          cp nodelite-agent/nodelite-agent.cdx.json dist/
+          cp nodelite-server/nodelite-server.cdx.json dist/
+          sha256sum dist/*.cdx.json > dist/SHA256SUMS-sbom.txt
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-sbom
+          path: |
+            dist/nodelite-proto.cdx.json
+            dist/nodelite-agent.cdx.json
+            dist/nodelite-server.cdx.json
+            dist/SHA256SUMS-sbom.txt
+
   release:
     # 汇总产物 → 合并校验文件 → 写入 GitHub Release。
     name: Publish GitHub Release
     needs:
       - build-linux
       - build-agent-macos
+      - sbom
     runs-on: ubuntu-latest
 
     steps:
@@ -322,5 +376,8 @@ jobs:
             release-assets/release-agent-aarch64-apple-darwin/nodelite-agent-aarch64-apple-darwin \
             release-assets/release-scripts/install-server.sh \
             release-assets/release-scripts/install-agent.sh \
+            release-assets/release-sbom/nodelite-proto.cdx.json \
+            release-assets/release-sbom/nodelite-agent.cdx.json \
+            release-assets/release-sbom/nodelite-server.cdx.json \
             release-assets/SHA256SUMS.txt \
             --clobber

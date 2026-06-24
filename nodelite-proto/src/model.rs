@@ -11,40 +11,58 @@ use serde::{Deserialize, Serialize};
 /// `tags` 用于在前端进行分组或过滤,具体语义由部署方约定。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NodeIdentity {
+    /// 节点在 registry 中的稳定 ID。
     pub node_id: String,
+    /// UI 中展示的节点名称。
     pub node_label: String,
+    /// Agent 采集到的主机名。
     pub hostname: String,
+    /// 操作系统名称或发行版标识。
     pub os: String,
+    /// 内核版本,无法采集时为空。
     pub kernel_version: Option<String>,
+    /// CPU 型号,无法采集时为空。
     pub cpu_model: Option<String>,
+    /// 逻辑 CPU 核心数。
     pub cpu_cores: u32,
+    /// Agent 二进制版本。
     pub agent_version: String,
+    /// 主机启动时间,无法采集时为空。
     pub boot_time: Option<DateTime<Utc>>,
     #[serde(default)]
+    /// 部署方自定义标签。
     pub tags: Vec<String>,
 }
 
 /// 首页列表需要的节点身份字段,避免把详情页不需要的静态字段一起下发。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NodeListIdentity {
+    /// 节点在 registry 中的稳定 ID。
     pub node_id: String,
+    /// UI 中展示的节点名称。
     pub node_label: String,
+    /// Agent 采集到的主机名。
     pub hostname: String,
     #[serde(default)]
+    /// 首页列表展示和筛选用标签。
     pub tags: Vec<String>,
 }
 
 /// Linux 三档平均负载,与 `uptime` / `/proc/loadavg` 输出一致。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LoadAverage {
+    /// 1 分钟平均负载。
     pub one: f64,
+    /// 5 分钟平均负载。
     pub five: f64,
+    /// 15 分钟平均负载。
     pub fifteen: f64,
 }
 
 /// 首页列表矩阵只需要 1 分钟负载。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NodeListLoadAverage {
+    /// 1 分钟平均负载。
     pub one: f64,
 }
 
@@ -53,29 +71,43 @@ pub struct NodeListLoadAverage {
 /// `available_bytes` 取自 `MemAvailable`(若不可用则用 `MemFree + Buffers + Cached` 近似)。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MemoryUsage {
+    /// 总物理内存字节数。
     pub total_bytes: u64,
+    /// 已用物理内存字节数。
     pub used_bytes: u64,
+    /// 可用物理内存字节数。
     pub available_bytes: u64,
+    /// 总 swap 字节数。
     pub swap_total_bytes: u64,
+    /// 已用 swap 字节数。
     pub swap_used_bytes: u64,
 }
 
 /// 首页列表矩阵只需要总内存与已用内存。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NodeListMemoryUsage {
+    /// 总物理内存字节数。
     pub total_bytes: u64,
+    /// 已用物理内存字节数。
     pub used_bytes: u64,
 }
 
 /// 单个挂载点的磁盘使用情况。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DiskUsage {
+    /// 设备名或块设备路径。
     pub device: String,
+    /// 挂载点路径。
     pub mount_point: String,
+    /// 文件系统类型。
     pub fs_type: String,
+    /// 文件系统总容量字节数。
     pub total_bytes: u64,
+    /// 文件系统可用容量字节数。
     pub available_bytes: u64,
+    /// 文件系统已用容量字节数。
     pub used_bytes: u64,
+    /// 文件系统已用百分比。
     pub used_percent: f64,
 }
 
@@ -84,38 +116,53 @@ pub struct DiskUsage {
 /// 即时速率在 Agent 启动后第一次采样时不可用,因此为 `Option`。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NetworkCounters {
+    /// Agent 启动后或系统计数器当前的累计接收字节数。
     pub total_rx_bytes: u64,
+    /// Agent 启动后或系统计数器当前的累计发送字节数。
     pub total_tx_bytes: u64,
+    /// 接收速率,首帧无前值时为空。
     pub rx_bytes_per_sec: Option<f64>,
+    /// 发送速率,首帧无前值时为空。
     pub tx_bytes_per_sec: Option<f64>,
     #[serde(default)]
+    /// 可选丢包率百分比,平台无法采集时为空。
     pub packet_loss_percent: Option<f64>,
 }
 
 /// Server 端推断出的 IP 地理位置。手动 tag 仍然可以在 UI 中覆盖/回退。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GeoIpLocation {
+    /// 国家或地区名称。
     pub country: String,
     #[serde(default)]
+    /// 城市名称,仅城市级数据可用时存在。
     pub city: Option<String>,
     #[serde(default)]
+    /// 纬度,仅城市级数据可用时存在。
     pub latitude: Option<f64>,
     #[serde(default)]
+    /// 经度,仅城市级数据可用时存在。
     pub longitude: Option<f64>,
 }
 
 /// 单次采样得到的完整节点快照。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NodeSnapshot {
+    /// Agent 采集该快照的 UTC 时间。
     pub collected_at: DateTime<Utc>,
     /// CPU 使用率在 Agent 首次采样时没有前值可做差分,因此可能为空。
     #[serde(default)]
     pub cpu_usage_percent: Option<f64>,
+    /// 三档平均负载。
     pub load: LoadAverage,
+    /// 内存与 swap 使用情况。
     pub memory: MemoryUsage,
+    /// 主机运行时间秒数。
     pub uptime_secs: u64,
     #[serde(default)]
+    /// 磁盘挂载点使用情况。
     pub disks: Vec<DiskUsage>,
+    /// 网络累计计数器与即时速率。
     pub network: NetworkCounters,
 }
 
@@ -123,8 +170,11 @@ pub struct NodeSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NodeListSnapshot {
     #[serde(default)]
+    /// CPU 使用率百分比,首帧无前值时为空。
     pub cpu_usage_percent: Option<f64>,
+    /// 首页所需的最小负载字段。
     pub load: NodeListLoadAverage,
+    /// 首页所需的最小内存字段。
     pub memory: NodeListMemoryUsage,
 }
 
@@ -133,57 +183,83 @@ pub struct NodeListSnapshot {
 /// `snapshot` 在 Hello 之后、首次 Metrics 之前可能为 `None`。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NodeStatus {
+    /// 节点身份信息。
     pub identity: NodeIdentity,
     #[serde(default)]
+    /// Server 看到的远端 IP。
     pub remote_ip: Option<String>,
     #[serde(default)]
+    /// GeoIP 推断出的国家或地区。
     pub geoip_country: Option<String>,
     #[serde(default)]
+    /// GeoIP 推断出的城市。
     pub geoip_city: Option<String>,
     #[serde(default)]
+    /// GeoIP 推断出的纬度。
     pub geoip_latitude: Option<f64>,
     #[serde(default)]
+    /// GeoIP 推断出的经度。
     pub geoip_longitude: Option<f64>,
     #[serde(default)]
+    /// 运维手动覆盖的国家或地区。
     pub location_override_country: Option<String>,
     #[serde(default)]
+    /// 运维手动覆盖的城市。
     pub location_override_city: Option<String>,
     #[serde(default)]
+    /// 运维手动覆盖的纬度。
     pub location_override_latitude: Option<f64>,
     #[serde(default)]
+    /// 运维手动覆盖的经度。
     pub location_override_longitude: Option<f64>,
+    /// 最新完整快照,首次 metrics 到达前为空。
     pub snapshot: Option<NodeSnapshot>,
+    /// Server 最近一次收到该节点消息的 UTC 时间。
     pub last_seen: Option<DateTime<Utc>>,
+    /// 最近一次心跳测得的延迟毫秒数。
     pub latency_ms: Option<u64>,
+    /// 节点当前是否在线。
     pub online: bool,
 }
 
 /// `/api/nodes` 的轻量列表项,避免把详情字段放进首页全量刷新响应。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NodeListItem {
+    /// 首页列表所需的节点身份字段。
     pub identity: NodeListIdentity,
     #[serde(default)]
+    /// GeoIP 推断出的国家或地区。
     pub geoip_country: Option<String>,
     #[serde(default)]
+    /// GeoIP 推断出的城市。
     pub geoip_city: Option<String>,
     #[serde(default)]
+    /// GeoIP 推断出的纬度。
     pub geoip_latitude: Option<f64>,
     #[serde(default)]
+    /// GeoIP 推断出的经度。
     pub geoip_longitude: Option<f64>,
     #[serde(default)]
+    /// 运维手动覆盖的国家或地区。
     pub location_override_country: Option<String>,
     #[serde(default)]
+    /// 运维手动覆盖的城市。
     pub location_override_city: Option<String>,
     #[serde(default)]
+    /// 运维手动覆盖的纬度。
     pub location_override_latitude: Option<f64>,
     #[serde(default)]
+    /// 运维手动覆盖的经度。
     pub location_override_longitude: Option<f64>,
+    /// 首页列表所需的最新快照子集。
     pub snapshot: Option<NodeListSnapshot>,
+    /// 最近一次心跳测得的延迟毫秒数。
     pub latency_ms: Option<u64>,
+    /// 节点当前是否在线。
     pub online: bool,
 }
 
-/// `/api/nodes` 的零拷贝视图,避免从 Arc<str> 克隆字符串 (Phase 3.2 优化)。
+/// `/api/nodes` 的零拷贝视图,避免从 `Arc<str>` 克隆字符串 (Phase 3.2 优化)。
 ///
 /// 与 `NodeListItem` 的区别:
 /// - GeoIP/location_override 字段使用 `Arc<str>` 而非 `String`
@@ -193,25 +269,37 @@ pub struct NodeListItem {
 /// 性能收益: 1000 节点场景下减少 ~80 KB 字符串克隆,API 响应延迟 -45%。
 #[derive(Debug, Clone, Serialize)]
 pub struct NodeListItemView {
+    /// 首页列表所需的节点身份字段。
     pub identity: NodeListIdentity,
     #[serde(default)]
+    /// GeoIP 推断出的国家或地区。
     pub geoip_country: Option<Arc<str>>,
     #[serde(default)]
+    /// GeoIP 推断出的城市。
     pub geoip_city: Option<Arc<str>>,
     #[serde(default)]
+    /// GeoIP 推断出的纬度。
     pub geoip_latitude: Option<f64>,
     #[serde(default)]
+    /// GeoIP 推断出的经度。
     pub geoip_longitude: Option<f64>,
     #[serde(default)]
+    /// 运维手动覆盖的国家或地区。
     pub location_override_country: Option<Arc<str>>,
     #[serde(default)]
+    /// 运维手动覆盖的城市。
     pub location_override_city: Option<Arc<str>>,
     #[serde(default)]
+    /// 运维手动覆盖的纬度。
     pub location_override_latitude: Option<f64>,
     #[serde(default)]
+    /// 运维手动覆盖的经度。
     pub location_override_longitude: Option<f64>,
+    /// 首页列表所需的最新快照子集。
     pub snapshot: Option<NodeListSnapshot>,
+    /// 最近一次心跳测得的延迟毫秒数。
     pub latency_ms: Option<u64>,
+    /// 节点当前是否在线。
     pub online: bool,
 }
 
@@ -220,35 +308,56 @@ pub struct NodeListItemView {
 /// 与 `NodeSnapshot` 的区别在于仅保留有损但够用的关键指标,降低存储成本。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HistoryPoint {
+    /// 该采样所属的节点 ID。
     pub node_id: String,
+    /// 采样写入历史库的 UTC 时间。
     pub recorded_at: DateTime<Utc>,
+    /// CPU 使用率百分比。
     pub cpu_usage_percent: Option<f64>,
     #[serde(default)]
+    /// 1 分钟平均负载。
     pub load_one: Option<f64>,
     #[serde(default)]
+    /// 5 分钟平均负载。
     pub load_five: Option<f64>,
     #[serde(default)]
+    /// 15 分钟平均负载。
     pub load_fifteen: Option<f64>,
+    /// 内存使用率百分比。
     pub memory_used_percent: f64,
+    /// 接收速率 bytes/s。
     pub rx_bytes_per_sec: Option<f64>,
+    /// 发送速率 bytes/s。
     pub tx_bytes_per_sec: Option<f64>,
+    /// 心跳延迟毫秒数。
     pub latency_ms: Option<u64>,
     #[serde(default)]
+    /// 丢包率百分比。
     pub packet_loss_percent: Option<f64>,
+    /// 所有磁盘中的最高使用率百分比。
     pub disk_used_percent: Option<f64>,
 }
 
 /// 仪表盘顶部的全局概览数据,由 Server 实时聚合得到。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OverviewData {
+    /// 生成该概览的 UTC 时间。
     pub generated_at: DateTime<Utc>,
+    /// registry 中的节点总数。
     pub total_nodes: usize,
+    /// 当前在线节点数。
     pub online_nodes: usize,
+    /// 当前离线节点数。
     pub offline_nodes: usize,
+    /// 所有节点累计接收字节数之和。
     pub total_rx_bytes: u64,
+    /// 所有节点累计发送字节数之和。
     pub total_tx_bytes: u64,
+    /// 所有在线节点当前接收速率之和。
     pub current_rx_bytes_per_sec: f64,
+    /// 所有在线节点当前发送速率之和。
     pub current_tx_bytes_per_sec: f64,
+    /// 在线节点最近心跳延迟的平均值。
     pub average_latency_ms: Option<f64>,
 }
 

@@ -51,33 +51,41 @@ pub enum WireMessage {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HelloMessage {
     #[serde(default = "current_protocol_version")]
+    /// Agent 支持的 wire protocol 版本。
     pub protocol_version: u16,
+    /// 节点注册表分配给 Agent 的认证 token。
     pub token: String,
+    /// Agent 采集到的节点身份。
     pub identity: NodeIdentity,
 }
 
 /// Agent 周期性上报的监控数据包装。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MetricsMessage {
+    /// 当前采样周期的完整节点快照。
     pub snapshot: NodeSnapshot,
 }
 
 /// Server 发往 Agent 的心跳请求,`nonce` 用于配对返回的 Pong。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PingMessage {
+    /// Server 生成的心跳随机数或序号。
     pub nonce: u64,
 }
 
 /// Agent 回复的心跳响应,需要回传相同的 `nonce`。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PongMessage {
+    /// 对应 `PingMessage::nonce` 的原样回传值。
     pub nonce: u64,
 }
 
 /// Server 推送的通知消息,Agent 用于日志输出与判定认证状态等。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ServerNoticeMessage {
+    /// 通知严重级别。
     pub level: NoticeLevel,
+    /// 面向日志或用户提示的可读消息。
     pub message: String,
 }
 
@@ -89,27 +97,34 @@ pub struct ServerNoticeMessage {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RefreshTokenRequestMessage {
     #[serde(default)]
+    /// 旧协议中的节点 ID,新服务端以会话认证身份为准。
     pub node_id: String,
 }
 
 /// Server 响应 Token 刷新请求。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RefreshTokenResponseMessage {
+    /// Server 新签发的节点 token。
     pub new_token: String,
-    pub expires_at: String, // ISO 8601 格式
+    /// 新 token 的 ISO 8601 过期时间。
+    pub expires_at: String,
 }
 
 /// Agent 运行时日志中的单条结构化事件。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentLogEntry {
-    pub occurred_at: String, // ISO 8601 格式
+    /// 日志事件发生的 ISO 8601 时间。
+    pub occurred_at: String,
+    /// 日志级别。
     pub level: NoticeLevel,
+    /// 日志消息正文。
     pub message: String,
 }
 
 /// Agent 批量上传的运行时日志。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentLogsMessage {
+    /// 本批次内的日志事件列表。
     pub entries: Vec<AgentLogEntry>,
 }
 
@@ -117,8 +132,11 @@ pub struct AgentLogsMessage {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum NoticeLevel {
+    /// 信息性通知。
     Info,
+    /// 警告性通知。
     Warn,
+    /// 错误通知。
     Error,
 }
 
@@ -134,23 +152,32 @@ pub enum NoticeLevel {
 pub enum BrowserMessage {
     /// 连接建立(以及重连 / 服务端 lag 恢复)时下发的全量快照,客户端整体替换本地状态。
     InitialState {
+        /// Server 生成该消息的 UTC 时间。
         generated_at: DateTime<Utc>,
+        /// 当前全局概览。
         overview: OverviewData,
+        /// 当前节点列表全量快照。
         nodes: Vec<NodeListItem>,
     },
     /// 概览聚合数字更新(整体替换,体积很小)。
     OverviewUpdate {
+        /// Server 生成该消息的 UTC 时间。
         generated_at: DateTime<Utc>,
+        /// 新的全局概览。
         overview: OverviewData,
     },
     /// 单节点增量:新增或更新一行,客户端按 `node_id` 合并进本地 Map。
     NodeUpsert {
+        /// Server 生成该消息的 UTC 时间。
         generated_at: DateTime<Utc>,
+        /// 新增或更新的节点列表项。
         node: Box<NodeListItem>,
     },
     /// 单节点移除(注销),客户端按 `node_id` 删除。
     NodeRemoved {
+        /// Server 生成该消息的 UTC 时间。
         generated_at: DateTime<Utc>,
+        /// 被移除的节点 ID。
         node_id: String,
     },
     /// 应用层心跳:客户端发送 `Ping`,服务端回 `Pong`。
