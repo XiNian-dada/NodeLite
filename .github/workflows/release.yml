@@ -175,14 +175,20 @@ jobs:
             mv .cargo/config.toml .cargo/config.toml.ci-bak
           fi
 
-      - name: Build release binaries
+      - name: Build release server binary
         # 通过 NODELITE_BUILD_VERSION 把 tag 注入二进制,便于运行时打印版本号。
         # NODELITE_SKIP_WEB_BUILD=1 因为前端资源已在前面步骤构建完成。
         run: |
           NODELITE_BUILD_VERSION="${RELEASE_TAG#v}" \
           NODELITE_SKIP_WEB_BUILD=1 \
           cross build --locked --release --target "${{ matrix.target }}" \
-            -p nodelite-server \
+            -p nodelite-server
+
+      - name: Build release agent binary
+        # 单独构建 agent 以确保其 tokio features 不被 server 的 full 污染。
+        run: |
+          NODELITE_BUILD_VERSION="${RELEASE_TAG#v}" \
+          cross build --locked --release --target "${{ matrix.target }}" \
             -p nodelite-agent
 
       - name: Collect release assets
