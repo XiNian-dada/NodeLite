@@ -7,6 +7,7 @@
 pub mod config;
 pub mod message;
 pub mod model;
+/// URL and host helpers shared by server and agent transport checks.
 pub mod netutil;
 pub mod text;
 pub mod validation;

@@ -97,6 +97,7 @@ pub struct ConfigError {
 }
 
 impl ConfigError {
+    /// 用可读错误消息创建配置错误。
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -126,40 +127,68 @@ impl std::error::Error for ConfigError {}
 /// ```
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ServerConfig {
+    /// Server 监听地址和端口。
     pub listen: SocketAddr,
+    /// 对外访问 Server 的基础 URL,用于生成安装脚本和提示信息。
     pub public_base_url: String,
+    /// 是否允许 `public_base_url` 使用明文 HTTP。
     pub insecure_allow_http: bool,
+    /// 可信反向代理网段,用于解析真实客户端 IP。
     pub trusted_proxies: Vec<IpNet>,
+    /// 可选的只读 Web UI 认证配置。
     pub readonly_auth: Option<ReadonlyAuthConfig>,
+    /// WebSocket 准入和认证失败限流配置。
     pub ws: WsConfig,
+    /// Prometheus 指标导出配置。
     pub metrics: MetricsConfig,
+    /// 审计日志配置。
     pub audit: AuditConfig,
+    /// GeoIP 数据源与更新配置。
     pub geoip: GeoIpConfig,
+    /// 告警规则、巡检和通知渠道配置。
     pub alerting: AlertingConfig,
+    /// 节点注册表持久化文件路径。
     pub node_registry_path: PathBuf,
+    /// 历史指标 SQLite 数据库路径。
     pub history_db_path: PathBuf,
+    /// 最新快照持久化文件路径。
     pub snapshot_path: PathBuf,
+    /// 超过该秒数未收到上报后,节点视为离线。
     pub stale_after_secs: u64,
+    /// Server 发送 WebSocket ping 的间隔秒数。
     pub ping_interval_secs: u64,
+    /// Server 接受的单条 WebSocket 消息最大字节数。
     pub max_message_bytes: usize,
+    /// 前端轮询或刷新 fallback 的默认间隔秒数。
     pub refresh_interval_secs: u64,
+    /// Agent 默认过滤的文件系统类型列表。
     pub ignored_filesystems: Vec<String>,
+    /// Agent release 下载基础 URL,为空时使用项目默认发布地址。
     pub agent_release_base_url: Option<String>,
+    /// x86_64 Linux Agent release 的 SHA-256 校验值。
     pub agent_release_sha256_x86_64: Option<String>,
+    /// aarch64 Linux Agent release 的 SHA-256 校验值。
     pub agent_release_sha256_aarch64: Option<String>,
     #[serde(default = "default_hello_timeout_secs")]
+    /// WebSocket hello 握手阶段的超时秒数。
     pub hello_timeout_secs: u64,
     #[serde(default = "default_max_outstanding_pings")]
+    /// 单连接允许的最大未响应 ping 数。
     pub max_outstanding_pings: usize,
     #[serde(default = "default_insecure_transport_warn_interval_secs")]
+    /// 明文传输安全告警的最小重复提示间隔秒数。
     pub insecure_transport_warn_interval_secs: u64,
     #[serde(default = "default_max_sanitized_disks")]
+    /// 单个快照保留的最大磁盘条目数。
     pub max_sanitized_disks: usize,
     #[serde(default = "default_max_sanitized_string_bytes")]
+    /// 快照字符串字段清洗后的最大 UTF-8 字节数。
     pub max_sanitized_string_bytes: usize,
     #[serde(default = "default_metric_anomaly_session_limit")]
+    /// 同一会话允许记录的指标异常次数上限。
     pub metric_anomaly_session_limit: usize,
     #[serde(default = "default_sqlite_busy_timeout_secs")]
+    /// SQLite busy timeout 秒数。
     pub sqlite_busy_timeout_secs: u64,
 }
 
@@ -173,21 +202,30 @@ pub struct ServerConfig {
 /// 并只把它派生 `Serialize`。
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ReadonlyAuthConfig {
+    /// 只读 Web UI 登录用户名。
     pub username: String,
+    /// 只读 Web UI 登录密码明文,仅存在于本地配置中。
     pub password: String,
     #[serde(default)]
+    /// 是否启用 TOTP 二次验证。
     pub enable_2fa: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// TOTP secret,启用 2FA 时由 server 读取和校验。
     pub totp_secret: Option<String>,
 }
 
 /// WebSocket 准入控制参数,用于限流与抗暴力破解。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WsConfig {
+    /// 全局允许的最大 WebSocket 连接数。
     pub max_total_connections: usize,
+    /// 单个客户端 IP 允许的最大 WebSocket 连接数。
     pub max_connections_per_ip: usize,
+    /// 认证失败计数窗口秒数。
     pub auth_fail_window_secs: u64,
+    /// 计数窗口内触发封禁的最大认证失败次数。
     pub auth_fail_max_attempts: usize,
+    /// 认证失败触发后的封禁秒数。
     pub auth_block_secs: u64,
 }
 
@@ -195,31 +233,46 @@ pub struct WsConfig {
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MetricsConfig {
     #[serde(default = "default_metrics_export_node_resource_metrics")]
+    /// 是否导出每节点 CPU、内存、网络等资源指标。
     pub export_node_resource_metrics: bool,
     #[serde(default = "default_metrics_export_node_disk_metrics")]
+    /// 是否按节点和挂载点导出磁盘指标。
     pub export_node_disk_metrics: bool,
 }
 
 /// 审计日志存储与记录策略。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AuditConfig {
+    /// 是否启用审计日志。
     pub enabled: bool,
+    /// 审计日志 SQLite 数据库路径。
     pub db_path: PathBuf,
+    /// 审计记录保留天数。
     pub retention_days: u64,
+    /// 是否记录成功认证事件。
     pub log_successful_auth: bool,
+    /// 是否记录失败认证事件。
     pub log_failed_auth: bool,
+    /// 是否记录 token 签发和刷新事件。
     pub log_token_events: bool,
+    /// 是否记录限流或封禁事件。
     pub log_rate_limit: bool,
 }
 
 /// IP 地理位置数据库配置。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GeoIpConfig {
+    /// 是否启用 GeoIP 推断。
     pub enabled: bool,
+    /// GeoIP 数据来源。
     pub provider: GeoIpProvider,
+    /// GeoIP 数据库粒度。
     pub edition: GeoIpEdition,
+    /// 本地 GeoIP 数据库路径。
     pub database_path: PathBuf,
+    /// 是否允许 server 自动更新 GeoIP 数据库。
     pub auto_update: bool,
+    /// 自动更新间隔天数。
     pub update_interval_days: u64,
 }
 
@@ -227,8 +280,11 @@ pub struct GeoIpConfig {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum GeoIpProvider {
+    /// DB-IP Lite 数据库。
     Dbip,
+    /// ipwho.is HTTP API。
     Ipwhois,
+    /// 用户提供的自定义数据库或后续扩展源。
     Custom,
 }
 
@@ -236,25 +292,37 @@ pub enum GeoIpProvider {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum GeoIpEdition {
+    /// 国家级 DB-IP Lite 数据库。
     CountryLite,
+    /// 城市级 DB-IP Lite 数据库。
     CityLite,
 }
 
 /// Agent 启动需要的全部配置。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentConfig {
+    /// Agent 在 server registry 中的稳定节点 ID。
     pub node_id: String,
+    /// UI 中展示的节点名称。
     pub node_label: String,
+    /// Server WebSocket 或基础连接地址。
     pub server: String,
+    /// Agent 连接 server 使用的认证 token。
     pub token: String,
+    /// Agent 上报指标的间隔秒数。
     pub report_interval_secs: u64,
+    /// 可选 hostname 覆盖值,为空时使用本机 hostname。
     pub hostname_override: Option<String>,
+    /// 部署方自定义标签,用于筛选和告警作用域。
     pub tags: Vec<String>,
     #[serde(default = "default_connect_timeout_secs")]
+    /// Agent 建立连接的超时秒数。
     pub connect_timeout_secs: u64,
     #[serde(default = "default_max_incoming_message_bytes")]
+    /// Agent 接受的单条 server 消息最大字节数。
     pub max_incoming_message_bytes: usize,
     #[serde(default = "default_insecure_transport_warn_interval_secs")]
+    /// 明文传输警告的最小重复提示间隔秒数。
     pub insecure_transport_warn_interval_secs: u64,
 }
 

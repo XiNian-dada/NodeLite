@@ -8,12 +8,17 @@
 
 use std::fmt;
 
+/// Validation failure returned by shared config and registry helpers.
+///
+/// The message is intentionally human-readable because callers surface it in
+/// configuration or registration error responses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationError {
     message: String,
 }
 
 impl ValidationError {
+    /// Create a validation error with a display-ready message.
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -31,6 +36,10 @@ impl std::error::Error for ValidationError {}
 
 const IDENTIFIER_MAX_CHARS: usize = 128;
 
+/// Reject values that are empty after trimming ASCII or Unicode whitespace.
+///
+/// `field` is included verbatim in the returned error so callers can point to a
+/// TOML key, JSON field, or registry property.
 pub fn validate_non_empty(field: &str, value: &str) -> Result<(), ValidationError> {
     if value.trim().is_empty() {
         return Err(ValidationError::new(format!("{field} must not be empty")));
@@ -38,6 +47,11 @@ pub fn validate_non_empty(field: &str, value: &str) -> Result<(), ValidationErro
     Ok(())
 }
 
+/// Validate a stable NodeLite identifier.
+///
+/// Identifiers must be non-empty, at most 128 bytes long, and limited to ASCII
+/// letters, numbers, dash, underscore, and dot. The same rule is used for node
+/// IDs and other registry keys that need to be safe in logs, paths, and labels.
 pub fn validate_identifier(field: &str, value: &str) -> Result<(), ValidationError> {
     validate_non_empty(field, value)?;
     if value.len() > IDENTIFIER_MAX_CHARS {
@@ -56,6 +70,10 @@ pub fn validate_identifier(field: &str, value: &str) -> Result<(), ValidationErr
     Ok(())
 }
 
+/// Trim, sort, and deduplicate a list of operator-provided strings.
+///
+/// Empty entries are discarded after trimming. The output order is stable and
+/// deterministic, which keeps config round-trips and tests reproducible.
 pub fn normalize_string_list(values: Vec<String>) -> Vec<String> {
     let mut values: Vec<String> = values
         .into_iter()
@@ -67,6 +85,11 @@ pub fn normalize_string_list(values: Vec<String>) -> Vec<String> {
     values
 }
 
+/// Validate normalized node tags against count and byte-size limits.
+///
+/// This function does not trim or deduplicate; call [`normalize_string_list`]
+/// first when values come from free-form user input. `max_tag_bytes` is measured
+/// with `String::len`, so it is a UTF-8 byte limit rather than a character count.
 pub fn validate_tag_list(
     field: &str,
     values: &[String],
