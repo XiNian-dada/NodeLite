@@ -66,7 +66,10 @@ jobs:
         run: cargo test --workspace --locked
 
       - name: Shellcheck installers
-        run: shellcheck scripts/install-server.sh scripts/install-agent.sh
+        run: shellcheck scripts/install-server.sh scripts/install-agent.sh scripts/test-install-server-summary.sh
+
+      - name: Test installer summaries
+        run: sh scripts/test-install-server-summary.sh
 
       - name: Audit dependency advisories
         # 发布前之外,日常 CI 也要尽早暴露已知 RUSTSEC / yanked 依赖问题。

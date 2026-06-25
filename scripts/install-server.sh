@@ -104,6 +104,15 @@ tty_println() {
   fi
 }
 
+print_readonly_credentials_summary() {
+  tty_println "Readonly username: $READONLY_USERNAME"
+  if has_tty; then
+    tty_println "Readonly password: $READONLY_PASSWORD"
+  else
+    tty_println "Readonly password: written to $CONFIG_PATH"
+  fi
+}
+
 # 清屏:优先使用 `clear`,否则发送 ANSI 序列。
 clear_screen() {
   if ! has_tty; then
@@ -1010,8 +1019,7 @@ if [ "$MODE" = "upgrade" ]; then
     tty_println "Config supplemented: added $CONFIG_DEFAULTS_ADDED missing default setting(s)."
   fi
 else
-  tty_println "Readonly username: $READONLY_USERNAME"
-  tty_println "Readonly password: $READONLY_PASSWORD"
+  print_readonly_credentials_summary
   tty_println "Public base URL: ${PUBLIC_SCHEME}://${PUBLIC_HOST}"
 fi
 tty_println ""
