@@ -12,6 +12,8 @@ import { test, expect } from '@playwright/test';
  */
 
 test.describe('WebSocket Dashboard', () => {
+  test.skip(!process.env.NODELITE_E2E_BASE_URL, 'requires a live backend WebSocket');
+
   test('loads dashboard via WS InitialState without REST polling', async ({ page }) => {
     // Track network requests
     const restCalls: string[] = [];

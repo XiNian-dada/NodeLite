@@ -1,10 +1,11 @@
 import { expect, test } from '@playwright/test';
-import { waitForAppShell } from './_helpers';
+import { setupApiFixtures, waitForAppShell } from './_helpers';
 
 // Plan §3.7.2 flow 5: language toggle (en ↔ zh-CN).
 // Validation point: the language selector flips vue-i18n's active locale,
 // the value is persisted, and at least one $t()-bound string updates.
 test('language toggle updates app shell copy and persists', async ({ page }) => {
+  await setupApiFixtures(page);
   await page.goto('/');
   await waitForAppShell(page);
 

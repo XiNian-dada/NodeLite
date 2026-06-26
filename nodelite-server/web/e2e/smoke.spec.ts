@@ -1,11 +1,13 @@
 import { expect, test } from '@playwright/test';
+import { setupApiFixtures, waitForAppShell } from './_helpers';
 
-test('legacy dashboard renders after login', async ({ page }) => {
+test('dashboard renders after login', async ({ page }) => {
+  await setupApiFixtures(page);
   const response = await page.goto('/');
   expect(response, 'GET / should produce a response').not.toBeNull();
   expect(response!.status(), 'GET / should succeed once credentials are accepted').toBeLessThan(400);
 
-  // Verify the legacy HTML markers — they prove we hit the existing dashboard and not a redirect page.
+  await waitForAppShell(page);
   await expect(page).toHaveTitle(/NodeLite/i);
-  await expect(page.locator('html')).toHaveAttribute('data-refresh-ms', /\d+/);
+  await expect(page.locator('[data-test="dashboard-view"]')).toBeVisible();
 });
