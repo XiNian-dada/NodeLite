@@ -73,6 +73,7 @@ pub(crate) async fn run_authenticated_session(
 
     let notice = WireMessage::ServerNotice(ServerNoticeMessage {
         level: nodelite_proto::NoticeLevel::Info,
+        code: None,
         message: "authenticated".to_string(),
     });
     let payload = serde_json::to_string(&notice)
@@ -477,6 +478,7 @@ mod tests {
             (
                 WireMessage::ServerNotice(ServerNoticeMessage {
                     level: NoticeLevel::Info,
+                    code: None,
                     message: "server-only".to_string(),
                 }),
                 "agent must not send server_notice messages",

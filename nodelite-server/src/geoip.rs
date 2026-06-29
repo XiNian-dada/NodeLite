@@ -25,6 +25,7 @@ const DBIP_DOWNLOAD_ATTEMPTS: usize = 12;
 const IPWHOIS_ENDPOINT: &str = "https://ipwho.is";
 const IPWHOIS_TIMEOUT_SECS: u64 = 3;
 const IPWHOIS_CACHE_TTL_SECS: u64 = 30 * 24 * 60 * 60;
+const IPWHOIS_CACHE_MAX_ENTRIES: usize = 10_000;
 const IPWHOIS_RETRY_AFTER_FALLBACK_SECS: u64 = 5 * 60;
 const IPWHOIS_FIELDS: &str = "success,message,country,country_code,region,city,latitude,longitude";
 
@@ -257,18 +258,31 @@ impl IpwhoisClient {
     }
 
     async fn cache_location(&self, ip: IpAddr, location: GeoIpLocation) {
+        let now = Instant::now();
         let mut guard = self.cache.write().await;
+        if !guard.contains_key(&ip) && guard.len() >= IPWHOIS_CACHE_MAX_ENTRIES {
+            prune_ipwhois_cache(&mut guard, now);
+        }
         guard.insert(
             ip,
             CachedIpwhoisLocation {
                 location,
-                expires_at: Instant::now() + Duration::from_secs(IPWHOIS_CACHE_TTL_SECS),
+                expires_at: now + Duration::from_secs(IPWHOIS_CACHE_TTL_SECS),
             },
         );
     }
 
     async fn is_rate_limited(&self) -> bool {
         let now = Instant::now();
+        {
+            let guard = self.retry_after.read().await;
+            match *guard {
+                Some(until) if until > now => return true,
+                None => return false,
+                Some(_) => {}
+            }
+        }
+
         let mut guard = self.retry_after.write().await;
         match *guard {
             Some(until) if until > now => true,
@@ -289,6 +303,16 @@ impl IpwhoisClient {
             .unwrap_or_else(|| Duration::from_secs(IPWHOIS_RETRY_AFTER_FALLBACK_SECS));
         let mut guard = self.retry_after.write().await;
         *guard = Some(Instant::now() + duration);
+    }
+}
+
+fn prune_ipwhois_cache(cache: &mut HashMap<IpAddr, CachedIpwhoisLocation>, now: Instant) {
+    cache.retain(|_, cached| cached.expires_at > now);
+    while cache.len() >= IPWHOIS_CACHE_MAX_ENTRIES {
+        let Some(ip) = cache.keys().next().copied() else {
+            break;
+        };
+        cache.remove(&ip);
     }
 }
 
@@ -561,6 +585,9 @@ fn is_lan_ipv6(ip: Ipv6Addr) -> bool {
 }
 
 #[cfg(test)]
+mod cache_tests;
+
+#[cfg(test)]
 mod tests {
     use std::net::IpAddr;
     use std::path::PathBuf;
@@ -601,21 +628,6 @@ mod tests {
 
         let public: IpAddr = "8.8.8.8".parse().expect("public ip");
         assert!(!is_lan_ip(public));
-    }
-
-    #[tokio::test]
-    async fn ipwhois_provider_does_not_require_database_file() {
-        let resolver = GeoIpResolver::new(GeoIpConfig {
-            enabled: true,
-            provider: GeoIpProvider::Ipwhois,
-            edition: GeoIpEdition::CountryLite,
-            database_path: PathBuf::from("/definitely/missing/nodelite/ipwhois.mmdb"),
-            auto_update: false,
-            update_interval_days: 30,
-        })
-        .await;
-
-        assert!(resolver.prepare_database().await);
     }
 
     #[tokio::test]

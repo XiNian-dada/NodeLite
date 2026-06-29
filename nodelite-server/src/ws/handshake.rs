@@ -116,6 +116,7 @@ async fn authorize_hello(
         state.ws_admission.record_auth_failure(client_ip);
         let notice = WireMessage::ServerNotice(ServerNoticeMessage {
             level: nodelite_proto::NoticeLevel::Error,
+            code: Some(nodelite_proto::ServerNoticeCode::UnsupportedProtocolVersion),
             message: rejection.notice_message,
         });
         let _ = send_wire_message(socket, &notice).await;
@@ -150,6 +151,7 @@ async fn authorize_hello(
             let rejection = auth_failure_rejection(&error);
             let notice = WireMessage::ServerNotice(ServerNoticeMessage {
                 level: nodelite_proto::NoticeLevel::Error,
+                code: Some(rejection.code),
                 message: rejection.notice_message.to_string(),
             });
             let _ = send_wire_message(socket, &notice).await;
@@ -193,6 +195,7 @@ fn protocol_version_rejection(protocol_version: u16) -> Option<ProtocolVersionRe
 
 #[derive(Debug, PartialEq, Eq)]
 struct AuthFailureRejection {
+    code: nodelite_proto::ServerNoticeCode,
     notice_message: &'static str,
     error_label: &'static str,
 }
@@ -202,15 +205,18 @@ fn auth_failure_rejection(error: &RegistryError) -> AuthFailureRejection {
         RegistryError::TokenExpired { node_id } => {
             warn!(expired_node_id = %node_id, "websocket token expired");
             AuthFailureRejection {
+                code: nodelite_proto::ServerNoticeCode::TokenExpired,
                 notice_message: "token expired; run `nodelite-server install-agent --rotate-token` and reinstall this node",
                 error_label: "token expired",
             }
         }
         RegistryError::Unauthorized => AuthFailureRejection {
+            code: nodelite_proto::ServerNoticeCode::Unauthorized,
             notice_message: "unauthorized",
             error_label: "unauthorized",
         },
         _ => AuthFailureRejection {
+            code: nodelite_proto::ServerNoticeCode::Unauthorized,
             notice_message: "unauthorized",
             error_label: "unauthorized",
         },
@@ -219,7 +225,9 @@ fn auth_failure_rejection(error: &RegistryError) -> AuthFailureRejection {
 
 #[cfg(test)]
 mod tests {
-    use nodelite_proto::{MIN_SUPPORTED_WIRE_PROTOCOL_VERSION, WIRE_PROTOCOL_VERSION};
+    use nodelite_proto::{
+        MIN_SUPPORTED_WIRE_PROTOCOL_VERSION, ServerNoticeCode, WIRE_PROTOCOL_VERSION,
+    };
 
     use super::{RegistryError, auth_failure_rejection, protocol_version_rejection};
 
@@ -244,6 +252,7 @@ mod tests {
             node_id: "hk-01".to_string(),
         });
 
+        assert_eq!(rejection.code, ServerNoticeCode::TokenExpired);
         assert_eq!(rejection.error_label, "token expired");
         assert!(rejection.notice_message.contains("--rotate-token"));
     }
@@ -252,6 +261,7 @@ mod tests {
     fn unauthorized_rejection_does_not_leak_details() {
         let rejection = auth_failure_rejection(&RegistryError::Unauthorized);
 
+        assert_eq!(rejection.code, ServerNoticeCode::Unauthorized);
         assert_eq!(rejection.error_label, "unauthorized");
         assert_eq!(rejection.notice_message, "unauthorized");
     }
@@ -263,6 +273,7 @@ mod tests {
             "bad scheme",
         ));
 
+        assert_eq!(rejection.code, ServerNoticeCode::Unauthorized);
         assert_eq!(rejection.error_label, "unauthorized");
         assert_eq!(rejection.notice_message, "unauthorized");
     }

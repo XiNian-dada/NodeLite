@@ -2,7 +2,7 @@
 //! 所有消息均为 JSON 文本帧,顶层使用 `type` 字段进行内部标记式枚举区分。
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::model::{NodeIdentity, NodeListItem, NodeSnapshot, OverviewData};
 
@@ -85,8 +85,50 @@ pub struct PongMessage {
 pub struct ServerNoticeMessage {
     /// 通知严重级别。
     pub level: NoticeLevel,
+    /// 机器可读的通知原因。旧端可能不发送该字段,接收方需兼容缺省值。
+    #[serde(
+        default,
+        deserialize_with = "deserialize_server_notice_code",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub code: Option<ServerNoticeCode>,
     /// 面向日志或用户提示的可读消息。
     pub message: String,
+}
+
+/// Server 通知的机器可读原因码。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerNoticeCode {
+    /// Agent token 已过期,需要运维侧轮换并重装/更新节点配置。
+    TokenExpired,
+    /// 认证失败,但服务端不向客户端暴露更细节原因。
+    Unauthorized,
+    /// Agent 使用的线协议版本不在服务端支持范围内。
+    UnsupportedProtocolVersion,
+}
+
+fn deserialize_server_notice_code<'de, D>(
+    deserializer: D,
+) -> Result<Option<ServerNoticeCode>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(code) = Option::<String>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    Ok(ServerNoticeCode::from_wire_code(&code))
+}
+
+impl ServerNoticeCode {
+    fn from_wire_code(code: &str) -> Option<Self> {
+        match code {
+            "token_expired" => Some(Self::TokenExpired),
+            "unauthorized" => Some(Self::Unauthorized),
+            "unsupported_protocol_version" => Some(Self::UnsupportedProtocolVersion),
+            _ => None,
+        }
+    }
 }
 
 /// Agent 请求刷新 Token(当 Token 即将过期时)。
@@ -191,8 +233,8 @@ mod tests {
     use chrono::{TimeZone, Utc};
 
     use super::{
-        AgentLogEntry, AgentLogsMessage, HelloMessage, NoticeLevel, ServerNoticeMessage,
-        WIRE_PROTOCOL_VERSION, WireMessage,
+        AgentLogEntry, AgentLogsMessage, HelloMessage, NoticeLevel, ServerNoticeCode,
+        ServerNoticeMessage, WIRE_PROTOCOL_VERSION, WireMessage,
     };
     use crate::model::{LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot};
 
@@ -310,6 +352,7 @@ mod tests {
         });
         let notice = WireMessage::ServerNotice(ServerNoticeMessage {
             level: NoticeLevel::Warn,
+            code: None,
             message: "careful".to_string(),
         });
         let agent_logs = WireMessage::AgentLogs(AgentLogsMessage {
@@ -328,6 +371,46 @@ mod tests {
             let decoded: WireMessage = serde_json::from_str(&encoded).expect("decode");
             assert_eq!(message, decoded);
         }
+    }
+
+    #[test]
+    fn server_notice_code_is_optional_for_legacy_payloads() {
+        let legacy = r#"{"type":"server_notice","level":"error","message":"token expired"}"#;
+        let WireMessage::ServerNotice(notice) =
+            serde_json::from_str(legacy).expect("legacy notice should parse")
+        else {
+            panic!("payload should decode as server notice");
+        };
+
+        assert_eq!(notice.code, None);
+    }
+
+    #[test]
+    fn server_notice_unknown_code_is_ignored() {
+        let payload =
+            r#"{"type":"server_notice","level":"error","code":"future_code","message":"nope"}"#;
+        let WireMessage::ServerNotice(notice) =
+            serde_json::from_str(payload).expect("future notice code should parse")
+        else {
+            panic!("payload should decode as server notice");
+        };
+
+        assert_eq!(notice.code, None);
+    }
+
+    #[test]
+    fn server_notice_code_round_trips_as_snake_case() {
+        let notice = WireMessage::ServerNotice(ServerNoticeMessage {
+            level: NoticeLevel::Error,
+            code: Some(ServerNoticeCode::TokenExpired),
+            message: "rotate token".to_string(),
+        });
+
+        let encoded = serde_json::to_string(&notice).expect("encode");
+        assert!(encoded.contains(r#""code":"token_expired""#));
+        let decoded: WireMessage = serde_json::from_str(&encoded).expect("decode");
+
+        assert_eq!(notice, decoded);
     }
 
     /// 验证所有 BrowserMessage 子类型(含增量与心跳)都能完整序列化和反序列化。

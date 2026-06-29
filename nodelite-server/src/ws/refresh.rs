@@ -60,6 +60,7 @@ pub(crate) async fn handle_refresh_request(
             let notice =
                 nodelite_proto::WireMessage::ServerNotice(nodelite_proto::ServerNoticeMessage {
                     level: nodelite_proto::NoticeLevel::Error,
+                    code: None,
                     message: "Failed to refresh token".to_string(),
                 });
             let payload = serde_json::to_string(&notice)

@@ -44,6 +44,7 @@ async fn run_mock_server(listener: TcpListener, new_token: String) -> Result<()>
     // 2. Send notice that authentication succeeded
     let auth_notice = WireMessage::ServerNotice(ServerNoticeMessage {
         level: NoticeLevel::Info,
+        code: None,
         message: "authenticated".to_string(),
     });
     let auth_payload = serde_json::to_string(&auth_notice)?;

@@ -4,8 +4,8 @@ use std::time::Duration;
 use chrono::{DateTime, Local, NaiveDate, NaiveTime, Utc};
 use nodelite_proto::{AlertChannel, AlertingConfig};
 use tokio::sync::{RwLock, Semaphore, mpsc};
-use tokio::task::JoinHandle;
-use tokio::time::{MissedTickBehavior, interval};
+use tokio::task::{JoinHandle, JoinSet};
+use tokio::time::{MissedTickBehavior, interval, timeout};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -22,6 +22,7 @@ const ALERT_EVALUATION_INTERVAL_SECS: u64 = 30;
 const INSPECTION_RETRY_INTERVAL_SECS: i64 = 300;
 const DELIVERY_QUEUE_CAPACITY: usize = 1024;
 const MAX_CONCURRENT_DELIVERIES: usize = 8;
+const DELIVERY_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 enum DeliveryJob {
@@ -127,7 +128,42 @@ async fn run_alert_runtime(
         }
     }
     drop(delivery_tx);
-    delivery_dispatcher.abort();
+    drain_delivery_dispatcher(delivery_dispatcher).await;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeliveryDrainOutcome {
+    Drained,
+    JoinFailed,
+    TimedOut,
+}
+
+async fn drain_delivery_dispatcher(delivery_dispatcher: JoinHandle<()>) -> DeliveryDrainOutcome {
+    drain_delivery_dispatcher_with_timeout(delivery_dispatcher, DELIVERY_SHUTDOWN_TIMEOUT).await
+}
+
+async fn drain_delivery_dispatcher_with_timeout(
+    mut delivery_dispatcher: JoinHandle<()>,
+    timeout_duration: Duration,
+) -> DeliveryDrainOutcome {
+    match timeout(timeout_duration, &mut delivery_dispatcher).await {
+        Ok(Ok(())) => {
+            info!("alert delivery dispatcher drained during shutdown");
+            DeliveryDrainOutcome::Drained
+        }
+        Ok(Err(error)) => {
+            warn!(error = ?error, "alert delivery dispatcher failed during shutdown");
+            DeliveryDrainOutcome::JoinFailed
+        }
+        Err(_) => {
+            delivery_dispatcher.abort();
+            warn!(
+                timeout_secs = timeout_duration.as_secs(),
+                "alert delivery dispatcher did not drain before shutdown timeout"
+            );
+            DeliveryDrainOutcome::TimedOut
+        }
+    }
 }
 
 fn spawn_delivery_dispatcher(
@@ -136,18 +172,37 @@ fn spawn_delivery_dispatcher(
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let limiter = Arc::new(Semaphore::new(MAX_CONCURRENT_DELIVERIES));
-        while let Some(job) = delivery_rx.recv().await {
-            let limiter = Arc::clone(&limiter);
-            let result_tx = result_tx.clone();
-            tokio::spawn(async move {
-                let Ok(_permit) = limiter.acquire_owned().await else {
-                    return;
-                };
-                let result = deliver_job(job).await;
-                let _ = result_tx.send(result);
-            });
+        let mut deliveries = JoinSet::new();
+        loop {
+            tokio::select! {
+                Some(job) = delivery_rx.recv() => {
+                    let limiter = Arc::clone(&limiter);
+                    let result_tx = result_tx.clone();
+                    deliveries.spawn(async move {
+                        let Ok(_permit) = limiter.acquire_owned().await else {
+                            return;
+                        };
+                        let result = deliver_job(job).await;
+                        let _ = result_tx.send(result);
+                    });
+                }
+                Some(result) = deliveries.join_next(), if !deliveries.is_empty() => {
+                    log_delivery_task_join(result);
+                }
+                else => break,
+            }
+        }
+
+        while let Some(result) = deliveries.join_next().await {
+            log_delivery_task_join(result);
         }
     })
+}
+
+fn log_delivery_task_join(result: Result<(), tokio::task::JoinError>) {
+    if let Err(error) = result {
+        warn!(error = ?error, "alert delivery task join failed");
+    }
 }
 
 async fn deliver_job(job: DeliveryJob) -> DeliveryResult {
