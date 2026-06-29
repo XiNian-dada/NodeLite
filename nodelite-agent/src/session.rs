@@ -8,8 +8,8 @@ use futures::{SinkExt, StreamExt};
 use getrandom::fill as fill_random;
 use nodelite_proto::{
     AgentConfig, AgentLogEntry, AgentLogsMessage, HelloMessage, MetricsMessage, NoticeLevel,
-    PingMessage, PongMessage, ServerNoticeMessage, WIRE_PROTOCOL_VERSION, WireMessage,
-    truncate_to_byte_boundary,
+    PingMessage, PongMessage, ServerNoticeCode, ServerNoticeMessage, WIRE_PROTOCOL_VERSION,
+    WireMessage, truncate_to_byte_boundary,
 };
 use tokio::time::{MissedTickBehavior, interval, sleep, timeout};
 use tokio_tungstenite::connect_async_with_config;
@@ -242,7 +242,7 @@ pub async fn run_session(
                                     .await
                                     .map_err(|error| session_error(authenticated, error))?;
                             }
-                            WireMessage::ServerNotice(ServerNoticeMessage { level, message }) => {
+                            WireMessage::ServerNotice(ServerNoticeMessage { level, code, message }) => {
                                 if !authenticated
                                     && matches!(level, NoticeLevel::Info)
                                     && message == "authenticated"
@@ -257,9 +257,7 @@ pub async fn run_session(
                                         .map_err(|error| session_error(authenticated, error))?;
                                 }
 
-                                if matches!(level, NoticeLevel::Error)
-                                    && message.contains("token expired")
-                                {
+                                if server_notice_reports_token_expired(level, code, &message) {
                                     log_buffer.push(
                                         NoticeLevel::Error,
                                         "agent token expired; waiting for operator to rotate token",
@@ -434,6 +432,22 @@ fn token_expired_reconnect_delay(attempt: u32) -> Duration {
         .unwrap_or(TOKEN_EXPIRED_LONG_RECONNECT_DELAY)
 }
 
+fn server_notice_reports_token_expired(
+    level: NoticeLevel,
+    code: Option<ServerNoticeCode>,
+    message: &str,
+) -> bool {
+    if !matches!(level, NoticeLevel::Error) {
+        return false;
+    }
+
+    match code {
+        Some(ServerNoticeCode::TokenExpired) => true,
+        Some(_) => false,
+        None => message.contains("token expired"),
+    }
+}
+
 fn retry_log_message(
     error: &SessionError,
     reason: &str,
@@ -473,11 +487,11 @@ mod tests {
     use std::collections::HashSet;
     use std::time::Duration;
 
-    use nodelite_proto::NoticeLevel;
+    use nodelite_proto::{NoticeLevel, ServerNoticeCode};
 
     use super::{
         AgentLogBuffer, MAX_PENDING_AGENT_LOGS, SessionError, reconnect_delay, retry_log_message,
-        token_expired_reconnect_delay,
+        server_notice_reports_token_expired, token_expired_reconnect_delay,
     };
 
     #[test]
@@ -561,6 +575,30 @@ mod tests {
         );
         assert!(refresh_message.contains("session ended after authentication"));
         assert!(!refresh_message.contains("confirmed token expiry"));
+    }
+
+    #[test]
+    fn token_expiry_notice_prefers_structured_code() {
+        assert!(server_notice_reports_token_expired(
+            NoticeLevel::Error,
+            Some(ServerNoticeCode::TokenExpired),
+            "localized operator-facing message",
+        ));
+        assert!(!server_notice_reports_token_expired(
+            NoticeLevel::Error,
+            Some(ServerNoticeCode::Unauthorized),
+            "token expired",
+        ));
+        assert!(server_notice_reports_token_expired(
+            NoticeLevel::Error,
+            None,
+            "token expired; rotate it",
+        ));
+        assert!(!server_notice_reports_token_expired(
+            NoticeLevel::Warn,
+            Some(ServerNoticeCode::TokenExpired),
+            "token expired",
+        ));
     }
 
     #[test]

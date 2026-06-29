@@ -200,6 +200,7 @@ async fn serve_token_expired_notice(stream: TcpStream) -> Result<()> {
         .map_err(|error| anyhow!("read Hello failed: {error}"))?;
     let notice = WireMessage::ServerNotice(ServerNoticeMessage {
         level: NoticeLevel::Error,
+        code: Some(nodelite_proto::ServerNoticeCode::TokenExpired),
         message: "token expired".to_string(),
     });
     let payload =

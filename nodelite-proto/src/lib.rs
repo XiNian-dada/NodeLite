@@ -30,7 +30,7 @@ pub use config::{
 pub use message::{
     AgentLogEntry, AgentLogsMessage, BrowserMessage, HelloMessage,
     MIN_SUPPORTED_WIRE_PROTOCOL_VERSION, MetricsMessage, NoticeLevel, PingMessage, PongMessage,
-    RefreshTokenRequestMessage, RefreshTokenResponseMessage, ServerNoticeMessage,
+    RefreshTokenRequestMessage, RefreshTokenResponseMessage, ServerNoticeCode, ServerNoticeMessage,
     WIRE_PROTOCOL_VERSION, WireMessage,
 };
 pub use model::{
