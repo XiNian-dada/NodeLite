@@ -5,12 +5,16 @@ use nodelite_proto::{
     AlertChannel, AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode, AlertSeverity,
     AlertingConfig,
 };
-use tokio::sync::mpsc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
+use tokio::sync::{mpsc, oneshot};
+use tokio::time::timeout;
 
 use super::{
-    DeliveryJob, DeliveryResult, InspectionDispatchState, enqueue_alert_delivery,
-    enqueue_inspection_delivery, handle_alert_delivery_result, parse_inspection_local_time,
-    process_delivery_results, should_check_inspection,
+    DeliveryDrainOutcome, DeliveryJob, DeliveryResult, InspectionDispatchState,
+    drain_delivery_dispatcher_with_timeout, enqueue_alert_delivery, enqueue_inspection_delivery,
+    handle_alert_delivery_result, parse_inspection_local_time, process_delivery_results,
+    should_check_inspection, spawn_delivery_dispatcher,
 };
 use crate::alerts::delivery::AlertDeliveryError;
 use crate::alerts::{
@@ -66,6 +70,19 @@ fn alerting_config() -> Arc<AlertingConfig> {
         webhook: nodelite_proto::AlertWebhookConfig {
             enabled: true,
             url: "https://alerts.example.test/hook".to_string(),
+            secret: None,
+            send_resolved: true,
+        },
+        ..AlertingConfig::default()
+    })
+}
+
+fn webhook_alerting_config(url: String) -> Arc<AlertingConfig> {
+    Arc::new(AlertingConfig {
+        enabled: true,
+        webhook: nodelite_proto::AlertWebhookConfig {
+            enabled: true,
+            url,
             secret: None,
             send_resolved: true,
         },
@@ -207,6 +224,79 @@ fn alert_delivery_failure_result_allows_retry() {
         retry[0].reading.as_ref().map(|reading| reading.value),
         Some(93)
     );
+}
+
+#[tokio::test]
+async fn delivery_dispatcher_drains_in_flight_jobs_after_queue_closes() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("test server should bind");
+    let addr = listener.local_addr().expect("test server should have addr");
+    let (request_seen_tx, request_seen_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("request should connect");
+        let mut buffer = [0_u8; 1024];
+        let _ = stream.read(&mut buffer).await.expect("request should read");
+        let _ = request_seen_tx.send(());
+        let _ = release_rx.await;
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n")
+            .await
+            .expect("response should write");
+    });
+    let config = webhook_alerting_config(format!("http://{addr}/alerts"));
+    let event = AlertStateTracker::new()
+        .update(&[rule()], &[matched(91)], Utc::now())
+        .pop()
+        .expect("matched rule should trigger alert");
+    let (delivery_tx, delivery_rx) = mpsc::channel(1);
+    let (result_tx, mut result_rx) = mpsc::unbounded_channel();
+    let mut dispatcher = spawn_delivery_dispatcher(delivery_rx, result_tx);
+
+    delivery_tx
+        .send(DeliveryJob::Alert { config, event })
+        .await
+        .expect("delivery queue should accept job");
+    drop(delivery_tx);
+    timeout(std::time::Duration::from_secs(1), request_seen_rx)
+        .await
+        .expect("delivery should start")
+        .expect("request signal should send");
+    assert!(
+        timeout(std::time::Duration::from_millis(50), &mut dispatcher)
+            .await
+            .is_err(),
+        "dispatcher should wait for in-flight delivery before joining",
+    );
+
+    release_tx
+        .send(())
+        .expect("delivery should still be waiting");
+    timeout(std::time::Duration::from_secs(2), &mut dispatcher)
+        .await
+        .expect("dispatcher should drain after response")
+        .expect("dispatcher task should join");
+    let result = result_rx.recv().await.expect("delivery result should send");
+
+    match result {
+        DeliveryResult::Alert { result, .. } => assert!(result.is_ok()),
+        DeliveryResult::Inspection { .. } => panic!("expected alert delivery result"),
+    }
+    server.await.expect("test server should join");
+}
+
+#[tokio::test]
+async fn delivery_dispatcher_shutdown_times_out() {
+    let dispatcher = tokio::spawn(async {
+        std::future::pending::<()>().await;
+    });
+
+    let outcome =
+        drain_delivery_dispatcher_with_timeout(dispatcher, std::time::Duration::from_millis(1))
+            .await;
+
+    assert_eq!(outcome, DeliveryDrainOutcome::TimedOut);
 }
 
 #[test]
