@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 
+test.skip(!process.env.NODELITE_E2E_BASE_URL, 'requires a live backend WebSocket');
+
 // Plan §3.7.2 flow 12: WebSocket disconnect / reconnect.
 // Validation points:
 //   - When the WS drops (we simulate via `page.route` blocking `/ws` or

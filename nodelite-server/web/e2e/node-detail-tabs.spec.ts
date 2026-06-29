@@ -1,24 +1,39 @@
-import { test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+import { setupApiFixtures, waitForAppShell } from './_helpers';
 
 // Plan §3.7.2 flow 7: node detail tabs.
 // Validation points:
 //   - overview / monitor / network / logs tabs each switch view and load data.
 //   - Each tab finishes loading without console errors.
-test.fixme('overview tab loads', async () => {
-  // TODO: navigate to a known node detail URL, default tab is overview,
-  // assert key panels rendered.
+test.beforeEach(async ({ page }) => {
+  await setupApiFixtures(page);
 });
 
-test.fixme('monitor tab loads charts', async () => {
-  // TODO: switch tab, assert at least one chart canvas is present
-  // and has a non-zero size.
+test('overview tab loads', async ({ page }) => {
+  await page.goto('/nodes/node-a');
+  await waitForAppShell(page);
+  await expect(page.locator('[data-test="node-detail-view"]')).toContainText('Node A');
+  await expect(page.locator('[data-test="node-combined-overview"]')).toBeVisible();
 });
 
-test.fixme('network tab loads interface stats', async () => {
-  // TODO: switch tab, assert per-interface rows present.
+test('monitor tab loads charts', async ({ page }) => {
+  await page.goto('/nodes/node-a');
+  await waitForAppShell(page);
+  await expect(page.locator('[data-test="metric-chart-svg"]').first()).toBeVisible();
 });
 
-test.fixme('logs tab streams entries', async () => {
-  // TODO: switch tab, assert log container appears, optionally wait for
-  // a streamed line to land.
+test('network tab loads interface stats', async ({ page }) => {
+  await page.goto('/nodes/node-a');
+  await waitForAppShell(page);
+  await page.locator('[data-test="tab-network"]').click();
+  await expect(page.locator('[data-test="network-pane"]')).toBeVisible();
+  await expect(page.locator('[data-test="network-traffic-card"]')).toBeVisible();
+});
+
+test('logs tab streams entries', async ({ page }) => {
+  await page.goto('/nodes/node-a');
+  await waitForAppShell(page);
+  await page.locator('[data-test="tab-logs"]').click();
+  await expect(page.locator('[data-test="log-panel"]')).toBeVisible();
+  await expect(page.locator('[data-test="log-entry"]')).toContainText('collector started');
 });
