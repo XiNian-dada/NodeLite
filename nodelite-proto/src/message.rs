@@ -2,7 +2,7 @@
 //! 所有消息均为 JSON 文本帧,顶层使用 `type` 字段进行内部标记式枚举区分。
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::model::{NodeIdentity, NodeListItem, NodeSnapshot, OverviewData};
 
@@ -86,7 +86,11 @@ pub struct ServerNoticeMessage {
     /// 通知严重级别。
     pub level: NoticeLevel,
     /// 机器可读的通知原因。旧端可能不发送该字段,接收方需兼容缺省值。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_server_notice_code",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub code: Option<ServerNoticeCode>,
     /// 面向日志或用户提示的可读消息。
     pub message: String,
@@ -102,6 +106,29 @@ pub enum ServerNoticeCode {
     Unauthorized,
     /// Agent 使用的线协议版本不在服务端支持范围内。
     UnsupportedProtocolVersion,
+}
+
+fn deserialize_server_notice_code<'de, D>(
+    deserializer: D,
+) -> Result<Option<ServerNoticeCode>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(code) = Option::<String>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    Ok(ServerNoticeCode::from_wire_code(&code))
+}
+
+impl ServerNoticeCode {
+    fn from_wire_code(code: &str) -> Option<Self> {
+        match code {
+            "token_expired" => Some(Self::TokenExpired),
+            "unauthorized" => Some(Self::Unauthorized),
+            "unsupported_protocol_version" => Some(Self::UnsupportedProtocolVersion),
+            _ => None,
+        }
+    }
 }
 
 /// Agent 请求刷新 Token(当 Token 即将过期时)。
@@ -351,6 +378,19 @@ mod tests {
         let legacy = r#"{"type":"server_notice","level":"error","message":"token expired"}"#;
         let WireMessage::ServerNotice(notice) =
             serde_json::from_str(legacy).expect("legacy notice should parse")
+        else {
+            panic!("payload should decode as server notice");
+        };
+
+        assert_eq!(notice.code, None);
+    }
+
+    #[test]
+    fn server_notice_unknown_code_is_ignored() {
+        let payload =
+            r#"{"type":"server_notice","level":"error","code":"future_code","message":"nope"}"#;
+        let WireMessage::ServerNotice(notice) =
+            serde_json::from_str(payload).expect("future notice code should parse")
         else {
             panic!("payload should decode as server notice");
         };
