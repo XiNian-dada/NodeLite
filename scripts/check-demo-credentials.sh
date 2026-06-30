@@ -2,7 +2,7 @@
 set -eu
 
 set --
-for path in README.md README.en.md config ops .github; do
+for path in README.md README.en.md config docs ops .github; do
   if [ -e "$path" ]; then
     set -- "$@" "$path"
   fi
