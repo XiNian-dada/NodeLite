@@ -36,7 +36,7 @@ function hp(recorded_at: string, over: Partial<HistoryPoint> = {}): HistoryPoint
     load_one: null,
     load_five: null,
     load_fifteen: null,
-    memory_used_percent: null,
+    memory_used_percent: 0,
     rx_bytes_per_sec: null,
     tx_bytes_per_sec: null,
     latency_ms: null,
