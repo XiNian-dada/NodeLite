@@ -1433,7 +1433,7 @@ curl -fsSL https://monitor.example.com/install/install-agent.sh | \
             </p>
             <div class="cmd-block">
               <span class="cmd-label">验证</span>
-              <pre>curl -u viewer:secret https://monitor.example.com/metrics</pre>
+              <pre>curl -u '&lt;readonly-username&gt;:&lt;generated-strong-password&gt;' https://monitor.example.com/metrics</pre>
             </div>
             <div class="cmd-block">
               <span class="cmd-label">Prometheus 配置</span>
@@ -1442,8 +1442,8 @@ curl -fsSL https://monitor.example.com/install/install-agent.sh | \
     scheme: https
     metrics_path: /metrics
     basic_auth:
-      username: viewer
-      password: secret
+      username: &lt;readonly-username&gt;
+      password: &lt;generated-strong-password&gt;
     static_configs:
       - targets:
           - monitor.example.com</pre>
@@ -1628,10 +1628,10 @@ auth_block_secs = 900</pre>
                 <div class="faq-a-inner">
                   <p>在 <code>server.toml</code> 中配置：</p>
                   <pre>[auth]
-username = "viewer"
-password = "Str0ng#Passphrase!2026"
+username = "&lt;readonly-username&gt;"
+password = "&lt;generated-strong-password&gt;"
 enable_2fa = true
-totp_secret = "JBSWY3DPEHPK3PXP"</pre>
+totp_secret = "&lt;base32-secret-from-setup&gt;"</pre>
                   <p>生成一个新的 base32 secret：</p>
                   <pre>python3 - <<'PY'
 import base64, secrets
@@ -1672,7 +1672,7 @@ PY</pre>
                   <p>审计日志默认记录认证失败、TOTP 校验结果、token 事件和限流封禁等安全事件。</p>
                   <p>通过 API 查询：</p>
                   <pre><span class="comment"># 查看最近 100 条失败认证</span>
-curl -u viewer:secret 'https://monitor.example.com/api/audit-log?event_type=login_failure&success=false&limit=100'</pre>
+curl -u '&lt;readonly-username&gt;:&lt;generated-strong-password&gt;' 'https://monitor.example.com/api/audit-log?event_type=login_failure&success=false&limit=100'</pre>
                   <p>审计日志默认保留 90 天，可在 <code>server.toml</code> 的 <code>[audit]</code> 段调整。</p>
                 </div>
               </div>
