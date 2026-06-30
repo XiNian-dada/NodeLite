@@ -29,18 +29,18 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
           ref: refs/tags/${{ env.RELEASE_TAG }}
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10.11.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: pnpm
@@ -60,7 +60,7 @@ jobs:
           rustup component add clippy rustfmt
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: release-validate
           workspaces: |
@@ -72,10 +72,10 @@ jobs:
           sudo apt-get install -y shellcheck
 
       - name: Install cargo-audit
-        uses: taiki-e/install-action@cargo-audit
+        uses: taiki-e/install-action@51b65422b7953c6b71a6f15b2ba16135551ce70a # cargo-audit
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@cargo-deny
+        uses: taiki-e/install-action@dc3d73161fdc9d737a247c07ec4d259142348ee1 # cargo-deny
 
       - name: Check formatting
         run: cargo fmt --all --check
@@ -91,7 +91,7 @@ jobs:
         run: cargo test --workspace --locked
 
       - name: Shellcheck installers
-        run: shellcheck scripts/install-server.sh scripts/install-agent.sh scripts/test-install-server-summary.sh scripts/check-demo-credentials.sh
+        run: shellcheck scripts/install-server.sh scripts/install-agent.sh scripts/test-install-server-summary.sh scripts/check-demo-credentials.sh scripts/check-actions-pinned.sh
 
       - name: Audit dependency advisories
         run: cargo audit --deny warnings
@@ -114,18 +114,18 @@ jobs:
     steps:
       - name: Check out repository
         # fetch-depth=0 让 cross 等工具能看到完整历史;ref 强制 checkout 到 release tag。
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
           ref: refs/tags/${{ env.RELEASE_TAG }}
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10.11.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: pnpm
@@ -143,14 +143,14 @@ jobs:
           rustup default stable
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: release-${{ matrix.target }}
           workspaces: |
             . -> target
 
       - name: Install cross
-        uses: taiki-e/install-action@cross
+        uses: taiki-e/install-action@532bca59bd936483e3ece96e64da0d83ba0f744a # cross
 
       - name: Warm cross image with retries
         # GHCR 偶发超时会让 cross 首次拉镜像失败;先显式重试拉取,减少 release 偶发红灯。
@@ -203,7 +203,7 @@ jobs:
             > "dist/SHA256SUMS-${{ matrix.target }}.txt"
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-${{ matrix.target }}
           path: |
@@ -214,7 +214,7 @@ jobs:
       - name: Upload installer scripts
         # 安装脚本只需要随某一个架构上传一次。
         if: matrix.target == 'x86_64-unknown-linux-musl'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-scripts
           path: |
@@ -237,7 +237,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
           ref: refs/tags/${{ env.RELEASE_TAG }}
@@ -249,7 +249,7 @@ jobs:
           rustup target add "${{ matrix.target }}"
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: release-agent-macos-${{ matrix.target }}
           workspaces: |
@@ -269,7 +269,7 @@ jobs:
             > "dist/SHA256SUMS-${{ matrix.target }}.txt"
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-agent-${{ matrix.target }}
           path: |
@@ -284,7 +284,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
           ref: refs/tags/${{ env.RELEASE_TAG }}
@@ -295,7 +295,7 @@ jobs:
           rustup default stable
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: release-sbom
           workspaces: |
@@ -320,7 +320,7 @@ jobs:
           sha256sum dist/*.cdx.json > dist/SHA256SUMS-sbom.txt
 
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-sbom
           path: |
@@ -340,7 +340,7 @@ jobs:
 
     steps:
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: release-assets
 
