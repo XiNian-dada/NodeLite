@@ -73,9 +73,13 @@ jobs:
 
       - name: Install cargo-audit
         uses: taiki-e/install-action@51b65422b7953c6b71a6f15b2ba16135551ce70a # cargo-audit
+        with:
+          tool: cargo-audit
 
       - name: Install cargo-deny
         uses: taiki-e/install-action@51b65422b7953c6b71a6f15b2ba16135551ce70a # cargo-deny
+        with:
+          tool: cargo-deny
 
       - name: Check formatting
         run: cargo fmt --all --check
@@ -151,6 +155,8 @@ jobs:
 
       - name: Install cross
         uses: taiki-e/install-action@51b65422b7953c6b71a6f15b2ba16135551ce70a # cross
+        with:
+          tool: cross
 
       - name: Warm cross image with retries
         # GHCR 偶发超时会让 cross 首次拉镜像失败;先显式重试拉取,减少 release 偶发红灯。

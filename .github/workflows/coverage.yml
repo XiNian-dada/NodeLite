@@ -73,6 +73,8 @@ jobs:
 
       - name: Install cargo-tarpaulin
         uses: taiki-e/install-action@51b65422b7953c6b71a6f15b2ba16135551ce70a # cargo-tarpaulin
+        with:
+          tool: cargo-tarpaulin
 
       - name: Run coverage
         env:
