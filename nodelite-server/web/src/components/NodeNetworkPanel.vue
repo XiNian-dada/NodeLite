@@ -2,138 +2,21 @@
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { HistoryPoint, NodeStatus } from '@/api';
-import { averageValue, buildChartData, type ChartPoint } from '@/lib/chart/chartData';
-import { networkSeries } from '@/lib/chart/svgModel';
-import { fmtBytes, fmtLatency, fmtPercent, fmtRate } from '@/lib/format';
+import { buildNodeNetworkModel } from '@/lib/nodeNetworkModel';
 import MetricChart from './MetricChart.vue';
 
 const props = defineProps<{ node: NodeStatus | null; history: HistoryPoint[] }>();
 
 const { t } = useI18n();
 
-type Tone = 'ok' | 'warn' | 'bad' | 'neutral';
-
-const chartData = computed(() => buildChartData(props.history));
-const trafficSeries = computed(() =>
-  networkSeries(chartData.value, t('index.node.download'), t('index.node.upload')),
-);
-
-const network = computed(() => props.node?.snapshot?.network ?? null);
-const rxRate = computed(() => network.value?.rx_bytes_per_sec ?? null);
-const txRate = computed(() => network.value?.tx_bytes_per_sec ?? null);
-const rxTotal = computed(() => network.value?.total_rx_bytes ?? null);
-const txTotal = computed(() => network.value?.total_tx_bytes ?? null);
-const totalTrafficBytes = computed(() => {
-  if (rxTotal.value == null && txTotal.value == null) return null;
-  return (rxTotal.value ?? 0) + (txTotal.value ?? 0);
-});
-const activeRate = computed(() => {
-  if (rxRate.value == null && txRate.value == null) return null;
-  return (rxRate.value ?? 0) + (txRate.value ?? 0);
-});
-const packetLoss = computed(() => network.value?.packet_loss_percent ?? null);
-const averagePacketLoss = computed(() => averageValue(chartData.value.packetLossPts));
-const averageLatency = computed(() => averageValue(chartData.value.rttPts));
-const peakRate = computed(() => maxPointValue([...chartData.value.dlPts, ...chartData.value.upPts]));
-const rxShare = computed(() => {
-  const total = totalTrafficBytes.value;
-  if (!total || rxTotal.value == null) return 0;
-  return Math.max(0, Math.min(100, (rxTotal.value / total) * 100));
-});
-const txShare = computed(() => (totalTrafficBytes.value ? 100 - rxShare.value : 0));
-
-const statCards = computed(() => [
-  {
-    key: 'download',
-    label: t('index.node.download'),
-    value: fmtRate(rxRate.value) ?? '—',
-    meta: t('node.network.total_value', { value: fmtBytes(rxTotal.value) ?? '—' }),
-    tone: 'ok' as Tone,
-  },
-  {
-    key: 'upload',
-    label: t('index.node.upload'),
-    value: fmtRate(txRate.value) ?? '—',
-    meta: t('node.network.total_value', { value: fmtBytes(txTotal.value) ?? '—' }),
-    tone: 'neutral' as Tone,
-  },
-  {
-    key: 'latency',
-    label: t('node.network.rtt'),
-    value: fmtLatency(props.node?.latency_ms) ?? '—',
-    meta: averageLatency.value == null ? t('node.network.avg_empty') : fmtLatency(averageLatency.value),
-    tone: latencyTone(props.node?.latency_ms),
-  },
-  {
-    key: 'loss',
-    label: t('node.network.packet_loss'),
-    value: fmtPercent(packetLoss.value) ?? '—',
-    meta:
-      averagePacketLoss.value == null
-        ? t('node.network.avg_empty')
-        : t('node.network.avg_value', { value: fmtPercent(averagePacketLoss.value) ?? '—' }),
-    tone: lossTone(packetLoss.value),
-  },
-]);
-
-const qualityRows = computed(() => [
-  {
-    label: t('node.network.status'),
-    value: props.node?.online ? t('common.online') : t('common.offline'),
-    tone: props.node?.online ? 'ok' : 'bad',
-  },
-  {
-    label: t('node.network.avg_rtt'),
-    value: fmtLatency(averageLatency.value) ?? '—',
-    tone: latencyTone(averageLatency.value),
-  },
-  {
-    label: t('node.network.peak_rate'),
-    value: fmtRate(peakRate.value) ?? '—',
-    tone: 'neutral',
-  },
-  {
-    label: t('node.network.samples'),
-    value: t('node.network.samples_count', { count: props.history.length }),
-    tone: 'neutral',
-  },
-]);
-
-const totalRows = computed(() => [
-  { label: t('node.network.received'), value: fmtBytes(rxTotal.value) ?? '—' },
-  { label: t('node.network.transmitted'), value: fmtBytes(txTotal.value) ?? '—' },
-  { label: t('node.network.total_traffic'), value: fmtBytes(totalTrafficBytes.value) ?? '—' },
-  { label: t('node.network.active_rate'), value: fmtRate(activeRate.value) ?? '—' },
-]);
-
-function maxPointValue(points: ChartPoint[]): number | null {
-  const values = points
-    .map((point) => point.value)
-    .filter((value): value is number => value != null && Number.isFinite(Number(value)));
-  if (values.length === 0) return null;
-  return Math.max(...values);
-}
-
-function latencyTone(value: number | null | undefined): Tone {
-  if (value == null || !Number.isFinite(Number(value))) return 'neutral';
-  if (value >= 300) return 'bad';
-  if (value >= 180) return 'warn';
-  return 'ok';
-}
-
-function lossTone(value: number | null | undefined): Tone {
-  if (value == null || !Number.isFinite(Number(value))) return 'neutral';
-  if (value >= 5) return 'bad';
-  if (value >= 1) return 'warn';
-  return 'ok';
-}
+const model = computed(() => buildNodeNetworkModel(props.node, props.history, t));
 </script>
 
 <template>
   <div class="network-panel" data-test="network-pane">
     <section class="network-stat-grid" data-test="network-stat-grid">
       <article
-        v-for="card in statCards"
+        v-for="card in model.statCards"
         :key="card.key"
         class="network-stat"
         :class="`network-stat--${card.tone}`"
@@ -157,7 +40,7 @@ function lossTone(value: number | null | undefined): Tone {
             <span class="legend-item legend-item--up">{{ t('index.node.upload') }}</span>
           </div>
         </header>
-        <MetricChart :series="trafficSeries" value-kind="rate" :min-value="0" :height="260" />
+        <MetricChart :series="model.trafficSeries" value-kind="rate" :min-value="0" :height="260" />
       </article>
 
       <article class="network-card quality-card" data-test="network-quality-card">
@@ -167,12 +50,12 @@ function lossTone(value: number | null | undefined): Tone {
             <strong>{{ t('node.network.link_health') }}</strong>
           </div>
         </header>
-        <div class="quality-meter" :class="`quality-meter--${lossTone(packetLoss)}`">
+        <div class="quality-meter" :class="`quality-meter--${model.packetLossTone}`">
           <span>{{ t('node.network.packet_loss') }}</span>
-          <strong>{{ fmtPercent(packetLoss) ?? '—' }}</strong>
+          <strong>{{ model.packetLossText }}</strong>
         </div>
         <div class="quality-list">
-          <div v-for="row in qualityRows" :key="row.label" class="quality-row">
+          <div v-for="row in model.qualityRows" :key="row.label" class="quality-row">
             <span>{{ row.label }}</span>
             <strong :class="`tone-${row.tone}`">{{ row.value }}</strong>
           </div>
@@ -187,10 +70,10 @@ function lossTone(value: number | null | undefined): Tone {
             <span class="card-kicker">{{ t('node.network.loss_history') }}</span>
             <strong>{{ t('node.network.packet_loss') }}</strong>
           </div>
-          <span class="head-value">{{ fmtPercent(averagePacketLoss) ?? '—' }}</span>
+          <span class="head-value">{{ model.averagePacketLossText }}</span>
         </header>
         <MetricChart
-          :points="chartData.packetLossPts"
+          :points="model.chartData.packetLossPts"
           value-kind="percent"
           color="var(--accent-red)"
           :min-value="0"
@@ -206,14 +89,14 @@ function lossTone(value: number | null | undefined): Tone {
             <span class="card-kicker">{{ t('node.network.totals') }}</span>
             <strong>{{ t('node.network.traffic_mix') }}</strong>
           </div>
-          <span class="head-value">{{ fmtBytes(totalTrafficBytes) ?? '—' }}</span>
+          <span class="head-value">{{ model.totalTrafficText }}</span>
         </header>
         <div class="traffic-split" aria-hidden="true">
-          <span class="traffic-split__rx" :style="{ width: `${rxShare}%` }" />
-          <span class="traffic-split__tx" :style="{ width: `${txShare}%` }" />
+          <span class="traffic-split__rx" :style="{ width: `${model.rxShare}%` }" />
+          <span class="traffic-split__tx" :style="{ width: `${model.txShare}%` }" />
         </div>
         <div class="totals-list">
-          <div v-for="row in totalRows" :key="row.label" class="total-row">
+          <div v-for="row in model.totalRows" :key="row.label" class="total-row">
             <span>{{ row.label }}</span>
             <strong>{{ row.value }}</strong>
           </div>
