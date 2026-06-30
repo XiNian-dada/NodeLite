@@ -9,17 +9,28 @@ on:
   workflow_dispatch:
 
 jobs:
-  lint-and-test:
-    name: Lint and Test
+  workflow-guards:
+    name: Workflow Guards
     runs-on: ubuntu-latest
-    needs: [web-lint-and-test]
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Check pinned GitHub Actions
+        run: sh scripts/check-actions-pinned.sh
+
+  lint-and-test:
+    name: Lint and Test
+    runs-on: ubuntu-latest
+    needs: [workflow-guards, web-lint-and-test]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Download web dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: web-dist
           path: nodelite-server/web/dist
@@ -32,7 +43,7 @@ jobs:
           rustup component add clippy rustfmt
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: ci-lint-and-test
           workspaces: |
@@ -45,10 +56,10 @@ jobs:
           sudo apt-get install -y shellcheck
 
       - name: Install cargo-audit
-        uses: taiki-e/install-action@cargo-audit
+        uses: taiki-e/install-action@51b65422b7953c6b71a6f15b2ba16135551ce70a # cargo-audit
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@cargo-deny
+        uses: taiki-e/install-action@dc3d73161fdc9d737a247c07ec4d259142348ee1 # cargo-deny
 
       - name: Check formatting
         # 严格校验 cargo fmt 的格式约定,任何差异都会失败。
@@ -66,10 +77,13 @@ jobs:
         run: cargo test --workspace --locked
 
       - name: Shellcheck installers
-        run: shellcheck scripts/install-server.sh scripts/install-agent.sh scripts/test-install-server-summary.sh
+        run: shellcheck scripts/install-server.sh scripts/install-agent.sh scripts/test-install-server-summary.sh scripts/check-demo-credentials.sh scripts/check-actions-pinned.sh
 
       - name: Test installer summaries
         run: sh scripts/test-install-server-summary.sh
+
+      - name: Check demo credentials
+        run: sh scripts/check-demo-credentials.sh
 
       - name: Audit dependency advisories
         # 发布前之外,日常 CI 也要尽早暴露已知 RUSTSEC / yanked 依赖问题。
@@ -81,14 +95,14 @@ jobs:
   msrv:
     name: MSRV Check
     runs-on: ubuntu-latest
-    needs: [web-lint-and-test]
+    needs: [workflow-guards, web-lint-and-test]
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Download web dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: web-dist
           path: nodelite-server/web/dist
@@ -99,7 +113,7 @@ jobs:
           rustup default 1.88.0
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: ci-msrv
           workspaces: |
@@ -113,22 +127,22 @@ jobs:
   web-e2e:
     name: Web E2E
     runs-on: ubuntu-latest
-    needs: [web-lint-and-test]
+    needs: [workflow-guards, web-lint-and-test]
     defaults:
       run:
         working-directory: nodelite-server/web
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10.11.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: pnpm
@@ -145,7 +159,7 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: playwright-report
           path: |
@@ -158,22 +172,23 @@ jobs:
     # Stage 1 接入 build.rs 后,Rust 侧会通过 NODELITE_SKIP_WEB_BUILD=1 复用这里的 dist/。
     name: Web Lint and Test
     runs-on: ubuntu-latest
+    needs: [workflow-guards]
     defaults:
       run:
         working-directory: nodelite-server/web
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up pnpm
         # 必须先装 pnpm,setup-node 的 cache: pnpm 才能找到它。
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10.11.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: pnpm
@@ -181,6 +196,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Audit web dependencies
+        run: pnpm audit --audit-level high
 
       - name: Lint
         run: pnpm lint
@@ -209,7 +227,7 @@ jobs:
           fi
 
       - name: Upload web dist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: web-dist
           path: nodelite-server/web/dist
@@ -218,7 +236,7 @@ jobs:
   cross-build:
     # 跨平台构建:确保发布前 musl 目标都能编译通过。
     name: Cross Build ${{ matrix.target }}
-    needs: [lint-and-test, msrv, web-lint-and-test]
+    needs: [workflow-guards, lint-and-test, msrv, web-lint-and-test]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -229,10 +247,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Download web dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: web-dist
           path: nodelite-server/web/dist
@@ -243,7 +261,7 @@ jobs:
           rustup default stable
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: ci-cross-${{ matrix.target }}
           workspaces: |
@@ -251,7 +269,7 @@ jobs:
 
       - name: Install cross
         # 使用 cross 容器化交叉编译,免去手动准备 musl sysroot。
-        uses: taiki-e/install-action@cross
+        uses: taiki-e/install-action@532bca59bd936483e3ece96e64da0d83ba0f744a # cross
 
       - name: Disable local linker overrides for CI cross build
         # 本地 .cargo/config.toml 里写死了 rust-lld 路径,CI 镜像里没有,所以临时改名。
@@ -271,7 +289,7 @@ jobs:
   agent-macos-build:
     # 先只验证 Agent 的官方 macOS 构建目标,避免把 server/安装链路一起扩大。
     name: Agent macOS Build ${{ matrix.target }}
-    needs: [lint-and-test, msrv]
+    needs: [workflow-guards, lint-and-test, msrv]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -284,7 +302,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Rust
         run: |
@@ -293,7 +311,7 @@ jobs:
           rustup target add "${{ matrix.target }}"
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: ci-agent-macos-${{ matrix.target }}
           workspaces: |

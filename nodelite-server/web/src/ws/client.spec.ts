@@ -1,15 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WS } from 'vitest-websocket-mock';
-import { parseBrowserMessage, WsClient } from './client';
+import { parseBrowserMessage, WsClient, type WsClientLogger } from './client';
 import type { BrowserMessage } from '@/api/types';
+
+const wsUrl = 'ws://localhost:1234/ws/browser';
 
 describe('WsClient', () => {
   let server: WS;
   let client: WsClient;
   let fetchSpy: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+  let logger: WsClientLogger;
 
   beforeEach(() => {
     vi.useRealTimers();
+    logger = {
+      log: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
     Object.defineProperty(document, 'hidden', {
       configurable: true,
       value: false,
@@ -24,16 +32,20 @@ describe('WsClient', () => {
   });
 
   afterEach(() => {
+    if (client) {
+      client.destroy();
+    }
     if (server) {
       server.close();
     }
     fetchSpy.mockRestore();
+    vi.useRealTimers();
   });
 
   describe('connection lifecycle', () => {
     it('transitions from idle → connecting → open', async () => {
-      server = new WS('ws://localhost:1234/ws/browser');
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      server = new WS(wsUrl);
+      client = new WsClient(wsUrl, logger);
 
       expect(client.getState()).toEqual({ kind: 'idle' });
 
@@ -49,8 +61,8 @@ describe('WsClient', () => {
     });
 
     it('does not reconnect if already connecting', () => {
-      server = new WS('ws://localhost:1234/ws/browser');
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      server = new WS(wsUrl);
+      client = new WsClient(wsUrl, logger);
 
       client.connect();
       const state1 = client.getState();
@@ -61,8 +73,8 @@ describe('WsClient', () => {
     });
 
     it('does not reconnect if already open', async () => {
-      server = new WS('ws://localhost:1234/ws/browser');
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      server = new WS(wsUrl);
+      client = new WsClient(wsUrl, logger);
 
       client.connect();
       await server.connected;
@@ -75,8 +87,8 @@ describe('WsClient', () => {
     });
 
     it('disconnect() closes the connection and sets failed state', async () => {
-      server = new WS('ws://localhost:1234/ws/browser');
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      server = new WS(wsUrl);
+      client = new WsClient(wsUrl, logger);
 
       client.connect();
       await server.connected;
@@ -91,8 +103,8 @@ describe('WsClient', () => {
 
   describe('reconnect with exponential backoff', () => {
     it('schedules reconnect after close with exponential backoff + jitter', async () => {
-      server = new WS('ws://localhost:1234/ws/browser');
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      server = new WS(wsUrl);
+      client = new WsClient(wsUrl, logger);
 
       client.connect();
       await server.connected;
@@ -112,8 +124,8 @@ describe('WsClient', () => {
     });
 
     it('reconnects after the scheduled delay', async () => {
-      server = new WS('ws://localhost:1234/ws/browser');
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      server = new WS(wsUrl);
+      client = new WsClient(wsUrl, logger);
 
       client.connect();
       await server.connected;
@@ -127,7 +139,7 @@ describe('WsClient', () => {
 
       const delay = state.nextAttemptAt - Date.now();
 
-      server = new WS('ws://localhost:1234/ws/browser');
+      server = new WS(wsUrl);
       await new Promise((resolve) => setTimeout(resolve, delay + 100));
 
       const finalState = client.getState().kind;
@@ -135,10 +147,10 @@ describe('WsClient', () => {
     });
 
     it('caps backoff delay at 30s', async () => {
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      client = new WsClient(wsUrl, logger);
 
       for (let i = 0; i < 5; i++) {
-        server = new WS('ws://localhost:1234/ws/browser');
+        server = new WS(wsUrl);
         client.connect();
         await server.connected;
         server.close();
@@ -168,8 +180,8 @@ describe('WsClient', () => {
     });
 
     it('delivers InitialState to registered handlers', async () => {
-      server = new WS('ws://localhost:1234/ws/browser');
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      server = new WS(wsUrl);
+      client = new WsClient(wsUrl, logger);
 
       const handler = vi.fn();
       client.on('initial_state', handler);
@@ -201,8 +213,8 @@ describe('WsClient', () => {
     });
 
     it('delivers NodeUpsert to registered handlers', async () => {
-      server = new WS('ws://localhost:1234/ws/browser');
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      server = new WS(wsUrl);
+      client = new WsClient(wsUrl, logger);
 
       const handler = vi.fn();
       client.on('node_upsert', handler);
@@ -245,11 +257,10 @@ describe('WsClient', () => {
     });
 
     it('ignores malformed JSON without dispatching handlers', async () => {
-      server = new WS('ws://localhost:1234/ws/browser');
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      server = new WS(wsUrl);
+      client = new WsClient(wsUrl, logger);
 
       const handler = vi.fn();
-      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       client.on('initial_state', handler);
 
       client.connect();
@@ -259,19 +270,17 @@ describe('WsClient', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       expect(handler).not.toHaveBeenCalled();
-      expect(errorSpy).toHaveBeenCalledWith(
+      expect(logger.error).toHaveBeenCalledWith(
         'Failed to parse WebSocket message',
         expect.any(SyntaxError),
       );
-      errorSpy.mockRestore();
     });
 
     it('ignores unknown message types without dispatching handlers', async () => {
-      server = new WS('ws://localhost:1234/ws/browser');
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      server = new WS(wsUrl);
+      client = new WsClient(wsUrl, logger);
 
       const handler = vi.fn();
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       client.on('overview_update', handler);
 
       client.connect();
@@ -281,16 +290,14 @@ describe('WsClient', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       expect(handler).not.toHaveBeenCalled();
-      expect(warnSpy).toHaveBeenCalledWith('Ignoring invalid WebSocket browser message');
-      warnSpy.mockRestore();
+      expect(logger.warn).toHaveBeenCalledWith('Ignoring invalid WebSocket browser message');
     });
 
     it('ignores known message types with missing required fields', async () => {
-      server = new WS('ws://localhost:1234/ws/browser');
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      server = new WS(wsUrl);
+      client = new WsClient(wsUrl, logger);
 
       const handler = vi.fn();
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       client.on('node_removed', handler);
 
       client.connect();
@@ -300,13 +307,12 @@ describe('WsClient', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       expect(handler).not.toHaveBeenCalled();
-      expect(warnSpy).toHaveBeenCalledWith('Ignoring invalid WebSocket browser message');
-      warnSpy.mockRestore();
+      expect(logger.warn).toHaveBeenCalledWith('Ignoring invalid WebSocket browser message');
     });
 
     it('unsubscribes handlers via returned function', async () => {
-      server = new WS('ws://localhost:1234/ws/browser');
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      server = new WS(wsUrl);
+      client = new WsClient(wsUrl, logger);
 
       const handler = vi.fn();
       const unsubscribe = client.on('ping', handler);
@@ -328,8 +334,8 @@ describe('WsClient', () => {
 
   describe('dev DOM marker', () => {
     it('increments data-ws-conn-id on each successful connection', async () => {
-      server = new WS('ws://localhost:1234/ws/browser');
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      server = new WS(wsUrl);
+      client = new WsClient(wsUrl, logger);
 
       client.connect();
       await server.connected;
@@ -347,7 +353,7 @@ describe('WsClient', () => {
 
       const delay = state.nextAttemptAt - Date.now();
 
-      server = new WS('ws://localhost:1234/ws/browser');
+      server = new WS(wsUrl);
       await new Promise((resolve) => setTimeout(resolve, delay + 100));
       await server.connected;
 
@@ -358,54 +364,57 @@ describe('WsClient', () => {
   });
 
   describe('heartbeat (Ping/Pong)', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
     it('sends Ping after 30s and restarts timer on Pong', async () => {
-      server = new WS('ws://localhost:1234/ws/browser');
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      server = new WS(wsUrl);
+      client = new WsClient(wsUrl, logger);
 
       client.connect();
+      await vi.advanceTimersByTimeAsync(100);
       await server.connected;
 
-      // Wait for first ping (30s)
-      await new Promise((resolve) => setTimeout(resolve, 30100));
+      await vi.advanceTimersByTimeAsync(30_000);
 
       expect(server.messages.length).toBeGreaterThan(0);
       expect(server.messages[0]).toBe(JSON.stringify({ type: 'ping' }));
 
-      // Send pong
       server.send(JSON.stringify({ type: 'pong' }));
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await vi.advanceTimersByTimeAsync(100);
 
-      // Wait for second ping (another 30s)
-      await new Promise((resolve) => setTimeout(resolve, 30100));
+      await vi.advanceTimersByTimeAsync(30_000);
 
       const pings = server.messages.filter((m) => m === JSON.stringify({ type: 'ping' }));
       expect(pings.length).toBeGreaterThanOrEqual(2);
-    }, 65000);
+    });
 
     it('closes connection if Pong not received within 10s', async () => {
-      server = new WS('ws://localhost:1234/ws/browser');
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      server = new WS(wsUrl);
+      client = new WsClient(wsUrl, logger);
 
       client.connect();
+      await vi.advanceTimersByTimeAsync(100);
       await server.connected;
 
       expect(client.getState().kind).toBe('open');
 
-      // Wait for ping (30s)
-      await new Promise((resolve) => setTimeout(resolve, 30100));
+      await vi.advanceTimersByTimeAsync(30_000);
 
       expect(server.messages).toContain(JSON.stringify({ type: 'ping' }));
 
-      // Don't send pong, wait for timeout (10s)
-      await new Promise((resolve) => setTimeout(resolve, 10100));
+      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(0);
 
+      expect(logger.warn).toHaveBeenCalledWith('Pong timeout, closing connection');
       expect(client.getState().kind).toBe('reconnecting');
-    }, 45000);
+    });
   });
 
   describe('reconnect stop condition', () => {
     it('stops reconnecting after 3 consecutive handshake failures', async () => {
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      client = new WsClient(wsUrl, logger);
 
       // Attempt 1: connect but server never opens
       client.connect();
@@ -461,8 +470,8 @@ describe('WsClient', () => {
 
   describe('visibility handling', () => {
     it('closes connection and stays idle when tab becomes hidden', async () => {
-      server = new WS('ws://localhost:1234/ws/browser');
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      server = new WS(wsUrl);
+      client = new WsClient(wsUrl, logger);
 
       client.connect();
       await server.connected;
@@ -481,8 +490,8 @@ describe('WsClient', () => {
     });
 
     it('reconnects when tab becomes visible after being hidden', async () => {
-      server = new WS('ws://localhost:1234/ws/browser');
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      server = new WS(wsUrl);
+      client = new WsClient(wsUrl, logger);
 
       client.connect();
       await server.connected;
@@ -502,7 +511,7 @@ describe('WsClient', () => {
       }
 
       server.close();
-      server = new WS('ws://localhost:1234/ws/browser');
+      server = new WS(wsUrl);
 
       Object.defineProperty(document, 'hidden', {
         configurable: true,
@@ -517,7 +526,7 @@ describe('WsClient', () => {
     });
 
     it('resets handshake failure counter on visibility-triggered reconnect', async () => {
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      client = new WsClient(wsUrl, logger);
 
       // Simulate 3 failures to reach failed state
       for (let i = 0; i < 3; i++) {
@@ -543,7 +552,7 @@ describe('WsClient', () => {
       expect(client.getState().kind).toBe('failed');
 
       // Visibility change should reset counter and reconnect
-      server = new WS('ws://localhost:1234/ws/browser');
+      server = new WS(wsUrl);
 
       Object.defineProperty(document, 'hidden', {
         configurable: true,
@@ -560,7 +569,7 @@ describe('WsClient', () => {
 
   describe('auth probe on handshake failure', () => {
     it('probes /api/bootstrap on WS error during connecting', async () => {
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      client = new WsClient(wsUrl, logger);
       client.connect();
       await new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -589,7 +598,7 @@ describe('WsClient', () => {
         url: 'http://localhost/verify-2fa',
       } as Response);
 
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      client = new WsClient(wsUrl, logger);
       client.connect();
       await new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -612,7 +621,7 @@ describe('WsClient', () => {
         ok: false,
       } as Response);
 
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      client = new WsClient(wsUrl, logger);
       client.connect();
       await new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -628,7 +637,7 @@ describe('WsClient', () => {
     it('does not navigate on successful probe (200)', async () => {
       const originalLocation = window.location.href;
 
-      client = new WsClient('ws://localhost:1234/ws/browser');
+      client = new WsClient(wsUrl, logger);
       client.connect();
       await new Promise((resolve) => setTimeout(resolve, 100));
 

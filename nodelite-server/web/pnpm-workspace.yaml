@@ -1,0 +1,13 @@
+packages:
+  - .
+
+allowBuilds:
+  esbuild: true
+  vue-demi: true
+
+overrides:
+  vite: ^6.4.3
+
+onlyBuiltDependencies:
+  - esbuild
+  - vue-demi

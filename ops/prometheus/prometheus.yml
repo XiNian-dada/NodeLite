@@ -7,8 +7,8 @@ scrape_configs:
     metrics_path: /metrics
     scheme: https
     basic_auth:
-      username: viewer
-      password: change-me
+      username: "<readonly-username>"
+      password_file: /etc/nodelite/secrets/metrics-password
     static_configs:
       - targets:
           - monitor.example.com

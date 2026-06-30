@@ -120,7 +120,7 @@ Browser -> https://monitor.example.com/ -> Nginx/Caddy -> 127.0.0.1:nodelite-ser
 Quick Prometheus check:
 
 ```bash
-curl -u viewer:secret https://monitor.example.com/metrics
+curl -u "$NODELITE_READONLY_USERNAME:$NODELITE_READONLY_PASSWORD" https://monitor.example.com/metrics
 ```
 
 ## Current Capabilities

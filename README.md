@@ -121,7 +121,7 @@ Browser -> https://monitor.example.com/ -> Nginx/Caddy -> 127.0.0.1:nodelite-ser
 Prometheus 快速验证：
 
 ```bash
-curl -u viewer:secret https://monitor.example.com/metrics
+curl -u "$NODELITE_READONLY_USERNAME:$NODELITE_READONLY_PASSWORD" https://monitor.example.com/metrics
 ```
 
 Prometheus 抓取示例和 Grafana Dashboard 见 `ops/prometheus/prometheus.yml` 与 `ops/grafana/nodelite-dashboard.json`。

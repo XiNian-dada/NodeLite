@@ -13,6 +13,18 @@ type MessageHandler<T extends BrowserMessage['type']> = (
 
 type UnsubscribeFn = () => void;
 
+export interface WsClientLogger {
+  log: (...args: unknown[]) => void;
+  warn: (...args: unknown[]) => void;
+  error: (...args: unknown[]) => void;
+}
+
+const defaultLogger: WsClientLogger = {
+  log: (...args) => console.log(...args),
+  warn: (...args) => console.warn(...args),
+  error: (...args) => console.error(...args),
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -72,7 +84,10 @@ export class WsClient {
 
   private readonly handlers = new Map<string, Set<MessageHandler<BrowserMessage['type']>>>();
 
-  constructor(private readonly url: string) {
+  constructor(
+    private readonly url: string,
+    private readonly logger: WsClientLogger = defaultLogger,
+  ) {
     this.handleVisibilityChange = this.handleVisibilityChange.bind(this);
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', this.handleVisibilityChange);
@@ -92,7 +107,7 @@ export class WsClient {
       this.ws.onerror = this.onError.bind(this);
       this.ws.onclose = this.onClose.bind(this);
     } catch (e) {
-      console.error('WebSocket construction failed', e);
+      this.logger.error('WebSocket construction failed', e);
       this.scheduleReconnect();
     }
   }
@@ -140,14 +155,14 @@ export class WsClient {
     }
 
     this.startHeartbeat();
-    console.log('WebSocket connected');
+    this.logger.log('WebSocket connected');
   }
 
   private onMessage(event: MessageEvent): void {
     try {
       const msg = parseBrowserMessage(JSON.parse(event.data));
       if (!msg) {
-        console.warn('Ignoring invalid WebSocket browser message');
+        this.logger.warn('Ignoring invalid WebSocket browser message');
         return;
       }
 
@@ -161,12 +176,12 @@ export class WsClient {
         set.forEach((handler) => handler(msg));
       }
     } catch (e) {
-      console.error('Failed to parse WebSocket message', e);
+      this.logger.error('Failed to parse WebSocket message', e);
     }
   }
 
   private onError(event: Event): void {
-    console.error('WebSocket error', event);
+    this.logger.error('WebSocket error', event);
     if (this.state.kind === 'connecting') {
       this.handshakeFailures++;
       this.probeAuthState();
@@ -174,7 +189,7 @@ export class WsClient {
   }
 
   private onClose(event: CloseEvent): void {
-    console.log('WebSocket closed', event.code, event.reason);
+    this.logger.log('WebSocket closed', event.code, event.reason);
     this.ws = null;
     this.clearHeartbeat();
 
@@ -202,17 +217,17 @@ export class WsClient {
       .then((res) => {
         // fetch() follows 302 redirects, so check res.redirected + pathname
         if (res.redirected && new URL(res.url).pathname === '/verify-2fa') {
-          console.warn('Auth probe detected 2FA required, navigating to verify-2fa');
+          this.logger.warn('Auth probe detected 2FA required, navigating to verify-2fa');
           window.location.href = '/verify-2fa';
           return;
         }
         if (res.status === 401) {
-          console.warn('Auth probe detected 401, navigating to logout-and-reauth');
+          this.logger.warn('Auth probe detected 401, navigating to logout-and-reauth');
           window.location.href = '/logout-and-reauth';
         }
       })
       .catch((err) => {
-        console.error('Auth probe failed', err);
+        this.logger.error('Auth probe failed', err);
       });
   }
 
@@ -252,7 +267,7 @@ export class WsClient {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         this.ws.send(JSON.stringify({ type: 'ping' }));
         this.pongTimer = setTimeout(() => {
-          console.warn('Pong timeout, closing connection');
+          this.logger.warn('Pong timeout, closing connection');
           if (this.ws) this.ws.close();
         }, 10000);
       }
@@ -283,7 +298,7 @@ export class WsClient {
 
     if (document.hidden) {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        console.log('Tab hidden, closing WebSocket');
+        this.logger.log('Tab hidden, closing WebSocket');
         this.ws.close();
       }
     } else {
@@ -292,7 +307,7 @@ export class WsClient {
         this.state.kind === 'idle' ||
         this.state.kind === 'reconnecting'
       ) {
-        console.log('Tab visible, reconnecting');
+        this.logger.log('Tab visible, reconnecting');
         this.clearReconnectTimer();
         this.handshakeFailures = 0;
         this.reconnectAttempt = 0;
