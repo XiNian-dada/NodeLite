@@ -43,6 +43,7 @@ fn main() {
     println!("cargo:rerun-if-changed=web/index.html");
     println!("cargo:rerun-if-changed=web/package.json");
     println!("cargo:rerun-if-changed=web/pnpm-lock.yaml");
+    println!("cargo:rerun-if-changed=web/pnpm-workspace.yaml");
     println!("cargo:rerun-if-changed=web/vite.config.ts");
     println!("cargo:rerun-if-changed=web/tsconfig.json");
 
