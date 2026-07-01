@@ -673,8 +673,10 @@ mod tests {
             "nodelite-missing-statvfs-{}-{unique}",
             std::process::id()
         ));
-        let error = real_statvfs(missing.to_string_lossy().as_ref())
-            .expect_err("missing mount paths should surface statvfs errors");
+        let error = match real_statvfs(missing.to_string_lossy().as_ref()) {
+            Ok(_) => panic!("missing mount paths should surface statvfs errors"),
+            Err(error) => error,
+        };
 
         assert!(error.to_string().contains("statvfs failed"));
     }
