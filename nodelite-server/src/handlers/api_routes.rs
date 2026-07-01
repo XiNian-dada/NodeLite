@@ -217,6 +217,8 @@ fn process_resident_memory_bytes() -> Option<u64> {
     {
         let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
         let resident_pages = statm.split_whitespace().nth(1)?.parse::<u64>().ok()?;
+        // SAFETY: `_SC_PAGESIZE` does not use pointers; libc returns the page
+        // size by value or a non-positive error/sentinel value.
         let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         if page_size <= 0 {
             return None;
@@ -226,28 +228,41 @@ fn process_resident_memory_bytes() -> Option<u64> {
 
     #[cfg(target_os = "macos")]
     {
-        let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::zeroed();
-        let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
-        let status = unsafe {
-            libc::proc_pidinfo(
-                libc::getpid(),
-                libc::PROC_PIDTASKINFO,
-                0,
-                info.as_mut_ptr().cast(),
-                size,
-            )
-        };
-        if status != size {
-            return None;
-        }
-        let info = unsafe { info.assume_init() };
-        Some(info.pti_resident_size)
+        // SAFETY: `getpid` has no preconditions and returns the current process
+        // id by value.
+        let pid = unsafe { libc::getpid() };
+        process_resident_memory_bytes_for_pid(pid)
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         None
     }
+}
+
+#[cfg(target_os = "macos")]
+fn process_resident_memory_bytes_for_pid(pid: libc::pid_t) -> Option<u64> {
+    let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::zeroed();
+    let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
+    // SAFETY: `info` points to writable storage for exactly one
+    // `proc_taskinfo`, and `size` matches that buffer. `proc_pidinfo` reports
+    // short/error writes via its byte-count return value, checked below.
+    let status = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTASKINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size,
+        )
+    };
+    if status != size {
+        return None;
+    }
+    // SAFETY: A full-size `proc_pidinfo` result means the kernel initialized
+    // every byte of `info`.
+    let info = unsafe { info.assume_init() };
+    Some(info.pti_resident_size)
 }
 
 /// 审计日志查询接口。默认按时间倒序返回最近 100 条。
@@ -421,5 +436,20 @@ mod tests {
             "nodelite_metrics_response_body_bytes {}",
             body.len()
         )));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn process_resident_memory_bytes_reads_linux_statm() {
+        let bytes = super::process_resident_memory_bytes()
+            .expect("linux /proc/self/statm should report resident memory");
+
+        assert!(bytes > 0);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn process_resident_memory_bytes_rejects_invalid_macos_pid() {
+        assert_eq!(super::process_resident_memory_bytes_for_pid(-1), None);
     }
 }
