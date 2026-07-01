@@ -1,3 +1,5 @@
+use std::mem;
+use std::ptr;
 use std::time::{Duration, Instant};
 
 use super::super::shared::{NetworkSample, NetworkTotals, compute_network_metrics};
@@ -5,6 +7,7 @@ use super::identity::{extract_plist_value, parse_os_name_from_plist};
 use super::metrics::{
     NetworkInterfaceCache, NetworkInterfaceSignature, ObservedNetworkSample,
     compute_available_memory_bytes, compute_network_metrics_if_same_interfaces,
+    parse_network_totals_and_indices_from_iflist2,
 };
 
 #[test]
@@ -154,7 +157,40 @@ fn network_interface_cache_only_matches_same_non_empty_list() {
 }
 
 #[test]
+fn iflist2_parser_ignores_truncated_headers() {
+    let buffer = vec![0_u8; mem::size_of::<libc::if_msghdr>().saturating_sub(1)];
+    let (totals, indices) = parse_network_totals_and_indices_from_iflist2(&buffer);
+
+    assert_eq!(totals.rx_bytes, 0);
+    assert_eq!(totals.tx_bytes, 0);
+    assert!(indices.is_empty());
+}
+
+#[test]
+fn iflist2_parser_stops_on_overlong_messages() {
+    let mut buffer = vec![0_u8; mem::size_of::<libc::if_msghdr>()];
+    // SAFETY: `if_msghdr` is a plain C header used here only as a byte fixture;
+    // zeroed fields are overwritten as needed before the unaligned write.
+    let mut header = unsafe { mem::zeroed::<libc::if_msghdr>() };
+    header.ifm_msglen = (buffer.len() + 1) as _;
+    header.ifm_type = libc::RTM_IFINFO2 as _;
+    // SAFETY: `buffer` has exactly enough bytes for one header, and
+    // `write_unaligned` matches the parser's byte-stream assumptions.
+    unsafe {
+        ptr::write_unaligned(buffer.as_mut_ptr().cast::<libc::if_msghdr>(), header);
+    }
+
+    let (totals, indices) = parse_network_totals_and_indices_from_iflist2(&buffer);
+
+    assert_eq!(totals.rx_packets, 0);
+    assert_eq!(totals.tx_packets, 0);
+    assert!(indices.is_empty());
+}
+
+#[test]
 fn available_memory_does_not_underflow_when_compressor_is_large() {
+    // SAFETY: `vm_statistics64` is a plain C statistics struct; this test
+    // assigns the fields used by `compute_available_memory_bytes`.
     let mut stats = unsafe { std::mem::zeroed::<libc::vm_statistics64>() };
     stats.free_count = 5_431;
     stats.inactive_count = 520_105;
