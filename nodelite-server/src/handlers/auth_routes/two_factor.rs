@@ -246,18 +246,16 @@ async fn record_totp_success(
         "endpoint": "/api/verify-2fa",
         "two_factor_verified": true,
     });
-    if let Some(info) = geoip_info {
-        if let Some(obj) = login_details.as_object_mut() {
-            obj.insert("country".to_string(), json!(info.country));
-            if let Some(city) = info.city {
-                obj.insert("city".to_string(), json!(city));
-            }
-            if let Some(lat) = info.latitude {
-                obj.insert("latitude".to_string(), json!(lat));
-            }
-            if let Some(lon) = info.longitude {
-                obj.insert("longitude".to_string(), json!(lon));
-            }
+    if let Some(info) = geoip_info && let Some(obj) = login_details.as_object_mut() {
+        obj.insert("country".to_string(), json!(info.country));
+        if let Some(city) = info.city {
+            obj.insert("city".to_string(), json!(city));
+        }
+        if let Some(lat) = info.latitude {
+            obj.insert("latitude".to_string(), json!(lat));
+        }
+        if let Some(lon) = info.longitude {
+            obj.insert("longitude".to_string(), json!(lon));
         }
     }
 
@@ -269,7 +267,7 @@ async fn record_totp_success(
     login_event.user = audit_user;
     login_event.user_agent = user_agent(headers);
     login_event.details = login_details;
-    state.audit_log.record(login_event).await;
+    let _ = state.audit_log.record(login_event).await;
 }
 
 fn successful_verify_2fa_response(state: &AppState, auth_token: &str) -> Response {

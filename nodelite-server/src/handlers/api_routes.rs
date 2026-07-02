@@ -12,7 +12,8 @@ use tracing::error;
 use crate::AppState;
 use crate::audit::{AuditEventType, AuditLogError, AuditQuery};
 use crate::handlers::metrics_routes::{
-    RuntimeMetrics, WriterMetrics, render_agent_log_metrics, render_api_cache_metrics,
+    RuntimeMetrics, WriterMetrics,
+    render_api_cache_metrics,
     render_metrics_response_body_bytes, render_runtime_metrics, render_writer_metrics,
 };
 use crate::history::HistoryError;
@@ -22,8 +23,6 @@ const DEFAULT_HISTORY_WINDOW_HOURS: u64 = 24;
 const DEFAULT_HISTORY_MAX_POINTS: usize = 480;
 const MAX_HISTORY_MAX_POINTS: usize = 1440;
 const PROMETHEUS_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
-const DEFAULT_NODE_LOG_LIMIT: usize = 120;
-const MAX_NODE_LOG_LIMIT: usize = 200;
 
 #[derive(Debug, Serialize)]
 struct BootstrapResponse {
@@ -48,6 +47,7 @@ pub(crate) struct HistoryQuery {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct NodeLogsQuery {
+    #[allow(dead_code)]
     limit: Option<usize>,
 }
 
@@ -130,7 +130,6 @@ pub(crate) async fn metrics(State(state): State<AppState>) -> Response {
         session_control_queue_full_total: state.shared.session_control_queue_full_total(),
     });
     let api_cache_metrics = render_api_cache_metrics(state.shared.api_cache_metrics());
-    let agent_log_metrics = render_agent_log_metrics(state.agent_logs.stats().await);
     let config = state.shared.config();
     let (history_db_bytes, history_wal_bytes, history_shm_bytes) =
         sqlite_artifact_sizes(config.history_db_path.as_path()).await;
@@ -154,7 +153,7 @@ pub(crate) async fn metrics(State(state): State<AppState>) -> Response {
     });
     let body = metrics_response_body(
         cached_body,
-        format!("{writer_metrics}{api_cache_metrics}{agent_log_metrics}{runtime_metrics}"),
+        format!("{writer_metrics}{api_cache_metrics}{runtime_metrics}"),
     );
     let content_length = body.len().to_string();
     (
@@ -405,15 +404,12 @@ pub(crate) async fn node_history(
 
 /// 节点最近的 Agent 运行日志。用于排查断链、重连、token 续期等偶发问题。
 pub(crate) async fn node_logs(
-    State(state): State<AppState>,
-    AxumPath(node_id): AxumPath<String>,
-    Query(query): Query<NodeLogsQuery>,
+    State(_state): State<AppState>,
+    AxumPath(_node_id): AxumPath<String>,
+    Query(_query): Query<NodeLogsQuery>,
 ) -> Json<Vec<AgentLogEntry>> {
-    let limit = query
-        .limit
-        .unwrap_or(DEFAULT_NODE_LOG_LIMIT)
-        .clamp(1, MAX_NODE_LOG_LIMIT);
-    Json(state.agent_logs.list(&node_id, limit).await)
+    // Agent logs persistence removed - return empty list
+    Json(vec![])
 }
 
 #[cfg(test)]

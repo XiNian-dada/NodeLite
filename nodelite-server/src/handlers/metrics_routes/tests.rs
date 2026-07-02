@@ -4,12 +4,11 @@ use chrono::Utc;
 
 use super::{
     ApiCacheMetrics, PrometheusNode, RuntimeMetrics, SqliteWalCheckpointMetrics,
-    SqliteWalCheckpointStats, WriterMetrics, WsMessageMetrics, render_agent_log_metrics,
+    SqliteWalCheckpointStats, WriterMetrics, WsMessageMetrics,
     render_api_cache_metrics, render_metrics_response_body_bytes, render_prometheus_metrics,
     render_prometheus_metrics_from_iter, render_runtime_metrics, render_writer_metrics,
 };
 use crate::ServerReadiness;
-use crate::agent_logs::AgentLogStats;
 use nodelite_proto::{
     DiskUsage, LoadAverage, MemoryUsage, MetricsConfig, NetworkCounters, NodeIdentity,
     NodeSnapshot, NodeStatus, OverviewData,
@@ -218,24 +217,6 @@ fn exporter_exposes_writer_counters() {
     assert!(body.contains("nodelite_audit_write_failures_total 7"));
     assert!(body.contains("# TYPE nodelite_session_control_queue_full_total counter"));
     assert!(body.contains("nodelite_session_control_queue_full_total 11"));
-}
-
-#[test]
-fn exporter_exposes_agent_log_store_gauges() {
-    let body = render_agent_log_metrics(AgentLogStats {
-        nodes: 2,
-        entries: 37,
-        estimated_bytes: 4096,
-        max_entries: 10_000,
-        max_estimated_bytes: 8 * 1024 * 1024,
-    });
-
-    assert!(body.contains("# TYPE nodelite_agent_log_nodes gauge"));
-    assert!(body.contains("nodelite_agent_log_nodes 2"));
-    assert!(body.contains("# TYPE nodelite_agent_log_entries gauge"));
-    assert!(body.contains("nodelite_agent_log_entries 37"));
-    assert!(body.contains("# TYPE nodelite_agent_log_estimated_bytes gauge"));
-    assert!(body.contains("nodelite_agent_log_estimated_bytes 4096"));
 }
 
 #[test]

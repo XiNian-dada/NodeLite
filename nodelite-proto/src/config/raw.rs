@@ -6,7 +6,7 @@ use serde::Deserialize;
 mod alerts;
 
 use super::defaults::{
-    default_agent_logs_db_path, default_agent_logs_max_size_mb, default_audit_db_path,
+    default_audit_db_path,
     default_audit_enabled, default_audit_log_failed_auth, default_audit_log_rate_limit,
     default_audit_log_successful_auth, default_audit_log_token_events,
     default_audit_retention_days, default_connect_timeout_secs, default_geoip_auto_update,
@@ -18,7 +18,7 @@ use super::defaults::{
     default_max_sanitized_string_bytes, default_metric_anomaly_session_limit,
     default_metrics_export_node_disk_metrics, default_metrics_export_node_resource_metrics,
     default_node_registry_path, default_ping_interval_secs, default_refresh_interval_secs,
-    default_report_interval_secs, default_server_logs_db_path, default_server_logs_max_size_mb,
+    default_report_interval_secs,
     default_snapshot_path, default_sqlite_busy_timeout_secs,
     default_stale_after_secs, default_trusted_proxies, default_ws_auth_block_secs,
     default_ws_auth_fail_max_attempts, default_ws_auth_fail_window_secs,
@@ -94,14 +94,6 @@ struct RawServerSection {
     max_outstanding_pings: usize,
     #[serde(default = "default_insecure_transport_warn_interval_secs")]
     insecure_transport_warn_interval_secs: u64,
-    #[serde(default = "default_agent_logs_db_path")]
-    agent_logs_db_path: PathBuf,
-    #[serde(default = "default_agent_logs_max_size_mb")]
-    agent_logs_max_size_mb: u64,
-    #[serde(default = "default_server_logs_db_path")]
-    server_logs_db_path: PathBuf,
-    #[serde(default = "default_server_logs_max_size_mb")]
-    server_logs_max_size_mb: u64,
     #[serde(default = "default_max_sanitized_disks")]
     max_sanitized_disks: usize,
     #[serde(default = "default_max_sanitized_string_bytes")]
@@ -355,10 +347,6 @@ impl RawServerConfigFile {
             max_sanitized_string_bytes: self.server.max_sanitized_string_bytes,
             metric_anomaly_session_limit: self.server.metric_anomaly_session_limit,
             sqlite_busy_timeout_secs: self.server.sqlite_busy_timeout_secs,
-            agent_logs_db_path: self.server.agent_logs_db_path,
-            agent_logs_max_size_mb: self.server.agent_logs_max_size_mb,
-            server_logs_db_path: self.server.server_logs_db_path,
-            server_logs_max_size_mb: self.server.server_logs_max_size_mb,
         })
     }
 

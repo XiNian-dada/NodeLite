@@ -24,7 +24,6 @@ use crate::admission::{
     InstallAdmissionController, WsAdmissionController, auth_failure_admission_config,
     sensitive_auth_failure_admission_config,
 };
-use crate::agent_logs::AgentLogStore;
 use crate::alerts::spawn_alert_runtime;
 use crate::app_state::{AppState, ServerReadiness};
 use crate::audit::AuditLog;
@@ -139,13 +138,8 @@ async fn initialize_server_runtime(
         config.history_db_path.clone(),
         config.sqlite_busy_timeout_secs,
     );
-    let agent_logs = AgentLogStore::with_persistence(
-        config.agent_logs_db_path.clone(),
-        config.agent_logs_max_size_mb,
-    );
     let audit_log = AuditLog::new(config.audit.clone(), config.sqlite_busy_timeout_secs);
     history.initialize().await;
-    agent_logs.initialize().await?;
     audit_log.initialize().await?;
     let geoip = GeoIpResolver::new(config.geoip.clone()).await;
     let readiness = ServerReadiness::new(history.is_available());
@@ -158,7 +152,6 @@ async fn initialize_server_runtime(
     let shutdown = CancellationToken::new();
     let state = AppState {
         history,
-        agent_logs,
         audit_log,
         geoip,
         install_admission: InstallAdmissionController::new(auth_failure_admission_config(
@@ -209,7 +202,6 @@ fn spawn_server_background_tasks(config: &ServerConfig, state: &AppState) -> Vec
         spawn_registry_reloader(
             state.registry.clone(),
             state.history.clone(),
-            state.agent_logs.clone(),
             state.readiness.clone(),
             state.shutdown.clone(),
         ),
