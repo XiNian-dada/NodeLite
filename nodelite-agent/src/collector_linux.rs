@@ -522,10 +522,13 @@ fn real_statvfs(path: &str) -> Result<FilesystemStats> {
     let c_path =
         CString::new(path.as_bytes()).with_context(|| format!("path contains NUL byte: {path}"))?;
     let mut stats = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: `c_path` is a live NUL-terminated C string and `stats` points to
+    // writable storage large enough for libc to fill one `statvfs` value.
     let result = unsafe { libc::statvfs(c_path.as_ptr(), stats.as_mut_ptr()) };
     if result != 0 {
         return Err(anyhow!("statvfs failed for {}", Path::new(path).display()));
     }
+    // SAFETY: `statvfs` returned success, which means libc initialized `stats`.
     let stats = unsafe { stats.assume_init() };
 
     let block_size = stats.f_frsize;
@@ -546,13 +549,14 @@ fn real_statvfs(path: &str) -> Result<FilesystemStats> {
 mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{Duration, Instant};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use anyhow::Result;
 
     use super::{
         FilesystemStats, HostCollector, compute_cpu_usage, compute_network_metrics,
         parse_cpu_sample, parse_load_average, parse_memory_usage, parse_network_totals,
+        real_statvfs,
     };
 
     /// RAII 临时目录:构造时创建唯一目录,析构时递归删除。
@@ -657,6 +661,24 @@ mod tests {
                 > 20.0
         );
         assert!(metrics.packet_loss_percent.is_some());
+    }
+
+    #[test]
+    fn real_statvfs_reports_missing_mount_errors() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after unix epoch")
+            .as_nanos();
+        let missing = std::env::temp_dir().join(format!(
+            "nodelite-missing-statvfs-{}-{unique}",
+            std::process::id()
+        ));
+        let error = match real_statvfs(missing.to_string_lossy().as_ref()) {
+            Ok(_) => panic!("missing mount paths should surface statvfs errors"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("statvfs failed"));
     }
 
     #[test]

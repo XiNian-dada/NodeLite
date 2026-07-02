@@ -1,6 +1,6 @@
 use std::fs::{File, OpenOptions};
 use std::io::Write;
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -189,13 +189,8 @@ fn acquire_registry_lock(path: &Path) -> RegistryResult<RegistryFileLock> {
 fn lock_file_exclusive(file: &File, lock_path: &Path) -> RegistryResult<()> {
     #[cfg(unix)]
     {
-        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
-        if result != 0 {
-            return Err(RegistryError::io(
-                "locking",
-                lock_path,
-                std::io::Error::last_os_error(),
-            ));
+        if let Err(error) = flock_fd(file.as_raw_fd(), libc::LOCK_EX) {
+            return Err(RegistryError::io("locking", lock_path, error));
         }
     }
 
@@ -210,13 +205,25 @@ fn lock_file_exclusive(file: &File, lock_path: &Path) -> RegistryResult<()> {
 fn unlock_file(file: &File) {
     #[cfg(unix)]
     {
-        let _ = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
+        let _ = flock_fd(file.as_raw_fd(), libc::LOCK_UN);
     }
 
     #[cfg(not(unix))]
     {
         let _ = file;
     }
+}
+
+#[cfg(unix)]
+fn flock_fd(fd: RawFd, operation: libc::c_int) -> std::io::Result<()> {
+    // SAFETY: `flock` only receives the process-local file descriptor and lock
+    // operation by value. Callers keep valid descriptors alive for normal use;
+    // invalid descriptors are reported by the kernel as `EBADF`.
+    let result = unsafe { libc::flock(fd, operation) };
+    if result != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 fn harden_registry_permissions(path: &Path) -> RegistryResult<()> {
@@ -288,4 +295,16 @@ where
 {
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(unlock));
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(harden));
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn flock_fd_reports_bad_file_descriptors() {
+        let error = super::flock_fd(-1, libc::LOCK_EX)
+            .expect_err("invalid file descriptors should surface EBADF");
+
+        assert_eq!(error.raw_os_error(), Some(libc::EBADF));
+    }
 }

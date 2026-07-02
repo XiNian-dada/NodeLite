@@ -2,6 +2,8 @@
 
 use std::collections::HashSet;
 use std::ffi::CStr;
+use std::mem;
+use std::ptr;
 use std::time::Instant;
 
 use anyhow::{Result, anyhow};
@@ -212,6 +214,12 @@ fn collect_network_totals_via_sysctl(cache: &mut NetworkInterfaceCache) -> Resul
 
 fn collect_network_totals_and_indices_via_iflist2(len: usize) -> Result<(NetworkTotals, Vec<u16>)> {
     let buffer = syscall::read_network_iflist2(len)?;
+    Ok(parse_network_totals_and_indices_from_iflist2(&buffer))
+}
+
+pub(super) fn parse_network_totals_and_indices_from_iflist2(
+    buffer: &[u8],
+) -> (NetworkTotals, Vec<u16>) {
     let mut seen_indices = HashSet::new();
     let mut indices = Vec::new();
     let mut rx_bytes = 0_u64;
@@ -220,25 +228,38 @@ fn collect_network_totals_and_indices_via_iflist2(len: usize) -> Result<(Network
     let mut tx_packets = 0_u64;
     let mut rx_dropped_packets = 0_u64;
     let mut next = buffer.as_ptr();
+    // SAFETY: `next` points at the start of `buffer`; adding exactly
+    // `buffer.len()` yields the one-past-the-end pointer for the same slice.
     let end = unsafe { next.add(buffer.len()) };
 
     while next < end {
-        let ifm = next.cast::<libc::if_msghdr>();
-        let message_len = unsafe { (*ifm).ifm_msglen as usize };
-        if message_len == 0 {
+        let remaining = (end as usize).saturating_sub(next as usize);
+        if remaining < mem::size_of::<libc::if_msghdr>() {
+            break;
+        }
+        // SAFETY: The remaining byte count was checked for a full header.
+        // `NET_RT_IFLIST2` buffers are byte streams, so use unaligned reads.
+        let ifm = unsafe { ptr::read_unaligned(next.cast::<libc::if_msghdr>()) };
+        let message_len = ifm.ifm_msglen as usize;
+        if message_len == 0 || message_len > remaining {
             break;
         }
 
-        if unsafe { (*ifm).ifm_type } == libc::RTM_IFINFO2 as u8 {
-            let ifm2 = next.cast::<libc::if_msghdr2>();
-            let flags = unsafe { (*ifm2).ifm_flags };
-            let index = unsafe { (*ifm2).ifm_index };
+        if ifm.ifm_type == libc::RTM_IFINFO2 as u8 {
+            if message_len < mem::size_of::<libc::if_msghdr2>() {
+                break;
+            }
+            // SAFETY: The message declares enough bytes for `if_msghdr2`, and
+            // the previous check keeps the read inside `buffer`.
+            let ifm2 = unsafe { ptr::read_unaligned(next.cast::<libc::if_msghdr2>()) };
+            let flags = ifm2.ifm_flags;
+            let index = ifm2.ifm_index;
             if flags & libc::IFF_LOOPBACK == 0
                 && flags & libc::IFF_UP != 0
                 && seen_indices.insert(index)
             {
                 indices.push(index);
-                let data = unsafe { &(*ifm2).ifm_data };
+                let data = ifm2.ifm_data;
                 rx_bytes = rx_bytes.saturating_add(data.ifi_ibytes);
                 tx_bytes = tx_bytes.saturating_add(data.ifi_obytes);
                 rx_packets = rx_packets.saturating_add(data.ifi_ipackets);
@@ -247,10 +268,12 @@ fn collect_network_totals_and_indices_via_iflist2(len: usize) -> Result<(Network
             }
         }
 
+        // SAFETY: `message_len` is non-zero and no larger than the remaining
+        // bytes, so the next cursor stays within the same buffer or at `end`.
         next = unsafe { next.add(message_len) };
     }
 
-    Ok((
+    (
         NetworkTotals {
             rx_bytes,
             tx_bytes,
@@ -260,7 +283,7 @@ fn collect_network_totals_and_indices_via_iflist2(len: usize) -> Result<(Network
             tx_dropped_packets: 0,
         },
         indices,
-    ))
+    )
 }
 
 fn collect_cached_network_totals(cache: &NetworkInterfaceCache) -> Result<NetworkTotals> {
@@ -315,18 +338,31 @@ fn collect_network_totals_via_ifaddrs() -> Result<NetworkReading> {
     let mut rx_dropped_packets = 0_u64;
     let mut current = addrs.as_ptr();
     while !current.is_null() {
+        // SAFETY: `current` starts at the head returned by `getifaddrs` and is
+        // advanced through `ifa_next` while `addrs` keeps the list alive.
         let iface = unsafe { &*current };
+        let address_family = if iface.ifa_addr.is_null() {
+            None
+        } else {
+            // SAFETY: `ifa_addr` was checked non-null and belongs to the live
+            // `getifaddrs` list guarded by `addrs`.
+            Some(unsafe { (*iface.ifa_addr).sa_family as i32 })
+        };
         if !iface.ifa_addr.is_null()
-            && unsafe { (*iface.ifa_addr).sa_family as i32 } == libc::AF_LINK
+            && address_family == Some(libc::AF_LINK)
             && iface.ifa_flags & libc::IFF_LOOPBACK as u32 == 0
             && iface.ifa_flags & libc::IFF_UP as u32 != 0
             && !iface.ifa_data.is_null()
         {
+            // SAFETY: macOS `getifaddrs` entries provide `ifa_name` as a
+            // NUL-terminated interface name for the lifetime of the list.
             let name = unsafe { CStr::from_ptr(iface.ifa_name) }
                 .to_string_lossy()
                 .into_owned();
             if seen_names.insert(name.clone()) {
                 sampled_names.push(name);
+                // SAFETY: For AF_LINK entries with non-null `ifa_data`, macOS
+                // stores a valid `if_data` counter block for this interface.
                 let data = unsafe { &*(iface.ifa_data as *const libc::if_data) };
                 rx_bytes = rx_bytes.saturating_add(u64::from(data.ifi_ibytes));
                 tx_bytes = tx_bytes.saturating_add(u64::from(data.ifi_obytes));

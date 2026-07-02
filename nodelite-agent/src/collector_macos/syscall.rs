@@ -34,7 +34,10 @@ const IFMIB_IFDATA: libc::c_int = 2;
 const NETLINK_GENERIC: libc::c_int = 0;
 
 pub(super) fn read_uname() -> Result<libc::utsname> {
+    // SAFETY: `utsname` is a plain C output struct; all-zero bytes are a valid
+    // staging value before `uname` overwrites the fields.
     let mut uts = unsafe { mem::zeroed::<libc::utsname>() };
+    // SAFETY: `uts` is a live, writable `utsname` value for libc to populate.
     let result = unsafe { libc::uname(&mut uts) };
     if result != 0 {
         return Err(anyhow!("uname failed"));
@@ -43,6 +46,8 @@ pub(super) fn read_uname() -> Result<libc::utsname> {
 }
 
 pub(super) fn c_chars_to_string(value: &[libc::c_char]) -> Result<String> {
+    // SAFETY: Callers pass fixed-size name fields returned by libc/kernel
+    // structs, which macOS stores as NUL-terminated C strings.
     let text = unsafe { CStr::from_ptr(value.as_ptr()) }
         .to_str()
         .context("invalid utf-8 in C string")?;
@@ -51,6 +56,8 @@ pub(super) fn c_chars_to_string(value: &[libc::c_char]) -> Result<String> {
 
 pub(super) fn read_sysctl_string(name: &[u8]) -> Result<String> {
     let mut size = 0_usize;
+    // SAFETY: `name` is supplied by this module's callers as a NUL-terminated
+    // sysctl name, and the size-query form uses no output buffer.
     let result = unsafe {
         libc::sysctlbyname(
             name.as_ptr().cast(),
@@ -65,6 +72,8 @@ pub(super) fn read_sysctl_string(name: &[u8]) -> Result<String> {
     }
 
     let mut buffer = vec![0_u8; size];
+    // SAFETY: `buffer` is valid for `size` bytes and `name` remains the same
+    // live NUL-terminated sysctl name used for the size query.
     let result = unsafe {
         libc::sysctlbyname(
             name.as_ptr().cast(),
@@ -84,6 +93,8 @@ pub(super) fn read_sysctl_string(name: &[u8]) -> Result<String> {
 }
 
 pub(super) fn count_cpu_cores() -> Result<u32> {
+    // SAFETY: `_SC_NPROCESSORS_ONLN` does not use pointers; libc returns the
+    // core count by value or a non-positive error/sentinel value.
     let cores = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) };
     if cores <= 0 {
         return Err(anyhow!("_SC_NPROCESSORS_ONLN returned {cores}"));
@@ -97,6 +108,8 @@ pub(super) fn read_uptime_secs() -> Result<u64> {
             tv_sec: 0,
             tv_nsec: 0,
         };
+        // SAFETY: `spec` is writable storage for one `timespec`, and each
+        // `clock_id` is a libc constant accepted by `clock_gettime`.
         let result = unsafe { libc::clock_gettime(clock_id, &mut spec) };
         if result == 0 {
             return u64::try_from(spec.tv_sec).context("negative uptime reported by clock_gettime");
@@ -108,11 +121,15 @@ pub(super) fn read_uptime_secs() -> Result<u64> {
 /// 使用 `host_processor_info` 汇总所有逻辑核心的累计 tick。
 pub(super) fn collect_cpu_sample() -> Result<CpuSample> {
     #[allow(deprecated)]
+    // SAFETY: `mach_host_self` has no preconditions and returns the current
+    // task's host port by value.
     let host = unsafe { libc::mach_host_self() };
     let mut cpu_count: libc::natural_t = 0;
     let mut cpu_info: libc::processor_cpu_load_info_t = ptr::null_mut();
     let mut info_count: libc::mach_msg_type_number_t = 0;
 
+    // SAFETY: All output pointers refer to live stack variables, and `cpu_info`
+    // is the kernel-owned buffer pointer that Mach fills on success.
     let status = unsafe {
         libc::host_processor_info(
             host,
@@ -126,6 +143,8 @@ pub(super) fn collect_cpu_sample() -> Result<CpuSample> {
         return Err(anyhow!("host_processor_info failed"));
     }
 
+    // SAFETY: A successful `host_processor_info` call returned a non-null
+    // `cpu_info` buffer with one load-info record per reported CPU.
     let samples = unsafe { slice::from_raw_parts(cpu_info, cpu_count as usize) };
     let mut total = 0_u64;
     let mut idle = 0_u64;
@@ -137,6 +156,8 @@ pub(super) fn collect_cpu_sample() -> Result<CpuSample> {
     }
 
     let deallocate_size = mem::size_of::<libc::integer_t>().saturating_mul(info_count as usize);
+    // SAFETY: `cpu_info` is the Mach-allocated buffer returned above, and the
+    // deallocation size is derived from Mach's returned element count.
     unsafe {
         libc::vm_deallocate(
             #[allow(deprecated)]
@@ -151,6 +172,7 @@ pub(super) fn collect_cpu_sample() -> Result<CpuSample> {
 
 pub(super) fn collect_load_average() -> Result<nodelite_proto::LoadAverage> {
     let mut loads = [0_f64; 3];
+    // SAFETY: `loads` has space for exactly the three samples requested.
     let result = unsafe { libc::getloadavg(loads.as_mut_ptr(), 3) };
     if result != 3 {
         return Err(anyhow!("getloadavg returned {result}"));
@@ -163,7 +185,11 @@ pub(super) fn collect_load_average() -> Result<nodelite_proto::LoadAverage> {
 }
 
 pub(super) fn read_memory_statistics() -> Result<MemoryStatistics> {
+    // SAFETY: `_SC_PHYS_PAGES` returns a scalar page count and does not access
+    // caller-provided memory.
     let total_pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
+    // SAFETY: `_SC_PAGESIZE` returns a scalar page size and does not access
+    // caller-provided memory.
     let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
     if total_pages <= 0 || page_size <= 0 {
         return Err(anyhow!(
@@ -172,9 +198,15 @@ pub(super) fn read_memory_statistics() -> Result<MemoryStatistics> {
     }
 
     #[allow(deprecated)]
+    // SAFETY: `mach_host_self` has no preconditions and returns the current
+    // task's host port by value.
     let host = unsafe { libc::mach_host_self() };
     let mut count = libc::HOST_VM_INFO64_COUNT;
+    // SAFETY: `vm_statistics64` is a plain C output struct; zeroed bytes are a
+    // valid staging value before `host_statistics64` writes it.
     let mut stats = unsafe { mem::zeroed::<libc::vm_statistics64>() };
+    // SAFETY: `stats` and `count` are live writable outputs, and `count` starts
+    // with the kernel-documented element count for `HOST_VM_INFO64`.
     let status = unsafe {
         libc::host_statistics64(
             host,
@@ -199,8 +231,12 @@ pub(super) fn read_memory_statistics() -> Result<MemoryStatistics> {
 
 pub(super) fn read_swap_usage() -> Result<(u64, u64)> {
     let mut mib = [libc::CTL_VM, libc::VM_SWAPUSAGE];
+    // SAFETY: `xsw_usage` is a plain C output struct; zeroing creates a valid
+    // staging value before sysctl fills it.
     let mut swap = unsafe { mem::zeroed::<libc::xsw_usage>() };
     let mut size = mem::size_of::<libc::xsw_usage>();
+    // SAFETY: `mib` names the VM swap sysctl, and `swap`/`size` describe a
+    // writable output buffer of the correct type.
     let result = unsafe {
         libc::sysctl(
             mib.as_mut_ptr(),
@@ -219,11 +255,16 @@ pub(super) fn read_swap_usage() -> Result<(u64, u64)> {
 
 pub(super) fn mounted_filesystems() -> Result<Vec<libc::statfs>> {
     let mut mounts: *mut libc::statfs = ptr::null_mut();
+    // SAFETY: `mounts` is a live output pointer slot. macOS returns a pointer
+    // to kernel-managed mount data that remains valid until the next call.
     let count = unsafe { libc::getmntinfo(&mut mounts, libc::MNT_NOWAIT) };
     if count <= 0 || mounts.is_null() {
         return Err(anyhow!("getmntinfo returned no mounts"));
     }
 
+    // SAFETY: `getmntinfo` returned `count > 0` and a non-null pointer. The
+    // slice is immediately copied into an owned `Vec` before another call can
+    // invalidate the backing storage.
     let mounts = unsafe { slice::from_raw_parts(mounts, count as usize) };
     Ok(mounts.to_vec())
 }
@@ -231,6 +272,8 @@ pub(super) fn mounted_filesystems() -> Result<Vec<libc::statfs>> {
 pub(super) fn network_iflist2_len() -> Result<usize> {
     let mut mib = [libc::CTL_NET, libc::PF_ROUTE, 0, 0, libc::NET_RT_IFLIST2, 0];
     let mut len = 0_usize;
+    // SAFETY: The size-query form passes no output buffer; `len` is a live
+    // writable slot for the kernel-reported byte count.
     let result = unsafe {
         libc::sysctl(
             mib.as_mut_ptr(),
@@ -250,6 +293,8 @@ pub(super) fn network_iflist2_len() -> Result<usize> {
 pub(super) fn read_network_iflist2(mut len: usize) -> Result<Vec<u8>> {
     let mut mib = [libc::CTL_NET, libc::PF_ROUTE, 0, 0, libc::NET_RT_IFLIST2, 0];
     let mut buffer = vec![0_u8; len];
+    // SAFETY: `buffer` is valid for the requested `len` bytes, and `len` is
+    // updated by the kernel to the number of bytes actually written.
     let result = unsafe {
         libc::sysctl(
             mib.as_mut_ptr(),
@@ -278,6 +323,8 @@ pub(super) fn collect_interface_data(index: u16) -> Result<IfMibData> {
     ];
     let mut if_data = MaybeUninit::<IfMibData>::uninit();
     let mut size = mem::size_of::<IfMibData>();
+    // SAFETY: `if_data` points to writable storage for one `IfMibData`, and
+    // `size` advertises exactly that buffer length to sysctl.
     let result = unsafe {
         libc::sysctl(
             mib_data.as_mut_ptr(),
@@ -292,11 +339,15 @@ pub(super) fn collect_interface_data(index: u16) -> Result<IfMibData> {
     if result != 0 || size < mem::size_of::<IfMibData>() {
         return Err(anyhow!("sysctl IFMIB_IFDATA failed for interface {index}"));
     }
+    // SAFETY: sysctl succeeded and reported enough bytes to initialize the
+    // entire `IfMibData` value.
     Ok(unsafe { if_data.assume_init() })
 }
 
 pub(super) fn get_ifaddrs() -> Result<IfAddrsGuard> {
     let mut addrs: *mut libc::ifaddrs = ptr::null_mut();
+    // SAFETY: `addrs` is a live output pointer slot. On success ownership of
+    // the linked list is transferred to `IfAddrsGuard` for `freeifaddrs`.
     let result = unsafe { libc::getifaddrs(&mut addrs) };
     if result != 0 || addrs.is_null() {
         return Err(anyhow!("getifaddrs failed"));
@@ -312,6 +363,8 @@ impl IfAddrsGuard {
 
 impl Drop for IfAddrsGuard {
     fn drop(&mut self) {
+        // SAFETY: `IfAddrsGuard` is only constructed after successful
+        // `getifaddrs`, so `self.0` is the matching list head to free once.
         unsafe {
             libc::freeifaddrs(self.0);
         }
