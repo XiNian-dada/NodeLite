@@ -413,6 +413,22 @@ async fn run_reconnect_storm_scenario(node_count: usize) -> Result<StormScenario
         );
     }
 
+    // 输出 token 缓存统计 (issue #306)
+    let cache_hits = server.registry.token_cache_hits();
+    let cache_misses = server.registry.token_cache_misses();
+    let cache_hit_rate = server.registry.token_cache_hit_rate();
+    let registry_revision = server.registry.registry_revision();
+    println!(
+        "STORM_CACHE_STATS nodes={} cycles={} sessions={} cache_hits={} cache_misses={} hit_rate={:.2}% registry_revision={}",
+        node_count,
+        LOAD_TEST_STORM_CYCLES,
+        node_count * LOAD_TEST_STORM_CYCLES,
+        cache_hits,
+        cache_misses,
+        cache_hit_rate,
+        registry_revision
+    );
+
     server.shutdown().await?;
 
     Ok(StormScenarioResult {
