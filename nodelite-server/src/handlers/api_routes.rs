@@ -22,6 +22,8 @@ const DEFAULT_HISTORY_WINDOW_HOURS: u64 = 24;
 const DEFAULT_HISTORY_MAX_POINTS: usize = 480;
 const MAX_HISTORY_MAX_POINTS: usize = 1440;
 const PROMETHEUS_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
+const DEFAULT_NODE_LOG_LIMIT: usize = 120;
+const MAX_NODE_LOG_LIMIT: usize = 200;
 
 #[derive(Debug, Serialize)]
 struct BootstrapResponse {
@@ -46,7 +48,6 @@ pub(crate) struct HistoryQuery {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct NodeLogsQuery {
-    #[allow(dead_code)]
     limit: Option<usize>,
 }
 
@@ -403,12 +404,15 @@ pub(crate) async fn node_history(
 
 /// 节点最近的 Agent 运行日志。用于排查断链、重连、token 续期等偶发问题。
 pub(crate) async fn node_logs(
-    State(_state): State<AppState>,
-    AxumPath(_node_id): AxumPath<String>,
-    Query(_query): Query<NodeLogsQuery>,
+    State(state): State<AppState>,
+    AxumPath(node_id): AxumPath<String>,
+    Query(query): Query<NodeLogsQuery>,
 ) -> Json<Vec<AgentLogEntry>> {
-    // Agent logs persistence removed - return empty list
-    Json(vec![])
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_NODE_LOG_LIMIT)
+        .clamp(1, MAX_NODE_LOG_LIMIT);
+    Json(state.agent_logs.list(&node_id, limit).await)
 }
 
 #[cfg(test)]

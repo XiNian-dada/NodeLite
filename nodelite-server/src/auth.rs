@@ -98,6 +98,8 @@ fn is_common_password(password: &str) -> bool {
 pub const TWO_FACTOR_PENDING_SECS: u64 = 300;
 /// 2FA 完成后的浏览器会话有效期。
 pub const TWO_FACTOR_AUTH_SECS: u64 = 24 * 60 * 60;
+/// Basic Auth 会话 cookie 的有效期(24 小时),用于避免每次请求都记录 LoginSuccess。
+pub const BASIC_AUTH_SESSION_SECS: u64 = 24 * 60 * 60;
 /// 单个 pending session 允许的最大 TOTP 错误尝试次数。达到后该 pending token
 /// 立即失效,客户端必须重新通过 Basic Auth 才能再次进入 verify-2fa 页面。
 /// 这与 `InstallAdmissionController` 的 IP 维度限流共同把 TOTP 暴力破解
@@ -109,6 +111,7 @@ pub const TWO_FACTOR_MAX_FAILED_ATTEMPTS: u32 = 5;
 pub const TWO_FACTOR_TOTP_REPLAY_RETENTION_SECS: u64 = 150;
 pub const TWO_FACTOR_PENDING_COOKIE: &str = "nodelite_2fa_pending";
 pub const TWO_FACTOR_AUTH_COOKIE: &str = "nodelite_auth";
+pub const BASIC_AUTH_SESSION_COOKIE: &str = "nodelite_basic_session";
 
 /// 包装 HTTP 基本认证,用于保护 `/api/*` 与 HTML 视图。
 #[derive(Debug, Clone)]

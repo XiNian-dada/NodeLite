@@ -13,9 +13,9 @@ use crate::AppState;
 use crate::admission::resolve_client_ip;
 use crate::audit::{AuditEventType, NewAuditEvent};
 use crate::auth::{
-    TWO_FACTOR_AUTH_COOKIE, TWO_FACTOR_AUTH_SECS, TWO_FACTOR_PENDING_COOKIE, Verify2FAError,
-    Verify2FARequest, auth_cookie, cookie_value, expire_cookie, matching_totp_steps,
-    secure_cookies,
+    TWO_FACTOR_AUTH_COOKIE, TWO_FACTOR_AUTH_SECS, TWO_FACTOR_PENDING_COOKIE,
+    BASIC_AUTH_SESSION_COOKIE, Verify2FAError, Verify2FARequest, auth_cookie, cookie_value,
+    expire_cookie, matching_totp_steps, secure_cookies,
 };
 use crate::handlers::record_audit_event;
 
@@ -60,6 +60,7 @@ pub(crate) async fn logout_and_reauth(
         AppendHeaders([
             expire_cookie(TWO_FACTOR_AUTH_COOKIE, secure),
             expire_cookie(TWO_FACTOR_PENDING_COOKIE, secure),
+            expire_cookie(BASIC_AUTH_SESSION_COOKIE, secure),
             (
                 header::WWW_AUTHENTICATE,
                 "Basic realm=\"NodeLite\"".to_string(),

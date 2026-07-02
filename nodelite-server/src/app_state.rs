@@ -6,6 +6,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use crate::admission::{InstallAdmissionController, WsAdmissionController};
+use crate::agent_logs::AgentLogStore;
 use crate::audit::AuditLog;
 use crate::auth::{ReadonlyRouteAuth, TwoFactorSessions};
 use crate::geoip::GeoIpResolver;
@@ -20,6 +21,7 @@ use crate::admission::{auth_failure_admission_config, sensitive_auth_failure_adm
 /// 在各处理器之间共享的运行时上下文。
 #[derive(Clone)]
 pub(crate) struct AppState {
+    pub(crate) agent_logs: AgentLogStore,
     pub(crate) history: HistoryStore,
     pub(crate) audit_log: AuditLog,
     pub(crate) geoip: GeoIpResolver,
@@ -116,6 +118,7 @@ impl AppState {
         ));
 
         Ok(Self {
+            agent_logs: AgentLogStore::new(),
             history,
             audit_log,
             geoip,

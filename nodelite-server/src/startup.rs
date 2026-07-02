@@ -24,6 +24,7 @@ use crate::admission::{
     InstallAdmissionController, WsAdmissionController, auth_failure_admission_config,
     sensitive_auth_failure_admission_config,
 };
+use crate::agent_logs::AgentLogStore;
 use crate::alerts::spawn_alert_runtime;
 use crate::app_state::{AppState, ServerReadiness};
 use crate::audit::AuditLog;
@@ -151,6 +152,7 @@ async fn initialize_server_runtime(
 
     let shutdown = CancellationToken::new();
     let state = AppState {
+        agent_logs: AgentLogStore::new(),
         history,
         audit_log,
         geoip,

@@ -4,9 +4,6 @@ import AppLayout from '@/components/AppLayout.vue';
 import { apiClient } from '@/api';
 import type { AuditLogEntry } from '@/api';
 
-type TabName = 'agent' | 'server' | 'audit';
-const activeTab = ref<TabName>('audit');
-
 const auditLogs = ref<AuditLogEntry[]>([]);
 const loading = ref(false);
 const error = ref<string | null>(null);
@@ -61,40 +58,16 @@ onMounted(() => {
 <template>
   <AppLayout>
     <template #title>
-      <h1 class="page-heading">Logs</h1>
-      <p class="page-subtitle">View system and audit logs</p>
+      <h1 class="page-heading">Audit Log</h1>
+      <p class="page-subtitle">Security and authentication events</p>
     </template>
 
     <section class="logs-view" data-test="logs-view">
-      <nav class="logs-tabs">
-        <button
-          class="logs-tab"
-          :class="{ 'logs-tab--active': activeTab === 'audit' }"
-          @click="activeTab = 'audit'"
-        >
-          Audit Log
-        </button>
-        <button
-          class="logs-tab"
-          :class="{ 'logs-tab--active': activeTab === 'agent' }"
-          @click="activeTab = 'agent'"
-        >
-          Agent Logs
-        </button>
-        <button
-          class="logs-tab"
-          :class="{ 'logs-tab--active': activeTab === 'server' }"
-          @click="activeTab = 'server'"
-        >
-          Server Logs
-        </button>
-      </nav>
-
       <article class="logs-panel panel">
         <div v-if="loading" class="logs-loading">Loading...</div>
         <div v-else-if="error" class="logs-error">{{ error }}</div>
 
-        <div v-else-if="activeTab === 'audit'" class="logs-content">
+        <div v-else class="logs-content">
           <div v-if="formattedAuditLogs.length === 0" class="logs-empty">
             No audit log entries found.
           </div>
@@ -127,14 +100,6 @@ onMounted(() => {
             </table>
           </div>
         </div>
-
-        <div v-else-if="activeTab === 'agent'" class="logs-content">
-          <div class="logs-placeholder">Agent logs coming soon...</div>
-        </div>
-
-        <div v-else-if="activeTab === 'server'" class="logs-content">
-          <div class="logs-placeholder">Server logs coming soon...</div>
-        </div>
       </article>
     </section>
   </AppLayout>
@@ -144,36 +109,6 @@ onMounted(() => {
 .logs-view {
   max-width: 1400px;
   margin: 0 auto;
-}
-
-.logs-tabs {
-  display: flex;
-  gap: 0.5rem;
-  margin-bottom: 1.5rem;
-  border-bottom: 2px solid #E7E1D7;
-}
-
-.logs-tab {
-  padding: 0.75rem 1.5rem;
-  background: none;
-  border: none;
-  border-bottom: 3px solid transparent;
-  color: #5C635D;
-  font-size: 0.95rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  margin-bottom: -2px;
-}
-
-.logs-tab:hover {
-  color: #1F2421;
-  background: #FBF9F5;
-}
-
-.logs-tab--active {
-  color: #C4612F;
-  border-bottom-color: #C4612F;
 }
 
 .logs-panel {
@@ -186,8 +121,7 @@ onMounted(() => {
 
 .logs-loading,
 .logs-error,
-.logs-empty,
-.logs-placeholder {
+.logs-empty {
   padding: 3rem;
   text-align: center;
   color: #5C635D;

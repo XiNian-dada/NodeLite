@@ -12,6 +12,7 @@
 //! - 来自 Agent 的所有指标都经过 `sanitize_snapshot` 处理,防止异常值污染统计或图表。
 
 mod admission;
+mod agent_logs;
 mod alerts;
 mod app_state;
 mod audit;

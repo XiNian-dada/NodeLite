@@ -263,7 +263,7 @@ async fn handle_metrics_message(
 async fn handle_agent_logs_message(
     state: &AppState,
     session: &mut ActiveSession,
-    _entries: Vec<nodelite_proto::AgentLogEntry>,
+    entries: Vec<nodelite_proto::AgentLogEntry>,
 ) -> Result<LoopAction, super::ProtocolError> {
     if !ensure_current_token(
         state,
@@ -274,7 +274,23 @@ async fn handle_agent_logs_message(
     {
         return Ok(LoopAction::Break);
     }
-    // Agent logs persistence removed - silently accept and discard
+    let result = state
+        .agent_logs
+        .record_entries(&session.node_id, entries)
+        .await;
+    if result.accepted > 0 {
+        info!(node_id = %session.node_id, accepted = result.accepted, "recorded agent runtime log entries");
+    }
+    if result.total_dropped() > 0 {
+        warn!(
+            node_id = %session.node_id,
+            accepted = result.accepted,
+            dropped_batch_cap = result.dropped_batch_cap,
+            dropped_sanitize = result.dropped_sanitize,
+            evicted_global_budget = result.evicted_global_budget,
+            "some agent runtime log entries dropped"
+        );
+    }
     Ok(LoopAction::Continue)
 }
 
