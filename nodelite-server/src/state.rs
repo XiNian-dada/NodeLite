@@ -41,6 +41,9 @@ enum ApiBodyKind {
     Overview,
 }
 
+/// Nodes API 缓存 TTL:高频上报时短窗口内容忍 revision 变化,提升缓存命中率。
+const NODES_API_CACHE_TTL: Duration = Duration::from_millis(250);
+
 /// Overview 聚合允许的最大"陈旧时间":即使 overview revision 没有递增,
 /// 缓存超过这个时长后也会强制重建。配合后续 commit 把 snapshot/latency
 /// 的 revision 影响范围收窄到 nodes,避免聚合数据无限期不刷新。
@@ -554,7 +557,7 @@ impl SharedState {
 
     fn max_age_for(&self, kind: ApiBodyKind) -> Option<Duration> {
         match kind {
-            ApiBodyKind::Nodes => None,
+            ApiBodyKind::Nodes => Some(NODES_API_CACHE_TTL),
             ApiBodyKind::Overview => Some(OVERVIEW_CACHE_MAX_STALE),
         }
     }
