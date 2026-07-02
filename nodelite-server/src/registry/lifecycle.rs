@@ -40,6 +40,8 @@ impl NodeRegistry {
             token_cache: Arc::new(ParkingLotMutex::new(LruCache::new(
                 std::num::NonZeroUsize::new(TOKEN_CACHE_CAPACITY).expect("cache capacity > 0"),
             ))),
+            token_cache_hits: Arc::new(AtomicU64::new(0)),
+            token_cache_misses: Arc::new(AtomicU64::new(0)),
             #[cfg(test)]
             token_verify_probe: None,
         })
@@ -48,6 +50,31 @@ impl NodeRegistry {
     /// 当前注册表状态版本。任一注册表 reload / 写入导致的内存状态变化都会递增。
     pub fn registry_revision(&self) -> u64 {
         self.registry_revision.load(Ordering::Acquire)
+    }
+
+    /// Token 缓存命中计数（累积值，issue #306）。
+    #[cfg(test)]
+    pub fn token_cache_hits(&self) -> u64 {
+        self.token_cache_hits.load(Ordering::Relaxed)
+    }
+
+    /// Token 缓存未命中计数（累积值，issue #306）。
+    #[cfg(test)]
+    pub fn token_cache_misses(&self) -> u64 {
+        self.token_cache_misses.load(Ordering::Relaxed)
+    }
+
+    /// Token 缓存命中率（百分比，issue #306）。
+    #[cfg(test)]
+    pub fn token_cache_hit_rate(&self) -> f64 {
+        let hits = self.token_cache_hits() as f64;
+        let misses = self.token_cache_misses() as f64;
+        let total = hits + misses;
+        if total == 0.0 {
+            0.0
+        } else {
+            (hits / total) * 100.0
+        }
     }
 
     /// 刷新节点的 Token:生成新明文 token, 哈希入库,代次 +1, 延长过期时间。

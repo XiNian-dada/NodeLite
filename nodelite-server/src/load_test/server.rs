@@ -25,6 +25,7 @@ pub(super) struct TestServer {
     pub(super) addr: SocketAddr,
     pub(super) shared: SharedState,
     pub(super) history: HistoryStore,
+    pub(super) registry: crate::registry::NodeRegistry,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
     server_handle: JoinHandle<Result<(), std::io::Error>>,
     temp_dir: PathBuf,
@@ -93,6 +94,7 @@ impl TestServer {
         )
         .await?;
         let history = state.history.clone();
+        let registry = state.registry.clone();
 
         let shared = state.shared.clone();
         let protected_routes = Router::new()
@@ -126,6 +128,7 @@ impl TestServer {
                 addr,
                 shared,
                 history,
+                registry,
                 shutdown_tx: Some(shutdown_tx),
                 server_handle,
                 temp_dir,

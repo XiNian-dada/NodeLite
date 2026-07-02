@@ -215,6 +215,9 @@ pub struct NodeRegistry {
     token_verify_limiter: Arc<Semaphore>,
     /// Token 验证结果缓存:减少重连场景的 Argon2id 开销。
     token_cache: Arc<ParkingLotMutex<LruCache<TokenCacheKey, TokenCacheEntry>>>,
+    /// Token 缓存诊断计数器 (issue #306)。
+    token_cache_hits: Arc<AtomicU64>,
+    token_cache_misses: Arc<AtomicU64>,
     #[cfg(test)]
     token_verify_probe: Option<Arc<TokenVerifyProbe>>,
 }

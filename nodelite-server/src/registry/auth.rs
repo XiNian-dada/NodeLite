@@ -1,6 +1,7 @@
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 #[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
 #[cfg(test)]
 use std::time::Duration;
 use std::time::Instant;
@@ -127,6 +128,7 @@ impl NodeRegistry {
             if let Some(entry) = cache.get(&cache_key) {
                 let age = entry.cached_at.elapsed();
                 if age < TOKEN_CACHE_TTL {
+                    self.token_cache_hits.fetch_add(1, Ordering::Relaxed);
                     return Ok(entry.verified);
                 }
                 // TTL 过期,移除旧条目
@@ -157,12 +159,14 @@ impl NodeRegistry {
             if let Some(entry) = cache.get(&cache_key) {
                 let age = entry.cached_at.elapsed();
                 if age < TOKEN_CACHE_TTL {
+                    self.token_cache_hits.fetch_add(1, Ordering::Relaxed);
                     return Ok(entry.verified);
                 }
             }
         }
 
-        // 执行实际的 Argon2id 验证
+        // 缓存未命中,执行实际的 Argon2id 验证
+        self.token_cache_misses.fetch_add(1, Ordering::Relaxed);
         let input = input.to_string();
         let token_hash = token_hash.to_string();
         #[cfg(test)]
