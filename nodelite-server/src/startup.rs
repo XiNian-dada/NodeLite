@@ -379,6 +379,7 @@ pub(crate) fn build_router(state: AppState) -> Router {
         .route("/settings", get(index))
         .route("/account", get(index))
         .route("/alerts", get(index))
+        .route("/logs", get(index))
         .route("/assets/{*path}", get(static_asset))
         .route("/api/bootstrap", get(bootstrap))
         .route("/api/overview", get(overview))

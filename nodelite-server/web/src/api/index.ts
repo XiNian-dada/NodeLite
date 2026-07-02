@@ -7,12 +7,14 @@ import { api } from './client';
 import type {
   AgentLogEntry,
   AlertSettingsResponse,
+  AuditLogEntry,
   BootstrapResponse,
   ChangePasswordRequest,
   DisableTwoFactorRequest,
   EnableTwoFactorRequest,
   HistoryPoint,
   HistoryQuery,
+  LastLoginInfo,
   NodeListItem,
   NodeStatus,
   NodeTokenRefreshResponse,
@@ -42,6 +44,7 @@ export type {
   AlertSmtpSettingsView,
   AlertSmtpTransport,
   AlertWebhookSettingsView,
+  AuditLogEntry,
   BootstrapResponse,
   ChangePasswordRequest,
   DisableTwoFactorRequest,
@@ -52,6 +55,7 @@ export type {
   InspectionHighlight,
   InspectionPreview,
   InspectionSettingsView,
+  LastLoginInfo,
   LogLevel,
   NodeIdentity,
   NodeListItem,
@@ -150,4 +154,11 @@ export const apiClient = {
       `/api/nodes/${encodeURIComponent(id)}/location-override`,
       body,
     ),
+
+  // --- Audit & Login ---
+  auditLog: (limit = 100) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    return api<AuditLogEntry[]>(`/api/audit-log?${params.toString()}`);
+  },
+  lastLogin: () => api<LastLoginInfo>('/api/auth/last-login'),
 };
