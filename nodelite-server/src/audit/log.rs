@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result, anyhow};
 use nodelite_proto::AuditConfig;
-use rusqlite::Connection;
+use rusqlite::{Connection, params};
 use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::{MissedTickBehavior, interval};
@@ -107,6 +107,25 @@ impl AuditLog {
                 anyhow::bail!("audit writer is closed");
             }
         }
+    }
+
+    pub(crate) async fn record_and_return_id(&self, event: NewAuditEvent) -> Result<Option<i64>> {
+        if !self.should_record(event.event_type) {
+            return Ok(None);
+        }
+
+        self.flush_pending().await?;
+        let connection = Arc::clone(&self.connection);
+        let id = tokio::task::spawn_blocking(move || {
+            let mut guard = connection.blocking_lock();
+            let Some(ref mut connection) = *guard else {
+                anyhow::bail!("audit connection not initialized");
+            };
+            insert_single_event(connection, &event)
+        })
+        .await
+        .context("audit record task failed")??;
+        Ok(Some(id))
     }
 
     pub async fn record_best_effort(&self, event: NewAuditEvent) {
@@ -257,4 +276,27 @@ impl AuditLog {
             AuditEventType::RateLimitExceeded => self.config.log_rate_limit,
         }
     }
+}
+
+fn insert_single_event(connection: &mut Connection, event: &NewAuditEvent) -> Result<i64> {
+    let details =
+        serde_json::to_string(&event.details).context("failed to serialize audit details")?;
+    connection
+        .execute(
+            "INSERT INTO audit_log
+             (timestamp, event_type, user, node_id, ip_address, user_agent, success, details)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                event.timestamp.timestamp(),
+                event.event_type.as_str(),
+                event.user,
+                event.node_id,
+                event.ip_address,
+                event.user_agent,
+                event.success as i64,
+                details,
+            ],
+        )
+        .context("failed to insert audit event")?;
+    Ok(connection.last_insert_rowid())
 }

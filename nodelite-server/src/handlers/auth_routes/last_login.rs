@@ -25,13 +25,13 @@ pub(crate) async fn last_login(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<LastLoginInfo>, (StatusCode, String)> {
-    // 从当前会话 cookie 获取登录时间戳,用于排除当前会话的登录
-    let current_login_timestamp = cookie_value(&headers, BASIC_AUTH_SESSION_COOKIE)
+    // 从当前会话 cookie 获取登录事件 id,用于排除当前会话的登录。
+    let current_login_event_id = cookie_value(&headers, BASIC_AUTH_SESSION_COOKIE)
         .as_deref()
         .and_then(|token| {
             state
                 .two_factor_sessions
-                .get_basic_auth_login_timestamp(token)
+                .get_basic_auth_login_event_id(token)
         });
 
     // 查询所有 LoginSuccess 事件
@@ -51,10 +51,8 @@ pub(crate) async fn last_login(
 
     // 找到第一个不是当前会话的登录事件
     let last_login_event = events.iter().find(|event| {
-        if let Some(current_ts) = current_login_timestamp {
-            // 排除时间戳匹配的事件(允许1秒误差)
-            let diff = (event.timestamp.timestamp() - current_ts.timestamp()).abs();
-            diff > 1
+        if let Some(current_id) = current_login_event_id {
+            event.id != current_id
         } else {
             // 没有当前会话(例如2FA模式),返回最近的一个
             true
