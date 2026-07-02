@@ -260,9 +260,12 @@ async fn connect_authenticated_fake_agent(
     ready_tx: mpsc::UnboundedSender<String>,
 ) -> Result<TestSocket> {
     let url = format!("ws://{addr}/ws");
+
+    let t0 = Instant::now();
     let (mut socket, _response) = connect_async(url)
         .await
         .with_context(|| format!("connect fake agent {}", credential.node_id))?;
+    let t1 = Instant::now();
 
     let hello = WireMessage::Hello(HelloMessage {
         protocol_version: nodelite_proto::WIRE_PROTOCOL_VERSION,
@@ -270,12 +273,25 @@ async fn connect_authenticated_fake_agent(
         identity: fake_identity(credential),
     });
     send_wire_message(&mut socket, &hello).await?;
+    let t2 = Instant::now();
+
     wait_for_authenticated_notice(
         &mut socket,
         &credential.node_id,
         Duration::from_secs(LOAD_TEST_TIMEOUT_SECS),
     )
     .await?;
+    let t3 = Instant::now();
+
+    println!(
+        "AGENT_TIMING node={} tcp_ws_ms={:.2} hello_send_ms={:.2} auth_wait_ms={:.2} total_ms={:.2}",
+        credential.node_id,
+        (t1 - t0).as_secs_f64() * 1000.0,
+        (t2 - t1).as_secs_f64() * 1000.0,
+        (t3 - t2).as_secs_f64() * 1000.0,
+        (t3 - t0).as_secs_f64() * 1000.0,
+    );
+
     ready_tx
         .send(credential.node_id.clone())
         .map_err(|_| anyhow!("ready channel closed"))?;
