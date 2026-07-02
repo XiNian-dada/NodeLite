@@ -63,7 +63,7 @@ pub(crate) async fn last_login(
         if let Some(current_id) = current_login_event_id {
             event.id != current_id
         } else {
-            // 没有当前会话(例如2FA模式),返回最近的一个
+            // 没有可识别的当前登录事件时,退回到最近的一条。
             true
         }
     });
