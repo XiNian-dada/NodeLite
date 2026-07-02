@@ -180,13 +180,19 @@ pub struct TwoFactorSessions {
 struct TwoFactorSessionStore {
     pending: HashMap<String, PendingSession>,
     authenticated: HashMap<String, Instant>,
-    /// Basic Auth 会话 token 存储。仅用于验证 session cookie 的有效性,
-    /// 每个 token 在 24 小时后过期。
-    basic_auth_sessions: HashMap<String, Instant>,
+    /// Basic Auth 会话 token 存储。每条记录包含过期时间和登录时间戳。
+    /// 登录时间戳用于 last-login API 排除当前会话的登录事件。
+    basic_auth_sessions: HashMap<String, BasicAuthSession>,
     /// 最近被成功消费过的 TOTP `time_step`(30 秒一个步长)。一旦某个 step
     /// 被用过,同一 step 的后续验证码必须拒绝,以阻止攻击者捕获一次 verify
     /// 请求后在同窗口内重放。条目会定期 prune,避免无界增长。
     used_totp_steps: HashMap<u64, Instant>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BasicAuthSession {
+    expires_at: Instant,
+    login_timestamp: chrono::DateTime<chrono::Utc>,
 }
 
 /// 一条待二次验证的会话:除了过期时间,还跟踪该 pending token 的连续失败
@@ -332,13 +338,23 @@ impl TwoFactorSessions {
     }
 
     /// 创建 Basic Auth 会话 token。用于 Basic-only 模式下跟踪已登录会话,
-    /// 避免每次请求都记录 LoginSuccess 事件。
-    pub fn create_basic_auth_session(&self) -> AuthSessionResult<String> {
+    /// 避免每次请求都记录 LoginSuccess 事件。同时记录登录时间戳,
+    /// 用于 last-login API 排除当前会话。
+    pub fn create_basic_auth_session(
+        &self,
+        login_timestamp: chrono::DateTime<chrono::Utc>,
+    ) -> AuthSessionResult<String> {
         let token = generate_session_token()?;
         let expires_at = Instant::now() + Duration::from_secs(BASIC_AUTH_SESSION_SECS);
         let mut store = lock_mutex(&self.inner);
         prune_expired_sessions(&mut store, Instant::now());
-        store.basic_auth_sessions.insert(token.clone(), expires_at);
+        store.basic_auth_sessions.insert(
+            token.clone(),
+            BasicAuthSession {
+                expires_at,
+                login_timestamp,
+            },
+        );
         Ok(token)
     }
 
@@ -347,6 +363,19 @@ impl TwoFactorSessions {
         let mut store = lock_mutex(&self.inner);
         prune_expired_sessions(&mut store, Instant::now());
         store.basic_auth_sessions.contains_key(token)
+    }
+
+    /// 获取 Basic Auth 会话的登录时间戳。用于 last-login API 排除当前会话。
+    pub fn get_basic_auth_login_timestamp(
+        &self,
+        token: &str,
+    ) -> Option<chrono::DateTime<chrono::Utc>> {
+        let mut store = lock_mutex(&self.inner);
+        prune_expired_sessions(&mut store, Instant::now());
+        store
+            .basic_auth_sessions
+            .get(token)
+            .map(|session| session.login_timestamp)
     }
 }
 
@@ -357,7 +386,7 @@ fn prune_expired_sessions(store: &mut TwoFactorSessionStore, now: Instant) {
         .retain(|_, expires_at| *expires_at > now);
     store
         .basic_auth_sessions
-        .retain(|_, expires_at| *expires_at > now);
+        .retain(|_, session| session.expires_at > now);
     store
         .used_totp_steps
         .retain(|_, expires_at| *expires_at > now);

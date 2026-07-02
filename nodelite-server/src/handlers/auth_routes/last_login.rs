@@ -2,11 +2,12 @@
 
 use axum::Json;
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use serde::Serialize;
 
 use crate::AppState;
 use crate::audit::AuditEventType;
+use crate::auth::{BASIC_AUTH_SESSION_COOKIE, cookie_value};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LastLoginInfo {
@@ -22,15 +23,24 @@ pub struct LastLoginInfo {
 /// 获取当前用户的最后一次登录信息(不包括本次登录)。
 pub(crate) async fn last_login(
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<Json<LastLoginInfo>, (StatusCode, String)> {
-    // 查询 LoginSuccess 事件，排除最近5秒内的(很可能是本次会话的登录)
-    let cutoff = chrono::Utc::now() - chrono::Duration::seconds(5);
+    // 从当前会话 cookie 获取登录时间戳,用于排除当前会话的登录
+    let current_login_timestamp = cookie_value(&headers, BASIC_AUTH_SESSION_COOKIE)
+        .as_deref()
+        .and_then(|token| {
+            state
+                .two_factor_sessions
+                .get_basic_auth_login_timestamp(token)
+        });
+
+    // 查询所有 LoginSuccess 事件
     let query = crate::audit::AuditQuery {
         start: None,
-        end: Some(cutoff),
+        end: None,
         event_type: Some(AuditEventType::LoginSuccess),
         success: Some(true),
-        limit: 1,
+        limit: 10, // 多查一些以防当前登录在前几条
     };
 
     let events = state
@@ -39,8 +49,17 @@ pub(crate) async fn last_login(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // 取最近的一条(排除了本次登录后)
-    let last_login_event = events.first();
+    // 找到第一个不是当前会话的登录事件
+    let last_login_event = events.iter().find(|event| {
+        if let Some(current_ts) = current_login_timestamp {
+            // 排除时间戳匹配的事件(允许1秒误差)
+            let diff = (event.timestamp.timestamp() - current_ts.timestamp()).abs();
+            diff > 1
+        } else {
+            // 没有当前会话(例如2FA模式),返回最近的一个
+            true
+        }
+    });
 
     let info = if let Some(event) = last_login_event {
         let details = &event.details;

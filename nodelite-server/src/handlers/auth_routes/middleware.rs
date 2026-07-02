@@ -62,8 +62,9 @@ pub(crate) async fn require_readonly_auth(
             .as_deref()
             .is_some_and(|token| state.two_factor_sessions.is_basic_auth_session_valid(token));
         if !has_valid_session {
-            record_basic_auth_login_success(&state, &meta).await;
-            return issue_basic_auth_session_and_continue(&state, request, next).await;
+            let login_timestamp = record_basic_auth_login_success(&state, &meta).await;
+            return issue_basic_auth_session_and_continue(&state, request, next, login_timestamp)
+                .await;
         }
         return next.run(request).await;
     }
@@ -308,7 +309,10 @@ fn request_client_ip(state: &AppState, headers: &HeaderMap, request: &Request) -
         )
 }
 
-async fn record_basic_auth_login_success(state: &AppState, meta: &ReadonlyAuthMeta) {
+async fn record_basic_auth_login_success(
+    state: &AppState,
+    meta: &ReadonlyAuthMeta,
+) -> chrono::DateTime<chrono::Utc> {
     let audit_user = {
         let auth = state.readonly_auth.read().await;
         auth.config.as_ref().map(|config| config.username.clone())
@@ -333,19 +337,25 @@ async fn record_basic_auth_login_success(state: &AppState, meta: &ReadonlyAuthMe
         }
     }
 
+    let login_timestamp = chrono::Utc::now();
     let mut event = NewAuditEvent::now(AuditEventType::LoginSuccess, meta.audit_ip.clone(), true);
     event.user = audit_user;
     event.user_agent = meta.audit_user_agent.clone();
     event.details = details;
     let _ = state.audit_log.record(event).await;
+    login_timestamp
 }
 
 async fn issue_basic_auth_session_and_continue(
     state: &AppState,
     request: Request,
     next: Next,
+    login_timestamp: chrono::DateTime<chrono::Utc>,
 ) -> Response {
-    let session_token = match state.two_factor_sessions.create_basic_auth_session() {
+    let session_token = match state
+        .two_factor_sessions
+        .create_basic_auth_session(login_timestamp)
+    {
         Ok(token) => token,
         Err(error) => {
             error!(error = ?error, "failed to generate basic auth session token");
