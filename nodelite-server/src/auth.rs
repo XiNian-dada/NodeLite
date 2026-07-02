@@ -179,7 +179,7 @@ pub struct TwoFactorSessions {
 #[derive(Debug, Default)]
 struct TwoFactorSessionStore {
     pending: HashMap<String, PendingSession>,
-    authenticated: HashMap<String, Instant>,
+    authenticated: HashMap<String, AuthenticatedSession>,
     /// Basic Auth 会话 token 存储。每条记录包含过期时间和当前登录审计事件 id。
     /// last-login API 通过事件 id 排除当前会话,避免同一秒内多次登录被时间窗口误判。
     basic_auth_sessions: HashMap<String, BasicAuthSession>,
@@ -191,6 +191,12 @@ struct TwoFactorSessionStore {
 
 #[derive(Debug, Clone, Copy)]
 struct BasicAuthSession {
+    expires_at: Instant,
+    login_event_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AuthenticatedSession {
     expires_at: Instant,
     login_event_id: Option<i64>,
 }
@@ -316,7 +322,13 @@ impl TwoFactorSessions {
         let expires_at = Instant::now() + Duration::from_secs(TWO_FACTOR_AUTH_SECS);
         let mut store = lock_mutex(&self.inner);
         prune_expired_sessions(&mut store, Instant::now());
-        store.authenticated.insert(token.clone(), expires_at);
+        store.authenticated.insert(
+            token.clone(),
+            AuthenticatedSession {
+                expires_at,
+                login_event_id: None,
+            },
+        );
         Ok(token)
     }
 
@@ -329,6 +341,28 @@ impl TwoFactorSessions {
     pub fn remove_authenticated(&self, token: &str) {
         let mut store = lock_mutex(&self.inner);
         store.authenticated.remove(token);
+    }
+
+    /// 绑定已完成 2FA 的会话与其 LoginSuccess 审计事件。
+    pub fn set_authenticated_login_event_id(&self, token: &str, login_event_id: Option<i64>) {
+        let Some(login_event_id) = login_event_id else {
+            return;
+        };
+        let mut store = lock_mutex(&self.inner);
+        prune_expired_sessions(&mut store, Instant::now());
+        if let Some(session) = store.authenticated.get_mut(token) {
+            session.login_event_id = Some(login_event_id);
+        }
+    }
+
+    /// 获取 2FA 会话的登录审计事件 id。用于 last-login API 排除当前会话。
+    pub fn get_authenticated_login_event_id(&self, token: &str) -> Option<i64> {
+        let mut store = lock_mutex(&self.inner);
+        prune_expired_sessions(&mut store, Instant::now());
+        store
+            .authenticated
+            .get(token)
+            .and_then(|session| session.login_event_id)
     }
 
     /// 密码轮换后清空已完成 2FA 的浏览器会话,避免旧凭据换出的会话继续可用。
@@ -380,7 +414,7 @@ fn prune_expired_sessions(store: &mut TwoFactorSessionStore, now: Instant) {
     store.pending.retain(|_, session| session.expires_at > now);
     store
         .authenticated
-        .retain(|_, expires_at| *expires_at > now);
+        .retain(|_, session| session.expires_at > now);
     store
         .basic_auth_sessions
         .retain(|_, session| session.expires_at > now);

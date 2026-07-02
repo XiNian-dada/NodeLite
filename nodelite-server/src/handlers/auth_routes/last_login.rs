@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::AppState;
 use crate::audit::AuditEventType;
-use crate::auth::{BASIC_AUTH_SESSION_COOKIE, cookie_value};
+use crate::auth::{BASIC_AUTH_SESSION_COOKIE, TWO_FACTOR_AUTH_COOKIE, cookie_value};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LastLoginInfo {
@@ -32,6 +32,15 @@ pub(crate) async fn last_login(
             state
                 .two_factor_sessions
                 .get_basic_auth_login_event_id(token)
+        })
+        .or_else(|| {
+            cookie_value(&headers, TWO_FACTOR_AUTH_COOKIE)
+                .as_deref()
+                .and_then(|token| {
+                    state
+                        .two_factor_sessions
+                        .get_authenticated_login_event_id(token)
+                })
         });
 
     // 查询所有 LoginSuccess 事件

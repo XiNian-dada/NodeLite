@@ -7,6 +7,7 @@ use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{AppendHeaders, IntoResponse, Response};
 use serde_json::json;
+use tracing::error;
 
 use super::user_agent;
 use crate::AppState;
@@ -40,7 +41,10 @@ pub(crate) async fn verify_2fa_api(
     let auth_token = create_authenticated_two_factor_session(&state)?;
     state.two_factor_sessions.consume_pending(&pending_token);
     state.verify_2fa_admission.clear_auth_failures(client_ip);
-    record_totp_success(&state, &headers, client_ip, audit_user).await;
+    let login_event_id = record_totp_success(&state, &headers, client_ip, audit_user).await;
+    state
+        .two_factor_sessions
+        .set_authenticated_login_event_id(&auth_token, login_event_id);
 
     Ok(successful_verify_2fa_response(&state, &auth_token))
 }
@@ -227,7 +231,7 @@ async fn record_totp_success(
     headers: &HeaderMap,
     client_ip: std::net::IpAddr,
     audit_user: Option<String>,
-) {
+) -> Option<i64> {
     // 记录 TOTP 验证成功事件
     let mut totp_event = NewAuditEvent::now(
         AuditEventType::TotpVerifySuccess,
@@ -267,7 +271,13 @@ async fn record_totp_success(
     login_event.user = audit_user;
     login_event.user_agent = user_agent(headers);
     login_event.details = login_details;
-    let _ = state.audit_log.record(login_event).await;
+    match state.audit_log.record_and_return_id(login_event).await {
+        Ok(id) => id,
+        Err(error) => {
+            error!(error = ?error, "failed to persist 2FA login audit event");
+            None
+        }
+    }
 }
 
 fn successful_verify_2fa_response(state: &AppState, auth_token: &str) -> Response {
