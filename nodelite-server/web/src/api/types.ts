@@ -107,7 +107,7 @@ export interface AuditLogEntry {
   ip_address: string;
   user_agent: string | null;
   success: boolean;
-  details: Record<string, any>;
+  details: Record<string, unknown>;
 }
 
 /** Full per-node identity — GET /api/nodes/{id}, nodelite-proto NodeIdentity */

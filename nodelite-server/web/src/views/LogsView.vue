@@ -46,7 +46,7 @@ async function loadAuditLogs() {
   }
 }
 
-function getLocationString(details: Record<string, any>): string {
+function getLocationString(details: Record<string, unknown>): string {
   const parts = [];
   if (details.city) parts.push(details.city);
   if (details.country) parts.push(details.country);
