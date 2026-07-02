@@ -7,15 +7,16 @@ use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{AppendHeaders, IntoResponse, Response};
 use serde_json::json;
+use tracing::error;
 
 use super::user_agent;
 use crate::AppState;
 use crate::admission::resolve_client_ip;
 use crate::audit::{AuditEventType, NewAuditEvent};
 use crate::auth::{
-    TWO_FACTOR_AUTH_COOKIE, TWO_FACTOR_AUTH_SECS, TWO_FACTOR_PENDING_COOKIE, Verify2FAError,
-    Verify2FARequest, auth_cookie, cookie_value, expire_cookie, matching_totp_steps,
-    secure_cookies,
+    BASIC_AUTH_SESSION_COOKIE, TWO_FACTOR_AUTH_COOKIE, TWO_FACTOR_AUTH_SECS,
+    TWO_FACTOR_PENDING_COOKIE, Verify2FAError, Verify2FARequest, auth_cookie, cookie_value,
+    expire_cookie, matching_totp_steps, secure_cookies,
 };
 use crate::handlers::record_audit_event;
 
@@ -40,7 +41,10 @@ pub(crate) async fn verify_2fa_api(
     let auth_token = create_authenticated_two_factor_session(&state)?;
     state.two_factor_sessions.consume_pending(&pending_token);
     state.verify_2fa_admission.clear_auth_failures(client_ip);
-    record_totp_success(&state, &headers, client_ip, audit_user).await;
+    let login_event_id = record_totp_success(&state, &headers, client_ip, audit_user).await;
+    state
+        .two_factor_sessions
+        .set_authenticated_login_event_id(&auth_token, login_event_id);
 
     Ok(successful_verify_2fa_response(&state, &auth_token))
 }
@@ -60,6 +64,7 @@ pub(crate) async fn logout_and_reauth(
         AppendHeaders([
             expire_cookie(TWO_FACTOR_AUTH_COOKIE, secure),
             expire_cookie(TWO_FACTOR_PENDING_COOKIE, secure),
+            expire_cookie(BASIC_AUTH_SESSION_COOKIE, secure),
             (
                 header::WWW_AUTHENTICATE,
                 "Basic realm=\"NodeLite\"".to_string(),
@@ -226,18 +231,53 @@ async fn record_totp_success(
     headers: &HeaderMap,
     client_ip: std::net::IpAddr,
     audit_user: Option<String>,
-) {
-    let mut event = NewAuditEvent::now(
+) -> Option<i64> {
+    // 记录 TOTP 验证成功事件
+    let mut totp_event = NewAuditEvent::now(
         AuditEventType::TotpVerifySuccess,
         client_ip.to_string(),
         true,
     );
-    event.user = audit_user;
-    event.user_agent = user_agent(headers);
-    event.details = json!({
+    totp_event.user = audit_user.clone();
+    totp_event.user_agent = user_agent(headers);
+    totp_event.details = json!({
         "endpoint": "/api/verify-2fa",
     });
-    state.audit_log.record_best_effort(event).await;
+    state.audit_log.record_best_effort(totp_event).await;
+
+    // 2FA 验证成功 = 完整登录成功,记录 LoginSuccess 事件(包含 GeoIP)
+    let geoip_info = state.geoip.lookup(client_ip).await;
+    let mut login_details = json!({
+        "endpoint": "/api/verify-2fa",
+        "two_factor_verified": true,
+    });
+    if let Some(info) = geoip_info
+        && let Some(obj) = login_details.as_object_mut()
+    {
+        obj.insert("country".to_string(), json!(info.country));
+        if let Some(city) = info.city {
+            obj.insert("city".to_string(), json!(city));
+        }
+        if let Some(lat) = info.latitude {
+            obj.insert("latitude".to_string(), json!(lat));
+        }
+        if let Some(lon) = info.longitude {
+            obj.insert("longitude".to_string(), json!(lon));
+        }
+    }
+
+    let mut login_event =
+        NewAuditEvent::now(AuditEventType::LoginSuccess, client_ip.to_string(), true);
+    login_event.user = audit_user;
+    login_event.user_agent = user_agent(headers);
+    login_event.details = login_details;
+    match state.audit_log.record_and_return_id(login_event).await {
+        Ok(id) => id,
+        Err(error) => {
+            error!(error = ?error, "failed to persist 2FA login audit event");
+            None
+        }
+    }
 }
 
 fn successful_verify_2fa_response(state: &AppState, auth_token: &str) -> Response {

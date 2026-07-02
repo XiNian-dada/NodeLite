@@ -1,5 +1,4 @@
 use crate::ServerReadiness;
-use crate::agent_logs::AgentLogStats;
 #[cfg(test)]
 use nodelite_proto::NodeStatus;
 use nodelite_proto::{MetricsConfig, NodeIdentity, NodeSnapshot, OverviewData};
@@ -116,30 +115,6 @@ pub(crate) fn render_writer_metrics(metrics: WriterMetrics) -> String {
         &[],
         metrics.session_control_queue_full_total,
     );
-    emitter.finish()
-}
-
-pub(crate) fn render_agent_log_metrics(stats: AgentLogStats) -> String {
-    let mut emitter = MetricEmitter::default();
-    for (metric, help, value) in [
-        (
-            "nodelite_agent_log_nodes",
-            "Number of nodes currently holding in-memory agent logs.",
-            stats.nodes,
-        ),
-        (
-            "nodelite_agent_log_entries",
-            "Number of in-memory agent log entries currently retained.",
-            stats.entries,
-        ),
-        (
-            "nodelite_agent_log_estimated_bytes",
-            "Estimated bytes currently retained by the in-memory agent log store.",
-            stats.estimated_bytes,
-        ),
-    ] {
-        emitter.gauge(metric, help, &[], value);
-    }
     emitter.finish()
 }
 

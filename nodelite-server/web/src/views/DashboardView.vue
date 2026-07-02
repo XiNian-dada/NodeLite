@@ -5,6 +5,7 @@ import OverviewStats from '@/components/OverviewStats.vue';
 import NodeHealthMatrix from '@/components/NodeHealthMatrix.vue';
 import NodeMap from '@/components/NodeMap.vue';
 import NodeList from '@/components/NodeList.vue';
+import LoginNotification from '@/components/LoginNotification.vue';
 import { useWebSocket } from '@/ws';
 import { useBootstrapStore } from '@/stores/bootstrap';
 import { useOverviewStore } from '@/stores/overview';
@@ -77,6 +78,8 @@ onMounted(() => {
 
       <NodeList />
     </section>
+
+    <LoginNotification />
   </AppLayout>
 </template>
 

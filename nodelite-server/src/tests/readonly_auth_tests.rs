@@ -6,9 +6,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
-use axum::http::{Request, StatusCode, header};
+use axum::http::{HeaderMap, Request, StatusCode, header};
 use axum::middleware::from_fn_with_state;
 use axum::routing::{get, post};
+use chrono::{TimeZone, Utc};
 use serde_json::json;
 use tokio::runtime::Runtime;
 use tower::util::ServiceExt;
@@ -18,7 +19,8 @@ use super::support::{
     protected_ok, protected_request, two_factor_auth_test_state, ws_upgrade_request,
 };
 use crate::audit::{AuditEvent, AuditEventType, AuditQuery, NewAuditEvent};
-use crate::handlers::{audit_log, require_readonly_auth};
+use crate::auth::{BASIC_AUTH_SESSION_COOKIE, TWO_FACTOR_AUTH_COOKIE};
+use crate::handlers::{audit_log, last_login, require_readonly_auth};
 use crate::test_support::{TEST_BASIC_AUTH_HEADER, test_server_config, test_ws_config};
 
 #[test]
@@ -60,6 +62,153 @@ fn readonly_auth_route_accepts_valid_basic_auth() {
             .expect("response should be produced");
 
         assert_eq!(response.status(), StatusCode::OK);
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    });
+}
+
+#[test]
+fn last_login_uses_session_event_id_when_login_timestamps_match() {
+    let runtime = Runtime::new().expect("runtime should build");
+    runtime.block_on(async {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic enough")
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("nodelite-last-login-id-{unique}"));
+        std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+        let registry_path = temp_dir.join("server.json");
+        let config = test_server_config(
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8080)),
+            "https://monitor.example.com".to_string(),
+            registry_path,
+            temp_dir.join("history.sqlite3"),
+            temp_dir.join("snapshot.json"),
+        );
+        let state = AppState::test_fixture(config.into(), Arc::new(temp_dir.join("server.toml")))
+            .await
+            .expect("state fixture should build");
+        let timestamp = Utc
+            .timestamp_opt(1_700_000_000, 0)
+            .single()
+            .expect("fixed timestamp should be valid");
+
+        let mut previous_login =
+            NewAuditEvent::now(AuditEventType::LoginSuccess, "198.51.100.24", true);
+        previous_login.timestamp = timestamp;
+        previous_login.user_agent = Some("CodexReview/previous".to_string());
+        state
+            .audit_log
+            .record_and_return_id(previous_login)
+            .await
+            .expect("previous login should persist")
+            .expect("previous login id should be returned");
+
+        let mut current_login =
+            NewAuditEvent::now(AuditEventType::LoginSuccess, "198.51.100.24", true);
+        current_login.timestamp = timestamp;
+        current_login.user_agent = Some("CodexReview/current".to_string());
+        let current_id = state
+            .audit_log
+            .record_and_return_id(current_login)
+            .await
+            .expect("current login should persist")
+            .expect("current login id should be returned");
+        let session_token = state
+            .two_factor_sessions
+            .create_basic_auth_session(Some(current_id))
+            .expect("session token should be created");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            format!("{BASIC_AUTH_SESSION_COOKIE}={session_token}")
+                .parse()
+                .expect("cookie header should parse"),
+        );
+
+        let info = last_login(axum::extract::State(state.clone()), headers)
+            .await
+            .expect("last-login response should succeed")
+            .0;
+        let expected_timestamp = timestamp.to_rfc3339();
+        assert_eq!(info.user_agent.as_deref(), Some("CodexReview/previous"));
+        assert_eq!(info.timestamp.as_deref(), Some(expected_timestamp.as_str()));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    });
+}
+
+#[test]
+fn last_login_uses_two_factor_session_event_id_when_login_timestamps_match() {
+    let runtime = Runtime::new().expect("runtime should build");
+    runtime.block_on(async {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic enough")
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("nodelite-last-login-2fa-id-{unique}"));
+        std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+        let registry_path = temp_dir.join("server.json");
+        let config = test_server_config(
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8080)),
+            "https://monitor.example.com".to_string(),
+            registry_path,
+            temp_dir.join("history.sqlite3"),
+            temp_dir.join("snapshot.json"),
+        );
+        let state = AppState::test_fixture(config.into(), Arc::new(temp_dir.join("server.toml")))
+            .await
+            .expect("state fixture should build");
+        let timestamp = Utc
+            .timestamp_opt(1_700_000_000, 0)
+            .single()
+            .expect("fixed timestamp should be valid");
+
+        let mut previous_login =
+            NewAuditEvent::now(AuditEventType::LoginSuccess, "198.51.100.24", true);
+        previous_login.timestamp = timestamp;
+        previous_login.user_agent = Some("CodexReview/previous-2fa".to_string());
+        state
+            .audit_log
+            .record_and_return_id(previous_login)
+            .await
+            .expect("previous login should persist")
+            .expect("previous login id should be returned");
+
+        let mut current_login =
+            NewAuditEvent::now(AuditEventType::LoginSuccess, "198.51.100.24", true);
+        current_login.timestamp = timestamp;
+        current_login.user_agent = Some("CodexReview/current-2fa".to_string());
+        let current_id = state
+            .audit_log
+            .record_and_return_id(current_login)
+            .await
+            .expect("current login should persist")
+            .expect("current login id should be returned");
+        let session_token = state
+            .two_factor_sessions
+            .create_authenticated()
+            .expect("session token should be created");
+        state
+            .two_factor_sessions
+            .set_authenticated_login_event_id(&session_token, Some(current_id));
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            format!("{TWO_FACTOR_AUTH_COOKIE}={session_token}")
+                .parse()
+                .expect("cookie header should parse"),
+        );
+
+        let info = last_login(axum::extract::State(state.clone()), headers)
+            .await
+            .expect("last-login response should succeed")
+            .0;
+        let expected_timestamp = timestamp.to_rfc3339();
+        assert_eq!(info.user_agent.as_deref(), Some("CodexReview/previous-2fa"));
+        assert_eq!(info.timestamp.as_deref(), Some(expected_timestamp.as_str()));
+
         let _ = std::fs::remove_dir_all(&temp_dir);
     });
 }

@@ -41,6 +41,7 @@ impl RecordResult {
 
 /// `AgentLogStore` 当前内存占用的轻量统计,用于测试和 Prometheus 导出。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[allow(dead_code)]
 pub struct AgentLogStats {
     pub nodes: usize,
     pub entries: usize,
@@ -147,6 +148,7 @@ impl AgentLogStore {
     }
 
     /// 清理已经不在注册表中的节点日志,避免长期运行时缓冲只增不减。
+    #[allow(dead_code)]
     pub async fn forget_missing(&self, live_node_ids: &[String]) -> usize {
         let live: HashSet<&str> = live_node_ids.iter().map(String::as_str).collect();
         let mut removed = 0;
@@ -173,6 +175,7 @@ impl AgentLogStore {
         removed
     }
 
+    #[allow(dead_code)]
     pub async fn stats(&self) -> AgentLogStats {
         let mut nodes = 0;
         for shard in &self.inner.shards {
@@ -293,6 +296,7 @@ impl AgentLogShard {
             .map(|(node_id, _)| node_id.to_string())
     }
 
+    #[allow(dead_code)]
     fn remove_node(&mut self, node_id: &str) -> RemovedNodeStats {
         let Some(buffer) = self.buffers.remove(node_id) else {
             return RemovedNodeStats::default();
@@ -320,6 +324,7 @@ impl AgentLogShard {
 }
 
 #[derive(Default)]
+#[allow(dead_code)]
 struct RemovedNodeStats {
     entries: usize,
     estimated_bytes: usize,
