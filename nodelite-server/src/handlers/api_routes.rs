@@ -12,9 +12,8 @@ use tracing::error;
 use crate::AppState;
 use crate::audit::{AuditEventType, AuditLogError, AuditQuery};
 use crate::handlers::metrics_routes::{
-    RuntimeMetrics, WriterMetrics,
-    render_api_cache_metrics,
-    render_metrics_response_body_bytes, render_runtime_metrics, render_writer_metrics,
+    RuntimeMetrics, WriterMetrics, render_api_cache_metrics, render_metrics_response_body_bytes,
+    render_runtime_metrics, render_writer_metrics,
 };
 use crate::history::HistoryError;
 use nodelite_proto::{AgentLogEntry, GeoIpProvider};

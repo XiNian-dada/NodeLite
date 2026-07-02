@@ -246,7 +246,9 @@ async fn record_totp_success(
         "endpoint": "/api/verify-2fa",
         "two_factor_verified": true,
     });
-    if let Some(info) = geoip_info && let Some(obj) = login_details.as_object_mut() {
+    if let Some(info) = geoip_info
+        && let Some(obj) = login_details.as_object_mut()
+    {
         obj.insert("country".to_string(), json!(info.country));
         if let Some(city) = info.city {
             obj.insert("city".to_string(), json!(city));
@@ -259,11 +261,8 @@ async fn record_totp_success(
         }
     }
 
-    let mut login_event = NewAuditEvent::now(
-        AuditEventType::LoginSuccess,
-        client_ip.to_string(),
-        true,
-    );
+    let mut login_event =
+        NewAuditEvent::now(AuditEventType::LoginSuccess, client_ip.to_string(), true);
     login_event.user = audit_user;
     login_event.user_agent = user_agent(headers);
     login_event.details = login_details;
