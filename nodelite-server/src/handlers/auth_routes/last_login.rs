@@ -23,13 +23,14 @@ pub struct LastLoginInfo {
 pub(crate) async fn last_login(
     State(state): State<AppState>,
 ) -> Result<Json<LastLoginInfo>, (StatusCode, String)> {
-    // 查询最近 2 次 LoginSuccess 事件
+    // 查询 LoginSuccess 事件，排除最近5秒内的(很可能是本次会话的登录)
+    let cutoff = chrono::Utc::now() - chrono::Duration::seconds(5);
     let query = crate::audit::AuditQuery {
         start: None,
-        end: None,
+        end: Some(cutoff),
         event_type: Some(AuditEventType::LoginSuccess),
         success: Some(true),
-        limit: 2,
+        limit: 1,
     };
 
     let events = state
@@ -38,13 +39,8 @@ pub(crate) async fn last_login(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // 如果有至少 2 条记录,返回倒数第 2 条(最后一次登录,排除本次)
-    // 如果只有 1 条,说明这是首次登录,返回空值
-    let last_login_event = if events.len() >= 2 {
-        Some(&events[events.len() - 2])
-    } else {
-        None
-    };
+    // 取最近的一条(排除了本次登录后)
+    let last_login_event = events.first();
 
     let info = if let Some(event) = last_login_event {
         let details = &event.details;

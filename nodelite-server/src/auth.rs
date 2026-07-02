@@ -180,6 +180,9 @@ pub struct TwoFactorSessions {
 struct TwoFactorSessionStore {
     pending: HashMap<String, PendingSession>,
     authenticated: HashMap<String, Instant>,
+    /// Basic Auth 会话 token 存储。仅用于验证 session cookie 的有效性,
+    /// 每个 token 在 24 小时后过期。
+    basic_auth_sessions: HashMap<String, Instant>,
     /// 最近被成功消费过的 TOTP `time_step`(30 秒一个步长)。一旦某个 step
     /// 被用过,同一 step 的后续验证码必须拒绝,以阻止攻击者捕获一次 verify
     /// 请求后在同窗口内重放。条目会定期 prune,避免无界增长。
@@ -327,12 +330,33 @@ impl TwoFactorSessions {
         let mut store = lock_mutex(&self.inner);
         store.authenticated.clear();
     }
+
+    /// 创建 Basic Auth 会话 token。用于 Basic-only 模式下跟踪已登录会话,
+    /// 避免每次请求都记录 LoginSuccess 事件。
+    pub fn create_basic_auth_session(&self) -> AuthSessionResult<String> {
+        let token = generate_session_token()?;
+        let expires_at = Instant::now() + Duration::from_secs(BASIC_AUTH_SESSION_SECS);
+        let mut store = lock_mutex(&self.inner);
+        prune_expired_sessions(&mut store, Instant::now());
+        store.basic_auth_sessions.insert(token.clone(), expires_at);
+        Ok(token)
+    }
+
+    /// 验证 Basic Auth 会话 token 是否有效。
+    pub fn is_basic_auth_session_valid(&self, token: &str) -> bool {
+        let mut store = lock_mutex(&self.inner);
+        prune_expired_sessions(&mut store, Instant::now());
+        store.basic_auth_sessions.contains_key(token)
+    }
 }
 
 fn prune_expired_sessions(store: &mut TwoFactorSessionStore, now: Instant) {
     store.pending.retain(|_, session| session.expires_at > now);
     store
         .authenticated
+        .retain(|_, expires_at| *expires_at > now);
+    store
+        .basic_auth_sessions
         .retain(|_, expires_at| *expires_at > now);
     store
         .used_totp_steps

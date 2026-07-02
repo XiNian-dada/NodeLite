@@ -16,8 +16,8 @@ use crate::admission::resolve_client_ip;
 use crate::audit::{AuditEventType, NewAuditEvent};
 use crate::auth::{
     BASIC_AUTH_SESSION_COOKIE, BASIC_AUTH_SESSION_SECS, TWO_FACTOR_AUTH_COOKIE,
-    TWO_FACTOR_PENDING_COOKIE, TWO_FACTOR_PENDING_SECS, auth_cookie, cookie_value,
-    expire_cookie, secure_cookies,
+    TWO_FACTOR_PENDING_COOKIE, TWO_FACTOR_PENDING_SECS, auth_cookie, cookie_value, expire_cookie,
+    secure_cookies,
 };
 use crate::handlers::record_audit_event;
 
@@ -58,8 +58,10 @@ pub(crate) async fn require_readonly_auth(
             return issue_two_factor_redirect(&state).await;
         }
         // Basic Auth only mode: record LoginSuccess on first access in this session
-        let has_session = cookie_value(&headers, BASIC_AUTH_SESSION_COOKIE).is_some();
-        if !has_session {
+        let has_valid_session = cookie_value(&headers, BASIC_AUTH_SESSION_COOKIE)
+            .as_deref()
+            .is_some_and(|token| state.two_factor_sessions.is_basic_auth_session_valid(token));
+        if !has_valid_session {
             record_basic_auth_login_success(&state, &meta).await;
             return issue_basic_auth_session_and_continue(&state, request, next).await;
         }
@@ -331,11 +333,7 @@ async fn record_basic_auth_login_success(state: &AppState, meta: &ReadonlyAuthMe
         }
     }
 
-    let mut event = NewAuditEvent::now(
-        AuditEventType::LoginSuccess,
-        meta.audit_ip.clone(),
-        true,
-    );
+    let mut event = NewAuditEvent::now(AuditEventType::LoginSuccess, meta.audit_ip.clone(), true);
     event.user = audit_user;
     event.user_agent = meta.audit_user_agent.clone();
     event.details = details;
@@ -347,7 +345,7 @@ async fn issue_basic_auth_session_and_continue(
     request: Request,
     next: Next,
 ) -> Response {
-    let session_token = match generate_session_token() {
+    let session_token = match state.two_factor_sessions.create_basic_auth_session() {
         Ok(token) => token,
         Err(error) => {
             error!(error = ?error, "failed to generate basic auth session token");
@@ -358,13 +356,15 @@ async fn issue_basic_auth_session_and_continue(
     let mut response = next.run(request).await;
     response.headers_mut().insert(
         header::SET_COOKIE,
-        match header::HeaderValue::from_str(&auth_cookie(
-            BASIC_AUTH_SESSION_COOKIE,
-            &session_token,
-            BASIC_AUTH_SESSION_SECS,
-            secure,
-        )
-        .1) {
+        match header::HeaderValue::from_str(
+            &auth_cookie(
+                BASIC_AUTH_SESSION_COOKIE,
+                &session_token,
+                BASIC_AUTH_SESSION_SECS,
+                secure,
+            )
+            .1,
+        ) {
             Ok(value) => value,
             Err(error) => {
                 error!(error = ?error, "failed to format session cookie");
@@ -373,10 +373,4 @@ async fn issue_basic_auth_session_and_continue(
         },
     );
     response
-}
-
-fn generate_session_token() -> Result<String, getrandom::Error> {
-    let mut bytes = [0u8; 24];
-    getrandom::fill(&mut bytes)?;
-    Ok(crate::encoding::hex_encode(&bytes))
 }
