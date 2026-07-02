@@ -182,6 +182,16 @@ pub enum NoticeLevel {
     Error,
 }
 
+impl NoticeLevel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Info => "info",
+            Self::Warn => "warn",
+            Self::Error => "error",
+        }
+    }
+}
+
 /// Server → 浏览器 WebSocket(`/ws/browser`)通道上的消息。
 ///
 /// 与 Agent 通道的 [`WireMessage`] 区分:浏览器通道是只读监控推送,客户端只发送

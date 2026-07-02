@@ -139,9 +139,13 @@ async fn initialize_server_runtime(
         config.history_db_path.clone(),
         config.sqlite_busy_timeout_secs,
     );
-    let agent_logs = AgentLogStore::new();
+    let agent_logs = AgentLogStore::with_persistence(
+        config.agent_logs_db_path.clone(),
+        config.agent_logs_max_size_mb,
+    );
     let audit_log = AuditLog::new(config.audit.clone(), config.sqlite_busy_timeout_secs);
     history.initialize().await;
+    agent_logs.initialize().await?;
     audit_log.initialize().await?;
     let geoip = GeoIpResolver::new(config.geoip.clone()).await;
     let readiness = ServerReadiness::new(history.is_available());

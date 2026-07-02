@@ -40,6 +40,22 @@ pub(super) fn default_geoip_database_path() -> PathBuf {
     PathBuf::from("./data/geoip/dbip.mmdb")
 }
 
+pub(super) fn default_agent_logs_db_path() -> PathBuf {
+    PathBuf::from("./data/agent_logs.sqlite3")
+}
+
+pub(super) fn default_agent_logs_max_size_mb() -> u64 {
+    100
+}
+
+pub(super) fn default_server_logs_db_path() -> PathBuf {
+    PathBuf::from("./data/server_logs.sqlite3")
+}
+
+pub(super) fn default_server_logs_max_size_mb() -> u64 {
+    50
+}
+
 pub(super) fn default_stale_after_secs() -> u64 {
     DEFAULT_STALE_AFTER_SECS
 }

@@ -190,6 +190,14 @@ pub struct ServerConfig {
     #[serde(default = "default_sqlite_busy_timeout_secs")]
     /// SQLite busy timeout 秒数。
     pub sqlite_busy_timeout_secs: u64,
+    /// Agent 日志 SQLite 数据库路径。
+    pub agent_logs_db_path: PathBuf,
+    /// Agent 日志数据库最大体积限制(MB)。
+    pub agent_logs_max_size_mb: u64,
+    /// Server 日志 SQLite 数据库路径。
+    pub server_logs_db_path: PathBuf,
+    /// Server 日志数据库最大体积限制(MB)。
+    pub server_logs_max_size_mb: u64,
 }
 
 /// 前端只读访问所用的基本认证凭证。

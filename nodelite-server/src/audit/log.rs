@@ -247,9 +247,9 @@ impl AuditLog {
         }
 
         match event_type {
-            AuditEventType::TotpVerifySuccess | AuditEventType::NodeConnected => {
-                self.config.log_successful_auth
-            }
+            AuditEventType::LoginSuccess
+            | AuditEventType::TotpVerifySuccess
+            | AuditEventType::NodeConnected => self.config.log_successful_auth,
             AuditEventType::LoginFailure | AuditEventType::TotpVerifyFailure => {
                 self.config.log_failed_auth
             }
