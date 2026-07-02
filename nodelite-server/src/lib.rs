@@ -36,6 +36,7 @@ mod qr;
 mod queue;
 mod registry;
 mod sanitize;
+mod server_logs;
 mod snapshot;
 mod startup;
 mod state;

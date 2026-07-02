@@ -1,10 +1,23 @@
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+mod query;
+mod storage;
+mod writer;
 
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+
+use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use nodelite_proto::{AgentLogEntry, truncate_to_byte_boundary};
-use tokio::sync::{Mutex, RwLock};
+use rusqlite::Connection;
+use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::task::JoinHandle;
+use tracing::error;
+
+use self::query::{query_logs_by_node, query_logs_by_time_range, database_size_bytes, prune_by_size, AgentLogEntryWithNode};
+use self::storage::{initialize_database, open_read_connection};
+use self::writer::{PendingLogEntry, WriterContext, run_agent_log_writer};
 
 const MAX_LOGS_PER_NODE: usize = 200;
 const MAX_BATCH_ENTRIES: usize = 64;
@@ -49,25 +62,30 @@ pub struct AgentLogStats {
     pub max_estimated_bytes: usize,
 }
 
-/// 最近 Agent 运行日志的内存缓冲。
+/// 最近 Agent 运行日志的内存缓冲与持久化存储。
 ///
-/// 这些日志只用于只读排障视图,不参与持久化。设计目标是:
-/// - 每节点保留固定上限,防止异常节点无限吃内存;
-/// - 全局条数和估算字节数都有上限,避免多节点同时刷日志时挤爆内存;
-/// - 接受 Agent 断线后回补的一小批日志,帮助排查偶发断链/重连问题;
-/// - 对消息长度与时间戳做轻量清洗,避免脏数据破坏前端渲染。
-#[derive(Clone, Default)]
+/// 设计目标:
+/// - 内存缓冲用于快速读取最近日志(每节点最多 200 条);
+/// - SQLite 持久化存储完整历史,支持时间范围查询;
+/// - 异步批量写入,不阻塞 WebSocket 接收路径;
+/// - 自动清理超过大小限制的旧日志。
+#[derive(Clone)]
 pub struct AgentLogStore {
     inner: Arc<AgentLogStoreInner>,
 }
 
-#[derive(Default)]
 struct AgentLogStoreInner {
     shards: Vec<RwLock<AgentLogShard>>,
     total_entries: AtomicUsize,
     estimated_bytes: AtomicUsize,
     next_sequence: AtomicU64,
     eviction_lock: Mutex<()>,
+    // 持久化相关
+    db_path: Option<Arc<PathBuf>>,
+    available: Arc<AtomicBool>,
+    writer_tx: Arc<RwLock<Option<mpsc::Sender<PendingLogEntry>>>>,
+    writer_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
+    max_size_bytes: Option<u64>,
 }
 
 #[derive(Default)]
@@ -83,6 +101,7 @@ struct StoredAgentLogEntry {
 }
 
 impl AgentLogStore {
+    /// 创建纯内存的 AgentLogStore（不持久化）。
     pub fn new() -> Self {
         Self {
             inner: Arc::new(AgentLogStoreInner {
@@ -93,8 +112,86 @@ impl AgentLogStore {
                 estimated_bytes: AtomicUsize::new(0),
                 next_sequence: AtomicU64::new(0),
                 eviction_lock: Mutex::new(()),
+                db_path: None,
+                available: Arc::new(AtomicBool::new(false)),
+                writer_tx: Arc::new(RwLock::new(None)),
+                writer_handle: Arc::new(Mutex::new(None)),
+                max_size_bytes: None,
             }),
         }
+    }
+
+    /// 创建带持久化的 AgentLogStore。
+    pub fn with_persistence(db_path: PathBuf, max_size_mb: u64) -> Self {
+        let max_size_bytes = max_size_mb * 1024 * 1024;
+        Self {
+            inner: Arc::new(AgentLogStoreInner {
+                shards: (0..AGENT_LOG_SHARDS)
+                    .map(|_| RwLock::new(AgentLogShard::default()))
+                    .collect(),
+                total_entries: AtomicUsize::new(0),
+                estimated_bytes: AtomicUsize::new(0),
+                next_sequence: AtomicU64::new(0),
+                eviction_lock: Mutex::new(()),
+                db_path: Some(Arc::new(db_path)),
+                available: Arc::new(AtomicBool::new(false)),
+                writer_tx: Arc::new(RwLock::new(None)),
+                writer_handle: Arc::new(Mutex::new(None)),
+                max_size_bytes: Some(max_size_bytes),
+            }),
+        }
+    }
+
+    /// 初始化持久化层并启动 writer 任务。
+    pub async fn initialize(&self) -> Result<()> {
+        let Some(db_path) = self.inner.db_path.as_ref() else {
+            return Ok(()); // 纯内存模式，无需初始化
+        };
+
+        let conn = match initialize_database(db_path) {
+            Ok(conn) => conn,
+            Err(error) => {
+                error!(
+                    error = %error,
+                    path = %db_path.display(),
+                    "failed to initialize agent logs database"
+                );
+                return Err(error);
+            }
+        };
+
+        let (tx, rx) = mpsc::channel(1024);
+        let writer_ctx = WriterContext {
+            db_path: Arc::clone(db_path),
+            connection: Arc::new(tokio::sync::Mutex::new(conn)),
+            rx,
+        };
+
+        let handle = tokio::spawn(run_agent_log_writer(writer_ctx));
+
+        *self.inner.writer_tx.write().await = Some(tx);
+        *self.inner.writer_handle.lock().await = Some(handle);
+        self.inner.available.store(true, Ordering::Release);
+
+        Ok(())
+    }
+
+    /// 关闭 writer 任务。
+    pub async fn shutdown(&self) -> Result<()> {
+        *self.inner.writer_tx.write().await = None;
+
+        if let Some(handle) = self.inner.writer_handle.lock().await.take() {
+            handle
+                .await
+                .context("join agent log writer task")?;
+        }
+
+        Ok(())
+    }
+
+    /// 数据库是否可用。
+    pub fn is_available(&self) -> bool {
+        self.inner.available.load(Ordering::Acquire)
     }
 
     /// 记录某节点上传的一批日志, 返回结构化的接收 / 丢弃统计。
@@ -102,6 +199,8 @@ impl AgentLogStore {
     /// 限流上限仍然是 `MAX_BATCH_ENTRIES = 64`, 超出部分会被丢弃,
     /// 但与 #89 之前不同的是: 丢弃数量现在会回传给调用方, 并触发
     /// `tracing::warn!` 让丢弃可被运维监控感知, 不再是黑洞。
+    ///
+    /// 如果启用持久化，日志也会异步写入 SQLite。
     pub async fn record_entries(&self, node_id: &str, entries: Vec<AgentLogEntry>) -> RecordResult {
         let total = entries.len();
         let dropped_batch_cap = total.saturating_sub(MAX_BATCH_ENTRIES);
@@ -116,7 +215,20 @@ impl AgentLogStore {
                 continue;
             };
 
-            self.push_entry(shard_index, node_id, entry).await;
+            let sequence = self.push_entry(shard_index, node_id, entry.clone()).await;
+
+            // 异步持久化
+            if let Some(tx) = self.inner.writer_tx.read().await.as_ref() {
+                let pending = PendingLogEntry {
+                    node_id: node_id.to_string(),
+                    occurred_at: entry.occurred_at.clone(),
+                    level: entry.level.as_str().to_string(),
+                    message: entry.message.clone(),
+                    sequence,
+                };
+                let _ = tx.try_send(pending); // 失败则静默丢弃，不阻塞实时路径
+            }
+
             accepted += 1;
         }
 
@@ -144,6 +256,73 @@ impl AgentLogStore {
             .skip(start)
             .map(|stored| stored.entry.clone())
             .collect()
+    }
+
+    /// 从持久化存储查询某节点的日志（比内存缓冲更完整）。
+    pub async fn query_from_db(&self, node_id: &str, limit: usize) -> Result<Vec<AgentLogEntry>> {
+        let Some(db_path) = self.inner.db_path.as_ref() else {
+            return Ok(Vec::new()); // 纯内存模式
+        };
+
+        let db_path = Arc::clone(db_path);
+        let node_id = node_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = open_read_connection(&db_path)?;
+            query_logs_by_node(&conn, &node_id, limit)
+        })
+        .await
+        .context("join query task")?
+    }
+
+    /// 查询时间范围内的日志。
+    pub async fn query_by_time_range(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        node_id: Option<String>,
+        level: Option<String>,
+        limit: usize,
+    ) -> Result<Vec<AgentLogEntryWithNode>> {
+        let Some(db_path) = self.inner.db_path.as_ref() else {
+            return Ok(Vec::new());
+        };
+
+        let db_path = Arc::clone(db_path);
+        let node_id_owned = node_id.clone();
+        let level_owned = level.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let conn = open_read_connection(&db_path)?;
+            query_logs_by_time_range(
+                &conn,
+                start,
+                end,
+                node_id_owned.as_deref(),
+                level_owned.as_deref(),
+                limit,
+            )
+        })
+        .await
+        .context("join query task")?
+    }
+
+    /// 清理超过大小限制的旧日志。
+    pub async fn prune_if_needed(&self) -> Result<usize> {
+        let Some(db_path) = self.inner.db_path.as_ref() else {
+            return Ok(0);
+        };
+        let Some(max_size_bytes) = self.inner.max_size_bytes else {
+            return Ok(0);
+        };
+
+        let db_path = Arc::clone(db_path);
+        tokio::task::spawn_blocking(move || {
+            let mut conn = Connection::open(&*db_path)
+                .with_context(|| format!("open agent logs db for prune at {}", db_path.display()))?;
+            query::prune_by_size(&mut conn, max_size_bytes)
+        })
+        .await
+        .context("join prune task")?
     }
 
     /// 清理已经不在注册表中的节点日志,避免长期运行时缓冲只增不减。
@@ -187,11 +366,12 @@ impl AgentLogStore {
         }
     }
 
-    async fn push_entry(&self, shard_index: usize, node_id: &str, entry: AgentLogEntry) {
+    async fn push_entry(&self, shard_index: usize, node_id: &str, entry: AgentLogEntry) -> u64 {
         let estimated_bytes = estimate_entry_bytes(node_id, &entry);
+        let sequence = self.inner.next_sequence.fetch_add(1, Ordering::Relaxed);
         let stored = StoredAgentLogEntry {
             entry,
-            sequence: self.inner.next_sequence.fetch_add(1, Ordering::Relaxed),
+            sequence,
             estimated_bytes,
         };
         self.inner.total_entries.fetch_add(1, Ordering::Relaxed);
@@ -225,6 +405,8 @@ impl AgentLogStore {
                 .estimated_bytes
                 .fetch_sub(local_evicted_bytes, Ordering::Relaxed);
         }
+
+        sequence
     }
 
     async fn enforce_global_budget(&self) -> usize {

@@ -26,6 +26,11 @@ const routes: RouteRecordRaw[] = [
     name: 'alerts',
     component: () => import('@/views/AlertsView.vue'),
   },
+  {
+    path: '/logs',
+    name: 'logs',
+    component: () => import('@/views/LogsView.vue'),
+  },
 ];
 
 export const router = createRouter({

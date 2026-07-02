@@ -36,11 +36,11 @@ use crate::fs_security::log_if_directory_is_not_private;
 use crate::geoip::GeoIpResolver;
 use crate::handlers::{
     alert_settings, audit_log, bootstrap, change_readonly_password, disable_two_factor,
-    enable_two_factor, healthz, index, install_agent_script, install_bootstrap, logout_and_reauth,
-    metrics, node_detail, node_history, node_logs, node_status, nodes, overview, readyz,
-    refresh_node_token, require_readonly_auth, server_update_log, settings, start_server_update,
-    start_two_factor_setup, static_asset, update_alert_settings, update_node_location_override,
-    update_node_service_metadata, verify_2fa_api, verify_2fa_page,
+    enable_two_factor, healthz, index, install_agent_script, install_bootstrap, last_login,
+    logout_and_reauth, metrics, node_detail, node_history, node_logs, node_status, nodes, overview,
+    readyz, refresh_node_token, require_readonly_auth, server_update_log, settings,
+    start_server_update, start_two_factor_setup, static_asset, update_alert_settings,
+    update_node_location_override, update_node_service_metadata, verify_2fa_api, verify_2fa_page,
 };
 use crate::history::HistoryStore;
 use crate::registry::NodeRegistry;
@@ -139,9 +139,13 @@ async fn initialize_server_runtime(
         config.history_db_path.clone(),
         config.sqlite_busy_timeout_secs,
     );
-    let agent_logs = AgentLogStore::new();
+    let agent_logs = AgentLogStore::with_persistence(
+        config.agent_logs_db_path.clone(),
+        config.agent_logs_max_size_mb,
+    );
     let audit_log = AuditLog::new(config.audit.clone(), config.sqlite_busy_timeout_secs);
     history.initialize().await;
+    agent_logs.initialize().await?;
     audit_log.initialize().await?;
     let geoip = GeoIpResolver::new(config.geoip.clone()).await;
     let readiness = ServerReadiness::new(history.is_available());
@@ -375,6 +379,7 @@ pub(crate) fn build_router(state: AppState) -> Router {
         .route("/settings", get(index))
         .route("/account", get(index))
         .route("/alerts", get(index))
+        .route("/logs", get(index))
         .route("/assets/{*path}", get(static_asset))
         .route("/api/bootstrap", get(bootstrap))
         .route("/api/overview", get(overview))
@@ -384,6 +389,7 @@ pub(crate) fn build_router(state: AppState) -> Router {
         .route("/api/nodes/{node_id}/history", get(node_history))
         .route("/api/nodes/{node_id}/logs", get(node_logs))
         .route("/api/audit-log", get(audit_log))
+        .route("/api/auth/last-login", get(last_login))
         .route("/ws/browser", get(ws_browser_handler))
         .route("/api/settings", get(settings))
         .route("/api/settings/alerts", get(alert_settings))

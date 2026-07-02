@@ -227,17 +227,49 @@ async fn record_totp_success(
     client_ip: std::net::IpAddr,
     audit_user: Option<String>,
 ) {
-    let mut event = NewAuditEvent::now(
+    // 记录 TOTP 验证成功事件
+    let mut totp_event = NewAuditEvent::now(
         AuditEventType::TotpVerifySuccess,
         client_ip.to_string(),
         true,
     );
-    event.user = audit_user;
-    event.user_agent = user_agent(headers);
-    event.details = json!({
+    totp_event.user = audit_user.clone();
+    totp_event.user_agent = user_agent(headers);
+    totp_event.details = json!({
         "endpoint": "/api/verify-2fa",
     });
-    state.audit_log.record_best_effort(event).await;
+    state.audit_log.record_best_effort(totp_event).await;
+
+    // 2FA 验证成功 = 完整登录成功,记录 LoginSuccess 事件(包含 GeoIP)
+    let geoip_info = state.geoip.lookup(client_ip).await;
+    let mut login_details = json!({
+        "endpoint": "/api/verify-2fa",
+        "two_factor_verified": true,
+    });
+    if let Some(info) = geoip_info {
+        if let Some(obj) = login_details.as_object_mut() {
+            obj.insert("country".to_string(), json!(info.country));
+            if let Some(city) = info.city {
+                obj.insert("city".to_string(), json!(city));
+            }
+            if let Some(lat) = info.latitude {
+                obj.insert("latitude".to_string(), json!(lat));
+            }
+            if let Some(lon) = info.longitude {
+                obj.insert("longitude".to_string(), json!(lon));
+            }
+        }
+    }
+
+    let mut login_event = NewAuditEvent::now(
+        AuditEventType::LoginSuccess,
+        client_ip.to_string(),
+        true,
+    );
+    login_event.user = audit_user;
+    login_event.user_agent = user_agent(headers);
+    login_event.details = login_details;
+    state.audit_log.record(login_event).await;
 }
 
 fn successful_verify_2fa_response(state: &AppState, auth_token: &str) -> Response {

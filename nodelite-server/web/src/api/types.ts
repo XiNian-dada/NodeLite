@@ -86,6 +86,30 @@ export interface HistoryQuery {
   end?: number;
 }
 
+/** GET /api/auth/last-login — handlers/auth_routes/last_login.rs LastLoginInfo */
+export interface LastLoginInfo {
+  timestamp: string | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  country: string | null;
+  city: string | null;
+  latitude: number | null;
+  longitude: number | null;
+}
+
+/** GET /api/audit-log — handlers/api_routes.rs or audit module */
+export interface AuditLogEntry {
+  id: number;
+  timestamp: string;
+  event_type: string;
+  user: string | null;
+  node_id: string | null;
+  ip_address: string;
+  user_agent: string | null;
+  success: boolean;
+  details: Record<string, any>;
+}
+
 /** Full per-node identity — GET /api/nodes/{id}, nodelite-proto NodeIdentity */
 export interface NodeIdentity {
   node_id: string;

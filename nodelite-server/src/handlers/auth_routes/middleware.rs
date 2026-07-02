@@ -56,6 +56,8 @@ pub(crate) async fn require_readonly_auth(
             }
             return issue_two_factor_redirect(&state).await;
         }
+        // 基本认证成功且未启用 2FA,记录登录成功事件
+        record_readonly_login_success(&state, &meta).await;
         return next.run(request).await;
     }
 
@@ -235,6 +237,42 @@ async fn record_readonly_login_failure(
         }),
     )
     .await;
+}
+
+async fn record_readonly_login_success(state: &AppState, meta: &ReadonlyAuthMeta) {
+    let auth = state.readonly_auth.read().await;
+    let username = auth.config.as_ref().map(|config| config.username.clone());
+    drop(auth);
+
+    let geoip_info = state.geoip.lookup(meta.client_ip).await;
+    let mut details = json!({
+        "path": meta.request_path,
+        "sensitive_path": meta.sensitive_path,
+    });
+    if let Some(info) = geoip_info {
+        if let Some(obj) = details.as_object_mut() {
+            obj.insert("country".to_string(), json!(info.country));
+            if let Some(city) = info.city {
+                obj.insert("city".to_string(), json!(city));
+            }
+            if let Some(lat) = info.latitude {
+                obj.insert("latitude".to_string(), json!(lat));
+            }
+            if let Some(lon) = info.longitude {
+                obj.insert("longitude".to_string(), json!(lon));
+            }
+        }
+    }
+
+    let mut event = crate::audit::NewAuditEvent::now(
+        AuditEventType::LoginSuccess,
+        meta.audit_ip.clone(),
+        true,
+    );
+    event.user = username;
+    event.user_agent = meta.audit_user_agent.clone();
+    event.details = details;
+    state.audit_log.record(event).await;
 }
 
 fn readonly_auth_unauthorized_response() -> Response {
