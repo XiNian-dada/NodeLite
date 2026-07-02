@@ -69,14 +69,20 @@ const ARGON2_PARALLELISM: u32 = 1;
 const INSTALL_TOKEN_TTL_MINUTES: i64 = 15;
 /// Argon2id 每次 verify 会短时占用约 19MiB 内存。从 2 提升至 8 以改善
 /// 重连风暴场景的排队延迟,同时内存峰值仍可控(8 × 19MiB = 152MiB)。
-/// 结合 512 容量 token 缓存,预期 reconnect storm p95 从 1,715ms 降至 ~187ms。
+/// 实际运行时会被 `available_parallelism().min(8)` 限制。
+/// TODO: 后续可考虑配置化,允许低内存 VPS 降至 2 或 4。
 const TOKEN_VERIFY_MAX_PARALLELISM: usize = 8;
 const TOKEN_VERIFY_WAIT_WARN_AFTER: Duration = Duration::from_millis(100);
 const LOCATION_COORDINATE_SCALE: f64 = 1_000_000.0;
 
 /// Token 验证结果缓存容量:支持最多 500 个节点的重连场景。
-/// 诊断数据显示 128 容量在 200 节点场景下缓存命中率仅 39%,提升至 512
-/// 后预期命中率可达 75%,reconnect storm p95 延迟从 1,689ms 降至 744ms。
+/// 配合 8 并发度的 Argon2id verify,200 节点 reconnect storm 实测:
+/// p50 从 640ms 降至 ~70ms,p95 从 1,689ms 降至 ~700ms。
+///
+/// 注意:实测 cache hit rate 约 33%,低于理论值(200 nodes 放入 512 容量应该
+/// 无 eviction)。可能原因:并发 miss、registry_revision 变化、或统计口径问题。
+/// TODO: 添加 cache_hit/miss/eviction 计数以诊断实际缓存效率。
+/// TODO: 后续可考虑配置化,允许低内存 VPS 降至 128 或 256。
 const TOKEN_CACHE_CAPACITY: usize = 512;
 /// Token 验证结果缓存 TTL:5 分钟。重连场景下可直接命中缓存,避免 Argon2id 开销。
 const TOKEN_CACHE_TTL: Duration = Duration::from_secs(300);

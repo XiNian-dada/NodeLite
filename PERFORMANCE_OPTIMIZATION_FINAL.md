@@ -159,19 +159,27 @@ const TOKEN_VERIFY_MAX_PARALLELISM: usize = 8;
 3. **协同效应**: 两个优化配合使用才能充分发挥效果
 4. **生产适用**: 对大多数部署环境 (内存 > 512MB) 都安全
 
-### ⚠️ 注意事项
+### ⚠️ 注意事项与后续改进
+
+**缓存命中率异常 (需进一步诊断)**:
+- 实测 cache hit rate 仅 33%，低于理论值
+- 200 节点 + 512 容量，理论上不应有大量 LRU eviction
+- 可能原因：并发 cache miss、registry_revision 变化、或统计口径问题
+- **建议**: 添加 `cache_hit/miss/eviction/registry_revision` 计数器以诊断
 
 **低内存环境** (< 512MB):
 - 考虑降低并发度至 4 (峰值 76MiB)
 - 或保持并发度 2 (峰值 38MiB)
 
-**配置化建议** (可选):
+**配置化建议** (后续工作):
 ```toml
-# server.toml
+# server.toml (未实现)
 [performance]
 token_cache_capacity = 512
 token_verify_max_parallelism = 8  # 低内存机器可降至 2-4
 ```
+
+当前为静态配置，已在代码注释中添加 TODO 标记后续配置化需求。
 
 ---
 
