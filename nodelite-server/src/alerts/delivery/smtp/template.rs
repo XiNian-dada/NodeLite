@@ -322,7 +322,7 @@ fn inspection_message_body(summary: &InspectionSummary<'_>) -> String {
 fn inspection_message_html(summary: &InspectionSummary<'_>) -> String {
     let report = summary.report;
     let logo_src = brand_logo_data_uri();
-    let cards = inspection_summary_cards_html(report);
+    let cards = inspection_summary_cards_html(report, summary.lookback_hours);
     let trends = inspection_trends_html(summary);
     let highlights = inspection_highlights_html(report);
 
@@ -367,13 +367,47 @@ fn brand_logo_data_uri() -> String {
     format!("data:image/png;base64,{}", STANDARD.encode(logo))
 }
 
-fn inspection_summary_cards_html(report: &crate::alerts::InspectionReport) -> String {
+fn inspection_summary_cards_html(
+    report: &crate::alerts::InspectionReport,
+    lookback_hours: u64,
+) -> String {
     let cards = [
-        ("Total nodes", report.total_nodes, "#2563eb", "#eff6ff"),
-        ("Offline", report.offline_nodes, "#ff4d6d", "#fff1f2"),
-        ("High latency", report.latency_nodes, "#d29922", "#fffbeb"),
-        ("CPU hot", report.cpu_hot_nodes, "#f97316", "#fff7ed"),
-        ("Memory hot", report.memory_hot_nodes, "#3b82f6", "#eff6ff"),
+        (
+            "Total nodes",
+            report.total_nodes.to_string(),
+            "#2563eb",
+            "#eff6ff",
+        ),
+        (
+            "Offline",
+            report.offline_nodes.to_string(),
+            "#ff4d6d",
+            "#fff1f2",
+        ),
+        (
+            "High latency",
+            report.latency_nodes.to_string(),
+            "#d29922",
+            "#fffbeb",
+        ),
+        (
+            "CPU hot",
+            report.cpu_hot_nodes.to_string(),
+            "#f97316",
+            "#fff7ed",
+        ),
+        (
+            "Memory hot",
+            report.memory_hot_nodes.to_string(),
+            "#3b82f6",
+            "#eff6ff",
+        ),
+        (
+            "Lookback",
+            format!("{lookback_hours}h"),
+            "#6b7280",
+            "#f8fafc",
+        ),
     ];
 
     let mut html = String::new();
@@ -387,9 +421,6 @@ fn inspection_summary_cards_html(report: &crate::alerts::InspectionReport) -> St
                 color,
                 value,
             ));
-        }
-        for _ in row.len()..3 {
-            html.push_str(r#"<td style="padding:0 8px 8px 0;width:33.333%;">&nbsp;</td>"#);
         }
         html.push_str("</tr>");
     }
