@@ -4,7 +4,10 @@ use nodelite_proto::AlertSmtpConfig;
 use crate::alerts::AlertEvent;
 
 use super::super::{AlertDeliveryError, InspectionSummary};
-use chart::{TrendChartConfig, TrendStats, format_metric_value, trend_chart_html, trend_has_samples, trend_stats};
+use chart::{
+    TrendChartConfig, TrendStats, format_metric_value, trend_chart_html, trend_has_samples,
+    trend_stats,
+};
 
 mod chart;
 
