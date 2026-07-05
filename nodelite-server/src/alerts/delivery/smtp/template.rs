@@ -4,7 +4,7 @@ use nodelite_proto::AlertSmtpConfig;
 use crate::alerts::AlertEvent;
 
 use super::super::{AlertDeliveryError, InspectionSummary};
-use chart::{TrendStats, format_metric_value, trend_chart_html, trend_has_samples, trend_stats};
+use chart::{TrendChartConfig, TrendStats, format_metric_value, trend_chart_html, trend_has_samples, trend_stats};
 
 mod chart;
 
@@ -484,32 +484,38 @@ fn inspection_trends_html(summary: &InspectionSummary<'_>) -> String {
             r#"</div>"#
         ),
         trend_chart_html(
-            "CPU usage",
-            "%",
-            "#22c55e",
-            "#dcfce7",
-            "cpu",
-            Some(100),
+            TrendChartConfig {
+                label: "CPU usage",
+                unit: "%",
+                color: "#22c55e",
+                fill: "#dcfce7",
+                id_suffix: "cpu",
+                fixed_scale_max: Some(100),
+            },
             summary.trends,
             |point| point.cpu_usage_percent,
         ),
         trend_chart_html(
-            "Memory usage",
-            "%",
-            "#3b82f6",
-            "#dbeafe",
-            "memory",
-            Some(100),
+            TrendChartConfig {
+                label: "Memory usage",
+                unit: "%",
+                color: "#3b82f6",
+                fill: "#dbeafe",
+                id_suffix: "memory",
+                fixed_scale_max: Some(100),
+            },
             summary.trends,
             |point| point.memory_used_percent,
         ),
         trend_chart_html(
-            "Latency",
-            "ms",
-            "#eab308",
-            "#fef3c7",
-            "latency",
-            None,
+            TrendChartConfig {
+                label: "Latency",
+                unit: "ms",
+                color: "#eab308",
+                fill: "#fef3c7",
+                id_suffix: "latency",
+                fixed_scale_max: None,
+            },
             summary.trends,
             |point| { point.latency_ms },
         ),

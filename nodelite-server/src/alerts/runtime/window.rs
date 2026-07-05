@@ -67,7 +67,7 @@ async fn load_alert_history(
 fn max_history_window_for_status(rules: &[AlertRuleConfig], status: &NodeStatus) -> Option<u64> {
     rules
         .iter()
-        .filter(|rule| rule_uses_history_average(rule) && rule_matches_scope(*rule, status))
+        .filter(|rule| rule_uses_history_average(rule) && rule_matches_scope(rule, status))
         .map(|rule| rule.window_minutes)
         .max()
 }

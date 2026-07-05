@@ -1,19 +1,32 @@
 use super::super::super::InspectionTrendPoint;
 use super::escape_html;
 
+/// Configuration for rendering a trend chart.
+pub(super) struct TrendChartConfig<'a> {
+    pub label: &'a str,
+    pub unit: &'a str,
+    pub color: &'a str,
+    pub fill: &'a str,
+    pub id_suffix: &'a str,
+    pub fixed_scale_max: Option<u64>,
+}
+
 pub(super) fn trend_chart_html<F>(
-    label: &str,
-    unit: &str,
-    color: &str,
-    fill: &str,
-    id_suffix: &str,
-    fixed_scale_max: Option<u64>,
+    config: TrendChartConfig<'_>,
     trends: &[InspectionTrendPoint],
     selector: F,
 ) -> String
 where
     F: Fn(&InspectionTrendPoint) -> Option<u64> + Copy,
 {
+    let TrendChartConfig {
+        label,
+        unit,
+        color,
+        fill,
+        id_suffix,
+        fixed_scale_max,
+    } = config;
     let stats = trend_stats(trends, selector);
     let scale_max = trend_scale_max(stats, fixed_scale_max);
     let stats_label = stats
