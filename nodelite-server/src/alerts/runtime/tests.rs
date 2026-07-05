@@ -3,23 +3,27 @@ use std::sync::Arc;
 use chrono::{Duration, NaiveDate, NaiveTime, Utc};
 use nodelite_proto::{
     AlertChannel, AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode, AlertSeverity,
-    AlertingConfig,
+    AlertingConfig, HistoryPoint, InspectionConfig, NodeStatus,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::timeout;
 
+use super::drain::{DeliveryDrainOutcome, drain_delivery_dispatcher_with_timeout};
+use super::window::{average_history_metric, evaluate_rule_with_history};
 use super::{
-    DeliveryDrainOutcome, DeliveryJob, DeliveryResult, InspectionDispatchState,
-    drain_delivery_dispatcher_with_timeout, enqueue_alert_delivery, enqueue_inspection_delivery,
-    handle_alert_delivery_result, parse_inspection_local_time, process_delivery_results,
+    DeliveryJob, DeliveryResult, HistoryHighlightBuilder, InspectionDispatchState,
+    enqueue_alert_delivery, enqueue_inspection_delivery, handle_alert_delivery_result,
+    merge_inspection_highlights, parse_inspection_local_time, process_delivery_results,
     should_check_inspection, spawn_delivery_dispatcher,
 };
 use crate::alerts::delivery::AlertDeliveryError;
 use crate::alerts::{
-    AlertEventKind, AlertMetricReading, AlertStateTracker, EvaluatedRule, InspectionReport,
+    AlertEventKind, AlertMetricReading, AlertStateTracker, EvaluatedRule, InspectionHighlight,
+    InspectionHighlightEvent, InspectionReport,
 };
+use crate::test_support::{fake_snapshot, synthetic_identity};
 
 fn rule() -> AlertRuleConfig {
     AlertRuleConfig {
@@ -62,6 +66,104 @@ fn report() -> InspectionReport {
         memory_hot_nodes: 0,
         highlights: Vec::new(),
     }
+}
+
+fn history_point(
+    recorded_at: chrono::DateTime<Utc>,
+    cpu: f64,
+    memory: f64,
+    latency: u64,
+) -> HistoryPoint {
+    HistoryPoint {
+        node_id: "hk-01".to_string(),
+        recorded_at,
+        cpu_usage_percent: Some(cpu),
+        load_one: None,
+        load_five: None,
+        load_fifteen: None,
+        memory_used_percent: memory,
+        rx_bytes_per_sec: None,
+        tx_bytes_per_sec: None,
+        latency_ms: Some(latency),
+        packet_loss_percent: None,
+        disk_used_percent: None,
+    }
+}
+
+fn status_with_cpu(
+    node_id: &str,
+    node_label: &str,
+    now: chrono::DateTime<Utc>,
+    cpu: f64,
+    memory_percent: u64,
+    latency_ms: Option<u64>,
+) -> NodeStatus {
+    let mut snapshot = fake_snapshot(300);
+    snapshot.cpu_usage_percent = Some(cpu);
+    snapshot.memory.total_bytes = 100;
+    snapshot.memory.used_bytes = memory_percent.min(100);
+    NodeStatus {
+        identity: synthetic_identity(node_id, node_label, "2.2.6", Some("6.8.0"), "edge"),
+        remote_ip: Some("203.0.113.8".to_string()),
+        geoip_country: None,
+        geoip_city: None,
+        geoip_latitude: None,
+        geoip_longitude: None,
+        location_override_country: None,
+        location_override_city: None,
+        location_override_latitude: None,
+        location_override_longitude: None,
+        snapshot: Some(snapshot),
+        last_seen: Some(now),
+        latency_ms,
+        online: true,
+    }
+}
+
+#[test]
+fn alert_window_average_uses_history_instead_of_current_spike() {
+    let now = Utc::now();
+    let points = vec![
+        history_point(now - Duration::minutes(4), 40.0, 60.0, 90),
+        history_point(now - Duration::minutes(2), 50.0, 62.0, 100),
+    ];
+    let status = status_with_cpu("hk-01", "Hong Kong", now, 95.0, 64, Some(110));
+    let mut history_by_node = std::collections::HashMap::new();
+    history_by_node.insert("hk-01".to_string(), points);
+
+    let matched = evaluate_rule_with_history(&rule(), &status, &history_by_node, now);
+
+    assert!(
+        matched.is_none(),
+        "window average below threshold should suppress a current CPU spike"
+    );
+}
+
+#[test]
+fn alert_window_average_falls_back_to_current_sample_without_history() {
+    let now = Utc::now();
+    let status = status_with_cpu("hk-01", "Hong Kong", now, 95.0, 64, Some(110));
+    let history_by_node = std::collections::HashMap::new();
+
+    let matched = evaluate_rule_with_history(&rule(), &status, &history_by_node, now)
+        .expect("current sample should trigger when history is unavailable");
+
+    assert_eq!(matched.reading.value, 95);
+}
+
+#[test]
+fn alert_window_average_filters_to_rule_window() {
+    let now = Utc::now();
+    let points = vec![
+        history_point(now - Duration::minutes(9), 100.0, 100.0, 400),
+        history_point(now - Duration::minutes(4), 80.0, 80.0, 120),
+        history_point(now - Duration::minutes(2), 90.0, 90.0, 180),
+    ];
+
+    assert_eq!(
+        average_history_metric(&AlertMetric::LatencyMs, &points, now - Duration::minutes(5)),
+        Some(150)
+    );
 }
 
 fn alerting_config() -> Arc<AlertingConfig> {
@@ -160,6 +262,67 @@ fn inspection_dispatch_suppresses_duplicate_while_pending() {
     state.mark_pending(date);
 
     assert!(state.due_date_for(date, time, time, Utc::now()).is_none());
+}
+
+#[test]
+fn history_highlight_builder_keeps_peak_events_with_thresholds() {
+    let inspection = InspectionConfig::default();
+    let now = Utc::now();
+    let mut builder = HistoryHighlightBuilder::new("hk-01".to_string(), "Hong Kong".to_string());
+
+    builder.record(
+        &history_point(now - Duration::hours(2), 82.0, 88.0, 180),
+        &inspection,
+    );
+    builder.record(
+        &history_point(now - Duration::hours(1), 92.0, 91.0, 320),
+        &inspection,
+    );
+    builder.record(&history_point(now, 89.0, 93.0, 280), &inspection);
+
+    let highlight = builder
+        .finish(&inspection)
+        .expect("threshold crossings should create a highlight");
+    let summaries = highlight
+        .events
+        .iter()
+        .map(|event| event.summary.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(highlight.node_id, "hk-01");
+    assert!(summaries.contains(&"CPU peaked at 92% (warn >= 85%)"));
+    assert!(summaries.contains(&"Memory peaked at 93% (warn >= 90%)"));
+    assert!(summaries.contains(&"RTT peaked at 320 ms (warn >= 250 ms)"));
+}
+
+#[test]
+fn merge_inspection_highlights_groups_events_by_node() {
+    let now = Utc::now();
+    let current = vec![InspectionHighlight {
+        node_id: "hk-01".to_string(),
+        node_label: "Hong Kong".to_string(),
+        events: vec![InspectionHighlightEvent {
+            occurred_at: now,
+            summary: "Offline for 30 min (grace 10 min)".to_string(),
+        }],
+    }];
+    let history = vec![InspectionHighlight {
+        node_id: "hk-01".to_string(),
+        node_label: "Hong Kong".to_string(),
+        events: vec![InspectionHighlightEvent {
+            occurred_at: now - Duration::hours(1),
+            summary: "CPU peaked at 92% (warn >= 85%)".to_string(),
+        }],
+    }];
+
+    let merged = merge_inspection_highlights(current, history);
+
+    assert_eq!(merged.len(), 1);
+    assert_eq!(merged[0].events.len(), 2);
+    assert_eq!(
+        merged[0].events[0].summary,
+        "Offline for 30 min (grace 10 min)"
+    );
 }
 
 #[test]
@@ -352,6 +515,7 @@ fn enqueue_inspection_delivery_marks_pending_and_queues_job() {
         &mut inspection_dispatch,
         &config,
         report(),
+        Vec::new(),
         date,
         now,
     );
@@ -392,6 +556,7 @@ fn enqueue_inspection_delivery_marks_retry_when_queue_is_full() {
             local_date: date,
             lookback_hours: config.inspection.lookback_hours,
             report: report(),
+            trends: Vec::new(),
         })
         .expect("prefill should fit in queue");
 
@@ -400,6 +565,7 @@ fn enqueue_inspection_delivery_marks_retry_when_queue_is_full() {
         &mut inspection_dispatch,
         &config,
         report(),
+        Vec::new(),
         date,
         now,
     );

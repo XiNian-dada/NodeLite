@@ -239,7 +239,13 @@ pub(crate) struct InspectionPreview {
 pub(crate) struct InspectionHighlight {
     pub(crate) node_id: String,
     pub(crate) node_label: String,
-    pub(crate) reasons: Vec<String>,
+    pub(crate) events: Vec<InspectionHighlightEvent>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct InspectionHighlightEvent {
+    pub(crate) occurred_at: DateTime<Utc>,
+    pub(crate) summary: String,
 }
 
 #[derive(Debug, Deserialize)]

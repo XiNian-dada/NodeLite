@@ -67,34 +67,57 @@ async function save(): Promise<void> {
           @update:model-value="(next) => Object.assign(draft, next)"
         />
 
-        <div class="alerts__grid" :class="{ 'alerts__grid--disabled': !draft.enabled }">
-          <SmtpChannelCard v-model="draft.smtp" />
-          <WebhookChannelCard v-model="draft.webhook" />
-          <InspectionCard v-model="draft.inspection" />
-        </div>
+        <div class="alerts__workspace" :class="{ 'alerts__workspace--disabled': !draft.enabled }">
+          <div class="alerts__main">
+            <section class="alerts-section" data-test="alerts-delivery-section">
+              <header class="section-head">
+                <div>
+                  <h2 class="section-title">{{ t('alerts.section.delivery') }}</h2>
+                  <p class="section-note">{{ t('alerts.section.delivery_note') }}</p>
+                </div>
+              </header>
+              <div class="alerts__grid alerts__grid--channels">
+                <SmtpChannelCard v-model="draft.smtp" />
+                <WebhookChannelCard v-model="draft.webhook" />
+              </div>
+            </section>
 
-        <article class="save-bar panel" data-test="alerts-save-bar">
-          <ReauthFields
-            v-model:current-password="reauth.current_password"
-            v-model:code="reauth.code"
-            variant="both"
-          />
-          <div class="save-bar__actions">
-            <button
-              type="button"
-              class="btn btn--primary"
-              :disabled="store.saving"
-              data-test="alerts-save"
-              @click="save"
-            >
-              {{ t('alerts.save') }}
-            </button>
-            <SettingsMessage :state="message.state" :text="message.text" />
+            <section class="alerts-section" data-test="alerts-inspection-section">
+              <header class="section-head">
+                <div>
+                  <h2 class="section-title">{{ t('alerts.section.inspection') }}</h2>
+                  <p class="section-note">{{ t('alerts.section.inspection_note') }}</p>
+                </div>
+              </header>
+              <InspectionCard v-model="draft.inspection" />
+            </section>
+
+            <RuleList v-model="draft.rules" />
           </div>
-        </article>
 
-        <RuleList v-model="draft.rules" />
-        <PreviewCard :preview="store.preview" />
+          <aside class="alerts__aside">
+            <PreviewCard :preview="store.preview" />
+            <article class="save-bar panel" data-test="alerts-save-bar">
+              <ReauthFields
+                v-model:current-password="reauth.current_password"
+                v-model:code="reauth.code"
+                variant="both"
+              />
+              <div class="save-bar__actions">
+                <button
+                  type="button"
+                  class="btn btn--primary"
+                  :disabled="store.saving"
+                  data-test="alerts-save"
+                  @click="save"
+                >
+                  {{ t('alerts.save') }}
+                </button>
+                <SettingsMessage :state="message.state" :text="message.text" />
+              </div>
+            </article>
+          </aside>
+        </div>
       </template>
 
       <SettingsMessage
@@ -116,14 +139,56 @@ async function save(): Promise<void> {
   flex-direction: column;
   gap: 16px;
 }
+.alerts__workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.36fr);
+  gap: 16px;
+  align-items: start;
+}
+.alerts__workspace--disabled {
+  opacity: 0.82;
+}
+.alerts__main,
+.alerts__aside {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.alerts__aside {
+  position: sticky;
+  top: 16px;
+}
+.alerts-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.section-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+.section-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+.section-note {
+  margin: 3px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
 .alerts__grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
   gap: 16px;
   align-items: start;
 }
-.alerts__grid--disabled {
-  opacity: 0.82;
+.alerts__grid--channels {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 .panel {
   background: var(--bg-card);
@@ -132,14 +197,13 @@ async function save(): Promise<void> {
   padding: 16px;
 }
 .save-bar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, auto);
-  gap: 16px;
-  align-items: end;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 .save-bar :deep(.reauth-fields) {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
 }
 .save-bar__actions {
@@ -182,11 +246,12 @@ async function save(): Promise<void> {
   font-size: 13px;
 }
 @media (max-width: 760px) {
-  .save-bar {
+  .alerts__workspace,
+  .alerts__grid--channels {
     grid-template-columns: 1fr;
   }
-  .save-bar :deep(.reauth-fields) {
-    grid-template-columns: 1fr;
+  .alerts__aside {
+    position: static;
   }
 }
 </style>

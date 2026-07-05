@@ -15,11 +15,11 @@ use super::{
     encode_auth_plain_payload, send_alert_event, send_auth_plain_command, send_smtp_with_timeout,
 };
 use crate::alerts::delivery::AlertDeliveryError;
-use crate::alerts::evaluator::InspectionHighlight;
-use crate::alerts::{AlertEvent, AlertEventKind, AlertMetricReading};
+use crate::alerts::evaluator::{InspectionHighlight, InspectionHighlightEvent};
+use crate::alerts::{AlertEvent, AlertEventKind, AlertMetricReading, InspectionTrendPoint};
 
 #[tokio::test]
-async fn send_smtp_delivers_plain_message() {
+async fn send_smtp_delivers_alert_multipart_message() {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("listener should bind");
@@ -58,7 +58,27 @@ async fn send_smtp_delivers_plain_message() {
             .message
             .contains("Subject: [NodeLite] triggered CPU hot on Hong Kong")
     );
-    assert!(session.message.contains("Metric: CpuUsagePercent"));
+    assert!(
+        session
+            .message
+            .contains("Content-Type: multipart/alternative")
+    );
+    assert!(
+        session
+            .message
+            .contains("Content-Type: text/plain; charset=utf-8")
+    );
+    assert!(
+        session
+            .message
+            .contains("Content-Type: text/html; charset=utf-8")
+    );
+    assert!(session.message.contains("NodeLite Alert Notification"));
+    assert!(session.message.contains("Metric: CPU usage"));
+    assert!(session.message.contains("Window: 5 min average"));
+    assert!(session.message.contains("Value: 91%"));
+    assert!(session.message.contains("Threshold: > 90%"));
+    assert!(session.message.contains("&gt; 90%"));
 }
 
 #[tokio::test]
@@ -207,14 +227,25 @@ fn build_inspection_message_includes_totals_and_highlights() {
         highlights: vec![InspectionHighlight {
             node_id: "hk-01".to_string(),
             node_label: "Hong Kong <edge>".to_string(),
-            reasons: vec!["offline".to_string(), "latency & jitter".to_string()],
+            events: vec![
+                InspectionHighlightEvent {
+                    occurred_at: Utc::now(),
+                    summary: "Offline for 30 min (grace 10 min)".to_string(),
+                },
+                InspectionHighlightEvent {
+                    occurred_at: Utc::now(),
+                    summary: "RTT 320 ms (warn >= 250 ms) & jitter".to_string(),
+                },
+            ],
         }],
     };
+    let trends = sample_trends();
     let summary = super::InspectionSummary {
         occurred_at: Utc::now(),
         local_date: chrono::NaiveDate::from_ymd_opt(2026, 5, 27).expect("date should be valid"),
         lookback_hours: 24,
         report: &report,
+        trends: &trends,
     };
 
     let message =
@@ -225,11 +256,31 @@ fn build_inspection_message_includes_totals_and_highlights() {
     assert!(message.contains("Content-Type: text/plain; charset=utf-8"));
     assert!(message.contains("Content-Type: text/html; charset=utf-8"));
     assert!(message.contains("Total nodes: 2"));
-    assert!(message.contains("- Hong Kong <edge> (hk-01): offline, latency & jitter"));
+    assert!(message.contains("Hong Kong <edge> (hk-01): Offline for 30 min"));
     assert!(message.contains("NodeLite Daily Inspection"));
     assert!(message.contains("High latency"));
+    assert!(message.contains("24h trends"));
+    assert!(message.contains("Latest 70%"));
+    assert!(message.contains("Latest 112 ms"));
     assert!(message.contains("Hong Kong &lt;edge&gt;"));
-    assert!(message.contains("latency &amp; jitter"));
+    assert!(message.contains("RTT 320 ms (warn &gt;= 250 ms) &amp; jitter"));
+}
+
+fn sample_trends() -> Vec<InspectionTrendPoint> {
+    vec![
+        InspectionTrendPoint {
+            label: "00:00".to_string(),
+            cpu_usage_percent: Some(42),
+            memory_used_percent: Some(61),
+            latency_ms: Some(80),
+        },
+        InspectionTrendPoint {
+            label: "01:00".to_string(),
+            cpu_usage_percent: Some(70),
+            memory_used_percent: Some(64),
+            latency_ms: Some(112),
+        },
+    ]
 }
 
 async fn run_fake_smtp(socket: tokio::net::TcpStream) -> SmtpSession {

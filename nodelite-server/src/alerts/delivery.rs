@@ -105,6 +105,15 @@ pub(crate) struct InspectionSummary<'a> {
     pub(crate) local_date: NaiveDate,
     pub(crate) lookback_hours: u64,
     pub(crate) report: &'a InspectionReport,
+    pub(crate) trends: &'a [InspectionTrendPoint],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct InspectionTrendPoint {
+    pub(crate) label: String,
+    pub(crate) cpu_usage_percent: Option<u64>,
+    pub(crate) memory_used_percent: Option<u64>,
+    pub(crate) latency_ms: Option<u64>,
 }
 
 pub(crate) async fn deliver_alert_event(
@@ -300,11 +309,13 @@ mod tests {
             memory_hot_nodes: 0,
             highlights: Vec::new(),
         };
+        let trends = Vec::new();
         let summary = InspectionSummary {
             occurred_at: Utc::now(),
             local_date: chrono::NaiveDate::from_ymd_opt(2026, 5, 27).expect("date should be valid"),
             lookback_hours: 24,
             report: &report,
+            trends: &trends,
         };
 
         deliver_inspection_summary(&config, &summary)
@@ -393,11 +404,13 @@ mod tests {
             memory_hot_nodes: 0,
             highlights: Vec::new(),
         };
+        let trends = Vec::new();
         let summary = InspectionSummary {
             occurred_at: Utc::now(),
             local_date: chrono::NaiveDate::from_ymd_opt(2026, 5, 27).expect("date should be valid"),
             lookback_hours: 24,
             report: &report,
+            trends: &trends,
         };
         let config = AlertingConfig {
             enabled: true,

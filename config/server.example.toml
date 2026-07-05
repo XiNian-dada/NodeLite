@@ -131,14 +131,62 @@ memory_warn_percent = 90
 
 [[alerts.rules]]
 # 规则 ID 需要稳定且唯一，便于后续调整和审计。
-id = "cpu-hot"
-name = "CPU 持续过高"
+id = "node-offline"
+name = "Node offline over 10 minutes"
+enabled = true
+metric = "offline_minutes"
+comparator = "gt"
+threshold = 10
+window_minutes = 1
+severity = "critical"
+scope_mode = "all"
+node_ids = []
+tags = []
+delivery = ["smtp", "webhook"]
+cooldown_minutes = 30
+send_resolved = true
+
+[[alerts.rules]]
+id = "cpu-avg-hot"
+name = "CPU 5 minute average over 85%"
 enabled = true
 metric = "cpu_usage_percent"
 comparator = "gt"
 threshold = 85
 window_minutes = 5
-severity = "critical"
+severity = "warning"
+scope_mode = "all"
+node_ids = []
+tags = []
+delivery = ["smtp", "webhook"]
+cooldown_minutes = 30
+send_resolved = true
+
+[[alerts.rules]]
+id = "memory-avg-hot"
+name = "Memory 10 minute average over 90%"
+enabled = true
+metric = "memory_usage_percent"
+comparator = "gt"
+threshold = 90
+window_minutes = 10
+severity = "warning"
+scope_mode = "all"
+node_ids = []
+tags = []
+delivery = ["smtp", "webhook"]
+cooldown_minutes = 30
+send_resolved = true
+
+[[alerts.rules]]
+id = "rtt-avg-high"
+name = "RTT 5 minute average over 250 ms"
+enabled = true
+metric = "latency_ms"
+comparator = "gt"
+threshold = 250
+window_minutes = 5
+severity = "warning"
 scope_mode = "all"
 node_ids = []
 tags = []

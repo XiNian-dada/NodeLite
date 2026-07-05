@@ -95,8 +95,30 @@ describe('PreviewCard', () => {
           cpu_hot_nodes: 0,
           memory_hot_nodes: 0,
           highlights: [
-            { node_id: 'node-a', node_label: 'Node A', reasons: ['offline', 'high cpu'] },
-            { node_id: 'node-b', node_label: '', reasons: ['high latency'] },
+            {
+              node_id: 'node-a',
+              node_label: 'Node A',
+              events: [
+                {
+                  occurred_at: '2026-05-29T00:00:00Z',
+                  summary: 'Offline for 30 min (grace 10 min)',
+                },
+                {
+                  occurred_at: '2026-05-29T00:05:00Z',
+                  summary: 'CPU peaked at 91% (warn >= 85%)',
+                },
+              ],
+            },
+            {
+              node_id: 'node-b',
+              node_label: '',
+              events: [
+                {
+                  occurred_at: '2026-05-29T00:10:00Z',
+                  summary: 'RTT peaked at 320 ms (warn >= 250 ms)',
+                },
+              ],
+            },
           ],
         },
       }),
@@ -104,7 +126,9 @@ describe('PreviewCard', () => {
     const items = wrapper.findAll('[data-test="preview-highlights"] .preview-item');
     expect(items).toHaveLength(2);
     expect(items[0]?.text()).toContain('Node A');
-    expect(items[0]?.text()).toContain('offline, high cpu');
+    expect(items[0]?.text()).toContain('Offline for 30 min');
+    expect(items[0]?.text()).toContain('CPU peaked at 91%');
     expect(items[1]?.text()).toContain('node-b');
+    expect(items[1]?.text()).toContain('RTT peaked at 320 ms');
   });
 });

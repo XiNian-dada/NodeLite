@@ -16,6 +16,14 @@ pub const DEFAULT_ALERT_INSPECTION_LATENCY_WARN_MS: u64 = 250;
 pub const DEFAULT_ALERT_INSPECTION_CPU_WARN_PERCENT: u64 = 85;
 /// 默认内存使用率告警阈值(百分比)。
 pub const DEFAULT_ALERT_INSPECTION_MEMORY_WARN_PERCENT: u64 = 90;
+/// 默认离线告警阈值(分钟)。
+pub const DEFAULT_ALERT_OFFLINE_THRESHOLD_MINUTES: u64 = 10;
+/// 默认 CPU 平均值告警窗口(分钟)。
+pub const DEFAULT_ALERT_CPU_WINDOW_MINUTES: u64 = 5;
+/// 默认内存平均值告警窗口(分钟)。
+pub const DEFAULT_ALERT_MEMORY_WINDOW_MINUTES: u64 = 10;
+/// 默认 RTT 平均值告警窗口(分钟)。
+pub const DEFAULT_ALERT_RTT_WINDOW_MINUTES: u64 = 5;
 
 /// 告警投递渠道。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -220,7 +228,7 @@ impl Default for InspectionConfig {
 }
 
 /// 告警系统的总配置入口。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AlertingConfig {
     /// 是否启用告警系统。
     pub enabled: bool,
@@ -232,4 +240,85 @@ pub struct AlertingConfig {
     pub rules: Vec<AlertRuleConfig>,
     /// 每日巡检配置。
     pub inspection: InspectionConfig,
+}
+
+impl Default for AlertingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            smtp: AlertSmtpConfig::default(),
+            webhook: AlertWebhookConfig::default(),
+            rules: default_alert_rules(),
+            inspection: InspectionConfig::default(),
+        }
+    }
+}
+
+pub(crate) fn default_alert_rules() -> Vec<AlertRuleConfig> {
+    vec![
+        AlertRuleConfig {
+            id: "node-offline".to_string(),
+            name: "Node offline over 10 minutes".to_string(),
+            enabled: true,
+            metric: AlertMetric::OfflineMinutes,
+            comparator: AlertComparator::Gt,
+            threshold: DEFAULT_ALERT_OFFLINE_THRESHOLD_MINUTES,
+            window_minutes: 1,
+            severity: AlertSeverity::Critical,
+            scope_mode: AlertScopeMode::All,
+            node_ids: Vec::new(),
+            tags: Vec::new(),
+            delivery: vec![AlertChannel::Smtp, AlertChannel::Webhook],
+            cooldown_minutes: DEFAULT_ALERT_RULE_COOLDOWN_MINUTES,
+            send_resolved: true,
+        },
+        AlertRuleConfig {
+            id: "cpu-avg-hot".to_string(),
+            name: "CPU 5 minute average over 85%".to_string(),
+            enabled: true,
+            metric: AlertMetric::CpuUsagePercent,
+            comparator: AlertComparator::Gt,
+            threshold: DEFAULT_ALERT_INSPECTION_CPU_WARN_PERCENT,
+            window_minutes: DEFAULT_ALERT_CPU_WINDOW_MINUTES,
+            severity: AlertSeverity::Warning,
+            scope_mode: AlertScopeMode::All,
+            node_ids: Vec::new(),
+            tags: Vec::new(),
+            delivery: vec![AlertChannel::Smtp, AlertChannel::Webhook],
+            cooldown_minutes: DEFAULT_ALERT_RULE_COOLDOWN_MINUTES,
+            send_resolved: true,
+        },
+        AlertRuleConfig {
+            id: "memory-avg-hot".to_string(),
+            name: "Memory 10 minute average over 90%".to_string(),
+            enabled: true,
+            metric: AlertMetric::MemoryUsagePercent,
+            comparator: AlertComparator::Gt,
+            threshold: DEFAULT_ALERT_INSPECTION_MEMORY_WARN_PERCENT,
+            window_minutes: DEFAULT_ALERT_MEMORY_WINDOW_MINUTES,
+            severity: AlertSeverity::Warning,
+            scope_mode: AlertScopeMode::All,
+            node_ids: Vec::new(),
+            tags: Vec::new(),
+            delivery: vec![AlertChannel::Smtp, AlertChannel::Webhook],
+            cooldown_minutes: DEFAULT_ALERT_RULE_COOLDOWN_MINUTES,
+            send_resolved: true,
+        },
+        AlertRuleConfig {
+            id: "rtt-avg-high".to_string(),
+            name: "RTT 5 minute average over 250 ms".to_string(),
+            enabled: true,
+            metric: AlertMetric::LatencyMs,
+            comparator: AlertComparator::Gt,
+            threshold: DEFAULT_ALERT_INSPECTION_LATENCY_WARN_MS,
+            window_minutes: DEFAULT_ALERT_RTT_WINDOW_MINUTES,
+            severity: AlertSeverity::Warning,
+            scope_mode: AlertScopeMode::All,
+            node_ids: Vec::new(),
+            tags: Vec::new(),
+            delivery: vec![AlertChannel::Smtp, AlertChannel::Webhook],
+            cooldown_minutes: DEFAULT_ALERT_RULE_COOLDOWN_MINUTES,
+            send_resolved: true,
+        },
+    ]
 }

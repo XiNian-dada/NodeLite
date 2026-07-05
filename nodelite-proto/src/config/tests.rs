@@ -4,11 +4,15 @@ use ipnet::IpNet;
 
 use super::{
     AlertChannel, AlertComparator, AlertMetric, AlertScopeMode, AlertSeverity, AlertSmtpTransport,
-    DEFAULT_ALERT_INSPECTION_LOCAL_TIME, DEFAULT_AUDIT_RETENTION_DAYS,
-    DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS, DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_WS_AUTH_BLOCK_SECS,
-    DEFAULT_WS_AUTH_FAIL_MAX_ATTEMPTS, DEFAULT_WS_AUTH_FAIL_WINDOW_SECS,
-    DEFAULT_WS_MAX_CONNECTIONS_PER_IP, DEFAULT_WS_MAX_TOTAL_CONNECTIONS, GeoIpEdition,
-    GeoIpProvider, MAX_NODE_TAG_BYTES, parse_agent_config, parse_server_config,
+    DEFAULT_ALERT_CPU_WINDOW_MINUTES, DEFAULT_ALERT_INSPECTION_CPU_WARN_PERCENT,
+    DEFAULT_ALERT_INSPECTION_LATENCY_WARN_MS, DEFAULT_ALERT_INSPECTION_LOCAL_TIME,
+    DEFAULT_ALERT_INSPECTION_MEMORY_WARN_PERCENT, DEFAULT_ALERT_MEMORY_WINDOW_MINUTES,
+    DEFAULT_ALERT_OFFLINE_THRESHOLD_MINUTES, DEFAULT_ALERT_RTT_WINDOW_MINUTES,
+    DEFAULT_AUDIT_RETENTION_DAYS, DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS, DEFAULT_MAX_MESSAGE_BYTES,
+    DEFAULT_WS_AUTH_BLOCK_SECS, DEFAULT_WS_AUTH_FAIL_MAX_ATTEMPTS,
+    DEFAULT_WS_AUTH_FAIL_WINDOW_SECS, DEFAULT_WS_MAX_CONNECTIONS_PER_IP,
+    DEFAULT_WS_MAX_TOTAL_CONNECTIONS, GeoIpEdition, GeoIpProvider, MAX_NODE_TAG_BYTES,
+    parse_agent_config, parse_server_config,
 };
 
 #[test]
@@ -93,7 +97,49 @@ fn parses_server_config_with_defaults() {
         DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS
     );
     assert!(!config.alerting.enabled);
-    assert_eq!(config.alerting.rules, Vec::new());
+    assert_eq!(config.alerting.rules.len(), 4);
+    assert_eq!(config.alerting.rules[0].id, "node-offline");
+    assert_eq!(config.alerting.rules[0].metric, AlertMetric::OfflineMinutes);
+    assert_eq!(
+        config.alerting.rules[0].threshold,
+        DEFAULT_ALERT_OFFLINE_THRESHOLD_MINUTES
+    );
+    assert_eq!(config.alerting.rules[0].window_minutes, 1);
+    assert_eq!(config.alerting.rules[0].severity, AlertSeverity::Critical);
+    assert_eq!(config.alerting.rules[1].id, "cpu-avg-hot");
+    assert_eq!(
+        config.alerting.rules[1].threshold,
+        DEFAULT_ALERT_INSPECTION_CPU_WARN_PERCENT
+    );
+    assert_eq!(
+        config.alerting.rules[1].window_minutes,
+        DEFAULT_ALERT_CPU_WINDOW_MINUTES
+    );
+    assert_eq!(config.alerting.rules[2].id, "memory-avg-hot");
+    assert_eq!(
+        config.alerting.rules[2].threshold,
+        DEFAULT_ALERT_INSPECTION_MEMORY_WARN_PERCENT
+    );
+    assert_eq!(
+        config.alerting.rules[2].window_minutes,
+        DEFAULT_ALERT_MEMORY_WINDOW_MINUTES
+    );
+    assert_eq!(config.alerting.rules[3].id, "rtt-avg-high");
+    assert_eq!(
+        config.alerting.rules[3].threshold,
+        DEFAULT_ALERT_INSPECTION_LATENCY_WARN_MS
+    );
+    assert_eq!(
+        config.alerting.rules[3].window_minutes,
+        DEFAULT_ALERT_RTT_WINDOW_MINUTES
+    );
+    assert!(
+        config
+            .alerting
+            .rules
+            .iter()
+            .all(|rule| rule.delivery == vec![AlertChannel::Smtp, AlertChannel::Webhook])
+    );
     assert_eq!(
         config.alerting.inspection.local_time,
         DEFAULT_ALERT_INSPECTION_LOCAL_TIME
@@ -490,6 +536,23 @@ fn parses_server_config_with_alerting() {
     assert_eq!(config.alerting.rules[0].severity, AlertSeverity::Critical);
     assert_eq!(config.alerting.rules[0].scope_mode, AlertScopeMode::Tags);
     assert_eq!(config.alerting.rules[0].delivery, vec![AlertChannel::Smtp]);
+}
+
+#[test]
+fn parses_alerting_with_explicit_empty_rules() {
+    let config = parse_server_config(
+        r#"
+        [server]
+        listen = "127.0.0.1:8080"
+        public_base_url = "https://monitor.example.com"
+
+        [alerts]
+        rules = []
+        "#,
+    )
+    .expect("explicit empty alert rules should parse");
+
+    assert!(config.alerting.rules.is_empty());
 }
 
 #[test]

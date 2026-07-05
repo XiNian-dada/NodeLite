@@ -76,7 +76,13 @@ struct InspectionTotalsNotification {
 #[derive(Debug, Serialize)]
 struct InspectionHighlightNotification<'a> {
     node: AlertNodeNotification<'a>,
-    reasons: &'a [String],
+    events: Vec<InspectionHighlightEventNotification<'a>>,
+}
+
+#[derive(Debug, Serialize)]
+struct InspectionHighlightEventNotification<'a> {
+    occurred_at: DateTime<Utc>,
+    summary: &'a str,
 }
 
 #[derive(Debug, Serialize)]
@@ -208,7 +214,14 @@ fn inspection_notification<'a>(
                     id: &highlight.node_id,
                     label: &highlight.node_label,
                 },
-                reasons: &highlight.reasons,
+                events: highlight
+                    .events
+                    .iter()
+                    .map(|event| InspectionHighlightEventNotification {
+                        occurred_at: event.occurred_at,
+                        summary: &event.summary,
+                    })
+                    .collect(),
             })
             .collect(),
     }
@@ -255,12 +268,15 @@ fn wecom_inspection_text(summary: &InspectionSummary<'_>) -> String {
     if !report.highlights.is_empty() {
         text.push_str("\nHighlights:");
         for highlight in report.highlights.iter().take(10) {
-            text.push_str(&format!(
-                "\n- {} ({}): {}",
-                highlight.node_label,
-                highlight.node_id,
-                highlight.reasons.join(", ")
-            ));
+            for event in &highlight.events {
+                text.push_str(&format!(
+                    "\n- {} / {} ({}): {}",
+                    event.occurred_at.to_rfc3339(),
+                    highlight.node_label,
+                    highlight.node_id,
+                    event.summary
+                ));
+            }
         }
         if report.highlights.len() > 10 {
             text.push_str(&format!(

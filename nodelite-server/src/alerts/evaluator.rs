@@ -33,7 +33,13 @@ pub(crate) struct InspectionReport {
 pub(crate) struct InspectionHighlight {
     pub(crate) node_id: String,
     pub(crate) node_label: String,
-    pub(crate) reasons: Vec<String>,
+    pub(crate) events: Vec<InspectionHighlightEvent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct InspectionHighlightEvent {
+    pub(crate) occurred_at: DateTime<Utc>,
+    pub(crate) summary: String,
 }
 
 pub(crate) trait AlertStatusView {
@@ -140,40 +146,66 @@ where
 
     for status in statuses {
         total_nodes += 1;
-        let mut reasons = Vec::new();
-        if offline_minutes(status, now)
-            .is_some_and(|minutes| minutes >= inspection.offline_grace_minutes)
+        let mut events = Vec::new();
+        if let Some(minutes) = offline_minutes(status, now)
+            && minutes >= inspection.offline_grace_minutes
         {
             offline_nodes += 1;
-            reasons.push("offline".to_string());
+            events.push(InspectionHighlightEvent {
+                occurred_at: offline_threshold_time(status, now, inspection.offline_grace_minutes),
+                summary: format!(
+                    "Offline for {minutes} min (grace {} min)",
+                    inspection.offline_grace_minutes
+                ),
+            });
         }
-        if status
-            .latency_ms()
-            .is_some_and(|latency| latency >= inspection.latency_warn_ms)
+        if let Some(latency) = status.latency_ms()
+            && latency >= inspection.latency_warn_ms
         {
             latency_nodes += 1;
-            reasons.push("latency".to_string());
+            events.push(InspectionHighlightEvent {
+                occurred_at: metric_observed_at(status, now),
+                summary: format!(
+                    "RTT {latency} ms (warn >= {} ms)",
+                    inspection.latency_warn_ms
+                ),
+            });
         }
-        if status
+        if let Some(cpu) = status
             .snapshot()
             .and_then(|snapshot| snapshot.cpu_usage_percent)
-            .is_some_and(|cpu| cpu >= inspection.cpu_warn_percent as f64)
+            && cpu >= inspection.cpu_warn_percent as f64
         {
             cpu_hot_nodes += 1;
-            reasons.push("cpu".to_string());
+            events.push(InspectionHighlightEvent {
+                occurred_at: metric_observed_at(status, now),
+                summary: format!(
+                    "CPU {}% (warn >= {}%)",
+                    cpu.round() as u64,
+                    inspection.cpu_warn_percent
+                ),
+            });
         }
-        if memory_percent(status).is_some_and(|memory| memory >= inspection.memory_warn_percent) {
+        if let Some(memory) = memory_percent(status)
+            && memory >= inspection.memory_warn_percent
+        {
             memory_hot_nodes += 1;
-            reasons.push("memory".to_string());
+            events.push(InspectionHighlightEvent {
+                occurred_at: metric_observed_at(status, now),
+                summary: format!(
+                    "Memory {memory}% (warn >= {}%)",
+                    inspection.memory_warn_percent
+                ),
+            });
         }
 
-        if reasons.is_empty() {
+        if events.is_empty() {
             continue;
         }
         highlights.push(InspectionHighlight {
             node_id: status.node_id().to_string(),
             node_label: status.node_label().to_string(),
-            reasons,
+            events,
         });
     }
 
@@ -197,7 +229,7 @@ where
     metric_value(rule.metric.clone(), status, now)
 }
 
-fn rule_matches_scope<S>(rule: &AlertRuleConfig, status: &S) -> bool
+pub(crate) fn rule_matches_scope<S>(rule: &AlertRuleConfig, status: &S) -> bool
 where
     S: AlertStatusView + ?Sized,
 {
@@ -229,7 +261,7 @@ where
     }
 }
 
-fn comparator_matches(comparator: AlertComparator, left: u64, right: u64) -> bool {
+pub(crate) fn comparator_matches(comparator: AlertComparator, left: u64, right: u64) -> bool {
     match comparator {
         AlertComparator::Gt => left > right,
         AlertComparator::Lt => left < right,
@@ -269,6 +301,32 @@ where
     }
     let minutes = (now - status.last_seen()?).num_minutes();
     Some(minutes.max(0) as u64)
+}
+
+fn offline_threshold_time<S>(
+    status: &S,
+    now: DateTime<Utc>,
+    offline_grace_minutes: u64,
+) -> DateTime<Utc>
+where
+    S: AlertStatusView + ?Sized,
+{
+    let Some(last_seen) = status.last_seen() else {
+        return now;
+    };
+    let crossed_at = last_seen + chrono::Duration::minutes(offline_grace_minutes as i64);
+    crossed_at.min(now)
+}
+
+fn metric_observed_at<S>(status: &S, now: DateTime<Utc>) -> DateTime<Utc>
+where
+    S: AlertStatusView + ?Sized,
+{
+    status
+        .snapshot()
+        .map(|snapshot| snapshot.collected_at)
+        .or_else(|| status.last_seen())
+        .unwrap_or(now)
 }
 
 #[cfg(test)]
@@ -374,5 +432,19 @@ mod tests {
         assert_eq!(report.offline_nodes, 1);
         assert_eq!(report.latency_nodes, 1);
         assert_eq!(report.highlights.len(), 1);
+        let highlight = report.highlights.first().expect("highlight should exist");
+        assert_eq!(highlight.events.len(), 3);
+        assert!(
+            highlight
+                .events
+                .iter()
+                .any(|event| event.summary == "Offline for 30 min (grace 10 min)")
+        );
+        assert!(
+            highlight
+                .events
+                .iter()
+                .any(|event| event.summary == "RTT 320 ms (warn >= 250 ms)")
+        );
     }
 }

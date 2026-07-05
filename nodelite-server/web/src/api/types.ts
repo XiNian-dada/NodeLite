@@ -369,7 +369,12 @@ export interface TriggeredRulePreview {
 export interface InspectionHighlight {
   node_id: string;
   node_label: string;
-  reasons: string[];
+  events: InspectionHighlightEvent[];
+}
+
+export interface InspectionHighlightEvent {
+  occurred_at: string;
+  summary: string;
 }
 
 export interface InspectionPreview {

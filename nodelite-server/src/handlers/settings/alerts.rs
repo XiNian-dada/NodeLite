@@ -14,8 +14,8 @@ use super::helpers::settings_json_error;
 use super::security::settings_confirmation_error_for_sensitive_action;
 use super::types::{
     AlertPreview, AlertRuleView, AlertSettingsResponse, AlertSettingsView, AlertSmtpSettingsView,
-    AlertWebhookSettingsView, InspectionHighlight, InspectionPreview, InspectionSettingsView,
-    TriggeredRulePreview, UpdateAlertSettingsRequest,
+    AlertWebhookSettingsView, InspectionHighlight, InspectionHighlightEvent, InspectionPreview,
+    InspectionSettingsView, TriggeredRulePreview, UpdateAlertSettingsRequest,
 };
 
 pub(crate) async fn alert_settings(State(state): State<AppState>) -> impl IntoResponse {
@@ -240,7 +240,14 @@ fn build_alert_preview(config: &AlertingConfig, statuses: &[NodeStatus]) -> Aler
                 .map(|highlight| InspectionHighlight {
                     node_id: highlight.node_id,
                     node_label: highlight.node_label,
-                    reasons: highlight.reasons,
+                    events: highlight
+                        .events
+                        .into_iter()
+                        .map(|event| InspectionHighlightEvent {
+                            occurred_at: event.occurred_at,
+                            summary: event.summary,
+                        })
+                        .collect(),
                 })
                 .collect(),
         },

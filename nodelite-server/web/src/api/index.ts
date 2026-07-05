@@ -50,6 +50,7 @@ export type {
   HistoryPoint,
   HistoryQuery,
   InspectionHighlight,
+  InspectionHighlightEvent,
   InspectionPreview,
   InspectionSettingsView,
   LogLevel,

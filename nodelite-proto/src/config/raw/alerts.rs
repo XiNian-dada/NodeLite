@@ -2,6 +2,7 @@ use serde::Deserialize;
 
 use crate::validation::{normalize_string_list, validate_identifier, validate_non_empty};
 
+use super::super::alerts::default_alert_rules;
 use super::super::defaults::{
     default_alert_inspection_cpu_warn_percent, default_alert_inspection_latency_warn_ms,
     default_alert_inspection_local_time, default_alert_inspection_lookback_hours,
@@ -25,7 +26,7 @@ pub(super) struct RawAlertsSection {
     #[serde(default)]
     webhook: RawAlertWebhookSection,
     #[serde(default)]
-    rules: Vec<RawAlertRuleSection>,
+    rules: Option<Vec<RawAlertRuleSection>>,
     #[serde(default)]
     inspection: RawInspectionSection,
 }
@@ -218,14 +219,17 @@ impl RawAlertsSection {
     }
 
     fn validate_rules(&self) -> Result<Vec<AlertRuleConfig>, ConfigError> {
-        if self.rules.len() > 64 {
+        let Some(raw_rules) = self.rules.as_deref() else {
+            return Ok(default_alert_rules());
+        };
+        if raw_rules.len() > 64 {
             return Err(ConfigError::new(
                 "alerts.rules must contain at most 64 rules",
             ));
         }
 
-        let mut rules = Vec::with_capacity(self.rules.len());
-        for (index, rule) in self.rules.iter().enumerate() {
+        let mut rules = Vec::with_capacity(raw_rules.len());
+        for (index, rule) in raw_rules.iter().enumerate() {
             let id = rule.id.trim().to_string();
             let name = rule.name.trim().to_string();
             validate_identifier(&format!("alerts.rules[{index}].id"), &id)?;

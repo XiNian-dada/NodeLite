@@ -81,7 +81,7 @@ const expression = computed(() => {
       </div>
     </header>
 
-    <details class="rule-details">
+    <details class="rule-details" open>
       <summary>{{ t('alerts.rules.details') }}</summary>
       <div class="grid">
         <label class="field">
@@ -189,9 +189,33 @@ const expression = computed(() => {
   margin-top: 12px;
 }
 .rule-details summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   cursor: pointer;
+  list-style: none;
   font-size: 13px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--bg-card);
   color: var(--text-secondary);
+  padding: 5px 10px;
+}
+.rule-details summary::-webkit-details-marker {
+  display: none;
+}
+.rule-details summary::before {
+  content: '>';
+  color: var(--text-muted);
+  transform: rotate(90deg);
+  transition: transform 0.16s ease;
+}
+.rule-details:not([open]) summary::before {
+  transform: rotate(0deg);
+}
+.rule-details summary:focus-visible {
+  outline: 2px solid var(--accent-blue-soft);
+  outline-offset: 2px;
 }
 .grid {
   display: grid;

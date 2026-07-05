@@ -11,7 +11,7 @@ import type { AlertPreview, InspectionPreview } from '@/api';
  */
 const props = defineProps<{ preview: AlertPreview | null }>();
 
-const { t } = useI18n();
+const { locale, t } = useI18n();
 
 type CountField = Exclude<keyof InspectionPreview, 'highlights'>;
 const summaryFields: { key: string; field: CountField }[] = [
@@ -30,6 +30,17 @@ const summary = computed(() => {
 
 const triggered = computed(() => props.preview?.triggered_rules ?? []);
 const highlights = computed(() => props.preview?.inspection.highlights ?? []);
+
+function formatHighlightTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(locale.value, {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
 </script>
 
 <template>
@@ -73,8 +84,18 @@ const highlights = computed(() => props.preview?.inspection.highlights ?? []);
         </p>
         <ul v-else class="preview-list" data-test="preview-highlights">
           <li v-for="h in highlights" :key="h.node_id" class="preview-item">
-            <span class="preview-name">{{ h.node_label || h.node_id }}</span>
-            <span class="preview-nodes">{{ h.reasons.join(', ') }}</span>
+            <div class="preview-event-head">
+              <span class="preview-name">{{ h.node_label || h.node_id }}</span>
+              <span class="preview-nodes">{{ h.node_id }}</span>
+            </div>
+            <ul class="preview-events">
+              <li v-for="event in h.events" :key="`${h.node_id}-${event.occurred_at}-${event.summary}`">
+                <time class="preview-time" :datetime="event.occurred_at">
+                  {{ formatHighlightTime(event.occurred_at) }}
+                </time>
+                <span class="preview-summary">{{ event.summary }}</span>
+              </li>
+            </ul>
           </li>
         </ul>
       </section>
@@ -147,10 +168,17 @@ const highlights = computed(() => props.preview?.inspection.highlights ?? []);
 }
 .preview-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   flex-wrap: wrap;
   font-size: 13px;
+}
+.preview-event-head {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .preview-name {
   color: var(--text-primary);
@@ -158,6 +186,29 @@ const highlights = computed(() => props.preview?.inspection.highlights ?? []);
 }
 .preview-nodes {
   color: var(--text-muted);
+  font-size: 12px;
+}
+.preview-events {
+  width: 100%;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.preview-events li {
+  display: grid;
+  grid-template-columns: minmax(88px, auto) minmax(0, 1fr);
+  gap: 8px;
+}
+.preview-time {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.preview-summary {
+  color: var(--text-secondary);
   font-size: 12px;
 }
 .badge {
