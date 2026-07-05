@@ -21,8 +21,8 @@ use crate::admission::{auth_failure_admission_config, sensitive_auth_failure_adm
 /// 在各处理器之间共享的运行时上下文。
 #[derive(Clone)]
 pub(crate) struct AppState {
-    pub(crate) history: HistoryStore,
     pub(crate) agent_logs: AgentLogStore,
+    pub(crate) history: HistoryStore,
     pub(crate) audit_log: AuditLog,
     pub(crate) geoip: GeoIpResolver,
     pub(crate) install_admission: InstallAdmissionController,
@@ -118,8 +118,8 @@ impl AppState {
         ));
 
         Ok(Self {
-            history,
             agent_logs: AgentLogStore::new(),
+            history,
             audit_log,
             geoip,
             install_admission: InstallAdmissionController::new(auth_failure_admission_config(

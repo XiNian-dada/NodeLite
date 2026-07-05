@@ -98,6 +98,8 @@ fn is_common_password(password: &str) -> bool {
 pub const TWO_FACTOR_PENDING_SECS: u64 = 300;
 /// 2FA 完成后的浏览器会话有效期。
 pub const TWO_FACTOR_AUTH_SECS: u64 = 24 * 60 * 60;
+/// Basic Auth 会话 cookie 的有效期(24 小时),用于避免每次请求都记录 LoginSuccess。
+pub const BASIC_AUTH_SESSION_SECS: u64 = 24 * 60 * 60;
 /// 单个 pending session 允许的最大 TOTP 错误尝试次数。达到后该 pending token
 /// 立即失效,客户端必须重新通过 Basic Auth 才能再次进入 verify-2fa 页面。
 /// 这与 `InstallAdmissionController` 的 IP 维度限流共同把 TOTP 暴力破解
@@ -109,6 +111,7 @@ pub const TWO_FACTOR_MAX_FAILED_ATTEMPTS: u32 = 5;
 pub const TWO_FACTOR_TOTP_REPLAY_RETENTION_SECS: u64 = 150;
 pub const TWO_FACTOR_PENDING_COOKIE: &str = "nodelite_2fa_pending";
 pub const TWO_FACTOR_AUTH_COOKIE: &str = "nodelite_auth";
+pub const BASIC_AUTH_SESSION_COOKIE: &str = "nodelite_basic_session";
 
 /// 包装 HTTP 基本认证,用于保护 `/api/*` 与 HTML 视图。
 #[derive(Debug, Clone)]
@@ -176,11 +179,26 @@ pub struct TwoFactorSessions {
 #[derive(Debug, Default)]
 struct TwoFactorSessionStore {
     pending: HashMap<String, PendingSession>,
-    authenticated: HashMap<String, Instant>,
+    authenticated: HashMap<String, AuthenticatedSession>,
+    /// Basic Auth 会话 token 存储。每条记录包含过期时间和当前登录审计事件 id。
+    /// last-login API 通过事件 id 排除当前会话,避免同一秒内多次登录被时间窗口误判。
+    basic_auth_sessions: HashMap<String, BasicAuthSession>,
     /// 最近被成功消费过的 TOTP `time_step`(30 秒一个步长)。一旦某个 step
     /// 被用过,同一 step 的后续验证码必须拒绝,以阻止攻击者捕获一次 verify
     /// 请求后在同窗口内重放。条目会定期 prune,避免无界增长。
     used_totp_steps: HashMap<u64, Instant>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BasicAuthSession {
+    expires_at: Instant,
+    login_event_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AuthenticatedSession {
+    expires_at: Instant,
+    login_event_id: Option<i64>,
 }
 
 /// 一条待二次验证的会话:除了过期时间,还跟踪该 pending token 的连续失败
@@ -304,7 +322,13 @@ impl TwoFactorSessions {
         let expires_at = Instant::now() + Duration::from_secs(TWO_FACTOR_AUTH_SECS);
         let mut store = lock_mutex(&self.inner);
         prune_expired_sessions(&mut store, Instant::now());
-        store.authenticated.insert(token.clone(), expires_at);
+        store.authenticated.insert(
+            token.clone(),
+            AuthenticatedSession {
+                expires_at,
+                login_event_id: None,
+            },
+        );
         Ok(token)
     }
 
@@ -319,10 +343,70 @@ impl TwoFactorSessions {
         store.authenticated.remove(token);
     }
 
+    /// 绑定已完成 2FA 的会话与其 LoginSuccess 审计事件。
+    pub fn set_authenticated_login_event_id(&self, token: &str, login_event_id: Option<i64>) {
+        let Some(login_event_id) = login_event_id else {
+            return;
+        };
+        let mut store = lock_mutex(&self.inner);
+        prune_expired_sessions(&mut store, Instant::now());
+        if let Some(session) = store.authenticated.get_mut(token) {
+            session.login_event_id = Some(login_event_id);
+        }
+    }
+
+    /// 获取 2FA 会话的登录审计事件 id。用于 last-login API 排除当前会话。
+    pub fn get_authenticated_login_event_id(&self, token: &str) -> Option<i64> {
+        let mut store = lock_mutex(&self.inner);
+        prune_expired_sessions(&mut store, Instant::now());
+        store
+            .authenticated
+            .get(token)
+            .and_then(|session| session.login_event_id)
+    }
+
     /// 密码轮换后清空已完成 2FA 的浏览器会话,避免旧凭据换出的会话继续可用。
     pub fn clear_authenticated(&self) {
         let mut store = lock_mutex(&self.inner);
         store.authenticated.clear();
+    }
+
+    /// 创建 Basic Auth 会话 token。用于 Basic-only 模式下跟踪已登录会话,
+    /// 避免每次请求都记录 LoginSuccess 事件。同时记录登录审计事件 id,
+    /// 用于 last-login API 排除当前会话。
+    pub fn create_basic_auth_session(
+        &self,
+        login_event_id: Option<i64>,
+    ) -> AuthSessionResult<String> {
+        let token = generate_session_token()?;
+        let expires_at = Instant::now() + Duration::from_secs(BASIC_AUTH_SESSION_SECS);
+        let mut store = lock_mutex(&self.inner);
+        prune_expired_sessions(&mut store, Instant::now());
+        store.basic_auth_sessions.insert(
+            token.clone(),
+            BasicAuthSession {
+                expires_at,
+                login_event_id,
+            },
+        );
+        Ok(token)
+    }
+
+    /// 验证 Basic Auth 会话 token 是否有效。
+    pub fn is_basic_auth_session_valid(&self, token: &str) -> bool {
+        let mut store = lock_mutex(&self.inner);
+        prune_expired_sessions(&mut store, Instant::now());
+        store.basic_auth_sessions.contains_key(token)
+    }
+
+    /// 获取 Basic Auth 会话的登录审计事件 id。用于 last-login API 排除当前会话。
+    pub fn get_basic_auth_login_event_id(&self, token: &str) -> Option<i64> {
+        let mut store = lock_mutex(&self.inner);
+        prune_expired_sessions(&mut store, Instant::now());
+        store
+            .basic_auth_sessions
+            .get(token)
+            .and_then(|session| session.login_event_id)
     }
 }
 
@@ -330,7 +414,10 @@ fn prune_expired_sessions(store: &mut TwoFactorSessionStore, now: Instant) {
     store.pending.retain(|_, session| session.expires_at > now);
     store
         .authenticated
-        .retain(|_, expires_at| *expires_at > now);
+        .retain(|_, session| session.expires_at > now);
+    store
+        .basic_auth_sessions
+        .retain(|_, session| session.expires_at > now);
     store
         .used_totp_steps
         .retain(|_, expires_at| *expires_at > now);

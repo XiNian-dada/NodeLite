@@ -8,7 +8,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use url::Url;
 
-use crate::agent_logs::AgentLogStore;
 use crate::app_state::ServerReadiness;
 use crate::history::HistoryStore;
 use crate::registry::NodeRegistry;
@@ -42,7 +41,6 @@ pub(crate) fn spawn_stale_reaper(
 pub(crate) fn spawn_registry_reloader(
     registry: NodeRegistry,
     history: HistoryStore,
-    agent_logs: AgentLogStore,
     readiness: ServerReadiness,
     shutdown: CancellationToken,
 ) -> JoinHandle<()> {
@@ -60,12 +58,10 @@ pub(crate) fn spawn_registry_reloader(
                             let enrolled_nodes = registry.count().await;
                             let node_ids = registry.node_ids().await;
                             let cleaned_history_nodes = history.forget_missing(&node_ids).await;
-                            let cleaned_agent_log_nodes = agent_logs.forget_missing(&node_ids).await;
                             info!(
                                 registry_path = %registry.path().display(),
                                 enrolled_nodes,
                                 cleaned_history_nodes,
-                                cleaned_agent_log_nodes,
                                 "reloaded node registry",
                             );
                         }
@@ -238,7 +234,6 @@ mod tests {
         let handle = spawn_registry_reloader(
             state.registry.clone(),
             state.history.clone(),
-            state.agent_logs.clone(),
             state.readiness.clone(),
             shutdown.clone(),
         );
@@ -273,7 +268,6 @@ mod tests {
         let handle = spawn_registry_reloader(
             state.registry.clone(),
             state.history.clone(),
-            state.agent_logs.clone(),
             state.readiness.clone(),
             shutdown.clone(),
         );
