@@ -340,7 +340,7 @@ fn inspection_message_html(summary: &InspectionSummary<'_>) -> String {
             r#"<td style="vertical-align:top;text-align:right;"><span style="display:inline-block;border:1px solid #dbeafe;border-radius:999px;background:#eff6ff;color:#2563eb;padding:5px 10px;font-size:12px;font-weight:600;">{} nodes</span></td>"#,
             r#"</tr></table></div>"#,
             r#"<div style="padding:20px 28px 24px;">"#,
-            r#"<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;"><tr>{}</tr></table>"#,
+            r#"<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">{}</table>"#,
             "{}",
             r#"<div style="margin-top:18px;border:1px solid #e5e5e5;border-radius:12px;background:#ffffff;padding:18px 20px;">"#,
             r#"<h2 style="margin:0 0 12px;font-size:16px;line-height:1.3;color:#111111;">Inspection highlights</h2>"#,
@@ -368,24 +368,32 @@ fn brand_logo_data_uri() -> String {
 }
 
 fn inspection_summary_cards_html(report: &crate::alerts::InspectionReport) -> String {
-    [
+    let cards = [
         ("Total nodes", report.total_nodes, "#2563eb", "#eff6ff"),
         ("Offline", report.offline_nodes, "#ff4d6d", "#fff1f2"),
         ("High latency", report.latency_nodes, "#d29922", "#fffbeb"),
         ("CPU hot", report.cpu_hot_nodes, "#f97316", "#fff7ed"),
         ("Memory hot", report.memory_hot_nodes, "#3b82f6", "#eff6ff"),
-    ]
-    .iter()
-    .map(|(label, value, color, background)| {
-        format!(
-            r#"<td style="padding:0 8px 8px 0;width:20%;"><div style="border:1px solid #e5e5e5;border-radius:10px;padding:13px 14px;background:{};"><div style="font-size:12px;color:#6b6b6b;">{}</div><div style="margin-top:7px;font-size:26px;line-height:1;font-weight:750;color:{};">{}</div></div></td>"#,
-            background,
-            escape_html(label),
-            color,
-            value,
-        )
-    })
-    .collect::<String>()
+    ];
+
+    let mut html = String::new();
+    for row in cards.chunks(3) {
+        html.push_str("<tr>");
+        for (label, value, color, background) in row {
+            html.push_str(&format!(
+                r#"<td style="padding:0 8px 8px 0;width:33.333%;vertical-align:top;"><div style="border:1px solid #e5e5e5;border-radius:10px;padding:13px 14px;background:{};"><div style="font-size:12px;color:#6b6b6b;">{}</div><div style="margin-top:7px;font-size:26px;line-height:1;font-weight:750;color:{};">{}</div></div></td>"#,
+                background,
+                escape_html(label),
+                color,
+                value,
+            ));
+        }
+        for _ in row.len()..3 {
+            html.push_str(r#"<td style="padding:0 8px 8px 0;width:33.333%;">&nbsp;</td>"#);
+        }
+        html.push_str("</tr>");
+    }
+    html
 }
 
 fn inspection_trends_body(summary: &InspectionSummary<'_>) -> String {
