@@ -340,7 +340,7 @@ fn inspection_message_html(summary: &InspectionSummary<'_>) -> String {
             r#"<td style="vertical-align:top;text-align:right;"><span style="display:inline-block;border:1px solid #dbeafe;border-radius:999px;background:#eff6ff;color:#2563eb;padding:5px 10px;font-size:12px;font-weight:600;">{} nodes</span></td>"#,
             r#"</tr></table></div>"#,
             r#"<div style="padding:20px 28px 24px;">"#,
-            r#"<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">{}</table>"#,
+            r#"<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;table-layout:fixed;">{}</table>"#,
             "{}",
             r#"<div style="margin-top:18px;border:1px solid #e5e5e5;border-radius:12px;background:#ffffff;padding:18px 20px;">"#,
             r#"<h2 style="margin:0 0 12px;font-size:16px;line-height:1.3;color:#111111;">Inspection highlights</h2>"#,
@@ -415,7 +415,7 @@ fn inspection_summary_cards_html(
         html.push_str("<tr>");
         for (label, value, color, background) in row {
             html.push_str(&format!(
-                r#"<td style="padding:0 8px 8px 0;width:33.333%;vertical-align:top;"><div style="border:1px solid #e5e5e5;border-radius:10px;padding:13px 14px;background:{};"><div style="font-size:12px;color:#6b6b6b;">{}</div><div style="margin-top:7px;font-size:26px;line-height:1;font-weight:750;color:{};">{}</div></div></td>"#,
+                r#"<td style="padding:0 8px 8px 0;width:33.333%;vertical-align:top;"><div style="height:88px;box-sizing:border-box;border:1px solid #e5e5e5;border-radius:10px;padding:13px 14px;background:{};"><div style="height:32px;font-size:12px;line-height:16px;color:#6b6b6b;">{}</div><div style="margin-top:7px;font-size:26px;line-height:26px;font-weight:750;color:{};">{}</div></div></td>"#,
                 background,
                 escape_html(label),
                 color,
