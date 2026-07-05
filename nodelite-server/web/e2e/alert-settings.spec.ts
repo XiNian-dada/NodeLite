@@ -28,7 +28,7 @@ test('alert rule CRUD round-trips', async ({ page }) => {
   await waitForAppShell(page);
   await page.locator('[data-test="rule-add"]').click();
   const rule = page.locator('[data-test="rule-card"]').last();
-  await rule.locator('summary').click();
+  await expect(rule.locator('[data-test="rule-id"]')).toBeVisible();
   await rule.locator('[data-test="rule-id"]').fill('memory-hot');
   await rule.locator('[data-test="rule-name"]').fill('Memory hot');
   await page.locator('[data-test="reauth-password"]').fill('pw');
