@@ -9,7 +9,7 @@ const lastLogin = ref<LastLoginInfo | null>(null);
 const { t } = useI18n();
 
 const DISMISSED_KEY = 'nodelite_login_notification_dismissed';
-const AUTO_DISMISS_MS = 5000;
+const AUTO_DISMISS_MS = 30_000;
 
 let dismissTimer: number | null = null;
 
@@ -28,9 +28,11 @@ function formatTimestamp(timestamp: string): string {
   const diffDays = Math.floor(diffHours / 24);
 
   if (diffDays > 0) {
+    if (diffDays === 1) return t('audit.last_login.day_ago');
     return t('audit.last_login.days_ago', { count: diffDays });
   }
   if (diffHours > 0) {
+    if (diffHours === 1) return t('audit.last_login.hour_ago');
     return t('audit.last_login.hours_ago', { count: diffHours });
   }
   return t('audit.last_login.recent');
@@ -46,13 +48,17 @@ function getLocationString(info: LastLoginInfo): string {
 function scheduleAutoDismiss(): void {
   clearDismissTimer();
   dismissTimer = window.setTimeout(() => {
-    dismiss();
+    hide();
   }, AUTO_DISMISS_MS);
 }
 
-function dismiss(): void {
+function hide(): void {
   clearDismissTimer();
   show.value = false;
+}
+
+function dismiss(): void {
+  hide();
   sessionStorage.setItem(DISMISSED_KEY, 'true');
 }
 
