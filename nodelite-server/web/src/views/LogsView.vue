@@ -1,33 +1,31 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { computed, onMounted, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import AppLayout from '@/components/AppLayout.vue';
 import { apiClient } from '@/api';
 import type { AuditLogEntry } from '@/api';
+import { useLanguage } from '@/i18n/language';
+import { fmtDateTime } from '@/lib/format';
 
 const auditLogs = ref<AuditLogEntry[]>([]);
 const loading = ref(false);
 const error = ref<string | null>(null);
+const { t } = useI18n();
+const { currentLocale } = useLanguage();
 
 const formattedAuditLogs = computed(() => {
   return auditLogs.value.map((entry) => ({
     ...entry,
-    formattedTime: new Date(entry.timestamp).toLocaleString(),
+    formattedTime: fmtDateTime(entry.timestamp, currentLocale.value),
     eventLabel: formatEventType(entry.event_type),
     statusClass: entry.success ? 'status-success' : 'status-failure',
   }));
 });
 
 function formatEventType(type: string): string {
-  const labels: Record<string, string> = {
-    login_success: 'Login Success',
-    login_failure: 'Login Failure',
-    totp_verify_success: '2FA Verified',
-    totp_verify_failure: '2FA Failed',
-    node_connected: 'Node Connected',
-    token_invalid: 'Invalid Token',
-    rate_limit_exceeded: 'Rate Limited',
-  };
-  return labels[type] || type;
+  const key = `audit.events.${type}`;
+  const label = t(key);
+  return label === key ? type : label;
 }
 
 async function loadAuditLogs() {
@@ -37,16 +35,17 @@ async function loadAuditLogs() {
     const response = await apiClient.auditLog(100);
     auditLogs.value = response;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Failed to load audit logs';
+    const message = e instanceof Error ? e.message : String(e);
+    error.value = t('audit.load_failed', { error: message });
   } finally {
     loading.value = false;
   }
 }
 
 function getLocationString(details: Record<string, unknown>): string {
-  const parts = [];
-  if (details.city) parts.push(details.city);
-  if (details.country) parts.push(details.country);
+  const parts: string[] = [];
+  if (typeof details.city === 'string' && details.city.length > 0) parts.push(details.city);
+  if (typeof details.country === 'string' && details.country.length > 0) parts.push(details.country);
   return parts.length > 0 ? parts.join(', ') : '—';
 }
 
@@ -58,29 +57,31 @@ onMounted(() => {
 <template>
   <AppLayout>
     <template #title>
-      <h1 class="page-heading">Audit Log</h1>
-      <p class="page-subtitle">Security and authentication events</p>
+      <h1 class="page-heading">{{ t('audit.heading') }}</h1>
+      <p class="page-subtitle">{{ t('audit.subtitle') }}</p>
     </template>
 
     <section class="logs-view" data-test="logs-view">
       <article class="logs-panel panel">
-        <div v-if="loading" class="logs-loading">Loading...</div>
-        <div v-else-if="error" class="logs-error">{{ error }}</div>
+        <div v-if="loading" class="logs-loading" data-test="logs-loading">
+          {{ t('audit.loading') }}
+        </div>
+        <div v-else-if="error" class="logs-error" data-test="logs-error">{{ error }}</div>
 
         <div v-else class="logs-content">
-          <div v-if="formattedAuditLogs.length === 0" class="logs-empty">
-            No audit log entries found.
+          <div v-if="formattedAuditLogs.length === 0" class="logs-empty" data-test="logs-empty">
+            {{ t('audit.empty') }}
           </div>
           <div v-else class="logs-table-wrap">
             <table class="logs-table">
               <thead>
                 <tr>
-                  <th>Time</th>
-                  <th>Event</th>
-                  <th>User</th>
-                  <th>IP Address</th>
-                  <th>Location</th>
-                  <th>Status</th>
+                  <th>{{ t('audit.columns.time') }}</th>
+                  <th>{{ t('audit.columns.event') }}</th>
+                  <th>{{ t('audit.columns.user') }}</th>
+                  <th>{{ t('audit.columns.ip_address') }}</th>
+                  <th>{{ t('audit.columns.location') }}</th>
+                  <th>{{ t('audit.columns.status') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -92,7 +93,7 @@ onMounted(() => {
                   <td class="logs-table__location">{{ getLocationString(entry.details) }}</td>
                   <td>
                     <span class="logs-status" :class="entry.statusClass">
-                      {{ entry.success ? 'Success' : 'Failure' }}
+                      {{ entry.success ? t('audit.status.success') : t('audit.status.failure') }}
                     </span>
                   </td>
                 </tr>
@@ -112,11 +113,11 @@ onMounted(() => {
 }
 
 .logs-panel {
-  background: #FFFFFF;
+  background: var(--bg-card);
+  border: 1px solid var(--border-soft);
   border-radius: 12px;
-  padding: 1.5rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-  border: 1px solid #E7E1D7;
+  padding: 12px;
+  box-shadow: var(--panel-shadow);
 }
 
 .logs-loading,
@@ -124,15 +125,15 @@ onMounted(() => {
 .logs-empty {
   padding: 3rem;
   text-align: center;
-  color: #5C635D;
+  color: var(--text-muted);
 }
 
 .logs-error {
-  color: #C4612F;
+  color: var(--accent-red);
 }
 
 .logs-content {
-  min-height: 400px;
+  min-height: 320px;
 }
 
 .logs-table-wrap {
@@ -142,78 +143,105 @@ onMounted(() => {
 .logs-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.9rem;
+  font-size: 13px;
 }
 
 .logs-table thead {
-  background: #FBF9F5;
-  border-bottom: 2px solid #E7E1D7;
+  background: var(--bg-card-soft);
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .logs-table th {
-  padding: 0.75rem 1rem;
+  padding: 14px 16px;
   text-align: left;
   font-weight: 600;
-  color: #1F2421;
-  font-size: 0.85rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  color: var(--text-primary);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .logs-table tbody tr {
-  border-bottom: 1px solid #E7E1D7;
-  transition: background 0.15s ease;
+  border-bottom: 1px solid var(--border-soft);
+  transition: background 150ms ease;
 }
 
 .logs-table tbody tr:hover {
-  background: #FBF9F5;
+  background: var(--bg-card-soft);
 }
 
 .logs-table td {
-  padding: 1rem;
-  color: #1F2421;
+  padding: 15px 16px;
+  color: var(--text-secondary);
 }
 
 .logs-table__time {
-  font-family: 'Courier New', monospace;
-  font-size: 0.85rem;
-  color: #5C635D;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 .logs-table__event {
-  font-weight: 500;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 .logs-table__user {
-  font-family: 'Courier New', monospace;
-  font-size: 0.9rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
 }
 
 .logs-table__ip {
-  font-family: 'Courier New', monospace;
-  font-size: 0.85rem;
-  color: #5C635D;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 .logs-table__location {
-  color: #5C635D;
+  color: var(--text-muted);
 }
 
 .logs-status {
   display: inline-block;
-  padding: 0.25rem 0.75rem;
+  padding: 4px 10px;
   border-radius: 999px;
-  font-size: 0.8rem;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .logs-status.status-success {
-  background: #F2E3D6;
-  color: #A94E22;
+  background: var(--accent-green-soft);
+  color: var(--accent-green);
 }
 
 .logs-status.status-failure {
-  background: #FBF9F5;
-  color: #5C635D;
+  background: var(--accent-red-soft);
+  color: var(--accent-red);
+}
+
+.page-heading {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.page-subtitle {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+@media (max-width: 820px) {
+  .logs-panel {
+    padding: 10px;
+  }
+
+  .logs-table th,
+  .logs-table td {
+    padding: 12px 10px;
+  }
 }
 </style>
