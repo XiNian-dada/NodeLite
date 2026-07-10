@@ -127,6 +127,19 @@ describe('NodeHardwarePanel', () => {
     expect(wrapper.find('.usage-track .bad').exists()).toBe(true);
   });
 
+  it('keeps long mount paths inside their grid cell and exposes the full value', () => {
+    const node = makeNodeStatus();
+    const mountPoint =
+      '/private/var/folders/y8/a-very-long-temporary-volume-name/that-must-not-overlap';
+    node.snapshot!.disks = [disk({ mount_point: mountPoint })];
+
+    const wrapper = mountHardware(node);
+    const mount = wrapper.get('[data-test="disk-mount"]');
+    expect(mount.classes()).toContain('mount');
+    expect(mount.attributes('title')).toBe(mountPoint);
+    expect(mount.text()).toBe(mountPoint);
+  });
+
   it('renders an empty disk placeholder without temperature fields', () => {
     const wrapper = mountHardware(makeNodeStatus({ snapshot: null }));
     expect(wrapper.find('[data-test="node-disks-empty"]').exists()).toBe(true);

@@ -34,7 +34,13 @@ const { t } = useI18n();
         data-test="disk-row"
       >
         <span class="device" :data-label="t('node.disk.device')">{{ row.device }}</span>
-        <span :data-label="t('node.disk.mount')">{{ row.mount }}</span>
+        <span
+          class="mount"
+          data-test="disk-mount"
+          :data-label="t('node.disk.mount')"
+          :title="row.mount"
+          >{{ row.mount }}</span
+        >
         <span :data-label="t('node.disk.filesystem')"
           ><em>{{ row.fs }}</em></span
         >
@@ -95,13 +101,13 @@ const { t } = useI18n();
 .disk-head,
 .disk-row {
   display: grid;
-  grid-template-columns: minmax(140px, 1.1fr) minmax(80px, 0.7fr) minmax(84px, 0.6fr) minmax(
+  grid-template-columns: minmax(140px, 1fr) minmax(180px, 1.5fr) minmax(84px, 0.6fr) minmax(
       160px,
       1fr
-    ) minmax(120px, 0.8fr);
+    ) minmax(140px, 0.8fr);
   gap: 12px;
   align-items: center;
-  min-width: 720px;
+  min-width: 780px;
   padding: 11px 12px;
 }
 
@@ -115,6 +121,16 @@ const { t } = useI18n();
   border-top: 1px solid var(--border-soft);
   color: var(--text-secondary);
   font-size: 13px;
+}
+
+.disk-row > span {
+  min-width: 0;
+}
+
+.mount {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .device,
@@ -203,6 +219,12 @@ const { t } = useI18n();
     gap: 10px;
     align-items: center;
     overflow-wrap: anywhere;
+  }
+
+  .mount {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
   }
 
   .disk-row > span::before {
