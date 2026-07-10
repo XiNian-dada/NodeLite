@@ -67,7 +67,8 @@ const nodeStatus = {
     disks: [
       {
         device: '/dev/sda1',
-        mount_point: '/',
+        mount_point:
+          '/private/var/folders/y8/a-very-long-temporary-volume-name/that-must-not-overlap',
         fs_type: 'ext4',
         total_bytes: 100_000_000_000,
         available_bytes: 60_000_000_000,
