@@ -40,17 +40,17 @@ after each case and is not a substitute for Linux PSS/RssAnon.
 
 | Concurrency | Read cache KiB | p50 ms | p95 ms | Max ms | RSS bytes |
 |---:|---:|---:|---:|---:|---:|
-| 2 | 256 | 255.38 | 497.10 | 524.19 | 28,409,856 |
-| 2 | 512 | 295.11 | 566.92 | 593.49 | 28,835,840 |
-| 2 | 1024 | 286.88 | 584.32 | 619.48 | 29,294,592 |
-| 4 | 256 | 255.45 | 436.27 | 456.58 | 31,981,568 |
-| 4 | 512 | 195.78 | 366.65 | 389.32 | 33,652,736 |
-| 4 | 1024 | 190.20 | 379.77 | 399.13 | 33,669,120 |
-| 8 | 256 | 307.99 | 665.94 | 692.77 | 34,373,632 |
-| 8 | 512 | 290.17 | 572.56 | 598.21 | 34,390,016 |
-| 8 | 1024 | 471.00 | 710.44 | 731.51 | 34,832,384 |
+| 2 | 256 | 245.53 | 467.64 | 491.81 | 26,394,624 |
+| 2 | 512 | 254.26 | 477.78 | 502.01 | 26,689,536 |
+| 2 | 1024 | 241.21 | 461.45 | 486.40 | 26,755,072 |
+| 4 | 256 | 189.33 | 356.24 | 374.00 | 29,638,656 |
+| 4 | 512 | 192.54 | 362.75 | 382.74 | 29,736,960 |
+| 4 | 1024 | 189.85 | 354.79 | 374.31 | 29,769,728 |
+| 8 | 256 | 247.00 | 468.58 | 490.87 | 32,079,872 |
+| 8 | 512 | 247.72 | 465.48 | 488.64 | 32,768,000 |
+| 8 | 1024 | 248.17 | 468.25 | 491.38 | 32,768,000 |
 
-The default `4 / 512 KiB` combination had the lowest measured p95 in this run. Concurrency `8`
-increased contention and was slower for every cache size; concurrency `2` reduced in-flight memory
-but increased queueing. Linux PSS/RssAnon sampling remains required before changing the production
-default based on memory rather than latency.
+All concurrency-4 cases were within 2.3% p95 of each other and materially faster than concurrency
+2 or 8. The default `4 / 512 KiB` stays in the middle of that stable latency band without doubling
+the per-connection cache to 1024 KiB. Linux PSS/RssAnon sampling and repeated runs remain required
+before changing the production default based on small single-run differences.
