@@ -368,3 +368,53 @@ async fn queued_same_key_queries_recheck_cache_after_acquiring_a_permit() {
         let _ = std::fs::remove_dir(parent);
     }
 }
+
+#[tokio::test]
+async fn cancelling_running_query_keeps_permit_until_blocking_work_finishes() {
+    let db_path = temp_history_db_path("query-cancel-running");
+    let start = seed_concurrent_query_history(&db_path);
+    let probe = Arc::new(HistoryQueryProbe::new(std::time::Duration::from_millis(
+        200,
+    )));
+    let store = HistoryStore::new(db_path.clone(), 5, 1, DEFAULT_HISTORY_READ_CACHE_KIB)
+        .with_query_probe(Arc::clone(&probe));
+    store.initialize().await;
+    assert!(store.is_available());
+
+    let end = start + Duration::seconds(240 * 30);
+    let query_store = store.clone();
+    let query_task = tokio::spawn(async move {
+        query_store
+            .query_history_range("hk-01", start, end, 120)
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while probe.total_entered() == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("blocking query should start");
+
+    query_task.abort();
+    let error = match query_task.await {
+        Err(error) => error,
+        Ok(_) => panic!("cancelled history query should not complete"),
+    };
+    assert!(error.is_cancelled());
+    assert_eq!(store.query_runtime_metrics().permits_in_use, 1);
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while store.query_runtime_metrics().permits_in_use != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("blocking query should eventually release its permit");
+    store.shutdown().await;
+
+    let _ = std::fs::remove_file(&db_path);
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
+}

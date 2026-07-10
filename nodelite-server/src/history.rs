@@ -435,7 +435,8 @@ impl HistoryStore {
         #[cfg(test)]
         let query_probe = self.query_probe.clone();
 
-        let points = tokio::task::spawn_blocking(move || {
+        let (points, query_permit) = tokio::task::spawn_blocking(move || -> HistoryResult<_> {
+            let query_permit = query_permit;
             #[cfg(test)]
             let _query_probe_guard = query_probe.as_ref().map(HistoryQueryProbe::enter);
             let connection = open_read_connection(
@@ -444,8 +445,9 @@ impl HistoryStore {
                 history_read_cache_kib,
             )
             .map_err(HistoryError::Query)?;
-            query_history_between(&connection, &node_id, since, until, max_points)
-                .map_err(HistoryError::from)
+            let points = query_history_between(&connection, &node_id, since, until, max_points)
+                .map_err(HistoryError::from)?;
+            Ok((points, query_permit))
         })
         .await
         .map_err(|error| {
