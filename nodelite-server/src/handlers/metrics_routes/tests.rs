@@ -296,10 +296,11 @@ fn exporter_exposes_runtime_observability_metrics() {
             expired_removals: 11,
         },
         history_queries: crate::history::HistoryQueryRuntimeMetrics {
-            active: 2,
+            permits_in_use: 2,
             waiting: 3,
             limit: 4,
-            wait_total: 13,
+            acquisitions_total: 13,
+            waits_total: 7,
             wait_seconds_total: 1.25,
         },
     });
@@ -322,14 +323,16 @@ fn exporter_exposes_runtime_observability_metrics() {
     assert!(body.contains("nodelite_history_cache_evictions_total 7"));
     assert!(body.contains("# TYPE nodelite_history_cache_expired_removals_total counter"));
     assert!(body.contains("nodelite_history_cache_expired_removals_total 11"));
-    assert!(body.contains("# TYPE nodelite_history_queries_active gauge"));
-    assert!(body.contains("nodelite_history_queries_active 2"));
+    assert!(body.contains("# TYPE nodelite_history_query_permits_in_use gauge"));
+    assert!(body.contains("nodelite_history_query_permits_in_use 2"));
     assert!(body.contains("# TYPE nodelite_history_queries_waiting gauge"));
     assert!(body.contains("nodelite_history_queries_waiting 3"));
     assert!(body.contains("# TYPE nodelite_history_query_concurrency_limit gauge"));
     assert!(body.contains("nodelite_history_query_concurrency_limit 4"));
-    assert!(body.contains("# TYPE nodelite_history_query_wait_total counter"));
-    assert!(body.contains("nodelite_history_query_wait_total 13"));
+    assert!(body.contains("# TYPE nodelite_history_query_permit_acquisitions_total counter"));
+    assert!(body.contains("nodelite_history_query_permit_acquisitions_total 13"));
+    assert!(body.contains("# TYPE nodelite_history_query_waits_total counter"));
+    assert!(body.contains("nodelite_history_query_waits_total 7"));
     assert!(body.contains("# TYPE nodelite_history_query_wait_seconds_total counter"));
     assert!(body.contains("nodelite_history_query_wait_seconds_total 1.25"));
     assert!(body.contains("# TYPE nodelite_sqlite_wal_checkpoint_observed gauge"));

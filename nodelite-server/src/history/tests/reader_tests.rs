@@ -260,7 +260,7 @@ async fn query_limiter_caps_twenty_concurrent_readers() {
                     .acquire_query_permit()
                     .await
                     .expect("query permit should remain available");
-                let active = store.query_runtime_metrics().active as usize;
+                let active = store.query_runtime_metrics().permits_in_use as usize;
                 max_active.fetch_max(active, Ordering::Relaxed);
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             })
@@ -273,11 +273,52 @@ async fn query_limiter_caps_twenty_concurrent_readers() {
 
     assert_eq!(max_active.load(Ordering::Relaxed), 4);
     let metrics = store.query_runtime_metrics();
-    assert_eq!(metrics.active, 0);
+    assert_eq!(metrics.permits_in_use, 0);
     assert_eq!(metrics.waiting, 0);
     assert_eq!(metrics.limit, 4);
-    assert_eq!(metrics.wait_total, 20);
+    assert_eq!(metrics.acquisitions_total, 20);
+    assert_eq!(metrics.waits_total, 16);
     assert!(metrics.wait_seconds_total > 0.0);
+}
+
+#[tokio::test]
+async fn cancelled_query_waiter_releases_waiting_metrics() {
+    let store = HistoryStore::new(
+        PathBuf::from("./data/history.sqlite3"),
+        5,
+        1,
+        DEFAULT_HISTORY_READ_CACHE_KIB,
+    );
+    let active_permit = store
+        .acquire_query_permit()
+        .await
+        .expect("first query permit should be available");
+    let waiting_store = store.clone();
+    let waiting_task = tokio::spawn(async move { waiting_store.acquire_query_permit().await });
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while store.query_runtime_metrics().waiting != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("second query should enter the waiting state");
+    waiting_task.abort();
+    let error = match waiting_task.await {
+        Err(error) => error,
+        Ok(_) => panic!("cancelled query waiter should not complete"),
+    };
+    assert!(error.is_cancelled());
+
+    let metrics = store.query_runtime_metrics();
+    assert_eq!(metrics.permits_in_use, 1);
+    assert_eq!(metrics.waiting, 0);
+    assert_eq!(metrics.acquisitions_total, 1);
+    assert_eq!(metrics.waits_total, 1);
+    assert!(metrics.wait_seconds_total > 0.0);
+
+    drop(active_permit);
+    assert_eq!(store.query_runtime_metrics().permits_in_use, 0);
 }
 
 #[tokio::test]
@@ -318,7 +359,7 @@ async fn queued_same_key_queries_recheck_cache_after_acquiring_a_permit() {
     assert!(probe.total_entered() <= 4);
     assert!(probe.max_active() <= 4);
     let metrics = store.query_runtime_metrics();
-    assert_eq!(metrics.active, 0);
+    assert_eq!(metrics.permits_in_use, 0);
     assert_eq!(metrics.waiting, 0);
     store.shutdown().await;
 

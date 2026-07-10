@@ -355,14 +355,14 @@ pub(crate) fn render_runtime_metrics(metrics: RuntimeMetrics) -> String {
         metrics.history_cache.expired_removals,
     );
     emitter.gauge(
-        "nodelite_history_queries_active",
-        "Number of history queries currently holding a SQLite read connection permit.",
+        "nodelite_history_query_permits_in_use",
+        "Number of history queries currently holding a concurrency permit.",
         &[],
-        metrics.history_queries.active,
+        metrics.history_queries.permits_in_use,
     );
     emitter.gauge(
         "nodelite_history_queries_waiting",
-        "Number of history queries currently waiting for a read connection permit.",
+        "Number of history queries currently waiting for a concurrency permit.",
         &[],
         metrics.history_queries.waiting,
     );
@@ -373,14 +373,20 @@ pub(crate) fn render_runtime_metrics(metrics: RuntimeMetrics) -> String {
         metrics.history_queries.limit,
     );
     emitter.counter(
-        "nodelite_history_query_wait_total",
-        "Number of history cache misses that acquired a SQLite read query permit.",
+        "nodelite_history_query_permit_acquisitions_total",
+        "Number of history cache misses that acquired a query concurrency permit.",
         &[],
-        metrics.history_queries.wait_total,
+        metrics.history_queries.acquisitions_total,
+    );
+    emitter.counter(
+        "nodelite_history_query_waits_total",
+        "Number of history queries that had to wait because all permits were in use.",
+        &[],
+        metrics.history_queries.waits_total,
     );
     emitter.counter(
         "nodelite_history_query_wait_seconds_total",
-        "Total time history queries spent waiting for a SQLite read query permit.",
+        "Total time history queries spent waiting for a concurrency permit.",
         &[],
         metrics.history_queries.wait_seconds_total,
     );

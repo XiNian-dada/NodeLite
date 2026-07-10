@@ -4,14 +4,15 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use tokio::sync::{AcquireError, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{AcquireError, OwnedSemaphorePermit, Semaphore, TryAcquireError};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct HistoryQueryRuntimeMetrics {
-    pub(crate) active: u64,
+    pub(crate) permits_in_use: u64,
     pub(crate) waiting: u64,
     pub(crate) limit: u64,
-    pub(crate) wait_total: u64,
+    pub(crate) acquisitions_total: u64,
+    pub(crate) waits_total: u64,
     pub(crate) wait_seconds_total: f64,
 }
 
@@ -19,9 +20,10 @@ pub(crate) struct HistoryQueryRuntimeMetrics {
 pub(super) struct HistoryQueryLimiter {
     limit: usize,
     semaphore: Arc<Semaphore>,
-    active: Arc<AtomicU64>,
+    permits_in_use: Arc<AtomicU64>,
     waiting: Arc<AtomicU64>,
-    wait_total: Arc<AtomicU64>,
+    acquisitions_total: Arc<AtomicU64>,
+    waits_total: Arc<AtomicU64>,
     wait_nanos_total: Arc<AtomicU64>,
 }
 
@@ -31,32 +33,44 @@ impl HistoryQueryLimiter {
         Self {
             limit,
             semaphore: Arc::new(Semaphore::new(limit)),
-            active: Arc::new(AtomicU64::new(0)),
+            permits_in_use: Arc::new(AtomicU64::new(0)),
             waiting: Arc::new(AtomicU64::new(0)),
-            wait_total: Arc::new(AtomicU64::new(0)),
+            acquisitions_total: Arc::new(AtomicU64::new(0)),
+            waits_total: Arc::new(AtomicU64::new(0)),
             wait_nanos_total: Arc::new(AtomicU64::new(0)),
         }
     }
 
     pub(super) async fn acquire(&self) -> Result<HistoryQueryPermit, AcquireError> {
-        let waiting_guard = WaitingQueryGuard::new(Arc::clone(&self.waiting));
-        let wait_started = Instant::now();
-        let permit = Arc::clone(&self.semaphore).acquire_owned().await?;
-        let waited = wait_started.elapsed();
-        drop(waiting_guard);
-        self.wait_total.fetch_add(1, Ordering::Relaxed);
-        let waited_nanos = u64::try_from(waited.as_nanos()).unwrap_or(u64::MAX);
-        self.wait_nanos_total
-            .fetch_add(waited_nanos, Ordering::Relaxed);
-        Ok(HistoryQueryPermit::new(permit, Arc::clone(&self.active)))
+        let semaphore = Arc::clone(&self.semaphore);
+        let permit = match Arc::clone(&semaphore).try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(TryAcquireError::NoPermits) => {
+                self.waits_total.fetch_add(1, Ordering::Relaxed);
+                let waiting_guard = WaitingQueryGuard::new(
+                    Arc::clone(&self.waiting),
+                    Arc::clone(&self.wait_nanos_total),
+                );
+                let permit = semaphore.acquire_owned().await?;
+                drop(waiting_guard);
+                permit
+            }
+            Err(TryAcquireError::Closed) => semaphore.acquire_owned().await?,
+        };
+        self.acquisitions_total.fetch_add(1, Ordering::Relaxed);
+        Ok(HistoryQueryPermit::new(
+            permit,
+            Arc::clone(&self.permits_in_use),
+        ))
     }
 
     pub(super) fn metrics(&self) -> HistoryQueryRuntimeMetrics {
         HistoryQueryRuntimeMetrics {
-            active: self.active.load(Ordering::Relaxed),
+            permits_in_use: self.permits_in_use.load(Ordering::Relaxed),
             waiting: self.waiting.load(Ordering::Relaxed),
             limit: self.limit as u64,
-            wait_total: self.wait_total.load(Ordering::Relaxed),
+            acquisitions_total: self.acquisitions_total.load(Ordering::Relaxed),
+            waits_total: self.waits_total.load(Ordering::Relaxed),
             wait_seconds_total: self.wait_nanos_total.load(Ordering::Relaxed) as f64
                 / 1_000_000_000.0,
         }
@@ -65,38 +79,47 @@ impl HistoryQueryLimiter {
 
 struct WaitingQueryGuard {
     waiting: Arc<AtomicU64>,
+    wait_nanos_total: Arc<AtomicU64>,
+    started_at: Instant,
 }
 
 impl WaitingQueryGuard {
-    fn new(waiting: Arc<AtomicU64>) -> Self {
+    fn new(waiting: Arc<AtomicU64>, wait_nanos_total: Arc<AtomicU64>) -> Self {
         waiting.fetch_add(1, Ordering::Relaxed);
-        Self { waiting }
+        Self {
+            waiting,
+            wait_nanos_total,
+            started_at: Instant::now(),
+        }
     }
 }
 
 impl Drop for WaitingQueryGuard {
     fn drop(&mut self) {
         self.waiting.fetch_sub(1, Ordering::Relaxed);
+        let waited_nanos = u64::try_from(self.started_at.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        self.wait_nanos_total
+            .fetch_add(waited_nanos, Ordering::Relaxed);
     }
 }
 
 pub(super) struct HistoryQueryPermit {
     _permit: OwnedSemaphorePermit,
-    active: Arc<AtomicU64>,
+    permits_in_use: Arc<AtomicU64>,
 }
 
 impl HistoryQueryPermit {
-    fn new(permit: OwnedSemaphorePermit, active: Arc<AtomicU64>) -> Self {
-        active.fetch_add(1, Ordering::Relaxed);
+    fn new(permit: OwnedSemaphorePermit, permits_in_use: Arc<AtomicU64>) -> Self {
+        permits_in_use.fetch_add(1, Ordering::Relaxed);
         Self {
             _permit: permit,
-            active,
+            permits_in_use,
         }
     }
 }
 
 impl Drop for HistoryQueryPermit {
     fn drop(&mut self) {
-        self.active.fetch_sub(1, Ordering::Relaxed);
+        self.permits_in_use.fetch_sub(1, Ordering::Relaxed);
     }
 }

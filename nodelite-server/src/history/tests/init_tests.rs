@@ -87,6 +87,10 @@ async fn query_history_reports_query_error_when_read_database_is_missing() {
         .expect_err("query should surface read connection error");
 
     assert!(matches!(error, HistoryError::Query(_)));
+    let metrics = store.query_runtime_metrics();
+    assert_eq!(metrics.permits_in_use, 0);
+    assert_eq!(metrics.waiting, 0);
+    assert_eq!(metrics.acquisitions_total, 1);
 
     if let Some(parent) = db_path.parent() {
         let _ = std::fs::remove_dir(parent);
@@ -106,6 +110,10 @@ async fn query_history_range_reports_query_error_when_read_database_is_missing()
         .expect_err("range query should surface read connection error");
 
     assert!(matches!(error, HistoryError::Query(_)));
+    let metrics = store.query_runtime_metrics();
+    assert_eq!(metrics.permits_in_use, 0);
+    assert_eq!(metrics.waiting, 0);
+    assert_eq!(metrics.acquisitions_total, 1);
 
     if let Some(parent) = db_path.parent() {
         let _ = std::fs::remove_dir(parent);
