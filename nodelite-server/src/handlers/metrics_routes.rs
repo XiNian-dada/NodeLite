@@ -10,7 +10,7 @@ mod token_verify;
 use emitter::MetricEmitter;
 pub(crate) use token_verify::render_token_verify_metrics;
 
-use crate::history::HistoryCacheMetrics;
+use crate::history::{HistoryCacheMetrics, HistoryQueryRuntimeMetrics};
 
 #[cfg(test)]
 pub(crate) fn render_prometheus_metrics(
@@ -289,6 +289,7 @@ pub(crate) struct RuntimeMetrics {
     pub(crate) registry_disk_entries_total: u64,
     pub(crate) ws_messages: WsMessageMetrics,
     pub(crate) history_cache: HistoryCacheMetrics,
+    pub(crate) history_queries: HistoryQueryRuntimeMetrics,
 }
 
 pub(crate) fn render_runtime_metrics(metrics: RuntimeMetrics) -> String {
@@ -352,6 +353,36 @@ pub(crate) fn render_runtime_metrics(metrics: RuntimeMetrics) -> String {
         "Number of expired history query cache entries removed during global pruning.",
         &[],
         metrics.history_cache.expired_removals,
+    );
+    emitter.gauge(
+        "nodelite_history_queries_active",
+        "Number of history queries currently holding a SQLite read connection permit.",
+        &[],
+        metrics.history_queries.active,
+    );
+    emitter.gauge(
+        "nodelite_history_queries_waiting",
+        "Number of history queries currently waiting for a read connection permit.",
+        &[],
+        metrics.history_queries.waiting,
+    );
+    emitter.gauge(
+        "nodelite_history_query_concurrency_limit",
+        "Maximum number of concurrent SQLite history read queries.",
+        &[],
+        metrics.history_queries.limit,
+    );
+    emitter.counter(
+        "nodelite_history_query_wait_total",
+        "Number of history cache misses that acquired a SQLite read query permit.",
+        &[],
+        metrics.history_queries.wait_total,
+    );
+    emitter.counter(
+        "nodelite_history_query_wait_seconds_total",
+        "Total time history queries spent waiting for a SQLite read query permit.",
+        &[],
+        metrics.history_queries.wait_seconds_total,
     );
     emitter.gauge(
         "nodelite_registry_nodes",

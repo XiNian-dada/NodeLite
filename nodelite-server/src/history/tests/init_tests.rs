@@ -1,6 +1,26 @@
 use super::*;
 
 #[test]
+fn read_connection_uses_bounded_private_page_cache() {
+    let db_path = temp_history_db_path("read-cache-size");
+    let write_connection = initialize_database(&db_path, 5).expect("database should initialize");
+    drop(write_connection);
+
+    let read_connection =
+        open_read_connection(&db_path, 5).expect("read connection should initialize");
+    let cache_size: i64 = read_connection
+        .query_row("PRAGMA cache_size", [], |row| row.get(0))
+        .expect("cache size should be readable");
+    assert_eq!(cache_size, -HISTORY_READ_CACHE_KIB);
+
+    drop(read_connection);
+    let _ = std::fs::remove_file(&db_path);
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
+}
+
+#[test]
 #[cfg(unix)]
 fn history_database_artifacts_are_mode_600() {
     let runtime = Runtime::new().expect("runtime should build");

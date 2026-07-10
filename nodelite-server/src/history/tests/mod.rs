@@ -11,9 +11,9 @@ use nodelite_proto::{
 use tokio::runtime::Runtime;
 
 use super::{
-    HISTORY_CHANNEL_CAPACITY, HISTORY_QUERY_SQL, HistoryError, HistoryStore,
-    SQLITE_BUSY_MAX_RETRIES, build_history_point, initialize_database, query_history_between,
-    sqlite_busy_retry_delay, write_history_point,
+    HISTORY_CHANNEL_CAPACITY, HISTORY_QUERY_SQL, HISTORY_READ_CACHE_KIB, HistoryError,
+    HistoryStore, SQLITE_BUSY_MAX_RETRIES, build_history_point, initialize_database,
+    open_read_connection, query_history_between, sqlite_busy_retry_delay, write_history_point,
 };
 
 mod init_tests;

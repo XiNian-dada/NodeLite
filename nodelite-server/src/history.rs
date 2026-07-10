@@ -14,6 +14,7 @@
 mod cache;
 mod init;
 mod query;
+mod query_limit;
 mod writer;
 
 use std::collections::{HashMap, HashSet};
@@ -33,10 +34,14 @@ use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::task::JoinHandle;
 use tracing::{error, warn};
 
+#[cfg(test)]
+use self::init::HISTORY_READ_CACHE_KIB;
 use self::init::{initialize_database, open_read_connection};
 #[cfg(test)]
 use self::query::HISTORY_QUERY_SQL;
 use self::query::{HistoryQueryError, query_history_between};
+pub(crate) use self::query_limit::HistoryQueryRuntimeMetrics;
+use self::query_limit::{HistoryQueryLimiter, HistoryQueryPermit};
 use self::writer::{WriterContext, build_history_point, run_history_writer};
 #[cfg(test)]
 use self::writer::{sqlite_busy_retry_delay, write_history_point};
@@ -70,6 +75,8 @@ const HISTORY_CACHE_MAX_BYTES: usize = 8 * 1024 * 1024;
 /// 短 TTL 确保快速写入场景（如测试 seed）能及时看到新数据,
 /// 同时仍能为真实高频刷新（浏览器每秒轮询）提供缓存收益。
 const HISTORY_CACHE_TTL: Duration = Duration::from_secs(1);
+/// History reads retain WAL concurrency but cap private SQLite page caches in flight.
+const HISTORY_QUERY_CONCURRENCY: usize = 4;
 
 pub type HistoryResult<T> = std::result::Result<T, HistoryError>;
 
@@ -129,10 +136,19 @@ pub struct HistoryStore {
     dropped_writes: Arc<AtomicU64>,
     /// 查询结果 LRU 缓存,减少重复聚合的开销。使用 parking_lot::Mutex 降低锁竞争。
     query_cache: Arc<ParkingLotMutex<HistoryQueryCache>>,
+    query_limiter: HistoryQueryLimiter,
 }
 
 impl HistoryStore {
     pub fn new(db_path: PathBuf, sqlite_busy_timeout_secs: u64) -> Self {
+        Self::new_with_query_limit(db_path, sqlite_busy_timeout_secs, HISTORY_QUERY_CONCURRENCY)
+    }
+
+    fn new_with_query_limit(
+        db_path: PathBuf,
+        sqlite_busy_timeout_secs: u64,
+        query_limit: usize,
+    ) -> Self {
         Self {
             db_path: Arc::new(db_path),
             available: Arc::new(AtomicBool::new(false)),
@@ -150,6 +166,7 @@ impl HistoryStore {
                 HISTORY_CACHE_MAX_BYTES,
                 HISTORY_CACHE_TTL,
             ))),
+            query_limiter: HistoryQueryLimiter::new(query_limit),
         }
     }
 
@@ -225,6 +242,16 @@ impl HistoryStore {
 
     pub(crate) fn query_cache_metrics(&self) -> HistoryCacheMetrics {
         self.query_cache.lock().metrics()
+    }
+
+    pub(crate) fn query_runtime_metrics(&self) -> HistoryQueryRuntimeMetrics {
+        self.query_limiter.metrics()
+    }
+
+    async fn acquire_query_permit(&self) -> HistoryResult<HistoryQueryPermit> {
+        self.query_limiter.acquire().await.map_err(|error| {
+            HistoryError::TaskFailed(anyhow!("history query limiter closed: {error}"))
+        })
     }
 
     /// 尝试把一次节点状态记录到历史表。
@@ -386,8 +413,10 @@ impl HistoryStore {
         let db_path = Arc::clone(&self.db_path);
         let node_id = node_id.to_string();
         let sqlite_busy_timeout_secs = self.sqlite_busy_timeout_secs;
+        let query_permit = self.acquire_query_permit().await?;
 
         let points = tokio::task::spawn_blocking(move || {
+            let _query_permit = query_permit;
             let connection = open_read_connection(db_path.as_ref(), sqlite_busy_timeout_secs)
                 .map_err(HistoryError::Query)?;
             query_history_between(&connection, &node_id, since, until, max_points)

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::*;
 
 #[test]
@@ -234,4 +236,37 @@ async fn concurrent_history_queries_use_independent_read_connections() {
     if let Some(parent) = db_path.parent() {
         let _ = std::fs::remove_dir(parent);
     }
+}
+
+#[tokio::test]
+async fn query_limiter_caps_twenty_concurrent_readers() {
+    let store = HistoryStore::new_with_query_limit(PathBuf::from("./data/history.sqlite3"), 5, 4);
+    let max_active = Arc::new(AtomicUsize::new(0));
+    let tasks = (0..20)
+        .map(|_| {
+            let store = store.clone();
+            let max_active = Arc::clone(&max_active);
+            tokio::spawn(async move {
+                let _permit = store
+                    .acquire_query_permit()
+                    .await
+                    .expect("query permit should remain available");
+                let active = store.query_runtime_metrics().active as usize;
+                max_active.fetch_max(active, Ordering::Relaxed);
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for task in tasks {
+        task.await.expect("query task should not panic");
+    }
+
+    assert_eq!(max_active.load(Ordering::Relaxed), 4);
+    let metrics = store.query_runtime_metrics();
+    assert_eq!(metrics.active, 0);
+    assert_eq!(metrics.waiting, 0);
+    assert_eq!(metrics.limit, 4);
+    assert_eq!(metrics.wait_total, 20);
+    assert!(metrics.wait_seconds_total > 0.0);
 }

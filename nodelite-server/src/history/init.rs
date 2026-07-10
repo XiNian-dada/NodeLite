@@ -12,6 +12,9 @@ use crate::fs_security::{create_private_dir_all, ensure_directory_mode};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+/// Read-only connections use a deliberately small private SQLite page cache.
+pub(super) const HISTORY_READ_CACHE_KIB: i64 = 512;
+
 /// 建库:如果父目录不存在则创建,然后建表 / 建索引并收紧权限。
 /// 返回已配置好的持久化连接(WAL 模式 + busy_timeout),供后续写入/查询复用。
 pub(super) fn initialize_database(
@@ -238,6 +241,9 @@ pub(super) fn open_read_connection(
     connection
         .busy_timeout(Duration::from_secs(sqlite_busy_timeout_secs))
         .context("failed to configure sqlite read busy timeout")?;
+    connection
+        .pragma_update(None, "cache_size", -HISTORY_READ_CACHE_KIB)
+        .context("failed to configure sqlite read page cache")?;
     Ok(connection)
 }
 
