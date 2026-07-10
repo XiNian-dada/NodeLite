@@ -89,3 +89,24 @@ impl Drop for TokenVerifyActiveGuard {
         self.state.active.fetch_sub(1, Ordering::Relaxed);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn guards_restore_gauges_when_work_is_cancelled_or_completed() {
+        let state = Arc::new(TokenVerifyMetricsState::default());
+        {
+            let _waiting = TokenVerifyWaitingGuard::start(Arc::clone(&state));
+            let _active = TokenVerifyActiveGuard::start(Arc::clone(&state));
+            let snapshot = state.snapshot(4);
+            assert_eq!(snapshot.waiting, 1);
+            assert_eq!(snapshot.active, 1);
+        }
+
+        let snapshot = state.snapshot(4);
+        assert_eq!(snapshot.waiting, 0);
+        assert_eq!(snapshot.active, 0);
+    }
+}
