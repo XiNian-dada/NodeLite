@@ -1,5 +1,5 @@
 use super::*;
-use futures::SinkExt;
+use futures::{SinkExt, StreamExt};
 use nodelite_proto::{HelloMessage, NodeIdentity, WIRE_PROTOCOL_VERSION, WireMessage};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
@@ -80,6 +80,26 @@ async fn accepts_fragmented_message_at_exact_64_kib_boundary() -> Result<()> {
         .await?;
 
     socket.close(None).await?;
+    server.shutdown().await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rejects_message_above_64_kib_boundary() -> Result<()> {
+    let server = TestServer::start().await?;
+    let node = server
+        .issue_node("itest-oversized-01", "Oversized 01")
+        .await?;
+    let mut payload = padded_hello_payload(&node);
+    payload.push(' ');
+    let (mut socket, _) = connect_async(format!("ws://{}/ws", server.addr)).await?;
+
+    socket.send(Message::Text(payload.into())).await?;
+    let response = tokio::time::timeout(TEST_TIMEOUT, socket.next()).await?;
+    assert!(matches!(
+        response,
+        None | Some(Err(_)) | Some(Ok(Message::Close(_)))
+    ));
+
     server.shutdown().await
 }
 
