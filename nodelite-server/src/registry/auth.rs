@@ -17,8 +17,7 @@ use super::token::{authorized_node_from_entry, constant_time_eq, verify_token};
 use super::validate::validate_runtime_identity;
 use super::{
     AuthorizedNode, NodeRegistry, RegisteredNode, RegistryError, RegistryResult,
-    RegistryTokenStatus, TOKEN_CACHE_TTL, TOKEN_VERIFY_MAX_PARALLELISM,
-    TOKEN_VERIFY_WAIT_WARN_AFTER, TokenCacheEntry,
+    RegistryTokenStatus, TOKEN_CACHE_TTL, TOKEN_VERIFY_WAIT_WARN_AFTER, TokenCacheEntry,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -288,13 +287,6 @@ pub(super) fn token_status_for_node(
         }
         _ => None,
     }
-}
-
-pub(super) fn default_token_verify_limit() -> usize {
-    std::thread::available_parallelism()
-        .map(|parallelism| parallelism.get().min(TOKEN_VERIFY_MAX_PARALLELISM))
-        .unwrap_or(1)
-        .max(1)
 }
 
 fn token_material_matches(left: &RegisteredNode, right: &RegisteredNode) -> bool {

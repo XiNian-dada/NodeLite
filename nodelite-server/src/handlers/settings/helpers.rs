@@ -378,6 +378,7 @@ mod tests {
             max_sanitized_string_bytes: 256,
             metric_anomaly_session_limit: 5,
             sqlite_busy_timeout_secs: 5,
+            token_verify_max_parallelism: nodelite_proto::DEFAULT_TOKEN_VERIFY_MAX_PARALLELISM,
         }
     }
 }

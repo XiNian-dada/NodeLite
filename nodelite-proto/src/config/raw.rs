@@ -18,9 +18,10 @@ use super::defaults::{
     default_metrics_export_node_disk_metrics, default_metrics_export_node_resource_metrics,
     default_node_registry_path, default_ping_interval_secs, default_refresh_interval_secs,
     default_report_interval_secs, default_snapshot_path, default_sqlite_busy_timeout_secs,
-    default_stale_after_secs, default_trusted_proxies, default_ws_auth_block_secs,
-    default_ws_auth_fail_max_attempts, default_ws_auth_fail_window_secs,
-    default_ws_max_connections_per_ip, default_ws_max_total_connections,
+    default_stale_after_secs, default_token_verify_max_parallelism, default_trusted_proxies,
+    default_ws_auth_block_secs, default_ws_auth_fail_max_attempts,
+    default_ws_auth_fail_window_secs, default_ws_max_connections_per_ip,
+    default_ws_max_total_connections,
 };
 use super::helpers::{
     normalize_tags, normalize_totp_secret, parse_trusted_proxies,
@@ -28,8 +29,8 @@ use super::helpers::{
 };
 use super::{
     AgentConfig, AlertingConfig, AuditConfig, ConfigError, GeoIpConfig, GeoIpEdition,
-    GeoIpProvider, MAX_NODE_IDENTITY_TEXT_BYTES, MetricsConfig, ReadonlyAuthConfig, ServerConfig,
-    WsConfig,
+    GeoIpProvider, MAX_NODE_IDENTITY_TEXT_BYTES, MAX_TOKEN_VERIFY_MAX_PARALLELISM,
+    MIN_TOKEN_VERIFY_MAX_PARALLELISM, MetricsConfig, ReadonlyAuthConfig, ServerConfig, WsConfig,
 };
 use crate::validation::{
     ValidationError, normalize_string_list, validate_bounded_text, validate_identifier,
@@ -102,6 +103,8 @@ struct RawServerSection {
     metric_anomaly_session_limit: usize,
     #[serde(default = "default_sqlite_busy_timeout_secs")]
     sqlite_busy_timeout_secs: u64,
+    #[serde(default = "default_token_verify_max_parallelism")]
+    token_verify_max_parallelism: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -347,6 +350,7 @@ impl RawServerConfigFile {
             max_sanitized_string_bytes: self.server.max_sanitized_string_bytes,
             metric_anomaly_session_limit: self.server.metric_anomaly_session_limit,
             sqlite_busy_timeout_secs: self.server.sqlite_busy_timeout_secs,
+            token_verify_max_parallelism: self.server.token_verify_max_parallelism,
         })
     }
 
@@ -561,6 +565,13 @@ impl RawServerConfigFile {
             return Err(ConfigError::new(
                 "server.max_message_bytes must be at least 1024 bytes",
             ));
+        }
+        if !(MIN_TOKEN_VERIFY_MAX_PARALLELISM..=MAX_TOKEN_VERIFY_MAX_PARALLELISM)
+            .contains(&self.server.token_verify_max_parallelism)
+        {
+            return Err(ConfigError::new(format!(
+                "server.token_verify_max_parallelism must be between {MIN_TOKEN_VERIFY_MAX_PARALLELISM} and {MAX_TOKEN_VERIFY_MAX_PARALLELISM}"
+            )));
         }
         Ok(())
     }

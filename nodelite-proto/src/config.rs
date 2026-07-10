@@ -25,6 +25,7 @@ use self::defaults::{
     default_max_outstanding_pings, default_max_sanitized_disks, default_max_sanitized_string_bytes,
     default_metric_anomaly_session_limit, default_metrics_export_node_disk_metrics,
     default_metrics_export_node_resource_metrics, default_sqlite_busy_timeout_secs,
+    default_token_verify_max_parallelism,
 };
 use self::raw::{RawAgentConfigFile, RawServerConfigFile};
 
@@ -85,6 +86,12 @@ pub const DEFAULT_MAX_SANITIZED_STRING_BYTES: usize = 256;
 pub const DEFAULT_METRIC_ANOMALY_SESSION_LIMIT: usize = 5;
 /// SQLite 忙等待超时(秒)。
 pub const DEFAULT_SQLITE_BUSY_TIMEOUT_SECS: u64 = 5;
+/// Argon2 token 验证的默认最大并发数。
+pub const DEFAULT_TOKEN_VERIFY_MAX_PARALLELISM: usize = 4;
+/// Argon2 token 验证并发配置的最小安全值。
+pub const MIN_TOKEN_VERIFY_MAX_PARALLELISM: usize = 1;
+/// Argon2 token 验证并发配置的最大安全值。
+pub const MAX_TOKEN_VERIFY_MAX_PARALLELISM: usize = 8;
 /// 审计日志默认保留天数。
 pub const DEFAULT_AUDIT_RETENTION_DAYS: u64 = 90;
 /// GeoIP 数据库默认更新间隔(天)。
@@ -194,6 +201,9 @@ pub struct ServerConfig {
     #[serde(default = "default_sqlite_busy_timeout_secs")]
     /// SQLite busy timeout 秒数。
     pub sqlite_busy_timeout_secs: u64,
+    #[serde(default = "default_token_verify_max_parallelism")]
+    /// 同时执行的 Argon2 token 验证任务上限。
+    pub token_verify_max_parallelism: usize,
 }
 
 /// 前端只读访问所用的基本认证凭证。

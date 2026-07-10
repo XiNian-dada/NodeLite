@@ -71,11 +71,6 @@ const ARGON2_PARALLELISM: u32 = 1;
 
 /// 一次性安装令牌的有效期(分钟)。
 const INSTALL_TOKEN_TTL_MINUTES: i64 = 15;
-/// Argon2id 每次 verify 会短时占用约 19MiB 内存。从 2 提升至 8 以改善
-/// 重连风暴场景的排队延迟,同时内存峰值仍可控(8 × 19MiB = 152MiB)。
-/// 实际运行时会被 `available_parallelism().min(8)` 限制。
-/// TODO: 后续可考虑配置化,允许低内存 VPS 降至 2 或 4。
-const TOKEN_VERIFY_MAX_PARALLELISM: usize = 8;
 const TOKEN_VERIFY_WAIT_WARN_AFTER: Duration = Duration::from_millis(100);
 const LOCATION_COORDINATE_SCALE: f64 = 1_000_000.0;
 

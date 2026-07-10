@@ -9,9 +9,10 @@ use super::{
     DEFAULT_ALERT_INSPECTION_MEMORY_WARN_PERCENT, DEFAULT_ALERT_MEMORY_WINDOW_MINUTES,
     DEFAULT_ALERT_OFFLINE_THRESHOLD_MINUTES, DEFAULT_ALERT_RTT_WINDOW_MINUTES,
     DEFAULT_AUDIT_RETENTION_DAYS, DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS, DEFAULT_MAX_MESSAGE_BYTES,
-    DEFAULT_WS_AUTH_BLOCK_SECS, DEFAULT_WS_AUTH_FAIL_MAX_ATTEMPTS,
-    DEFAULT_WS_AUTH_FAIL_WINDOW_SECS, DEFAULT_WS_MAX_CONNECTIONS_PER_IP,
-    DEFAULT_WS_MAX_TOTAL_CONNECTIONS, GeoIpEdition, GeoIpProvider, parse_server_config,
+    DEFAULT_TOKEN_VERIFY_MAX_PARALLELISM, DEFAULT_WS_AUTH_BLOCK_SECS,
+    DEFAULT_WS_AUTH_FAIL_MAX_ATTEMPTS, DEFAULT_WS_AUTH_FAIL_WINDOW_SECS,
+    DEFAULT_WS_MAX_CONNECTIONS_PER_IP, DEFAULT_WS_MAX_TOTAL_CONNECTIONS, GeoIpEdition,
+    GeoIpProvider, parse_server_config,
 };
 
 mod agent;
@@ -33,6 +34,14 @@ fn server_example_documents_metrics_section() {
     assert!(example.contains("[metrics]"));
     assert!(example.contains("export_node_resource_metrics"));
     assert!(example.contains("export_node_disk_metrics"));
+}
+
+#[test]
+fn server_example_documents_token_verify_parallelism() {
+    let example = include_str!("../../../config/server.example.toml");
+
+    assert!(example.contains("token_verify_max_parallelism = 4"));
+    assert!(example.contains("每个任务约需 19 MiB"));
 }
 
 #[test]
@@ -68,6 +77,10 @@ fn parses_server_config_with_defaults() {
         DEFAULT_WS_AUTH_FAIL_MAX_ATTEMPTS
     );
     assert_eq!(config.ws.auth_block_secs, DEFAULT_WS_AUTH_BLOCK_SECS);
+    assert_eq!(
+        config.token_verify_max_parallelism,
+        DEFAULT_TOKEN_VERIFY_MAX_PARALLELISM
+    );
     assert!(!config.metrics.export_node_resource_metrics);
     assert!(!config.metrics.export_node_disk_metrics);
     assert_eq!(
@@ -145,6 +158,43 @@ fn parses_server_config_with_defaults() {
         config.alerting.inspection.local_time,
         DEFAULT_ALERT_INSPECTION_LOCAL_TIME
     );
+}
+
+#[test]
+fn parses_token_verify_parallelism_override() {
+    let config = parse_server_config(
+        r#"
+        [server]
+        listen = "127.0.0.1:8080"
+        public_base_url = "https://monitor.example.com"
+        token_verify_max_parallelism = 2
+        "#,
+    )
+    .expect("token verify parallelism should parse");
+
+    assert_eq!(config.token_verify_max_parallelism, 2);
+}
+
+#[test]
+fn rejects_token_verify_parallelism_outside_safe_range() {
+    for invalid in [0, 9] {
+        let input = format!(
+            r#"
+            [server]
+            listen = "127.0.0.1:8080"
+            public_base_url = "https://monitor.example.com"
+            token_verify_max_parallelism = {invalid}
+            "#
+        );
+        let error = parse_server_config(&input)
+            .expect_err("out-of-range token verify parallelism should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("server.token_verify_max_parallelism must be between 1 and 8")
+        );
+    }
 }
 
 #[test]

@@ -107,7 +107,11 @@ impl AppState {
         audit_log.initialize().await?;
         let readiness = ServerReadiness::new(history.is_available());
         let geoip = GeoIpResolver::new(config.geoip.clone()).await;
-        let registry = NodeRegistry::load(config.node_registry_path.as_path()).await?;
+        let registry = NodeRegistry::load_with_token_verify_limit(
+            config.node_registry_path.as_path(),
+            config.token_verify_max_parallelism,
+        )
+        .await?;
 
         let shutdown = CancellationToken::new();
         let shared = SharedState::new(config.clone());
