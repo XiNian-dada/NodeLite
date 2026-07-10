@@ -127,13 +127,14 @@ impl HistoryQueryCache {
         }
     }
 
-    fn prune_expired(&mut self, now: Instant) {
+    pub(super) fn prune_expired(&mut self, now: Instant) -> usize {
         let expired_keys = self
             .entries
             .iter()
             .filter(|(_, entry)| now.saturating_duration_since(entry.cached_at) >= self.ttl)
             .map(|(key, _)| key.clone())
             .collect::<Vec<_>>();
+        let expired_count = expired_keys.len();
         for key in expired_keys {
             if let Some((_, removed_entry)) = self.entries.pop_entry(&key) {
                 self.estimated_bytes = self
@@ -142,6 +143,7 @@ impl HistoryQueryCache {
                 self.expired_removals = self.expired_removals.saturating_add(1);
             }
         }
+        expired_count
     }
 }
 
@@ -188,6 +190,22 @@ mod tests {
         assert_eq!(metrics.entries, 0);
         assert_eq!(metrics.estimated_bytes, 0);
         assert_eq!(metrics.expired_removals, 2);
+    }
+
+    #[test]
+    fn maintenance_prunes_expired_entries_without_a_followup_query() {
+        let ttl = Duration::from_secs(1);
+        let start = Instant::now();
+        let mut cache = HistoryQueryCache::new(
+            NonZeroUsize::new(10).expect("test capacity should be non-zero"),
+            usize::MAX,
+            ttl,
+        );
+        cache.insert(CacheKey::new("idle", 1, 2, 60), vec![point("idle")], start);
+
+        assert_eq!(cache.prune_expired(start + ttl), 1);
+        assert_eq!(cache.metrics().entries, 0);
+        assert_eq!(cache.metrics().expired_removals, 1);
     }
 
     #[test]

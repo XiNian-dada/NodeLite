@@ -244,6 +244,10 @@ impl HistoryStore {
         self.query_cache.lock().metrics()
     }
 
+    pub(crate) fn prune_query_cache(&self) -> usize {
+        self.query_cache.lock().prune_expired(Instant::now())
+    }
+
     pub(crate) fn query_runtime_metrics(&self) -> HistoryQueryRuntimeMetrics {
         self.query_limiter.metrics()
     }
