@@ -11,8 +11,12 @@
 //! - 对外暴露的查询入口统一返回 [`HistoryError`],让 handler 可以按类别区分
 //!   "任务调度失败" / "连接未初始化" / "查询本身失败",而不是匹配错误字符串。
 
+mod cache;
 mod init;
 mod query;
+mod query_limit;
+#[cfg(test)]
+mod test_probe;
 mod writer;
 
 use std::collections::{HashMap, HashSet};
@@ -23,7 +27,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow};
 use chrono::{DateTime, Utc};
-use lru::LruCache;
 use nodelite_proto::{
     DEFAULT_HISTORY_RETENTION_HOURS, DEFAULT_HISTORY_WRITE_INTERVAL_SECS, HistoryPoint, NodeStatus,
 };
@@ -37,10 +40,17 @@ use self::init::{initialize_database, open_read_connection};
 #[cfg(test)]
 use self::query::HISTORY_QUERY_SQL;
 use self::query::{HistoryQueryError, query_history_between};
+pub(crate) use self::query_limit::HistoryQueryRuntimeMetrics;
+use self::query_limit::{HistoryQueryLimiter, HistoryQueryPermit};
+#[cfg(test)]
+use self::test_probe::HistoryQueryProbe;
 use self::writer::{WriterContext, build_history_point, run_history_writer};
 #[cfg(test)]
 use self::writer::{sqlite_busy_retry_delay, write_history_point};
 use crate::queue::{QueueSendError, bounded_mpsc_channel, record_dropped_write, try_enqueue};
+
+pub(crate) use self::cache::HistoryCacheMetrics;
+use self::cache::{CacheKey, HistoryQueryCache};
 
 /// SQLite 在并发写入冲突时的等待时长。
 const SQLITE_BUSY_MAX_RETRIES: u32 = 10;
@@ -59,13 +69,14 @@ const HISTORY_BATCH_MAX: usize = 128;
 const HISTORY_BATCH_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 /// 距上一次 DELETE 至少要过这么长时间才再次触发清理。
 const HISTORY_PRUNE_MIN_INTERVAL: Duration = Duration::from_secs(300);
-/// 查询缓存容量:缓存最近 N 次查询结果。假设 50 个节点被高频查看,每节点最多缓存 4 次不同窗口查询。
+/// 条目数只作为异常小对象下的第二道防线,主要内存约束由字节预算提供。
 const HISTORY_CACHE_CAPACITY: usize = 200;
+/// 查询缓存的估算内存硬预算。当前默认允许约 40-80 个常见 480 点查询结果。
+const HISTORY_CACHE_MAX_BYTES: usize = 8 * 1024 * 1024;
 /// 缓存条目有效期:1 秒内的重复查询直接返回缓存。
 /// 短 TTL 确保快速写入场景（如测试 seed）能及时看到新数据,
 /// 同时仍能为真实高频刷新（浏览器每秒轮询）提供缓存收益。
 const HISTORY_CACHE_TTL: Duration = Duration::from_secs(1);
-
 pub type HistoryResult<T> = std::result::Result<T, HistoryError>;
 
 /// 历史查询路径对外暴露的稳定错误边界。
@@ -73,15 +84,6 @@ pub type HistoryResult<T> = std::result::Result<T, HistoryError>;
 pub enum HistoryError {
     Query(anyhow::Error),
     TaskFailed(anyhow::Error),
-}
-
-/// 查询缓存的键:(node_id, since_ts, until_ts, max_points)。
-type CacheKey = (String, i64, i64, usize);
-
-/// 查询缓存的值:(查询结果, 缓存时间戳)。
-struct CacheEntry {
-    points: Vec<HistoryPoint>,
-    cached_at: Instant,
 }
 
 impl std::fmt::Display for HistoryError {
@@ -125,6 +127,8 @@ pub struct HistoryStore {
     artifacts_hardened_after_write: Arc<AtomicBool>,
     /// SQLite 忙等待超时(秒)。
     sqlite_busy_timeout_secs: u64,
+    /// 每个临时只读连接的 SQLite 私有 page cache(KiB)。None 仅供测试旧版默认值。
+    history_read_cache_kib: Option<u64>,
     /// Writer task 的入口。Some 表示已初始化;关停时清空以让 record_status 进入空操作分支。
     writer_tx: Arc<RwLock<Option<mpsc::Sender<HistoryPoint>>>>,
     /// Writer task 的 join handle,用于在关停时显式 await。
@@ -132,11 +136,42 @@ pub struct HistoryStore {
     /// 历史写入被静默丢弃的总数(channel 满或已关闭)。监控该值可观察反压。
     dropped_writes: Arc<AtomicU64>,
     /// 查询结果 LRU 缓存,减少重复聚合的开销。使用 parking_lot::Mutex 降低锁竞争。
-    query_cache: Arc<ParkingLotMutex<LruCache<CacheKey, CacheEntry>>>,
+    query_cache: Arc<ParkingLotMutex<HistoryQueryCache>>,
+    query_limiter: HistoryQueryLimiter,
+    #[cfg(test)]
+    query_probe: Option<Arc<HistoryQueryProbe>>,
 }
 
 impl HistoryStore {
-    pub fn new(db_path: PathBuf, sqlite_busy_timeout_secs: u64) -> Self {
+    pub fn new(
+        db_path: PathBuf,
+        sqlite_busy_timeout_secs: u64,
+        query_limit: usize,
+        history_read_cache_kib: u64,
+    ) -> Self {
+        Self::new_with_read_cache(
+            db_path,
+            sqlite_busy_timeout_secs,
+            query_limit,
+            Some(history_read_cache_kib),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_with_default_read_cache(
+        db_path: PathBuf,
+        sqlite_busy_timeout_secs: u64,
+        query_limit: usize,
+    ) -> Self {
+        Self::new_with_read_cache(db_path, sqlite_busy_timeout_secs, query_limit, None)
+    }
+
+    fn new_with_read_cache(
+        db_path: PathBuf,
+        sqlite_busy_timeout_secs: u64,
+        query_limit: usize,
+        history_read_cache_kib: Option<u64>,
+    ) -> Self {
         Self {
             db_path: Arc::new(db_path),
             available: Arc::new(AtomicBool::new(false)),
@@ -145,13 +180,26 @@ impl HistoryStore {
             last_pruned_at: Arc::new(AtomicI64::new(0)),
             artifacts_hardened_after_write: Arc::new(AtomicBool::new(false)),
             sqlite_busy_timeout_secs,
+            history_read_cache_kib,
             writer_tx: Arc::new(RwLock::new(None)),
             writer_handle: Arc::new(Mutex::new(None)),
             dropped_writes: Arc::new(AtomicU64::new(0)),
-            query_cache: Arc::new(ParkingLotMutex::new(LruCache::new(
-                std::num::NonZeroUsize::new(HISTORY_CACHE_CAPACITY).expect("cache capacity > 0"),
+            query_cache: Arc::new(ParkingLotMutex::new(HistoryQueryCache::new(
+                std::num::NonZeroUsize::new(HISTORY_CACHE_CAPACITY)
+                    .unwrap_or(std::num::NonZeroUsize::MIN),
+                HISTORY_CACHE_MAX_BYTES,
+                HISTORY_CACHE_TTL,
             ))),
+            query_limiter: HistoryQueryLimiter::new(query_limit),
+            #[cfg(test)]
+            query_probe: None,
         }
+    }
+
+    #[cfg(test)]
+    fn with_query_probe(mut self, query_probe: Arc<HistoryQueryProbe>) -> Self {
+        self.query_probe = Some(query_probe);
+        self
     }
 
     /// 初始化数据库 + 启动 writer task。失败不会抛出,仅记录警告并保持 `available=false`。
@@ -222,6 +270,28 @@ impl HistoryStore {
         let capacity = tx.max_capacity();
         let depth = capacity.saturating_sub(tx.capacity());
         (depth as u64, capacity as u64)
+    }
+
+    pub(crate) fn query_cache_metrics(&self) -> HistoryCacheMetrics {
+        self.query_cache.lock().metrics()
+    }
+
+    pub(crate) fn prune_query_cache(&self) -> usize {
+        self.query_cache.lock().prune_expired(Instant::now())
+    }
+
+    pub(crate) fn query_runtime_metrics(&self) -> HistoryQueryRuntimeMetrics {
+        self.query_limiter.metrics()
+    }
+
+    async fn acquire_query_permit(&self) -> HistoryResult<HistoryQueryPermit> {
+        self.query_limiter.acquire().await.map_err(|error| {
+            HistoryError::TaskFailed(anyhow!("history query limiter closed: {error}"))
+        })
+    }
+
+    fn cached_query(&self, cache_key: &CacheKey) -> Option<Vec<HistoryPoint>> {
+        self.query_cache.lock().get(cache_key, Instant::now())
     }
 
     /// 尝试把一次节点状态记录到历史表。
@@ -369,36 +439,38 @@ impl HistoryStore {
         until: DateTime<Utc>,
         max_points: usize,
     ) -> HistoryResult<Vec<HistoryPoint>> {
-        let cache_key = (
-            node_id.to_string(),
-            since.timestamp(),
-            until.timestamp(),
-            max_points,
-        );
+        let cache_key = CacheKey::new(node_id, since.timestamp(), until.timestamp(), max_points);
 
         // 先尝试从缓存读取（parking_lot::Mutex 是同步的，不需要 await）
-        {
-            let mut cache = self.query_cache.lock();
-            if let Some(entry) = cache.get(&cache_key) {
-                let age = entry.cached_at.elapsed();
-                if age < HISTORY_CACHE_TTL {
-                    return Ok(entry.points.clone());
-                }
-                // TTL 过期,移除旧条目
-                cache.pop(&cache_key);
-            }
+        if let Some(points) = self.cached_query(&cache_key) {
+            return Ok(points);
         }
 
         // 缓存未命中或已过期,执行实际查询
         let db_path = Arc::clone(&self.db_path);
         let node_id = node_id.to_string();
         let sqlite_busy_timeout_secs = self.sqlite_busy_timeout_secs;
+        let history_read_cache_kib = self.history_read_cache_kib;
+        let query_permit = self.acquire_query_permit().await?;
+        if let Some(points) = self.cached_query(&cache_key) {
+            return Ok(points);
+        }
+        #[cfg(test)]
+        let query_probe = self.query_probe.clone();
 
-        let points = tokio::task::spawn_blocking(move || {
-            let connection = open_read_connection(db_path.as_ref(), sqlite_busy_timeout_secs)
-                .map_err(HistoryError::Query)?;
-            query_history_between(&connection, &node_id, since, until, max_points)
-                .map_err(HistoryError::from)
+        let (points, query_permit) = tokio::task::spawn_blocking(move || -> HistoryResult<_> {
+            let query_permit = query_permit;
+            #[cfg(test)]
+            let _query_probe_guard = query_probe.as_ref().map(HistoryQueryProbe::enter);
+            let connection = open_read_connection(
+                db_path.as_ref(),
+                sqlite_busy_timeout_secs,
+                history_read_cache_kib,
+            )
+            .map_err(HistoryError::Query)?;
+            let points = query_history_between(&connection, &node_id, since, until, max_points)
+                .map_err(HistoryError::from)?;
+            Ok((points, query_permit))
         })
         .await
         .map_err(|error| {
@@ -408,14 +480,9 @@ impl HistoryStore {
         // 写入缓存（只缓存非空结果，避免测试场景中缓存"数据还没写入"的空快照）
         if !points.is_empty() {
             let mut cache = self.query_cache.lock();
-            cache.put(
-                cache_key,
-                CacheEntry {
-                    points: points.clone(),
-                    cached_at: Instant::now(),
-                },
-            );
+            cache.insert(cache_key, points.clone(), Instant::now());
         }
+        drop(query_permit);
 
         Ok(points)
     }

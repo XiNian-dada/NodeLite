@@ -101,7 +101,12 @@ impl AppState {
         config: Arc<nodelite_proto::ServerConfig>,
         config_path: Arc<PathBuf>,
     ) -> anyhow::Result<Self> {
-        let history = HistoryStore::new(config.history_db_path.clone(), 5);
+        let history = HistoryStore::new(
+            config.history_db_path.clone(),
+            config.sqlite_busy_timeout_secs,
+            config.history_query_concurrency,
+            config.history_read_cache_kib,
+        );
         history.initialize().await;
         let audit_log = AuditLog::new(config.audit.clone(), config.sqlite_busy_timeout_secs);
         audit_log.initialize().await?;

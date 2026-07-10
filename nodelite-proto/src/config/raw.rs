@@ -11,7 +11,8 @@ use super::defaults::{
     default_audit_log_token_events, default_audit_retention_days, default_connect_timeout_secs,
     default_geoip_auto_update, default_geoip_database_path, default_geoip_edition,
     default_geoip_enabled, default_geoip_provider, default_geoip_update_interval_days,
-    default_hello_timeout_secs, default_history_db_path, default_ignored_filesystems,
+    default_hello_timeout_secs, default_history_db_path, default_history_query_concurrency,
+    default_history_read_cache_kib, default_ignored_filesystems,
     default_insecure_transport_warn_interval_secs, default_max_incoming_message_bytes,
     default_max_message_bytes, default_max_outstanding_pings, default_max_sanitized_disks,
     default_max_sanitized_string_bytes, default_metric_anomaly_session_limit,
@@ -29,8 +30,10 @@ use super::helpers::{
 };
 use super::{
     AgentConfig, AlertingConfig, AuditConfig, ConfigError, GeoIpConfig, GeoIpEdition,
-    GeoIpProvider, MAX_NODE_IDENTITY_TEXT_BYTES, MAX_TOKEN_VERIFY_MAX_PARALLELISM,
-    MIN_TOKEN_VERIFY_MAX_PARALLELISM, MetricsConfig, ReadonlyAuthConfig, ServerConfig, WsConfig,
+    GeoIpProvider, MAX_HISTORY_QUERY_CONCURRENCY, MAX_HISTORY_READ_CACHE_KIB,
+    MAX_NODE_IDENTITY_TEXT_BYTES, MAX_TOKEN_VERIFY_MAX_PARALLELISM, MIN_HISTORY_QUERY_CONCURRENCY,
+    MIN_HISTORY_READ_CACHE_KIB, MIN_TOKEN_VERIFY_MAX_PARALLELISM, MetricsConfig,
+    ReadonlyAuthConfig, ServerConfig, WsConfig,
 };
 use crate::validation::{
     ValidationError, normalize_string_list, validate_bounded_text, validate_identifier,
@@ -81,6 +84,10 @@ struct RawServerSection {
     node_registry_path: PathBuf,
     #[serde(default = "default_history_db_path")]
     history_db_path: PathBuf,
+    #[serde(default = "default_history_query_concurrency")]
+    history_query_concurrency: usize,
+    #[serde(default = "default_history_read_cache_kib")]
+    history_read_cache_kib: u64,
     #[serde(default = "default_snapshot_path")]
     snapshot_path: PathBuf,
     #[serde(default = "default_stale_after_secs")]
@@ -332,6 +339,8 @@ impl RawServerConfigFile {
             alerting,
             node_registry_path: self.server.node_registry_path,
             history_db_path: self.server.history_db_path,
+            history_query_concurrency: self.server.history_query_concurrency,
+            history_read_cache_kib: self.server.history_read_cache_kib,
             snapshot_path: self.server.snapshot_path,
             stale_after_secs: self.server.stale_after_secs,
             ping_interval_secs: self.server.ping_interval_secs,
@@ -571,6 +580,20 @@ impl RawServerConfigFile {
         {
             return Err(ConfigError::new(format!(
                 "server.token_verify_max_parallelism must be between {MIN_TOKEN_VERIFY_MAX_PARALLELISM} and {MAX_TOKEN_VERIFY_MAX_PARALLELISM}"
+            )));
+        }
+        if !(MIN_HISTORY_QUERY_CONCURRENCY..=MAX_HISTORY_QUERY_CONCURRENCY)
+            .contains(&self.server.history_query_concurrency)
+        {
+            return Err(ConfigError::new(format!(
+                "server.history_query_concurrency must be between {MIN_HISTORY_QUERY_CONCURRENCY} and {MAX_HISTORY_QUERY_CONCURRENCY}",
+            )));
+        }
+        if !(MIN_HISTORY_READ_CACHE_KIB..=MAX_HISTORY_READ_CACHE_KIB)
+            .contains(&self.server.history_read_cache_kib)
+        {
+            return Err(ConfigError::new(format!(
+                "server.history_read_cache_kib must be between {MIN_HISTORY_READ_CACHE_KIB} and {MAX_HISTORY_READ_CACHE_KIB} KiB",
             )));
         }
         Ok(())

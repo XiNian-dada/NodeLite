@@ -10,6 +10,8 @@ mod token_verify;
 use emitter::MetricEmitter;
 pub(crate) use token_verify::render_token_verify_metrics;
 
+use crate::history::{HistoryCacheMetrics, HistoryQueryRuntimeMetrics};
+
 #[cfg(test)]
 pub(crate) fn render_prometheus_metrics(
     readiness: &ServerReadiness,
@@ -286,6 +288,8 @@ pub(crate) struct RuntimeMetrics {
     pub(crate) registry_nodes: u64,
     pub(crate) registry_disk_entries_total: u64,
     pub(crate) ws_messages: WsMessageMetrics,
+    pub(crate) history_cache: HistoryCacheMetrics,
+    pub(crate) history_queries: HistoryQueryRuntimeMetrics,
 }
 
 pub(crate) fn render_runtime_metrics(metrics: RuntimeMetrics) -> String {
@@ -326,6 +330,66 @@ pub(crate) fn render_runtime_metrics(metrics: RuntimeMetrics) -> String {
         metrics.history_wal_bytes,
     );
     render_sqlite_wal_checkpoint_metrics(&mut emitter, metrics.sqlite_wal_checkpoint);
+    emitter.gauge(
+        "nodelite_history_cache_entries",
+        "Number of query result entries currently retained by the history cache.",
+        &[],
+        metrics.history_cache.entries,
+    );
+    emitter.gauge(
+        "nodelite_history_cache_estimated_bytes",
+        "Conservative estimated bytes retained by history query cache entries and metadata.",
+        &[],
+        metrics.history_cache.estimated_bytes,
+    );
+    emitter.counter(
+        "nodelite_history_cache_evictions_total",
+        "Number of history query cache entries evicted by entry or byte limits.",
+        &[],
+        metrics.history_cache.evictions,
+    );
+    emitter.counter(
+        "nodelite_history_cache_expired_removals_total",
+        "Number of expired history query cache entries removed on access or periodic pruning.",
+        &[],
+        metrics.history_cache.expired_removals,
+    );
+    emitter.gauge(
+        "nodelite_history_query_permits_in_use",
+        "Number of history queries currently holding a concurrency permit.",
+        &[],
+        metrics.history_queries.permits_in_use,
+    );
+    emitter.gauge(
+        "nodelite_history_queries_waiting",
+        "Number of history queries currently waiting for a concurrency permit.",
+        &[],
+        metrics.history_queries.waiting,
+    );
+    emitter.gauge(
+        "nodelite_history_query_concurrency_limit",
+        "Maximum number of concurrent SQLite history read queries.",
+        &[],
+        metrics.history_queries.limit,
+    );
+    emitter.counter(
+        "nodelite_history_query_permit_acquisitions_total",
+        "Number of history cache misses that acquired a query concurrency permit.",
+        &[],
+        metrics.history_queries.acquisitions_total,
+    );
+    emitter.counter(
+        "nodelite_history_query_waits_total",
+        "Number of history queries that had to wait because all permits were in use.",
+        &[],
+        metrics.history_queries.waits_total,
+    );
+    emitter.counter(
+        "nodelite_history_query_wait_seconds_total",
+        "Total time history queries spent waiting for a concurrency permit.",
+        &[],
+        metrics.history_queries.wait_seconds_total,
+    );
     emitter.gauge(
         "nodelite_registry_nodes",
         "Number of registered nodes currently loaded in memory.",

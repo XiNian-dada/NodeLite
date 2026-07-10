@@ -20,12 +20,12 @@ use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 
 use self::defaults::{
-    default_connect_timeout_secs, default_hello_timeout_secs,
-    default_insecure_transport_warn_interval_secs, default_max_incoming_message_bytes,
-    default_max_outstanding_pings, default_max_sanitized_disks, default_max_sanitized_string_bytes,
-    default_metric_anomaly_session_limit, default_metrics_export_node_disk_metrics,
-    default_metrics_export_node_resource_metrics, default_sqlite_busy_timeout_secs,
-    default_token_verify_max_parallelism,
+    default_connect_timeout_secs, default_hello_timeout_secs, default_history_query_concurrency,
+    default_history_read_cache_kib, default_insecure_transport_warn_interval_secs,
+    default_max_incoming_message_bytes, default_max_outstanding_pings, default_max_sanitized_disks,
+    default_max_sanitized_string_bytes, default_metric_anomaly_session_limit,
+    default_metrics_export_node_disk_metrics, default_metrics_export_node_resource_metrics,
+    default_sqlite_busy_timeout_secs, default_token_verify_max_parallelism,
 };
 use self::raw::{RawAgentConfigFile, RawServerConfigFile};
 
@@ -56,6 +56,18 @@ pub const DEFAULT_REPORT_INTERVAL_SECS: u64 = 5;
 pub const DEFAULT_HISTORY_RETENTION_HOURS: u64 = 24 * 14;
 /// 同一节点两次历史写入的最小间隔(秒),降低 SQLite 压力。
 pub const DEFAULT_HISTORY_WRITE_INTERVAL_SECS: u64 = 30;
+/// 同时执行的历史 SQLite 只读查询默认上限。
+pub const DEFAULT_HISTORY_QUERY_CONCURRENCY: usize = 4;
+/// 历史只读连接的 SQLite 私有 page cache 默认大小(KiB)。
+pub const DEFAULT_HISTORY_READ_CACHE_KIB: u64 = 512;
+/// 历史查询至少保留一个并发槽位。
+pub const MIN_HISTORY_QUERY_CONCURRENCY: usize = 1;
+/// 防止大量并发 SQLite page cache 抬高匿名内存峰值。
+pub const MAX_HISTORY_QUERY_CONCURRENCY: usize = 8;
+/// 过小的 page cache 会让覆盖索引查询反复读取相同页面。
+pub const MIN_HISTORY_READ_CACHE_KIB: u64 = 64;
+/// 单连接 page cache 的运维安全上限(KiB)。
+pub const MAX_HISTORY_READ_CACHE_KIB: u64 = 1024;
 /// WebSocket 并发连接总数上限。
 pub const DEFAULT_WS_MAX_TOTAL_CONNECTIONS: usize = 1024;
 /// 单个 IP 允许的 WebSocket 并发连接数。
@@ -162,6 +174,12 @@ pub struct ServerConfig {
     pub node_registry_path: PathBuf,
     /// 历史指标 SQLite 数据库路径。
     pub history_db_path: PathBuf,
+    #[serde(default = "default_history_query_concurrency")]
+    /// 同时执行的历史 SQLite 只读查询上限。
+    pub history_query_concurrency: usize,
+    #[serde(default = "default_history_read_cache_kib")]
+    /// 每个历史只读连接的 SQLite 私有 page cache 大小(KiB)。
+    pub history_read_cache_kib: u64,
     /// 最新快照持久化文件路径。
     pub snapshot_path: PathBuf,
     /// 超过该秒数未收到上报后,节点视为离线。

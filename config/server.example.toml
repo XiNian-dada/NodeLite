@@ -17,6 +17,10 @@ node_registry_path = "./config/server.json"
 # 历史图是按写入间隔采样的趋势数据,不是完整 metrics 归档;队列满时会优先实时视图并丢弃历史点。
 # 如果 /metrics 中 nodelite_history_dropped_writes_total 持续增长,说明历史写入跟不上上报速率或磁盘 I/O。
 history_db_path = "./data/history.sqlite3"
+# 同时执行的历史只读查询数,允许 1-8。提高会增加吞吐,也会按连接数放大 SQLite 私有 page cache。
+history_query_concurrency = 4
+# 每个历史只读连接的 SQLite 私有 page cache(KiB),允许 64-1024,不等同于 Linux filesystem page cache。
+history_read_cache_kib = 512
 # 运行态快照文件,用于 Server 重启后秒级恢复最近视图。
 snapshot_path = "./data/snapshot.json"
 # 多少秒未收到心跳即视为节点离线。

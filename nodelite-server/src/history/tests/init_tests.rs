@@ -1,6 +1,52 @@
 use super::*;
 
 #[test]
+fn read_connection_uses_bounded_private_page_cache() {
+    let db_path = temp_history_db_path("read-cache-size");
+    let write_connection = initialize_database(&db_path, 5).expect("database should initialize");
+    drop(write_connection);
+
+    let read_connection = open_read_connection(&db_path, 5, Some(DEFAULT_HISTORY_READ_CACHE_KIB))
+        .expect("read connection should initialize");
+    let cache_size: i64 = read_connection
+        .query_row("PRAGMA cache_size", [], |row| row.get(0))
+        .expect("cache size should be readable");
+    assert_eq!(cache_size, -(DEFAULT_HISTORY_READ_CACHE_KIB as i64));
+
+    drop(read_connection);
+    let _ = std::fs::remove_file(&db_path);
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
+}
+
+#[test]
+fn read_connection_can_preserve_sqlite_default_page_cache() {
+    let db_path = temp_history_db_path("default-read-cache-size");
+    let write_connection = initialize_database(&db_path, 5).expect("database should initialize");
+    drop(write_connection);
+
+    let expected: i64 =
+        rusqlite::Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .expect("reference read connection should initialize")
+            .query_row("PRAGMA cache_size", [], |row| row.get(0))
+            .expect("reference cache size should be readable");
+    let read_connection =
+        open_read_connection(&db_path, 5, None).expect("read connection should initialize");
+    let cache_size: i64 = read_connection
+        .query_row("PRAGMA cache_size", [], |row| row.get(0))
+        .expect("cache size should be readable");
+
+    assert_eq!(cache_size, expected);
+
+    drop(read_connection);
+    let _ = std::fs::remove_file(&db_path);
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
+}
+
+#[test]
 #[cfg(unix)]
 fn history_database_artifacts_are_mode_600() {
     let runtime = Runtime::new().expect("runtime should build");
@@ -58,7 +104,7 @@ fn history_database_artifacts_are_mode_600() {
 #[tokio::test]
 async fn query_history_reports_query_error_when_read_database_is_missing() {
     let db_path = temp_history_db_path("missing-query-db");
-    let store = HistoryStore::new(db_path.clone(), 5);
+    let store = test_history_store(db_path.clone());
     store.available.store(true, Ordering::Relaxed);
 
     let error = store
@@ -67,6 +113,10 @@ async fn query_history_reports_query_error_when_read_database_is_missing() {
         .expect_err("query should surface read connection error");
 
     assert!(matches!(error, HistoryError::Query(_)));
+    let metrics = store.query_runtime_metrics();
+    assert_eq!(metrics.permits_in_use, 0);
+    assert_eq!(metrics.waiting, 0);
+    assert_eq!(metrics.acquisitions_total, 1);
 
     if let Some(parent) = db_path.parent() {
         let _ = std::fs::remove_dir(parent);
@@ -76,7 +126,7 @@ async fn query_history_reports_query_error_when_read_database_is_missing() {
 #[tokio::test]
 async fn query_history_range_reports_query_error_when_read_database_is_missing() {
     let db_path = temp_history_db_path("missing-range-query-db");
-    let store = HistoryStore::new(db_path.clone(), 5);
+    let store = test_history_store(db_path.clone());
     store.available.store(true, Ordering::Relaxed);
 
     let now = Utc::now();
@@ -86,6 +136,10 @@ async fn query_history_range_reports_query_error_when_read_database_is_missing()
         .expect_err("range query should surface read connection error");
 
     assert!(matches!(error, HistoryError::Query(_)));
+    let metrics = store.query_runtime_metrics();
+    assert_eq!(metrics.permits_in_use, 0);
+    assert_eq!(metrics.waiting, 0);
+    assert_eq!(metrics.acquisitions_total, 1);
 
     if let Some(parent) = db_path.parent() {
         let _ = std::fs::remove_dir(parent);

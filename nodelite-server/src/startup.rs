@@ -141,6 +141,8 @@ async fn initialize_server_runtime(
     let history = HistoryStore::new(
         config.history_db_path.clone(),
         config.sqlite_busy_timeout_secs,
+        config.history_query_concurrency,
+        config.history_read_cache_kib,
     );
     let audit_log = AuditLog::new(config.audit.clone(), config.sqlite_busy_timeout_secs);
     history.initialize().await;
