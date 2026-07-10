@@ -527,12 +527,9 @@ fn lookup_country(reader: &maxminddb::Reader<Vec<u8>>, ip: IpAddr) -> Option<Geo
         .country
         .iso_code
         .or(country.registered_country.iso_code)?;
-    Some(GeoIpLocation {
-        country: iso_code.to_ascii_uppercase(),
-        city: None,
-        latitude: None,
-        longitude: None,
-    })
+    sanitize_location_override(Some(iso_code.to_ascii_uppercase()), None, None, None)
+        .ok()
+        .flatten()
 }
 
 fn lookup_city(reader: &maxminddb::Reader<Vec<u8>>, ip: IpAddr) -> Option<GeoIpLocation> {
@@ -550,12 +547,14 @@ fn lookup_city(reader: &maxminddb::Reader<Vec<u8>>, ip: IpAddr) -> Option<GeoIpL
         .or(city.city.names.brazilian_portuguese)
         .or(city.city.names.russian)
         .map(str::to_string);
-    Some(GeoIpLocation {
-        country: country.to_ascii_uppercase(),
-        city: city_name,
-        latitude: city.location.latitude,
-        longitude: city.location.longitude,
-    })
+    sanitize_location_override(
+        Some(country.to_ascii_uppercase()),
+        city_name,
+        city.location.latitude,
+        city.location.longitude,
+    )
+    .ok()
+    .flatten()
 }
 
 fn is_lan_ip(ip: IpAddr) -> bool {

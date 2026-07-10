@@ -9,7 +9,8 @@ use super::{
     RegistryError, RegistryFile, TokenVerifyProbe, build_agent_server_url,
     build_github_release_base_url, default_agent_release_base_url, issue_node,
     registry_file_read_count, release_registry_lock_with, render_install_command,
-    reset_registry_file_read_count, token_is_unexpired, validate_registered_node, verify_token,
+    reset_registry_file_read_count, token_is_unexpired, validate_registered_node,
+    validate_runtime_identity, verify_token,
 };
 use nodelite_proto::NodeIdentity;
 
@@ -33,6 +34,9 @@ fn legacy_node(
         node_label: node_label.to_string(),
         token_hash: String::new(),
         token_generation: 0,
+        previous_token_hash: String::new(),
+        previous_token_generation: None,
+        previous_token_valid_until: None,
         token: token.to_string(),
         tags: Vec::new(),
         created_at: Utc::now(),

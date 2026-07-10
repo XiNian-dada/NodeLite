@@ -3,10 +3,10 @@
 use anyhow::{Result, anyhow};
 use axum::extract::ws::{Message, WebSocket};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use futures::SinkExt;
 use tracing::{info, warn};
 
 use super::ActiveSession;
+use super::transport::send_message;
 use crate::AppState;
 use crate::registry::{NodeRegistry, RegistryTokenStatus};
 
@@ -35,7 +35,11 @@ pub(crate) async fn handle_refresh_request(
             "ignoring client-supplied node_id in refresh_token_request",
         );
     }
-    match state.registry.refresh_token(&session.node_id).await {
+    match state
+        .registry
+        .refresh_token(&session.node_id, session.session_generation)
+        .await
+    {
         Ok((new_token, expires_at, new_generation)) => {
             let response = nodelite_proto::WireMessage::RefreshTokenResponse(
                 nodelite_proto::RefreshTokenResponseMessage {
@@ -45,10 +49,12 @@ pub(crate) async fn handle_refresh_request(
             );
             let payload = serde_json::to_string(&response)
                 .map_err(|error| anyhow!("failed to serialize refresh response: {error}"))?;
-            sender
-                .send(Message::Text(payload.into()))
-                .await
-                .map_err(|error| anyhow!("failed to send refresh response: {error}"))?;
+            send_message(
+                sender,
+                Message::Text(payload.into()),
+                "failed to send refresh response",
+            )
+            .await?;
             session.session_token = new_token;
             session.session_generation = new_generation;
             session.token_expires_at = Some(expires_at);
@@ -65,10 +71,12 @@ pub(crate) async fn handle_refresh_request(
                 });
             let payload = serde_json::to_string(&notice)
                 .map_err(|error| anyhow!("failed to serialize notice: {error}"))?;
-            sender
-                .send(Message::Text(payload.into()))
-                .await
-                .map_err(|error| anyhow!("failed to send notice: {error}"))?;
+            send_message(
+                sender,
+                Message::Text(payload.into()),
+                "failed to send notice",
+            )
+            .await?;
         }
     }
     Ok(super::LoopAction::Continue)
@@ -88,7 +96,11 @@ pub(crate) async fn ensure_current_token(
         return true;
     }
 
-    let Some(status) = state.registry.token_status(&session.node_id).await else {
+    let Some(status) = state
+        .registry
+        .token_status(&session.node_id, session.session_generation)
+        .await
+    else {
         warn!(node_id = %session.node_id, "{log_message}");
         return false;
     };
@@ -108,7 +120,10 @@ pub(crate) async fn should_refresh_agent_token(
         return Ok(token_needs_refresh(session.token_expires_at, refresh_after));
     }
 
-    let Some(status) = registry.token_status(&session.node_id).await else {
+    let Some(status) = registry
+        .token_status(&session.node_id, session.session_generation)
+        .await
+    else {
         return Ok(true);
     };
     if !apply_current_token_status(session, status) {
@@ -151,7 +166,9 @@ pub(crate) async fn refresh_session_token(
     trigger: &str,
 ) -> Result<DateTime<Utc>> {
     let node_id = session.node_id.clone();
-    let (new_token, expires_at, new_generation) = registry.refresh_token(&node_id).await?;
+    let (new_token, expires_at, new_generation) = registry
+        .refresh_token(&node_id, session.session_generation)
+        .await?;
     info!(
         node_id = %session.node_id,
         trigger,
@@ -167,10 +184,12 @@ pub(crate) async fn refresh_session_token(
     );
     let payload = serde_json::to_string(&response)
         .map_err(|error| anyhow!("failed to serialize token refresh response: {error}"))?;
-    sender
-        .send(Message::Text(payload.into()))
-        .await
-        .map_err(|error| anyhow!("failed to send token refresh response: {error}"))?;
+    send_message(
+        sender,
+        Message::Text(payload.into()),
+        "failed to send token refresh response",
+    )
+    .await?;
     session.session_token = new_token;
     session.session_generation = new_generation;
     session.token_expires_at = Some(expires_at);
@@ -180,12 +199,19 @@ pub(crate) async fn refresh_session_token(
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
     use chrono::Utc;
+    use tokio::io::duplex;
+    use tokio_tungstenite::WebSocketStream;
+    use tokio_tungstenite::tungstenite::protocol::{Message as TungsteniteMessage, Role};
 
     use super::{
         AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS, ActiveSession, RegistryTokenStatus,
         apply_current_token_status, token_needs_refresh,
     };
+    use crate::registry::{IssueNodeRequest, NodeRegistry, issue_node};
+    use crate::ws::transport::send_message_with_timeout;
 
     fn session() -> ActiveSession {
         ActiveSession {
@@ -196,6 +222,21 @@ mod tests {
             session_generation: 3,
             token_expires_at: None,
             registry_revision: 11,
+        }
+    }
+
+    fn identity_for(node_id: &str) -> nodelite_proto::NodeIdentity {
+        nodelite_proto::NodeIdentity {
+            node_id: node_id.to_string(),
+            node_label: node_id.to_string(),
+            hostname: format!("{node_id}.internal"),
+            os: "Linux".to_string(),
+            kernel_version: None,
+            cpu_model: None,
+            cpu_cores: 2,
+            agent_version: "test".to_string(),
+            boot_time: None,
+            tags: Vec::new(),
         }
     }
 
@@ -256,5 +297,88 @@ mod tests {
         assert!(!apply_current_token_status(&mut session, status));
         assert_eq!(session.token_expires_at, None);
         assert_eq!(session.registry_revision, 11);
+    }
+
+    #[tokio::test]
+    async fn old_token_survives_repeated_refresh_response_send_timeouts() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("nodelite-refresh-timeout-{unique}"));
+        std::fs::create_dir_all(&temp_dir).expect("temp dir");
+        let path = temp_dir.join("server.json");
+        let issued = issue_node(
+            &path,
+            IssueNodeRequest {
+                node_id: "timeout-01".to_string(),
+                node_label: Some("Timeout 01".to_string()),
+                tags: Vec::new(),
+            },
+        )
+        .await
+        .expect("node should be issued");
+        let mut registry = NodeRegistry::load(&path)
+            .await
+            .expect("registry should load");
+        let identity = identity_for("timeout-01");
+        let mut session_generation = 1;
+        let mut original_grace_deadline = None;
+
+        for expected_generation in 2..=4 {
+            let (new_token, expires_at, new_generation) = registry
+                .refresh_token("timeout-01", session_generation)
+                .await
+                .expect("token should be persisted before send");
+            assert_eq!(new_generation, expected_generation);
+            let node = registry
+                .list_registered_nodes()
+                .await
+                .into_iter()
+                .next()
+                .expect("registered node should exist");
+            let grace_deadline = node
+                .previous_token_valid_until
+                .expect("previous token should have a grace deadline");
+            match original_grace_deadline {
+                Some(original) => assert_eq!(grace_deadline, original),
+                None => original_grace_deadline = Some(grace_deadline),
+            }
+            let response = nodelite_proto::WireMessage::RefreshTokenResponse(
+                nodelite_proto::RefreshTokenResponseMessage {
+                    new_token,
+                    expires_at: expires_at.to_rfc3339(),
+                },
+            );
+            let payload =
+                serde_json::to_string(&response).expect("refresh response should serialize");
+            let (stream, _blocked_peer) = duplex(1);
+            let mut socket = WebSocketStream::from_raw_socket(stream, Role::Server, None).await;
+
+            send_message_with_timeout(
+                &mut socket,
+                TungsteniteMessage::Text(payload.into()),
+                "test refresh response send",
+                Duration::from_millis(20),
+            )
+            .await
+            .expect_err("blocked refresh response should time out");
+            drop(socket);
+            drop(registry);
+
+            registry = NodeRegistry::load(&path)
+                .await
+                .expect("registry should reload after failed send");
+            let authorized = registry
+                .authorize(&identity, &issued.node_session_token)
+                .await
+                .expect("old token should reconnect during persisted grace");
+            assert_eq!(authorized.generation, 1);
+            session_generation = authorized.generation;
+        }
+
+        drop(registry);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&temp_dir);
     }
 }

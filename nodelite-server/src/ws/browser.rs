@@ -21,8 +21,8 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
+use futures::StreamExt;
 use futures::stream::SplitSink;
-use futures::{SinkExt, StreamExt};
 use nodelite_proto::BrowserMessage;
 use tokio::sync::broadcast;
 use tracing::warn;
@@ -30,6 +30,8 @@ use tracing::warn;
 use crate::AppState;
 use crate::admission::{resolve_client_ip, ws_admission_error_response};
 use crate::state::SharedState;
+
+use super::transport::{WebSocketPeer, configure_upgrade, send_message};
 
 type BrowserSink = SplitSink<WebSocket, Message>;
 
@@ -48,8 +50,7 @@ pub async fn ws_browser_handler(
         Err(error) => return ws_admission_error_response(error),
     };
     let max_message_bytes = config.max_message_bytes;
-    ws.max_frame_size(max_message_bytes)
-        .max_message_size(max_message_bytes)
+    configure_upgrade(ws, WebSocketPeer::Browser, max_message_bytes)
         .on_upgrade(move |socket| async move {
             // permit 持有到会话结束;drop 时自动把连接配额归还给该 IP。
             let _permit = permit;
@@ -163,19 +164,80 @@ async fn send_browser_message(
 ) -> anyhow::Result<()> {
     let payload = serde_json::to_string(message)
         .map_err(|error| anyhow!("failed to serialize browser message: {error}"))?;
-    sender
-        .send(Message::Text(payload.into()))
-        .await
-        .map_err(|error| anyhow!("failed to send browser message: {error}"))
+    send_message(
+        sender,
+        Message::Text(payload.into()),
+        "failed to send browser message",
+    )
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
+    use std::convert::Infallible;
+    use std::net::IpAddr;
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::task::{Context, Poll};
+    use std::time::Duration;
 
-    use nodelite_proto::{NodeListIdentity, NodeListItem};
+    use futures::Sink;
+    use nodelite_proto::{BrowserMessage, NodeListIdentity, NodeListItem, WsConfig};
 
     use super::*;
+    use crate::admission::WsAdmissionController;
+    use crate::ws::transport::send_message_with_timeout;
+
+    struct DropProbeSink {
+        dropped: Arc<AtomicBool>,
+    }
+
+    impl Drop for DropProbeSink {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    impl Sink<Message> for DropProbeSink {
+        type Error = Infallible;
+
+        fn poll_ready(
+            self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+        ) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn start_send(self: Pin<&mut Self>, _item: Message) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn poll_flush(
+            self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+        ) -> Poll<Result<(), Self::Error>> {
+            Poll::Pending
+        }
+
+        fn poll_close(
+            self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+        ) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    fn browser_admission() -> WsAdmissionController {
+        WsAdmissionController::new(&WsConfig {
+            max_total_connections: 2,
+            max_connections_per_ip: 1,
+            auth_fail_window_secs: 60,
+            auth_fail_max_attempts: 2,
+            auth_block_secs: 60,
+        })
+    }
 
     /// 一次重算相对上次发送快照的增量:新增/变更的行 + 消失的行 id。
     struct NodeListDiff<'a> {
@@ -365,5 +427,42 @@ mod tests {
         let action = classify_client_message(&Message::Close(None));
 
         assert_eq!(action, ClientAction::End);
+    }
+
+    #[tokio::test]
+    async fn slow_browser_timeout_drops_sink_and_releases_admission_permit() {
+        let controller = browser_admission();
+        let client_ip: IpAddr = "198.51.100.20".parse().expect("valid test IP");
+        let permit = controller
+            .try_acquire(client_ip)
+            .expect("browser connection should acquire a permit");
+        assert_eq!(controller.snapshot().active_connections, 1);
+        let dropped = Arc::new(AtomicBool::new(false));
+        let payload =
+            serde_json::to_string(&BrowserMessage::Pong).expect("browser message should serialize");
+
+        let error = {
+            let _permit = permit;
+            let mut sender = DropProbeSink {
+                dropped: Arc::clone(&dropped),
+            };
+            send_message_with_timeout(
+                &mut sender,
+                Message::Text(payload.into()),
+                "test slow browser send",
+                Duration::from_millis(20),
+            )
+            .await
+            .expect_err("slow browser send should time out")
+        };
+
+        assert!(error.to_string().contains("timed out"));
+        assert!(dropped.load(Ordering::SeqCst));
+        assert_eq!(controller.snapshot().active_connections, 0);
+        let replacement = controller
+            .try_acquire(client_ip)
+            .expect("released browser permit should be reusable");
+        drop(replacement);
+        assert_eq!(controller.snapshot().active_connections, 0);
     }
 }

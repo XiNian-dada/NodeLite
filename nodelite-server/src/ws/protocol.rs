@@ -7,6 +7,8 @@ use anyhow::{Result, anyhow};
 use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use nodelite_proto::{HelloMessage, PingMessage, WireMessage};
 
+use super::transport::send_message;
+
 /// WebSocket 处理流程中的错误来源区分:
 /// `Client` 表示因对方原因(协议错误、未认证)而断开,只记 warn;
 /// `Server` 表示我们这边出现异常,记 error。
@@ -88,10 +90,12 @@ pub(crate) async fn send_wire_message(
 ) -> Result<(), ProtocolError> {
     let payload = serde_json::to_string(message)
         .map_err(|error| anyhow!("failed to serialize websocket message: {error}"))?;
-    socket
-        .send(Message::Text(payload.into()))
-        .await
-        .map_err(|error| anyhow!("failed to send websocket message: {error}"))?;
+    send_message(
+        socket,
+        Message::Text(payload.into()),
+        "failed to send websocket message",
+    )
+    .await?;
     Ok(())
 }
 
@@ -102,13 +106,15 @@ pub(crate) async fn send_close_frame(
     code: u16,
     reason: &'static str,
 ) -> Result<(), anyhow::Error> {
-    socket
-        .send(Message::Close(Some(CloseFrame {
+    send_message(
+        socket,
+        Message::Close(Some(CloseFrame {
             code,
             reason: reason.into(),
-        })))
-        .await
-        .map_err(|error| anyhow!("failed to send close frame: {error}"))?;
+        })),
+        "failed to send close frame",
+    )
+    .await?;
     Ok(())
 }
 

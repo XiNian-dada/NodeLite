@@ -69,6 +69,8 @@ pub const DEFAULT_WS_AUTH_BLOCK_SECS: u64 = 900;
 pub const MAX_NODE_TAGS: usize = 64;
 /// 单个标签允许的最大字节数。
 pub const MAX_NODE_TAG_BYTES: usize = 256;
+/// 节点身份中单个展示文本字段允许的最大 UTF-8 字节数。
+pub const MAX_NODE_IDENTITY_TEXT_BYTES: usize = 256;
 /// WebSocket Hello 握手超时(秒)。
 pub const DEFAULT_HELLO_TIMEOUT_SECS: u64 = 10;
 /// 最大未响应 Ping 数量。

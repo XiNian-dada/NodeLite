@@ -1,4 +1,5 @@
 use super::*;
+use nodelite_proto::MAX_NODE_IDENTITY_TEXT_BYTES;
 use proptest::prelude::*;
 
 #[test]
@@ -8,6 +9,9 @@ fn validate_registered_node_rejects_oversized_tags() {
         node_label: "Hong Kong 01".to_string(),
         token_hash: "hash".to_string(),
         token_generation: 1,
+        previous_token_hash: String::new(),
+        previous_token_generation: None,
+        previous_token_valid_until: None,
         token: "secret-token".to_string(),
         tags: vec!["edge".to_string()],
         created_at: Utc::now(),
@@ -33,6 +37,9 @@ fn validate_registered_node_rejects_invalid_renewal_price() {
         node_label: "Hong Kong 01".to_string(),
         token_hash: "hash".to_string(),
         token_generation: 1,
+        previous_token_hash: String::new(),
+        previous_token_generation: None,
+        previous_token_valid_until: None,
         token: "secret-token".to_string(),
         tags: vec!["edge".to_string()],
         created_at: Utc::now(),
@@ -51,6 +58,65 @@ fn validate_registered_node_rejects_invalid_renewal_price() {
 
     node.renewal_price = Some("$5/mo".to_string());
     validate_registered_node(&node).expect("plain price should pass");
+}
+
+#[test]
+fn validate_registered_node_rejects_partial_previous_token_grace() {
+    let mut node = legacy_node("hk-01", "Hong Kong 01", "secret-token", None);
+    node.token_hash = "hash".to_string();
+    node.token.clear();
+    node.token_generation = 2;
+    node.previous_token_hash = "previous-hash".to_string();
+
+    let error = validate_registered_node(&node)
+        .expect_err("partial previous token fields should be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("must be set or cleared together")
+    );
+}
+
+#[test]
+fn validate_registered_node_rejects_oversized_label() {
+    let mut node = legacy_node("hk-01", "Hong Kong 01", "secret-token", None);
+    node.node_label = "界".repeat(MAX_NODE_IDENTITY_TEXT_BYTES / 3 + 1);
+
+    let error = validate_registered_node(&node).expect_err("oversized label should fail");
+    assert!(error.to_string().contains("node.node_label"));
+}
+
+#[test]
+fn validate_runtime_identity_bounds_every_text_field_by_utf8_bytes() {
+    let oversized = "界".repeat(MAX_NODE_IDENTITY_TEXT_BYTES / 3 + 1);
+    for field in [
+        "identity.node_label",
+        "identity.hostname",
+        "identity.os",
+        "identity.agent_version",
+        "identity.kernel_version",
+        "identity.cpu_model",
+    ] {
+        let mut identity = identity_for("hk-01");
+        match field {
+            "identity.node_label" => identity.node_label = oversized.clone(),
+            "identity.hostname" => identity.hostname = oversized.clone(),
+            "identity.os" => identity.os = oversized.clone(),
+            "identity.agent_version" => identity.agent_version = oversized.clone(),
+            "identity.kernel_version" => identity.kernel_version = Some(oversized.clone()),
+            "identity.cpu_model" => identity.cpu_model = Some(oversized.clone()),
+            _ => unreachable!("all test fields are handled"),
+        }
+
+        let error = validate_runtime_identity(&identity)
+            .expect_err("oversized runtime identity field should fail");
+        assert!(error.to_string().contains(field));
+    }
+
+    let mut boundary = identity_for("hk-01");
+    boundary.hostname = format!("{}a", "界".repeat(85));
+    assert_eq!(boundary.hostname.len(), MAX_NODE_IDENTITY_TEXT_BYTES);
+    validate_runtime_identity(&boundary).expect("exact UTF-8 byte boundary should pass");
 }
 
 #[tokio::test]

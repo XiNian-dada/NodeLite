@@ -105,7 +105,7 @@ async fn refresh_token_reports_missing_nodes_with_typed_error() {
         .expect("registry should load");
 
     let error = registry
-        .refresh_token("missing-01")
+        .refresh_token("missing-01", 1)
         .await
         .expect_err("missing nodes should surface a typed error");
     assert!(matches!(error, RegistryError::NodeNotFound(ref node_id) if node_id == "missing-01"));

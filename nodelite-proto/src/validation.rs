@@ -47,6 +47,26 @@ pub fn validate_non_empty(field: &str, value: &str) -> Result<(), ValidationErro
     Ok(())
 }
 
+/// Validate non-empty UI/protocol text against byte and control-character limits.
+pub fn validate_bounded_text(
+    field: &str,
+    value: &str,
+    max_bytes: usize,
+) -> Result<(), ValidationError> {
+    validate_non_empty(field, value)?;
+    if value.len() > max_bytes {
+        return Err(ValidationError::new(format!(
+            "{field} must be <= {max_bytes} bytes"
+        )));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(ValidationError::new(format!(
+            "{field} must not contain control characters"
+        )));
+    }
+    Ok(())
+}
+
 /// Validate a stable NodeLite identifier.
 ///
 /// Identifiers must be non-empty, at most 128 bytes long, and limited to ASCII
@@ -102,11 +122,7 @@ pub fn validate_tag_list(
         )));
     }
     for (index, value) in values.iter().enumerate() {
-        if value.len() > max_tag_bytes {
-            return Err(ValidationError::new(format!(
-                "{field}[{index}] must be <= {max_tag_bytes} bytes"
-            )));
-        }
+        validate_bounded_text(&format!("{field}[{index}]"), value, max_tag_bytes)?;
     }
     Ok(())
 }
@@ -114,8 +130,8 @@ pub fn validate_tag_list(
 #[cfg(test)]
 mod tests {
     use super::{
-        ValidationError, normalize_string_list, validate_identifier, validate_non_empty,
-        validate_tag_list,
+        ValidationError, normalize_string_list, validate_bounded_text, validate_identifier,
+        validate_non_empty, validate_tag_list,
     };
 
     #[test]
@@ -147,11 +163,19 @@ mod tests {
         let error = validate_tag_list("tags", &[String::from("abcdef")], 4, 5)
             .expect_err("oversized tags should fail");
         assert_eq!(error.to_string(), "tags[0] must be <= 5 bytes");
+
+        let error = validate_bounded_text("label", "bad\nlabel", 32)
+            .expect_err("control characters should fail");
+        assert_eq!(
+            error.to_string(),
+            "label must not contain control characters"
+        );
     }
 
     #[test]
     fn validation_helpers_accept_expected_happy_paths() {
         validate_non_empty("name", "node-lite").expect("non-empty values should pass");
+        validate_bounded_text("label", "节点", 6).expect("UTF-8 byte boundary should pass");
         validate_identifier("node_id", "hk-01.edge_1").expect("valid identifiers should pass");
         validate_tag_list("tags", &[String::from("edge"), String::from("prod")], 4, 8)
             .expect("small tag lists should pass");

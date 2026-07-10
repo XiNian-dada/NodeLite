@@ -12,6 +12,7 @@ mod auth;
 mod error;
 mod issue;
 mod lifecycle;
+mod migration;
 mod render;
 mod storage;
 #[cfg(test)]
@@ -51,11 +52,14 @@ use self::storage::{
 use self::token::{generate_token, token_is_unexpired, verify_token};
 #[cfg(test)]
 use self::validate::validate_registered_node;
+pub(crate) use self::validate::validate_runtime_identity;
 #[cfg(test)]
 use nodelite_proto::{MAX_NODE_TAG_BYTES, normalize_string_list};
 
 /// Agent Token 默认有效期:30 天。
 const DEFAULT_TOKEN_VALIDITY_DAYS: i64 = 30;
+/// Token 轮换后允许旧凭证短暂重连，避免 refresh response 未送达时永久失联。
+const TOKEN_REFRESH_GRACE_MINUTES: i64 = 10;
 
 /// Argon2id 参数:用 OWASP 2023 推荐的"低延迟服务器"档位,大约 ~12-25ms/verify。
 /// memory=19 MiB, iterations=2, parallelism=1。
@@ -109,6 +113,14 @@ pub struct RegisteredNode {
     /// 避免每条消息都跑 Argon2 verify。
     #[serde(default)]
     pub token_generation: u64,
+    /// 最近一次刷新前的 token 哈希。仅在短期 grace 窗口内用于恢复未收到
+    /// refresh response 的 Agent；重新安装节点不会保留这一兼容凭证。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub previous_token_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_token_generation: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_token_valid_until: Option<DateTime<Utc>>,
     /// Legacy: 旧版本的明文 token 字段。新版本启动后会一次性把它哈希到
     /// `token_hash` 并清空, 之后磁盘上不再出现。保留 #[serde(default)]
     /// 与 skip_serializing_if 是为了让升级与降级都能干净通过。

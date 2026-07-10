@@ -15,6 +15,7 @@ mod handshake;
 mod protocol;
 mod refresh;
 mod session;
+mod transport;
 
 pub use browser::ws_browser_handler;
 
@@ -37,6 +38,7 @@ use self::protocol::ProtocolError;
 use self::protocol::{
     ParsedFrame, encode_ping_message, parse_wire_message, prune_outstanding_pings,
 };
+use self::transport::{WebSocketPeer, configure_upgrade};
 
 struct ActiveSession {
     node_id: String,
@@ -70,8 +72,7 @@ pub async fn ws_handler(
             return ws_admission_error_response(error);
         }
     };
-    ws.max_frame_size(max_message_bytes)
-        .max_message_size(max_message_bytes)
+    configure_upgrade(ws, WebSocketPeer::Agent, max_message_bytes)
         .on_upgrade(move |socket| async move {
             if let Err(error) = handle_socket(
                 state,
