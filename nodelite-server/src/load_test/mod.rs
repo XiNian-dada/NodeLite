@@ -183,6 +183,17 @@ async fn load_test_history_query_matrix_scores() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[ignore = "internal child process for the history query matrix"]
+async fn load_test_history_query_matrix_case() {
+    if !history_matrix::child_case_requested() {
+        return;
+    }
+    if let Err(error) = history_matrix::run_history_query_matrix_child().await {
+        panic!("{error:#}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[cfg_attr(
     not(feature = "load_test"),
     ignore = "manual large payload load test; run with -- --ignored --nocapture"

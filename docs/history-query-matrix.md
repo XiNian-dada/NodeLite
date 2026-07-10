@@ -1,8 +1,10 @@
 # History query resource matrix
 
 The history-only matrix isolates SQLite reads from Agent WebSocket authentication. It seeds 1,000
-nodes with 480 points each, then runs every combination of:
+nodes with 480 points each, then runs these cases in separate child processes:
 
+- a legacy-equivalent baseline with no effective application concurrency limit and SQLite's
+  default read cache (approximately 2 MiB per connection);
 - query concurrency: `2`, `4`, `8`;
 - SQLite read cache: `256`, `512`, `1024` KiB per connection.
 
@@ -12,9 +14,12 @@ Run it with an optimized build:
 cargo test -p nodelite-server --release load_test_history_query_matrix_scores -- --ignored --nocapture
 ```
 
-Each `HISTORY_QUERY_MATRIX_RESULT` line reports p50, p95, max latency and process memory. Linux
-reports RSS, PSS and `RssAnon`. macOS only exposes RSS through the portable benchmark probe, so its
-PSS and anonymous-memory fields are printed as `unavailable` and must not be used for memory-limit
+The parent process seeds one shared database and launches each case in a fresh copy of the test
+executable. Each child captures idle memory, samples memory every 10 ms while queries run, and
+returns the observed peak. `HISTORY_QUERY_MATRIX_RESULT` reports p50, p95, max latency, peak delta
+from that child's idle value, and delta from the legacy baseline. Linux reports RSS, PSS and
+`RssAnon`. macOS only exposes RSS through the portable benchmark probe, so its PSS and
+anonymous-memory fields are printed as `unavailable` and must not be used for memory-limit
 selection.
 
 For a Linux production process, capture the memory split separately while history requests are in
@@ -39,23 +44,27 @@ PSS/RssAnon is still the final production validation source.
 
 ## 2026-07-10 macOS result
 
-Environment: Apple M1 Pro, 32 GiB RAM, macOS Darwin 25.5.0, Rust 1.93.1, release profile. This was a
-single matrix run after warming the SQLite covering index. RSS is the cumulative test-process RSS
-after each case and is not a substitute for Linux PSS/RssAnon.
+Environment: Apple M1 Pro, 32 GiB RAM, macOS Darwin 25.5.0, Rust 1.93.1, release profile. The table
+is the final verification run after warming the SQLite covering index. Every row is a new process.
+RSS is not a substitute for Linux PSS/RssAnon.
 
-| Concurrency | Read cache KiB | p50 ms | p95 ms | Max ms | RSS bytes |
-|---:|---:|---:|---:|---:|---:|
-| 2 | 256 | 245.53 | 467.64 | 491.81 | 26,394,624 |
-| 2 | 512 | 254.26 | 477.78 | 502.01 | 26,689,536 |
-| 2 | 1024 | 241.21 | 461.45 | 486.40 | 26,755,072 |
-| 4 | 256 | 189.33 | 356.24 | 374.00 | 29,638,656 |
-| 4 | 512 | 192.54 | 362.75 | 382.74 | 29,736,960 |
-| 4 | 1024 | 189.85 | 354.79 | 374.31 | 29,769,728 |
-| 8 | 256 | 247.00 | 468.58 | 490.87 | 32,079,872 |
-| 8 | 512 | 247.72 | 465.48 | 488.64 | 32,768,000 |
-| 8 | 1024 | 248.17 | 468.25 | 491.38 | 32,768,000 |
+| Case | Concurrency | Read cache KiB | p95 ms | p95 vs baseline ms | Peak RSS bytes | Peak RSS delta from idle | Delta vs baseline |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Legacy baseline | effectively unbounded | SQLite default | 431.30 | 0.00 | 178,110,464 | 168,230,912 | 0 |
+| Configured | 2 | 256 | 511.23 | +79.93 | 22,495,232 | 12,599,296 | -155,631,616 |
+| Configured | 2 | 512 | 488.73 | +57.43 | 22,970,368 | 13,074,432 | -155,156,480 |
+| Configured | 2 | 1024 | 489.42 | +58.12 | 22,708,224 | 12,828,672 | -155,402,240 |
+| Configured | 4 | 256 | 379.32 | -51.97 | 24,707,072 | 14,860,288 | -153,370,624 |
+| Configured | 4 | 512 | 371.69 | -59.61 | 24,231,936 | 14,336,000 | -153,894,912 |
+| Configured | 4 | 1024 | 374.16 | -57.14 | 24,199,168 | 14,303,232 | -153,927,680 |
+| Configured | 8 | 256 | 461.62 | +30.32 | 26,230,784 | 16,334,848 | -151,896,064 |
+| Configured | 8 | 512 | 449.06 | +17.77 | 26,345,472 | 16,449,536 | -151,781,376 |
+| Configured | 8 | 1024 | 461.68 | +30.38 | 25,411,584 | 15,532,032 | -152,698,880 |
 
-All concurrency-4 cases were within 2.3% p95 of each other and materially faster than concurrency
-2 or 8. The default `4 / 512 KiB` stays in the middle of that stable latency band without doubling
-the per-connection cache to 1024 KiB. Linux PSS/RssAnon sampling and repeated runs remain required
-before changing the production default based on small single-run differences.
+The default `4 / 512 KiB` cut peak RSS growth by 153,894,912 bytes (91.5%) versus the
+legacy-equivalent baseline while improving p95 by 59.61 ms in the final run. Across two verification
+runs, baseline peak growth stayed at 160-162 MiB while the default stayed at 13.7-14.3 MiB; p95 varied
+from 431-469 ms for the baseline and 372-383 ms for the default. The three concurrency-4 cases were
+the fastest group in both runs. `512 KiB` avoids choosing the largest per-connection cache based on
+small differences. Linux peak PSS/RssAnon sampling remains required before treating these macOS RSS
+results as production memory limits.

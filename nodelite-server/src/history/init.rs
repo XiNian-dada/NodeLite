@@ -227,7 +227,7 @@ fn covering_index_columns(connection: &Connection) -> Result<Option<Vec<String>>
 pub(super) fn open_read_connection(
     db_path: &PathBuf,
     sqlite_busy_timeout_secs: u64,
-    history_read_cache_kib: u64,
+    history_read_cache_kib: Option<u64>,
 ) -> Result<Connection> {
     let connection = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .with_context(|| {
@@ -239,11 +239,13 @@ pub(super) fn open_read_connection(
     connection
         .busy_timeout(Duration::from_secs(sqlite_busy_timeout_secs))
         .context("failed to configure sqlite read busy timeout")?;
-    let history_read_cache_kib = i64::try_from(history_read_cache_kib)
-        .context("history read page cache exceeds SQLite integer range")?;
-    connection
-        .pragma_update(None, "cache_size", -history_read_cache_kib)
-        .context("failed to configure sqlite read page cache")?;
+    if let Some(history_read_cache_kib) = history_read_cache_kib {
+        let history_read_cache_kib = i64::try_from(history_read_cache_kib)
+            .context("history read page cache exceeds SQLite integer range")?;
+        connection
+            .pragma_update(None, "cache_size", -history_read_cache_kib)
+            .context("failed to configure sqlite read page cache")?;
+    }
     Ok(connection)
 }
 

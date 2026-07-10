@@ -127,8 +127,8 @@ pub struct HistoryStore {
     artifacts_hardened_after_write: Arc<AtomicBool>,
     /// SQLite 忙等待超时(秒)。
     sqlite_busy_timeout_secs: u64,
-    /// 每个临时只读连接的 SQLite 私有 page cache(KiB)。
-    history_read_cache_kib: u64,
+    /// 每个临时只读连接的 SQLite 私有 page cache(KiB)。None 仅供测试旧版默认值。
+    history_read_cache_kib: Option<u64>,
     /// Writer task 的入口。Some 表示已初始化;关停时清空以让 record_status 进入空操作分支。
     writer_tx: Arc<RwLock<Option<mpsc::Sender<HistoryPoint>>>>,
     /// Writer task 的 join handle,用于在关停时显式 await。
@@ -148,6 +148,29 @@ impl HistoryStore {
         sqlite_busy_timeout_secs: u64,
         query_limit: usize,
         history_read_cache_kib: u64,
+    ) -> Self {
+        Self::new_with_read_cache(
+            db_path,
+            sqlite_busy_timeout_secs,
+            query_limit,
+            Some(history_read_cache_kib),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_with_default_read_cache(
+        db_path: PathBuf,
+        sqlite_busy_timeout_secs: u64,
+        query_limit: usize,
+    ) -> Self {
+        Self::new_with_read_cache(db_path, sqlite_busy_timeout_secs, query_limit, None)
+    }
+
+    fn new_with_read_cache(
+        db_path: PathBuf,
+        sqlite_busy_timeout_secs: u64,
+        query_limit: usize,
+        history_read_cache_kib: Option<u64>,
     ) -> Self {
         Self {
             db_path: Arc::new(db_path),
