@@ -20,7 +20,10 @@ async fn manual_live_refresh_updates_registry_and_agent_view() -> Result<()> {
             .is_token_current(&node.node_id, &refresh.new_token)
             .await
     );
-    assert!(!server.is_token_current(&node.node_id, &node.token).await);
+    assert!(
+        server.is_token_current(&node.node_id, &node.token).await,
+        "old token should remain usable during bounded refresh recovery grace"
+    );
 
     agent.disconnect().await?;
     server.shutdown().await
@@ -75,7 +78,10 @@ async fn concurrent_live_refresh_keeps_each_node_consistent() -> Result<()> {
     ] {
         assert_ne!(new_token, old_token);
         assert!(server.is_token_current(node_id, new_token).await);
-        assert!(!server.is_token_current(node_id, old_token).await);
+        assert!(
+            server.is_token_current(node_id, old_token).await,
+            "old token should remain usable during bounded refresh recovery grace"
+        );
     }
 
     agent_a.disconnect().await?;
