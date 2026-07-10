@@ -68,6 +68,7 @@ impl TokenVerifyWaitingGuard {
 impl Drop for TokenVerifyWaitingGuard {
     fn drop(&mut self) {
         if self.waiting {
+            self.state.record_wait(self.started.elapsed());
             self.state.waiting.fetch_sub(1, Ordering::Relaxed);
         }
     }
@@ -108,5 +109,6 @@ mod tests {
         let snapshot = state.snapshot(4);
         assert_eq!(snapshot.waiting, 0);
         assert_eq!(snapshot.active, 0);
+        assert!(snapshot.wait_seconds_total > 0.0);
     }
 }
