@@ -175,6 +175,14 @@ cargo tarpaulin --config tarpaulin.toml
 
 Performance baselines should be rerun with release builds on the target machine. The README no longer keeps long benchmark tables because those numbers drift as the code evolves.
 
+Memory baselines don't use a single usage number. Server and Agent reports must
+separate process RSS/PSS, anonymous resident memory, and systemd cgroup
+`MemoryCurrent`; the latter includes reclaimable filesystem page cache created
+by SQLite and WAL I/O and isn't a Rust heap or leak metric. See the
+[memory measurement methodology](docs/memory-measurement.md) for commands,
+cold/warm scenarios, and the report template. Unscoped `Server <15MB` and
+`Agent <2MB` statements are no longer release gates.
+
 Common loopback benchmarks:
 
 ```bash

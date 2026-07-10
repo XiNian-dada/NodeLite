@@ -12,12 +12,12 @@ NodeLite 是一个轻量级 Rust 监控系统，采用 Server-Agent 架构。
 - Token 认证，可选 TOTP 2FA
 - SQLite 历史数据、审计日志与告警状态存储
 - Vue 3 Web UI，由 server 嵌入静态构建产物
-- 低资源占用：服务端目标 < 15MB，Agent 目标 < 2MB
+- 低资源占用：按场景跟踪 Server/Agent 的 RSS、PSS、匿名内存与 cgroup 总预算
 
 性能目标：
 - 200 节点并发：18,677 指标/秒
 - p95 延迟：< 5ms
-- 内存占用：服务端 < 15MB，Agent < 2MB
+- 内存：同机、同构建、同负载做回归比较；采集规范见 `docs/memory-measurement.md`
 
 ## 架构
 

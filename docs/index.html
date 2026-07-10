@@ -1702,16 +1702,15 @@ curl -u '&lt;readonly-username&gt;:&lt;generated-strong-password&gt;' 'https://m
               </button>
               <div class="faq-a" hidden>
                 <div class="faq-a-inner">
-                  <p><code>800-1000 KB</code> 只能看作 Agent 的冷启动基线，不应该理解成长时间运行后的固定占用。</p>
+                  <p>NodeLite 不使用单一的“内存占用”数字作为发布基线。进程 RSS/PSS、匿名驻留内存和 systemd cgroup <code>MemoryCurrent</code> 回答的是不同问题，必须结合负载场景一起记录。</p>
                   <ul>
-                    <li><strong>服务端</strong>：4-10 MB 内存</li>
-                    <li><strong>Agent 冷启动</strong>：约 800 KB</li>
-                    <li><strong>Agent 运行 24 小时后</strong>：约 1.2 MB</li>
-                    <li><strong>Agent 运行 72 小时后</strong>：约 3 MB</li>
-                    <li><strong>200 节点并发</strong>：p95 延迟 &lt; 5ms，metrics 吞吐 18,677/s</li>
+                    <li><strong>RSS/PSS</strong>：用于比较进程驻留工作集；PSS 会按比例分摊共享页。</li>
+                    <li><strong>匿名内存</strong>：用于近似观察 heap、线程栈和 runtime 私有状态。</li>
+                    <li><strong>MemoryCurrent</strong>：用于 systemd 总资源预算，也包含 SQLite/WAL 产生的可回收文件页缓存。</li>
+                    <li><strong>对照条件</strong>：使用同一机器、同一构建目标和相同节点数，区分 dashboard/History 冷、热场景。</li>
                   </ul>
-                  <p>也就是说，当前版本的 Agent 常驻内存会随着运行时长增加而缓慢上升。这个现象已经在文档里明确标注，实际表现还会受到反向代理、SQLite I/O、历史保留时长和宿主机环境影响。</p>
-                  <p>如果你对常驻内存比较敏感，建议把这些数字当作实测参考值，而不是容量上限，并在自己的环境中持续观察 RSS 变化。</p>
+                  <p>生产实例中的 cgroup 数字可能明显高于进程 RSS，其中大部分差值可能是可回收的数据库文件页缓存，不能直接描述为 Rust heap 或内存泄漏。</p>
+                  <p>完整采集命令、场景定义和报告模板见 <a href="https://github.com/XiNian-dada/NodeLite/blob/main/docs/memory-measurement.md" target="_blank" rel="noopener">内存测量规范</a>。</p>
                 </div>
               </div>
             </div>

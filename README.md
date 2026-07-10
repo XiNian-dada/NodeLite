@@ -178,6 +178,12 @@ cargo tarpaulin --config tarpaulin.toml
 
 性能基线建议用 release 构建在目标机器上重新跑，README 不再维护长表格，避免数据随版本漂移后增加阅读负担。
 
+内存基线不使用单一的“占用”数字。Server/Agent 报告必须同时区分进程 RSS/PSS、
+匿名驻留内存和 systemd cgroup `MemoryCurrent`；后者包含 SQLite/WAL 产生的可回收
+filesystem page cache，不能直接当作 Rust heap 或泄漏。完整采集命令、冷/热缓存场景
+和报告模板见 [内存测量规范](docs/memory-measurement.md)。没有平台与口径的
+`Server <15MB` / `Agent <2MB` 不再作为发布门槛。
+
 常用 loopback 压测：
 
 ```bash
