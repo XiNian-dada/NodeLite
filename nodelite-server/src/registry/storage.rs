@@ -10,6 +10,7 @@ use tokio::fs;
 #[cfg(test)]
 pub(super) use self::write::release_registry_lock_with;
 use self::write::{mutate_registry_file_sync, save_registry_file_sync};
+use super::migration::migrate_legacy_display_metadata;
 use super::token::{migrate_legacy_tokens, prune_expired_install_sessions};
 use super::validate::validate_registry_file;
 use super::{RegistryError, RegistryFile, RegistryResult, RegistryState};
@@ -108,9 +109,12 @@ pub(super) async fn load_registry_state(path: &Path) -> RegistryResult<RegistryS
     let mut file = load_registry_file(path).await?;
     prune_expired_install_sessions(&mut file, Utc::now());
 
-    // #56: 升级老版本的明文 token 到 Argon2id 哈希。一旦发现旧字段, 哈希后
-    // 立即落盘, 之后磁盘上不再有任何节点的明文。
-    let migrated = migrate_legacy_tokens(&mut file)?;
+    // 展示字段先迁移到当前安全边界，再执行严格校验；通过后才做昂贵的
+    // Argon2 token 迁移，避免损坏的注册表在拒绝前消耗额外资源。
+    let metadata_migrated = migrate_legacy_display_metadata(&mut file);
+    validate_registry_file(path, &file)?;
+    let token_migrated = migrate_legacy_tokens(&mut file)?;
+    let migrated = token_migrated || metadata_migrated;
     if migrated {
         file.version = file.version.saturating_add(1);
         let path_buf = path.to_path_buf();
@@ -145,7 +149,6 @@ async fn load_registry_file(path: &Path) -> RegistryResult<RegistryFile> {
 
     let file: RegistryFile =
         serde_json::from_str(&content).map_err(|error| RegistryError::parse(path, error))?;
-    validate_registry_file(path, &file)?;
     Ok(file)
 }
 
@@ -167,8 +170,9 @@ pub(super) fn load_registry_file_sync(path: &Path) -> RegistryResult<RegistryFil
         Err(error) => return Err(RegistryError::io("reading", path, error)),
     };
 
-    let file: RegistryFile =
+    let mut file: RegistryFile =
         serde_json::from_str(&content).map_err(|error| RegistryError::parse(path, error))?;
+    migrate_legacy_display_metadata(&mut file);
     validate_registry_file(path, &file)?;
     Ok(file)
 }

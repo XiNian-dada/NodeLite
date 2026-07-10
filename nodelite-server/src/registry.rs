@@ -12,6 +12,7 @@ mod auth;
 mod error;
 mod issue;
 mod lifecycle;
+mod migration;
 mod render;
 mod storage;
 #[cfg(test)]
