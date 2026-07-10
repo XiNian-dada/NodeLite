@@ -63,11 +63,11 @@ pub const DEFAULT_HISTORY_READ_CACHE_KIB: u64 = 512;
 /// 历史查询至少保留一个并发槽位。
 pub const MIN_HISTORY_QUERY_CONCURRENCY: usize = 1;
 /// 防止大量并发 SQLite page cache 抬高匿名内存峰值。
-pub const MAX_HISTORY_QUERY_CONCURRENCY: usize = 32;
+pub const MAX_HISTORY_QUERY_CONCURRENCY: usize = 8;
 /// 过小的 page cache 会让覆盖索引查询反复读取相同页面。
 pub const MIN_HISTORY_READ_CACHE_KIB: u64 = 64;
 /// 单连接 page cache 的运维安全上限(KiB)。
-pub const MAX_HISTORY_READ_CACHE_KIB: u64 = 16 * 1024;
+pub const MAX_HISTORY_READ_CACHE_KIB: u64 = 1024;
 /// WebSocket 并发连接总数上限。
 pub const DEFAULT_WS_MAX_TOTAL_CONNECTIONS: usize = 1024;
 /// 单个 IP 允许的 WebSocket 并发连接数。

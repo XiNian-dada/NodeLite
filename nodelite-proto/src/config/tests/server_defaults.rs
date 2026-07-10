@@ -195,6 +195,11 @@ fn parses_history_query_resource_overrides() {
 
 #[test]
 fn rejects_history_query_resource_limits_outside_safe_ranges() {
+    assert_eq!(MIN_HISTORY_QUERY_CONCURRENCY, 1);
+    assert_eq!(MAX_HISTORY_QUERY_CONCURRENCY, 8);
+    assert_eq!(MIN_HISTORY_READ_CACHE_KIB, 64);
+    assert_eq!(MAX_HISTORY_READ_CACHE_KIB, 1024);
+
     for (key, value, expected) in [
         (
             "history_query_concurrency",
