@@ -60,8 +60,13 @@ async fn refreshed_token_grace_survives_registry_restart_and_expires() {
     let registry = NodeRegistry::load(&path)
         .await
         .expect("registry should load");
+    let error = registry
+        .refresh_token("grace-01", 0)
+        .await
+        .expect_err("stale generation must not rotate the current token");
+    assert!(matches!(error, RegistryError::Unauthorized));
     let (new_token, _, new_generation) = registry
-        .refresh_token("grace-01")
+        .refresh_token("grace-01", 1)
         .await
         .expect("token should refresh");
     assert_eq!(new_generation, 2);

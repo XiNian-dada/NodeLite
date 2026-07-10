@@ -51,11 +51,13 @@ impl NodeRegistry {
     }
 
     /// 刷新节点的 Token:生成新明文 token, 哈希入库,代次 +1, 延长过期时间。
+    /// 若调用方仍持有 grace generation，则保留该旧 hash，直到新响应成功送达。
     /// 返回 (new_plaintext_token, expires_at, new_generation)。明文只在
     /// 进程内存里短暂存在,从这里被传递给 WS 端发送给 agent。
     pub async fn refresh_token(
         &self,
         node_id: &str,
+        session_generation: u64,
     ) -> RegistryResult<(String, DateTime<Utc>, u64)> {
         let path = Arc::clone(&self.path);
         let node_id = node_id.to_string();
@@ -65,14 +67,28 @@ impl NodeRegistry {
                 let Some(node) = file.nodes.iter_mut().find(|n| n.node_id == node_id) else {
                     return Err(RegistryError::NodeNotFound(node_id.clone()));
                 };
+                let refreshing_previous = node.previous_token_generation
+                    == Some(session_generation)
+                    && node
+                        .previous_token_valid_until
+                        .is_some_and(|valid_until| now < valid_until)
+                    && !node.previous_token_hash.is_empty();
+                if session_generation != node.token_generation && !refreshing_previous {
+                    return Err(RegistryError::Unauthorized);
+                }
 
                 let new_token = generate_token()?;
                 let expires_at = now + ChronoDuration::days(DEFAULT_TOKEN_VALIDITY_DAYS);
                 let new_token_hash = hash_token(&new_token).map_err(|error| {
                     RegistryError::internal("failed to hash refreshed token", error.into())
                 })?;
-                node.previous_token_hash = std::mem::replace(&mut node.token_hash, new_token_hash);
-                node.previous_token_generation = Some(node.token_generation);
+                if refreshing_previous {
+                    node.token_hash = new_token_hash;
+                } else {
+                    node.previous_token_hash =
+                        std::mem::replace(&mut node.token_hash, new_token_hash);
+                    node.previous_token_generation = Some(node.token_generation);
+                }
                 node.previous_token_valid_until =
                     Some(now + ChronoDuration::minutes(TOKEN_REFRESH_GRACE_MINUTES));
                 node.token_generation = node.token_generation.saturating_add(1);

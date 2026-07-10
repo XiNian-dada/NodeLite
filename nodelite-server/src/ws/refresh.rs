@@ -35,7 +35,11 @@ pub(crate) async fn handle_refresh_request(
             "ignoring client-supplied node_id in refresh_token_request",
         );
     }
-    match state.registry.refresh_token(&session.node_id).await {
+    match state
+        .registry
+        .refresh_token(&session.node_id, session.session_generation)
+        .await
+    {
         Ok((new_token, expires_at, new_generation)) => {
             let response = nodelite_proto::WireMessage::RefreshTokenResponse(
                 nodelite_proto::RefreshTokenResponseMessage {
@@ -162,7 +166,9 @@ pub(crate) async fn refresh_session_token(
     trigger: &str,
 ) -> Result<DateTime<Utc>> {
     let node_id = session.node_id.clone();
-    let (new_token, expires_at, new_generation) = registry.refresh_token(&node_id).await?;
+    let (new_token, expires_at, new_generation) = registry
+        .refresh_token(&node_id, session.session_generation)
+        .await?;
     info!(
         node_id = %session.node_id,
         trigger,
@@ -294,7 +300,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn old_token_can_reconnect_after_refresh_response_send_timeout() {
+    async fn old_token_survives_repeated_refresh_response_send_timeouts() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")
@@ -312,42 +318,52 @@ mod tests {
         )
         .await
         .expect("node should be issued");
-        let registry = NodeRegistry::load(&path)
+        let mut registry = NodeRegistry::load(&path)
             .await
             .expect("registry should load");
-        let (new_token, expires_at, _) = registry
-            .refresh_token("timeout-01")
-            .await
-            .expect("token should be persisted before send");
-        let response = nodelite_proto::WireMessage::RefreshTokenResponse(
-            nodelite_proto::RefreshTokenResponseMessage {
-                new_token,
-                expires_at: expires_at.to_rfc3339(),
-            },
-        );
-        let payload = serde_json::to_string(&response).expect("refresh response should serialize");
-        let (stream, _blocked_peer) = duplex(1);
-        let mut socket = WebSocketStream::from_raw_socket(stream, Role::Server, None).await;
+        let identity = identity_for("timeout-01");
+        let mut session_generation = 1;
 
-        send_message_with_timeout(
-            &mut socket,
-            TungsteniteMessage::Text(payload.into()),
-            "test refresh response send",
-            Duration::from_millis(20),
-        )
-        .await
-        .expect_err("blocked refresh response should time out");
-        drop(socket);
+        for expected_generation in 2..=4 {
+            let (new_token, expires_at, new_generation) = registry
+                .refresh_token("timeout-01", session_generation)
+                .await
+                .expect("token should be persisted before send");
+            assert_eq!(new_generation, expected_generation);
+            let response = nodelite_proto::WireMessage::RefreshTokenResponse(
+                nodelite_proto::RefreshTokenResponseMessage {
+                    new_token,
+                    expires_at: expires_at.to_rfc3339(),
+                },
+            );
+            let payload =
+                serde_json::to_string(&response).expect("refresh response should serialize");
+            let (stream, _blocked_peer) = duplex(1);
+            let mut socket = WebSocketStream::from_raw_socket(stream, Role::Server, None).await;
+
+            send_message_with_timeout(
+                &mut socket,
+                TungsteniteMessage::Text(payload.into()),
+                "test refresh response send",
+                Duration::from_millis(20),
+            )
+            .await
+            .expect_err("blocked refresh response should time out");
+            drop(socket);
+            drop(registry);
+
+            registry = NodeRegistry::load(&path)
+                .await
+                .expect("registry should reload after failed send");
+            let authorized = registry
+                .authorize(&identity, &issued.node_session_token)
+                .await
+                .expect("old token should reconnect during persisted grace");
+            assert_eq!(authorized.generation, 1);
+            session_generation = authorized.generation;
+        }
+
         drop(registry);
-
-        let restarted = NodeRegistry::load(&path)
-            .await
-            .expect("registry should reload after failed send");
-        restarted
-            .authorize(&identity_for("timeout-01"), &issued.node_session_token)
-            .await
-            .expect("old token should reconnect during persisted grace");
-
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&temp_dir);
     }

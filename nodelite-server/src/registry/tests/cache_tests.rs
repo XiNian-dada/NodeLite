@@ -175,7 +175,7 @@ async fn token_cache_distinguishes_current_and_grace_tokens_after_rotation() {
 
     // Refresh token (cache should be cleared)
     let (new_token, _, new_generation) = registry
-        .refresh_token("rotate-01")
+        .refresh_token("rotate-01", authorized.generation)
         .await
         .expect("token should refresh");
     assert_eq!(new_generation, 2);
