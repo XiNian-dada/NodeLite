@@ -351,8 +351,12 @@ jobs:
           path: release-assets
 
       - name: Merge checksums
-        # 把每个架构的 SHA256SUMS 合并为统一的 SHA256SUMS.txt,供安装脚本下载。
+        # 对即将上传的 installer 本体取摘要,再与二进制/SBOM 摘要合并。
         run: |
+          sha256sum \
+            release-assets/release-scripts/install-server.sh \
+            release-assets/release-scripts/install-agent.sh \
+            > release-assets/SHA256SUMS-scripts.txt
           find release-assets -type f -name 'SHA256SUMS-*.txt' | sort | xargs cat > release-assets/SHA256SUMS.txt
 
       - name: Create or update GitHub release
