@@ -15,11 +15,20 @@ cache_dir="$NODELITE_UPDATE_CACHE_DIR"
 repository="${NODELITE_UPDATE_REPOSITORY%/}"
 tmp_script=""
 tmp_checksums=""
+tmp_resolved_url=""
+active_pid=""
+
+CURL_CONNECT_TIMEOUT_SECS=10
+CURL_RESOLVE_TIMEOUT_SECS=30
+CURL_DOWNLOAD_TIMEOUT_SECS=60
+CHECKSUM_MAX_BYTES=1048576
+INSTALLER_MAX_BYTES=1048576
 
 # shellcheck disable=SC2317 # Invoked indirectly by the EXIT trap.
 cleanup() {
   [ -n "$tmp_script" ] && rm -f "$tmp_script"
   [ -n "$tmp_checksums" ] && rm -f "$tmp_checksums"
+  [ -n "$tmp_resolved_url" ] && rm -f "$tmp_resolved_url"
   return 0
 }
 
@@ -32,6 +41,37 @@ finish() {
 fail_update() {
   printf '%s\n' "nodelite-update: error: $1" >>"$log"
   finish 1
+}
+
+# shellcheck disable=SC2317 # Invoked indirectly by the signal traps.
+stop_active_process() {
+  if [ -n "$active_pid" ]; then
+    kill -TERM "$active_pid" 2>/dev/null || true
+    wait "$active_pid" 2>/dev/null || true
+    active_pid=""
+  fi
+}
+
+# shellcheck disable=SC2317 # Invoked indirectly by the signal traps.
+handle_signal() {
+  signal_name="$1"
+  signal_status="$2"
+  stop_active_process
+  printf '%s\n' "nodelite-update: interrupted signal=$signal_name" >>"$log"
+  finish "$signal_status"
+}
+
+run_secure_curl() {
+  curl \
+    --proto '=https' \
+    --proto-redir '=https' \
+    --connect-timeout "$CURL_CONNECT_TIMEOUT_SECS" \
+    "$@" &
+  active_pid="$!"
+  wait "$active_pid"
+  command_status="$?"
+  active_pid=""
+  return "$command_status"
 }
 
 calculate_sha256() {
@@ -47,12 +87,18 @@ calculate_sha256() {
 }
 
 trap cleanup EXIT
-trap 'exit 130' HUP INT TERM
+trap 'handle_signal HUP 129' HUP
+trap 'handle_signal INT 130' INT
+trap 'handle_signal TERM 143' TERM
 
 : >"$log" || exit 1
 printf '%s\n' "nodelite-update: started at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$log"
 mkdir -p "$cache_dir" || fail_update "failed to create private update cache"
 chmod 0700 "$cache_dir" || fail_update "failed to secure private update cache"
+tmp_resolved_url="$(mktemp "$cache_dir/release-url.XXXXXX")" \
+  || fail_update "failed to create temporary release URL file"
+chmod 0600 "$tmp_resolved_url" \
+  || fail_update "failed to secure temporary release URL file"
 
 case "$repository" in
   https://github.com/*/*)
@@ -64,9 +110,15 @@ esac
 
 release_url="$repository/releases/latest"
 printf '%s\n' "nodelite-update: resolving stable release from $release_url" >>"$log"
-if ! resolved_url="$(curl -fsSIL -o /dev/null -w '%{url_effective}' "$release_url")"; then
+if ! run_secure_curl \
+  --max-time "$CURL_RESOLVE_TIMEOUT_SECS" \
+  -fsSIL \
+  -o /dev/null \
+  -w '%{url_effective}' \
+  "$release_url" >"$tmp_resolved_url"; then
   fail_update "failed to resolve latest stable release"
 fi
+resolved_url="$(cat "$tmp_resolved_url")"
 
 tag_prefix="$repository/releases/tag/"
 case "$resolved_url" in
@@ -96,8 +148,17 @@ tmp_checksums="$(mktemp "$cache_dir/SHA256SUMS.XXXXXX")" \
 chmod 0600 "$tmp_script" "$tmp_checksums" \
   || fail_update "failed to secure temporary update files"
 
-if ! curl -fsSL "$checksums_url" -o "$tmp_checksums" >>"$log" 2>&1; then
+if ! run_secure_curl \
+  --max-time "$CURL_DOWNLOAD_TIMEOUT_SECS" \
+  --max-filesize "$CHECKSUM_MAX_BYTES" \
+  -fsSL \
+  "$checksums_url" \
+  -o "$tmp_checksums" >>"$log" 2>&1; then
   fail_update "failed to download release checksums"
+fi
+checksum_size="$(wc -c <"$tmp_checksums" | tr -d '[:space:]')"
+if [ "$checksum_size" -gt "$CHECKSUM_MAX_BYTES" ]; then
+  fail_update "release checksum manifest exceeds size limit"
 fi
 expected_sha256="$(awk -v artifact="install-server.sh" '
   NF >= 2 {
@@ -119,8 +180,17 @@ if [ "${#expected_sha256}" -ne 64 ]; then
 fi
 expected_sha256="$(printf '%s' "$expected_sha256" | tr 'A-F' 'a-f')"
 
-if ! curl -fsSL "$installer_url" -o "$tmp_script" >>"$log" 2>&1; then
+if ! run_secure_curl \
+  --max-time "$CURL_DOWNLOAD_TIMEOUT_SECS" \
+  --max-filesize "$INSTALLER_MAX_BYTES" \
+  -fsSL \
+  "$installer_url" \
+  -o "$tmp_script" >>"$log" 2>&1; then
   fail_update "failed to download versioned installer"
+fi
+installer_size="$(wc -c <"$tmp_script" | tr -d '[:space:]')"
+if [ "$installer_size" -gt "$INSTALLER_MAX_BYTES" ]; then
+  fail_update "downloaded installer exceeds size limit"
 fi
 if ! actual_sha256="$(calculate_sha256 "$tmp_script")"; then
   fail_update "missing required command: sha256sum or shasum"
@@ -135,6 +205,9 @@ printf '%s\n' "nodelite-update: running verified installer in upgrade mode" >>"$
 NODELITE_SERVER_VERSION="$target_tag" \
 NODELITE_SERVER_BASE_URL="$asset_base_url" \
 NODELITE_SERVER_MODE=upgrade \
-  sh "$tmp_script" >>"$log" 2>&1
+  sh "$tmp_script" >>"$log" 2>&1 &
+active_pid="$!"
+wait "$active_pid"
 update_status="$?"
+active_pid=""
 finish "$update_status"
