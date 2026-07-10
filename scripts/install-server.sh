@@ -552,6 +552,8 @@ load_existing_server_defaults() {
   [ -n "$value" ] && SERVER_PING_INTERVAL_SECS="$value"
   value="$(trim_whitespace "$(toml_get_raw "$config_path" server max_message_bytes)")"
   [ -n "$value" ] && SERVER_MAX_MESSAGE_BYTES="$value"
+  value="$(trim_whitespace "$(toml_get_raw "$config_path" server token_verify_max_parallelism)")"
+  [ -n "$value" ] && SERVER_TOKEN_VERIFY_MAX_PARALLELISM="$value"
   value="$(trim_whitespace "$(toml_get_raw "$config_path" ws max_total_connections)")"
   [ -n "$value" ] && WS_MAX_TOTAL_CONNECTIONS="$value"
   value="$(trim_whitespace "$(toml_get_raw "$config_path" ws max_connections_per_ip)")"
@@ -602,6 +604,7 @@ complete_server_config_defaults() {
   ensure_toml_default "$config_path" server max_sanitized_string_bytes "max_sanitized_string_bytes = $SERVER_MAX_SANITIZED_STRING_BYTES"
   ensure_toml_default "$config_path" server metric_anomaly_session_limit "metric_anomaly_session_limit = $SERVER_METRIC_ANOMALY_SESSION_LIMIT"
   ensure_toml_default "$config_path" server sqlite_busy_timeout_secs "sqlite_busy_timeout_secs = $SERVER_SQLITE_BUSY_TIMEOUT_SECS"
+  ensure_toml_default "$config_path" server token_verify_max_parallelism "token_verify_max_parallelism = $SERVER_TOKEN_VERIFY_MAX_PARALLELISM"
 
   ensure_toml_default "$config_path" auth enable_2fa "enable_2fa = false"
 
@@ -675,6 +678,7 @@ snapshot_path = "${DATA_DIR}/snapshot.json"
 stale_after_secs = ${SERVER_STALE_AFTER_SECS}
 ping_interval_secs = ${SERVER_PING_INTERVAL_SECS}
 max_message_bytes = ${SERVER_MAX_MESSAGE_BYTES}
+token_verify_max_parallelism = ${SERVER_TOKEN_VERIFY_MAX_PARALLELISM}
 
 [auth]
 username = "${READONLY_USERNAME}"
@@ -795,6 +799,7 @@ SERVER_MAX_SANITIZED_DISKS="64"
 SERVER_MAX_SANITIZED_STRING_BYTES="256"
 SERVER_METRIC_ANOMALY_SESSION_LIMIT="5"
 SERVER_SQLITE_BUSY_TIMEOUT_SECS="5"
+SERVER_TOKEN_VERIFY_MAX_PARALLELISM="4"
 WS_MAX_TOTAL_CONNECTIONS="1024"
 WS_MAX_CONNECTIONS_PER_IP="32"
 WS_AUTH_FAIL_WINDOW_SECS="300"
