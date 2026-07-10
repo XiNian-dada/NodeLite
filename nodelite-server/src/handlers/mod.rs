@@ -18,7 +18,7 @@ mod settings;
 use crate::AppState;
 use crate::audit::{AuditEventType, NewAuditEvent};
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "linux")))]
 pub(crate) use api_routes::process_resident_memory_bytes;
 pub(crate) use api_routes::{
     audit_log, bootstrap, metrics, node_history, node_logs, node_status, nodes, overview,

@@ -55,19 +55,21 @@ pub(super) fn current_process_memory() -> Result<ProcessMemorySnapshot> {
     {
         let pss_bytes = linux_memory_kib("/proc/self/smaps_rollup", "Pss:")?.map(kib_to_bytes);
         let rss_anon_bytes = linux_memory_kib("/proc/self/status", "RssAnon:")?.map(kib_to_bytes);
-        return Ok(ProcessMemorySnapshot {
+        Ok(ProcessMemorySnapshot {
             rss_bytes,
             pss_bytes,
             rss_anon_bytes,
-        });
+        })
     }
 
     #[cfg(not(target_os = "linux"))]
-    Ok(ProcessMemorySnapshot {
-        rss_bytes,
-        pss_bytes: None,
-        rss_anon_bytes: None,
-    })
+    {
+        Ok(ProcessMemorySnapshot {
+            rss_bytes,
+            pss_bytes: None,
+            rss_anon_bytes: None,
+        })
+    }
 }
 
 #[cfg(target_os = "linux")]
