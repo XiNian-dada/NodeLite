@@ -51,7 +51,7 @@ impl NodeRegistry {
     }
 
     /// 刷新节点的 Token:生成新明文 token, 哈希入库,代次 +1, 延长过期时间。
-    /// 若调用方仍持有 grace generation，则保留该旧 hash，直到新响应成功送达。
+    /// 若调用方仍持有 grace generation，则保留该旧 hash 与原始截止时间。
     /// 返回 (new_plaintext_token, expires_at, new_generation)。明文只在
     /// 进程内存里短暂存在,从这里被传递给 WS 端发送给 agent。
     pub async fn refresh_token(
@@ -88,9 +88,9 @@ impl NodeRegistry {
                     node.previous_token_hash =
                         std::mem::replace(&mut node.token_hash, new_token_hash);
                     node.previous_token_generation = Some(node.token_generation);
+                    node.previous_token_valid_until =
+                        Some(now + ChronoDuration::minutes(TOKEN_REFRESH_GRACE_MINUTES));
                 }
-                node.previous_token_valid_until =
-                    Some(now + ChronoDuration::minutes(TOKEN_REFRESH_GRACE_MINUTES));
                 node.token_generation = node.token_generation.saturating_add(1);
                 node.token_expires_at = Some(expires_at);
                 // 升级路径残留的明文也在这里清空,确保从此刻起 disk 上彻底无明文。

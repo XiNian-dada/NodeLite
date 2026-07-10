@@ -323,6 +323,7 @@ mod tests {
             .expect("registry should load");
         let identity = identity_for("timeout-01");
         let mut session_generation = 1;
+        let mut original_grace_deadline = None;
 
         for expected_generation in 2..=4 {
             let (new_token, expires_at, new_generation) = registry
@@ -330,6 +331,19 @@ mod tests {
                 .await
                 .expect("token should be persisted before send");
             assert_eq!(new_generation, expected_generation);
+            let node = registry
+                .list_registered_nodes()
+                .await
+                .into_iter()
+                .next()
+                .expect("registered node should exist");
+            let grace_deadline = node
+                .previous_token_valid_until
+                .expect("previous token should have a grace deadline");
+            match original_grace_deadline {
+                Some(original) => assert_eq!(grace_deadline, original),
+                None => original_grace_deadline = Some(grace_deadline),
+            }
             let response = nodelite_proto::WireMessage::RefreshTokenResponse(
                 nodelite_proto::RefreshTokenResponseMessage {
                     new_token,
