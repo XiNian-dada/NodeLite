@@ -300,21 +300,26 @@ impl TwoFactorSessions {
         false
     }
 
-    /// 标记某个 TOTP `time_step` 已经被成功消费过;同一个 step 再次出现时,
-    /// `is_totp_step_used` 会返回 true,从而拒绝重放。
-    /// 标记会在该 step 离开 ±1 漂移窗口后自动过期。
-    pub fn mark_totp_step_used(&self, step: u64) {
+    /// 原子地检查并标记当前验证码匹配的所有 TOTP step。
+    ///
+    /// drift 窗口内可能有多个 step 生成同一个验证码。只要其中至少一个尚未
+    /// 被消费就接受本次验证,并把所有匹配 step 一并标记,避免碰撞码从相邻
+    /// step 再次通过。空列表或所有 step 都已被消费时返回 `false`。
+    pub fn try_mark_unused_totp_steps(&self, steps: &[u64]) -> bool {
+        let now = Instant::now();
         let mut store = lock_mutex(&self.inner);
-        prune_expired_sessions(&mut store, Instant::now());
-        let expires_at =
-            Instant::now() + Duration::from_secs(TWO_FACTOR_TOTP_REPLAY_RETENTION_SECS);
-        store.used_totp_steps.insert(step, expires_at);
-    }
-
-    pub fn is_totp_step_used(&self, step: u64) -> bool {
-        let mut store = lock_mutex(&self.inner);
-        prune_expired_sessions(&mut store, Instant::now());
-        store.used_totp_steps.contains_key(&step)
+        prune_expired_sessions(&mut store, now);
+        if steps
+            .iter()
+            .all(|step| store.used_totp_steps.contains_key(step))
+        {
+            return false;
+        }
+        let expires_at = now + Duration::from_secs(TWO_FACTOR_TOTP_REPLAY_RETENTION_SECS);
+        for step in steps {
+            store.used_totp_steps.insert(*step, expires_at);
+        }
+        true
     }
 
     pub fn create_authenticated(&self) -> AuthSessionResult<String> {
@@ -447,8 +452,9 @@ pub fn decode_totp_secret(value: &str) -> Option<Vec<u8>> {
 
 /// 返回当前 drift 窗口内与验证码匹配的所有 TOTP step。
 ///
-/// 调用方做 replay protection 时应检查所有返回 step，并在接受后把所有匹配
-/// step 标记为已用，避免 6 位码在相邻 step 碰撞时被重复使用。
+/// 调用方做 replay protection 时应把返回值交给
+/// [`TwoFactorSessions::try_mark_unused_totp_steps`],原子地检查并标记所有
+/// 匹配 step,避免 6 位码在相邻 step 碰撞时被重复使用。
 pub fn matching_totp_steps(totp_secret: Option<&[u8]>, code: &str) -> Vec<u64> {
     // 时钟回拨到 1970 之前 chrono 会返回负值;退化到 0 而不是 panic。
     let now_secs = Utc::now().timestamp().max(0) as u64;

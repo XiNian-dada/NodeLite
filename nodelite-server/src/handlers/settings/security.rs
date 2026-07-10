@@ -107,8 +107,8 @@ pub(super) fn settings_confirmation_error_for_sensitive_action(
             "verification code is required",
         ));
     };
-    let matching_steps = match unused_matching_totp_steps(state, &secret, code) {
-        Ok(steps) => steps,
+    match verify_and_consume_totp_steps(state, &secret, code) {
+        Ok(()) => {}
         Err(TotpVerificationError::Invalid) => {
             return Some(settings_json_error(
                 StatusCode::UNAUTHORIZED,
@@ -121,8 +121,7 @@ pub(super) fn settings_confirmation_error_for_sensitive_action(
                 "verification code already used",
             ));
         }
-    };
-    mark_totp_steps_used(state, &matching_steps);
+    }
     None
 }
 
@@ -131,28 +130,22 @@ enum TotpVerificationError {
     AlreadyUsed,
 }
 
-fn unused_matching_totp_steps(
+fn verify_and_consume_totp_steps(
     state: &AppState,
     secret: &[u8],
     code: &str,
-) -> Result<Vec<u64>, TotpVerificationError> {
+) -> Result<(), TotpVerificationError> {
     let matching_steps = matching_totp_steps(Some(secret), code);
     if matching_steps.is_empty() {
         return Err(TotpVerificationError::Invalid);
     }
-    if matching_steps
-        .iter()
-        .all(|step| state.two_factor_sessions.is_totp_step_used(*step))
+    if !state
+        .two_factor_sessions
+        .try_mark_unused_totp_steps(&matching_steps)
     {
         return Err(TotpVerificationError::AlreadyUsed);
     }
-    Ok(matching_steps)
-}
-
-fn mark_totp_steps_used(state: &AppState, steps: &[u64]) {
-    for step in steps {
-        state.two_factor_sessions.mark_totp_step_used(*step);
-    }
+    Ok(())
 }
 
 /// 开始网页端 2FA 绑定:生成一个新 TOTP secret 和本地 SVG 二维码。
@@ -231,16 +224,15 @@ pub(crate) async fn enable_two_factor(
     if secret_bytes.len() < 10 {
         return settings_json_error(StatusCode::BAD_REQUEST, "invalid TOTP secret");
     }
-    let matching_steps = match unused_matching_totp_steps(&state, &secret_bytes, &request.code) {
-        Ok(steps) => steps,
+    match verify_and_consume_totp_steps(&state, &secret_bytes, &request.code) {
+        Ok(()) => {}
         Err(TotpVerificationError::Invalid) => {
             return settings_json_error(StatusCode::UNAUTHORIZED, "invalid verification code");
         }
         Err(TotpVerificationError::AlreadyUsed) => {
             return settings_json_error(StatusCode::UNAUTHORIZED, "verification code already used");
         }
-    };
-    mark_totp_steps_used(&state, &matching_steps);
+    }
 
     let next_auth = ReadonlyAuthConfig {
         enable_2fa: true,
@@ -317,16 +309,15 @@ pub(crate) async fn disable_two_factor(
     else {
         return settings_json_error(StatusCode::CONFLICT, "2FA secret is not configured");
     };
-    let matching_steps = match unused_matching_totp_steps(&state, &secret, &request.code) {
-        Ok(steps) => steps,
+    match verify_and_consume_totp_steps(&state, &secret, &request.code) {
+        Ok(()) => {}
         Err(TotpVerificationError::Invalid) => {
             return settings_json_error(StatusCode::UNAUTHORIZED, "invalid verification code");
         }
         Err(TotpVerificationError::AlreadyUsed) => {
             return settings_json_error(StatusCode::UNAUTHORIZED, "verification code already used");
         }
-    };
-    mark_totp_steps_used(&state, &matching_steps);
+    }
 
     let next_auth = ReadonlyAuthConfig {
         enable_2fa: false,
