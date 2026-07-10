@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use nodelite_proto::NodeStatus;
+use nodelite_proto::{GeoIpLocation, NodeStatus};
 use tokio::fs;
 use tokio::task::JoinHandle;
 use tokio::time::{MissedTickBehavior, interval};
@@ -41,8 +41,44 @@ pub async fn load_snapshot(path: &Path) -> Result<Vec<NodeStatus>> {
                 status.identity.node_id
             )
         })?;
+        validate_snapshot_location(
+            "geoip",
+            status.geoip_country.as_deref(),
+            status.geoip_city.as_deref(),
+            status.geoip_latitude,
+            status.geoip_longitude,
+        )?;
+        validate_snapshot_location(
+            "location override",
+            status.location_override_country.as_deref(),
+            status.location_override_city.as_deref(),
+            status.location_override_latitude,
+            status.location_override_longitude,
+        )?;
     }
     Ok(statuses)
+}
+
+fn validate_snapshot_location(
+    field: &str,
+    country: Option<&str>,
+    city: Option<&str>,
+    latitude: Option<f64>,
+    longitude: Option<f64>,
+) -> Result<()> {
+    if country.is_none() && city.is_none() && latitude.is_none() && longitude.is_none() {
+        return Ok(());
+    }
+    let Some(country) = country else {
+        anyhow::bail!("snapshot {field} is missing country");
+    };
+    crate::sanitize::validate_location_override(&GeoIpLocation {
+        country: country.to_string(),
+        city: city.map(str::to_string),
+        latitude,
+        longitude,
+    })
+    .map_err(|error| anyhow::anyhow!("snapshot {field} is invalid: {error}"))
 }
 
 /// 启动一个后台任务,每 15 秒把当前 `SharedState` 序列化到 `snapshot_path`。
@@ -309,6 +345,28 @@ mod tests {
             .await
             .expect_err("oversized snapshot identity should fail");
         assert!(error.to_string().contains("invalid identity"));
+
+        let _ = std::fs::remove_file(&snapshot_path);
+        let _ = std::fs::remove_dir(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn load_snapshot_rejects_oversized_geoip_text() {
+        let unique = unique_suffix();
+        let temp_dir = std::env::temp_dir().join(format!("nodelite-snapshot-geoip-test-{unique}"));
+        std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+        let snapshot_path = temp_dir.join("snapshot.json");
+        let mut status = sample_status();
+        status.geoip_country = Some("HK".to_string());
+        status.geoip_city = Some("x".repeat(crate::sanitize::MAX_LOCATION_OVERRIDE_TEXT_BYTES + 1));
+
+        persist_snapshot(&snapshot_path, &[status])
+            .await
+            .expect("snapshot should persist");
+        let error = load_snapshot(&snapshot_path)
+            .await
+            .expect_err("oversized snapshot GeoIP should fail");
+        assert!(error.to_string().contains("snapshot geoip is invalid"));
 
         let _ = std::fs::remove_file(&snapshot_path);
         let _ = std::fs::remove_dir(&temp_dir);
