@@ -50,7 +50,9 @@ test('long disk mounts stay within their column across the mobile breakpoint', a
   expect(desktopMountBox!.x + desktopMountBox!.width).toBeLessThanOrEqual(filesystemBox!.x);
   expect(await mount.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
   expect(
-    await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth),
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    ),
   ).toBe(true);
 
   await page.setViewportSize({ width: 560, height: 900 });
@@ -59,7 +61,9 @@ test('long disk mounts stay within their column across the mobile breakpoint', a
   await expect(mount).toHaveCSS('white-space', 'normal');
   expect(await mount.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   expect(
-    await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth),
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    ),
   ).toBe(true);
 });
 
