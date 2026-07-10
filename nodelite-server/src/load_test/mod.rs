@@ -8,6 +8,7 @@
 
 mod diagnostics;
 mod fake_agent;
+mod history_matrix;
 mod large_scale;
 mod probes;
 mod scenarios;
@@ -166,6 +167,17 @@ async fn load_test_dashboard_fanout_scores() {
 )]
 async fn load_test_history_pressure_scores() {
     if let Err(error) = large_scale::run_history_pressure_load_test().await {
+        panic!("{error:#}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[cfg_attr(
+    not(feature = "load_test"),
+    ignore = "manual history-only query matrix; run with -- --ignored --nocapture"
+)]
+async fn load_test_history_query_matrix_scores() {
+    if let Err(error) = history_matrix::run_history_query_matrix().await {
         panic!("{error:#}");
     }
 }
