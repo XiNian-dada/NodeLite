@@ -7,6 +7,13 @@ use std::time::{Duration, Instant};
 use lru::LruCache;
 use nodelite_proto::HistoryPoint;
 
+/// Conservative metadata allowance for each heap allocation made by String or Vec.
+const ALLOCATOR_METADATA_BYTES: usize = 16;
+/// LRU linked-list pointers, hash-table entry/control bytes, and node allocation metadata.
+const LRU_ENTRY_METADATA_BYTES: usize = 64;
+/// Covers allocator size classes and platform-specific alignment not visible through capacity().
+const ESTIMATE_SAFETY_MARGIN_DIVISOR: usize = 8;
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(super) struct CacheKey {
     node_id: String,
@@ -26,7 +33,9 @@ impl CacheKey {
     }
 
     fn estimated_bytes(&self) -> usize {
-        size_of::<Self>().saturating_add(self.node_id.capacity())
+        size_of::<Self>()
+            .saturating_add(self.node_id.capacity())
+            .saturating_add(allocation_metadata(self.node_id.capacity()))
     }
 }
 
@@ -38,20 +47,36 @@ struct CacheEntry {
 
 impl CacheEntry {
     fn new(key: &CacheKey, points: Vec<HistoryPoint>, cached_at: Instant) -> Self {
-        let point_allocations = points
-            .iter()
-            .map(|point| point.node_id.capacity())
-            .sum::<usize>();
-        let estimated_bytes = key
+        let point_allocations = points.iter().fold(0_usize, |total, point| {
+            total.saturating_add(
+                point
+                    .node_id
+                    .capacity()
+                    .saturating_add(allocation_metadata(point.node_id.capacity())),
+            )
+        });
+        let base_estimate = key
             .estimated_bytes()
             .saturating_add(size_of::<Self>())
             .saturating_add(points.capacity().saturating_mul(size_of::<HistoryPoint>()))
-            .saturating_add(point_allocations);
+            .saturating_add(allocation_metadata(points.capacity()))
+            .saturating_add(point_allocations)
+            .saturating_add(LRU_ENTRY_METADATA_BYTES);
+        let estimated_bytes =
+            base_estimate.saturating_add(base_estimate / ESTIMATE_SAFETY_MARGIN_DIVISOR);
         Self {
             points,
             cached_at,
             estimated_bytes,
         }
+    }
+}
+
+fn allocation_metadata(capacity: usize) -> usize {
+    if capacity == 0 {
+        0
+    } else {
+        ALLOCATOR_METADATA_BYTES
     }
 }
 
@@ -294,5 +319,43 @@ mod tests {
 
         assert!(cache.get(&key, start).is_none());
         assert_eq!(cache.metrics().entries, 0);
+    }
+
+    #[test]
+    fn many_short_node_ids_include_per_allocation_overhead() {
+        let start = Instant::now();
+        let key = CacheKey::new("k", 1, 2, 1024);
+        let points = (0..1024).map(|_| point("x")).collect::<Vec<_>>();
+        let point_count = points.len();
+        let entry = CacheEntry::new(&key, points, start);
+        let minimum_point_bytes =
+            point_count.saturating_mul(size_of::<HistoryPoint>() + 1 + ALLOCATOR_METADATA_BYTES);
+
+        assert!(entry.estimated_bytes > minimum_point_bytes);
+    }
+
+    #[test]
+    fn empty_result_respects_exact_estimated_budget_boundary() {
+        let start = Instant::now();
+        let key = CacheKey::new("empty", 1, 2, 60);
+        let estimated_bytes = CacheEntry::new(&key, Vec::new(), start).estimated_bytes;
+        let capacity = NonZeroUsize::new(2).expect("test capacity should be non-zero");
+
+        let mut below_budget = HistoryQueryCache::new(
+            capacity,
+            estimated_bytes.saturating_sub(1),
+            Duration::from_secs(60),
+        );
+        below_budget.insert(key.clone(), Vec::new(), start);
+        assert_eq!(below_budget.metrics().entries, 0);
+
+        let mut exact_budget =
+            HistoryQueryCache::new(capacity, estimated_bytes, Duration::from_secs(60));
+        exact_budget.insert(key, Vec::new(), start);
+        assert_eq!(exact_budget.metrics().entries, 1);
+        assert_eq!(
+            exact_budget.metrics().estimated_bytes,
+            estimated_bytes as u64
+        );
     }
 }

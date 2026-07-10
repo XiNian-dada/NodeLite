@@ -32,6 +32,11 @@ The cgroup `file` value is Linux filesystem page cache. It is reclaimable kernel
 the same resource as SQLite's per-connection private page cache controlled by
 `history_read_cache_kib`.
 
+The query-result cache's `estimated_bytes` budget includes String/Vec allocation metadata, LRU/hash
+entry overhead, and a 12.5% safety margin for allocator size classes and alignment. It remains a
+portable conservative estimate rather than an allocator-reported exact heap measurement; Linux
+PSS/RssAnon is still the final production validation source.
+
 ## 2026-07-10 macOS result
 
 Environment: Apple M1 Pro, 32 GiB RAM, macOS Darwin 25.5.0, Rust 1.93.1, release profile. This was a

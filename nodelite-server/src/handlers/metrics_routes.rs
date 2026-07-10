@@ -338,7 +338,7 @@ pub(crate) fn render_runtime_metrics(metrics: RuntimeMetrics) -> String {
     );
     emitter.gauge(
         "nodelite_history_cache_estimated_bytes",
-        "Estimated bytes retained by history query cache keys and values.",
+        "Conservative estimated bytes retained by history query cache entries and metadata.",
         &[],
         metrics.history_cache.estimated_bytes,
     );
