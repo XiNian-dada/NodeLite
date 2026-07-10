@@ -32,10 +32,9 @@ pub(crate) async fn verify_2fa_api(
     let client_ip = resolve_client_ip(&state.shared.config().trusted_proxies, peer_addr, &headers);
     ensure_verify_2fa_not_blocked(&state, &headers, client_ip).await?;
     let pending_token = require_pending_token(&state, &headers, client_ip).await?;
-    let Some(totp_steps) = current_unused_totp_steps(&state, &request.code).await else {
+    if !try_consume_current_totp(&state, &request.code).await {
         return Ok(handle_invalid_totp(&state, &headers, client_ip, &pending_token).await);
-    };
-    mark_totp_steps_used(&state, &totp_steps);
+    }
 
     let audit_user = readonly_auth_username(&state).await;
     let auth_token = create_authenticated_two_factor_session(&state)?;
@@ -132,26 +131,15 @@ async fn require_pending_token(
     Ok(pending_token)
 }
 
-async fn current_unused_totp_steps(state: &AppState, code: &str) -> Option<Vec<u64>> {
+async fn try_consume_current_totp(state: &AppState, code: &str) -> bool {
     let totp_secret = {
         let auth = state.readonly_auth.read().await;
         auth.totp_secret.clone()
     };
     let matching_steps = matching_totp_steps(totp_secret.as_deref(), code);
-    if matching_steps.is_empty()
-        || matching_steps
-            .iter()
-            .all(|step| state.two_factor_sessions.is_totp_step_used(*step))
-    {
-        return None;
-    }
-    Some(matching_steps)
-}
-
-fn mark_totp_steps_used(state: &AppState, steps: &[u64]) {
-    for step in steps {
-        state.two_factor_sessions.mark_totp_step_used(*step);
-    }
+    state
+        .two_factor_sessions
+        .try_mark_unused_totp_steps(&matching_steps)
 }
 
 async fn handle_invalid_totp(

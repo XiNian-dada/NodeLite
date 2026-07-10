@@ -1,6 +1,8 @@
 //! Auth and runtime-focused library-unit tests.
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::sync::{Arc, Barrier};
+use std::thread;
 
 use axum::body::Body;
 use axum::http::{Request, header};
@@ -57,17 +59,54 @@ fn pending_session_invalidated_after_max_failed_attempts() {
 }
 
 #[test]
-fn totp_step_marked_used_blocks_replay() {
+fn totp_step_consumption_blocks_replay() {
     let sessions = TwoFactorSessions::new();
     let step = 12345_u64;
     let replay_retention =
         std::time::Duration::from_secs(crate::auth::TWO_FACTOR_TOTP_REPLAY_RETENTION_SECS);
     assert!(replay_retention >= std::time::Duration::from_secs(150));
-    assert!(!sessions.is_totp_step_used(step));
-    sessions.mark_totp_step_used(step);
-    assert!(sessions.is_totp_step_used(step));
-    assert!(!sessions.is_totp_step_used(step + 1));
-    assert!(!sessions.is_totp_step_used(step - 1));
+    assert!(sessions.try_mark_unused_totp_steps(&[step]));
+    assert!(!sessions.try_mark_unused_totp_steps(&[step]));
+    assert!(sessions.try_mark_unused_totp_steps(&[step + 1]));
+    assert!(sessions.try_mark_unused_totp_steps(&[step - 1]));
+}
+
+#[test]
+fn totp_steps_are_consumed_atomically_across_concurrent_requests() {
+    const WORKERS: usize = 16;
+
+    let sessions = TwoFactorSessions::new();
+    let barrier = Arc::new(Barrier::new(WORKERS));
+    let step = 12345_u64;
+    let handles = (0..WORKERS)
+        .map(|_| {
+            let sessions = sessions.clone();
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                sessions.try_mark_unused_totp_steps(&[step])
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let accepted = handles
+        .into_iter()
+        .map(|handle| handle.join().expect("worker should not panic"))
+        .filter(|accepted| *accepted)
+        .count();
+
+    assert_eq!(accepted, 1);
+}
+
+#[test]
+fn totp_step_collision_marks_every_matching_step() {
+    let sessions = TwoFactorSessions::new();
+    let previous_step = 12344_u64;
+    let current_step = 12345_u64;
+
+    assert!(sessions.try_mark_unused_totp_steps(&[previous_step]));
+    assert!(sessions.try_mark_unused_totp_steps(&[previous_step, current_step]));
+    assert!(!sessions.try_mark_unused_totp_steps(&[previous_step, current_step]));
 }
 
 #[test]
