@@ -175,10 +175,69 @@ async fn send_browser_message(
 #[cfg(test)]
 mod tests {
     use std::collections::{HashMap, HashSet};
+    use std::convert::Infallible;
+    use std::net::IpAddr;
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::task::{Context, Poll};
+    use std::time::Duration;
 
-    use nodelite_proto::{NodeListIdentity, NodeListItem};
+    use futures::Sink;
+    use nodelite_proto::{BrowserMessage, NodeListIdentity, NodeListItem, WsConfig};
 
     use super::*;
+    use crate::admission::WsAdmissionController;
+    use crate::ws::transport::send_message_with_timeout;
+
+    struct DropProbeSink {
+        dropped: Arc<AtomicBool>,
+    }
+
+    impl Drop for DropProbeSink {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    impl Sink<Message> for DropProbeSink {
+        type Error = Infallible;
+
+        fn poll_ready(
+            self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+        ) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn start_send(self: Pin<&mut Self>, _item: Message) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn poll_flush(
+            self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+        ) -> Poll<Result<(), Self::Error>> {
+            Poll::Pending
+        }
+
+        fn poll_close(
+            self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+        ) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    fn browser_admission() -> WsAdmissionController {
+        WsAdmissionController::new(&WsConfig {
+            max_total_connections: 2,
+            max_connections_per_ip: 1,
+            auth_fail_window_secs: 60,
+            auth_fail_max_attempts: 2,
+            auth_block_secs: 60,
+        })
+    }
 
     /// 一次重算相对上次发送快照的增量:新增/变更的行 + 消失的行 id。
     struct NodeListDiff<'a> {
@@ -368,5 +427,42 @@ mod tests {
         let action = classify_client_message(&Message::Close(None));
 
         assert_eq!(action, ClientAction::End);
+    }
+
+    #[tokio::test]
+    async fn slow_browser_timeout_drops_sink_and_releases_admission_permit() {
+        let controller = browser_admission();
+        let client_ip: IpAddr = "198.51.100.20".parse().expect("valid test IP");
+        let permit = controller
+            .try_acquire(client_ip)
+            .expect("browser connection should acquire a permit");
+        assert_eq!(controller.snapshot().active_connections, 1);
+        let dropped = Arc::new(AtomicBool::new(false));
+        let payload =
+            serde_json::to_string(&BrowserMessage::Pong).expect("browser message should serialize");
+
+        let error = {
+            let _permit = permit;
+            let mut sender = DropProbeSink {
+                dropped: Arc::clone(&dropped),
+            };
+            send_message_with_timeout(
+                &mut sender,
+                Message::Text(payload.into()),
+                "test slow browser send",
+                Duration::from_millis(20),
+            )
+            .await
+            .expect_err("slow browser send should time out")
+        };
+
+        assert!(error.to_string().contains("timed out"));
+        assert!(dropped.load(Ordering::SeqCst));
+        assert_eq!(controller.snapshot().active_connections, 0);
+        let replacement = controller
+            .try_acquire(client_ip)
+            .expect("released browser permit should be reusable");
+        drop(replacement);
+        assert_eq!(controller.snapshot().active_connections, 0);
     }
 }
