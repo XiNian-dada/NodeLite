@@ -12,6 +12,7 @@ mod auth;
 mod error;
 mod issue;
 mod lifecycle;
+mod metrics;
 mod migration;
 mod render;
 mod storage;
@@ -37,6 +38,7 @@ use tokio::sync::{RwLock, Semaphore};
 use self::auth::TokenVerifyProbe;
 pub use self::error::{RegistryError, RegistryResult};
 pub use self::issue::issue_node;
+pub(crate) use self::metrics::TokenVerifyMetrics;
 #[cfg(test)]
 pub use self::render::{build_agent_server_url, build_github_release_base_url};
 pub use self::render::{
@@ -220,6 +222,7 @@ pub struct NodeRegistry {
     registry_revision: Arc<AtomicU64>,
     token_verify_limit: usize,
     token_verify_limiter: Arc<Semaphore>,
+    token_verify_metrics: Arc<metrics::TokenVerifyMetricsState>,
     /// Token 验证结果缓存:减少重连场景的 Argon2id 开销。
     token_cache: Arc<ParkingLotMutex<LruCache<TokenCacheKey, TokenCacheEntry>>>,
     #[cfg(test)]

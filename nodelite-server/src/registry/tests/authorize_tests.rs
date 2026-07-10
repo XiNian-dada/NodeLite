@@ -87,6 +87,18 @@ async fn token_verify_limiter_caps_parallel_argon2_verifies() {
         }));
     }
 
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let metrics = registry.token_verify_metrics();
+            if metrics.active == 1 && metrics.waiting >= 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("token verify metrics should observe active and waiting requests");
+
     for result in futures::future::join_all(handles).await {
         let authorized = result
             .expect("authorize task should complete")
@@ -94,6 +106,11 @@ async fn token_verify_limiter_caps_parallel_argon2_verifies() {
         assert_eq!(authorized.identity.node_id, "storm-01");
     }
     assert_eq!(probe.max_active(), 1);
+    let metrics = registry.token_verify_metrics();
+    assert_eq!(metrics.limit, 1);
+    assert_eq!(metrics.active, 0);
+    assert_eq!(metrics.waiting, 0);
+    assert!(metrics.wait_seconds_total > 0.0);
 
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_dir(&temp_dir);

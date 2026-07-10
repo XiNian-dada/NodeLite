@@ -389,6 +389,11 @@ fn metrics_response_sets_content_length_for_uncompressed_body() {
             .await
             .expect("metrics body should collect");
         assert_eq!(content_length, body.len());
+        let body = std::str::from_utf8(&body).expect("metrics body should be utf-8");
+        assert!(body.contains("nodelite_token_verify_limit 4"));
+        assert!(body.contains("nodelite_token_verify_active 0"));
+        assert!(body.contains("nodelite_token_verify_waiting 0"));
+        assert!(body.contains("nodelite_token_verify_wait_seconds_total 0"));
 
         state.history.shutdown().await;
         state.audit_log.shutdown().await;

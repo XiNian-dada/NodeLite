@@ -61,6 +61,7 @@ impl NodeRegistry {
             registry_revision: Arc::new(AtomicU64::new(1)),
             token_verify_limit,
             token_verify_limiter: Arc::new(Semaphore::new(token_verify_limit)),
+            token_verify_metrics: Arc::new(super::metrics::TokenVerifyMetricsState::default()),
             token_cache: Arc::new(ParkingLotMutex::new(LruCache::new(
                 std::num::NonZeroUsize::new(TOKEN_CACHE_CAPACITY).expect("cache capacity > 0"),
             ))),
