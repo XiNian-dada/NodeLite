@@ -9,7 +9,8 @@ use super::{
     RegistryError, RegistryFile, TokenVerifyProbe, build_agent_server_url,
     build_github_release_base_url, default_agent_release_base_url, issue_node,
     registry_file_read_count, release_registry_lock_with, render_install_command,
-    reset_registry_file_read_count, token_is_unexpired, validate_registered_node, verify_token,
+    reset_registry_file_read_count, token_is_unexpired, validate_registered_node,
+    validate_runtime_identity, verify_token,
 };
 use nodelite_proto::NodeIdentity;
 

@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use nodelite_proto::{
-    MAX_NODE_TAG_BYTES, MAX_NODE_TAGS, NodeIdentity, validate_identifier, validate_non_empty,
-    validate_tag_list,
+    MAX_NODE_IDENTITY_TEXT_BYTES, MAX_NODE_TAG_BYTES, MAX_NODE_TAGS, NodeIdentity,
+    validate_bounded_text, validate_identifier, validate_non_empty, validate_tag_list,
 };
 
 use crate::sanitize::{validate_location_override, validate_renewal_price};
@@ -47,7 +47,12 @@ pub(super) fn validate_registry_file(path: &Path, file: &RegistryFile) -> Regist
 
 pub(super) fn validate_registered_node(node: &RegisteredNode) -> RegistryResult<()> {
     validate_identifier("node.node_id", &node.node_id).map_err(RegistryError::validation)?;
-    validate_non_empty("node.node_label", &node.node_label).map_err(RegistryError::validation)?;
+    validate_bounded_text(
+        "node.node_label",
+        &node.node_label,
+        MAX_NODE_IDENTITY_TEXT_BYTES,
+    )
+    .map_err(RegistryError::validation)?;
     // 注册表中 token 必须以哈希形式存在; 旧版本的明文 `token` 字段
     // 在 `migrate_legacy_tokens` 中已经被搬迁过来。
     if node.token_hash.is_empty() && node.token.is_empty() {
@@ -93,16 +98,30 @@ fn validate_install_session(session: &InstallSession) -> RegistryResult<()> {
     Ok(())
 }
 
-pub(super) fn validate_runtime_identity(identity: &NodeIdentity) -> RegistryResult<()> {
+pub(crate) fn validate_runtime_identity(identity: &NodeIdentity) -> RegistryResult<()> {
     validate_identifier("identity.node_id", &identity.node_id)
         .map_err(RegistryError::validation)?;
-    validate_non_empty("identity.node_label", &identity.node_label)
-        .map_err(RegistryError::validation)?;
-    validate_non_empty("identity.agent_version", &identity.agent_version)
-        .map_err(RegistryError::validation)?;
-    validate_non_empty("identity.hostname", &identity.hostname)
-        .map_err(RegistryError::validation)?;
-    validate_non_empty("identity.os", &identity.os).map_err(RegistryError::validation)?;
+    for (field, value) in [
+        ("identity.node_label", identity.node_label.as_str()),
+        ("identity.hostname", identity.hostname.as_str()),
+        ("identity.os", identity.os.as_str()),
+        ("identity.agent_version", identity.agent_version.as_str()),
+    ] {
+        validate_bounded_text(field, value, MAX_NODE_IDENTITY_TEXT_BYTES)
+            .map_err(RegistryError::validation)?;
+    }
+    for (field, value) in [
+        (
+            "identity.kernel_version",
+            identity.kernel_version.as_deref(),
+        ),
+        ("identity.cpu_model", identity.cpu_model.as_deref()),
+    ] {
+        if let Some(value) = value {
+            validate_bounded_text(field, value, MAX_NODE_IDENTITY_TEXT_BYTES)
+                .map_err(RegistryError::validation)?;
+        }
+    }
     validate_tag_list(
         "identity.tags",
         &identity.tags,

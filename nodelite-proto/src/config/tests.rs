@@ -11,8 +11,8 @@ use super::{
     DEFAULT_AUDIT_RETENTION_DAYS, DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS, DEFAULT_MAX_MESSAGE_BYTES,
     DEFAULT_WS_AUTH_BLOCK_SECS, DEFAULT_WS_AUTH_FAIL_MAX_ATTEMPTS,
     DEFAULT_WS_AUTH_FAIL_WINDOW_SECS, DEFAULT_WS_MAX_CONNECTIONS_PER_IP,
-    DEFAULT_WS_MAX_TOTAL_CONNECTIONS, GeoIpEdition, GeoIpProvider, MAX_NODE_TAG_BYTES,
-    parse_agent_config, parse_server_config,
+    DEFAULT_WS_MAX_TOTAL_CONNECTIONS, GeoIpEdition, GeoIpProvider, MAX_NODE_IDENTITY_TEXT_BYTES,
+    MAX_NODE_TAG_BYTES, parse_agent_config, parse_server_config,
 };
 
 #[test]
@@ -378,6 +378,31 @@ fn rejects_agent_config_with_oversized_tag() {
 
     let error = parse_agent_config(&input).expect_err("oversized tag should fail");
     assert!(error.to_string().contains("agent.tags[0]"));
+}
+
+#[test]
+fn rejects_agent_config_with_oversized_identity_text() {
+    let oversized = "界".repeat(MAX_NODE_IDENTITY_TEXT_BYTES / 3 + 1);
+    for (field, extra) in [
+        ("agent.node_label", format!("node_label = \"{oversized}\"")),
+        (
+            "agent.hostname_override",
+            format!("node_label = \"Hong Kong 01\"\nhostname_override = \"{oversized}\""),
+        ),
+    ] {
+        let input = format!(
+            r#"
+            [agent]
+            node_id = "hk-01"
+            {extra}
+            server = "ws://127.0.0.1:8080/ws"
+            token = "token"
+            "#
+        );
+
+        let error = parse_agent_config(&input).expect_err("oversized identity text should fail");
+        assert!(error.to_string().contains(field));
+    }
 }
 
 #[test]

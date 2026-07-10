@@ -2,8 +2,8 @@ use std::path::Path;
 
 use chrono::{Duration as ChronoDuration, Utc};
 use nodelite_proto::{
-    MAX_NODE_TAG_BYTES, MAX_NODE_TAGS, normalize_string_list, validate_identifier,
-    validate_non_empty, validate_tag_list,
+    MAX_NODE_IDENTITY_TEXT_BYTES, MAX_NODE_TAG_BYTES, MAX_NODE_TAGS, normalize_string_list,
+    validate_bounded_text, validate_identifier, validate_tag_list,
 };
 
 use super::storage::mutate_registry_file;
@@ -22,7 +22,8 @@ use super::{
 pub async fn issue_node(path: &Path, request: IssueNodeRequest) -> RegistryResult<IssueNodeResult> {
     validate_identifier("node_id", &request.node_id).map_err(RegistryError::validation)?;
     if let Some(node_label) = request.node_label.as_deref() {
-        validate_non_empty("node_label", node_label).map_err(RegistryError::validation)?;
+        validate_bounded_text("node_label", node_label, MAX_NODE_IDENTITY_TEXT_BYTES)
+            .map_err(RegistryError::validation)?;
     }
     let normalized_tags = normalize_string_list(request.tags.clone());
     validate_tag_list("tags", &normalized_tags, MAX_NODE_TAGS, MAX_NODE_TAG_BYTES)

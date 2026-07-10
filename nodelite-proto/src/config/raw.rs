@@ -28,10 +28,12 @@ use super::helpers::{
 };
 use super::{
     AgentConfig, AlertingConfig, AuditConfig, ConfigError, GeoIpConfig, GeoIpEdition,
-    GeoIpProvider, MetricsConfig, ReadonlyAuthConfig, ServerConfig, WsConfig,
+    GeoIpProvider, MAX_NODE_IDENTITY_TEXT_BYTES, MetricsConfig, ReadonlyAuthConfig, ServerConfig,
+    WsConfig,
 };
 use crate::validation::{
-    ValidationError, normalize_string_list, validate_identifier, validate_non_empty,
+    ValidationError, normalize_string_list, validate_bounded_text, validate_identifier,
+    validate_non_empty,
 };
 use alerts::RawAlertsSection;
 
@@ -611,7 +613,11 @@ impl RawAgentConfigFile {
     /// 校验 Agent 配置,并把 `agent.tags` 等字段规范化(去空白、去重、排序)。
     pub(super) fn validate(self) -> Result<AgentConfig, ConfigError> {
         validate_identifier("agent.node_id", &self.agent.node_id)?;
-        validate_non_empty("agent.node_label", &self.agent.node_label)?;
+        validate_bounded_text(
+            "agent.node_label",
+            &self.agent.node_label,
+            MAX_NODE_IDENTITY_TEXT_BYTES,
+        )?;
         validate_url("agent.server", &self.agent.server, &["ws", "wss"])?;
         validate_non_empty("agent.token", &self.agent.token)?;
 
@@ -622,7 +628,11 @@ impl RawAgentConfigFile {
         }
 
         if let Some(hostname) = &self.agent.hostname_override {
-            validate_non_empty("agent.hostname_override", hostname)?;
+            validate_bounded_text(
+                "agent.hostname_override",
+                hostname,
+                MAX_NODE_IDENTITY_TEXT_BYTES,
+            )?;
         }
 
         Ok(AgentConfig {

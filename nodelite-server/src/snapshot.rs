@@ -34,6 +34,14 @@ pub async fn load_snapshot(path: &Path) -> Result<Vec<NodeStatus>> {
         .with_context(|| format!("failed to read snapshot file {}", path.display()))?;
     let statuses = serde_json::from_str::<Vec<NodeStatus>>(&content)
         .with_context(|| format!("failed to parse snapshot file {}", path.display()))?;
+    for status in &statuses {
+        crate::registry::validate_runtime_identity(&status.identity).with_context(|| {
+            format!(
+                "snapshot contains invalid identity for {}",
+                status.identity.node_id
+            )
+        })?;
+    }
     Ok(statuses)
 }
 
@@ -279,6 +287,28 @@ mod tests {
             .expect("snapshot should restore");
         assert_eq!(restored.len(), 1);
         assert_eq!(restored[0].identity.node_id, "hk-01");
+
+        let _ = std::fs::remove_file(&snapshot_path);
+        let _ = std::fs::remove_dir(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn load_snapshot_rejects_oversized_runtime_identity() {
+        let unique = unique_suffix();
+        let temp_dir =
+            std::env::temp_dir().join(format!("nodelite-snapshot-identity-test-{unique}"));
+        std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+        let snapshot_path = temp_dir.join("snapshot.json");
+        let mut status = sample_status();
+        status.identity.hostname = "界".repeat(86);
+
+        persist_snapshot(&snapshot_path, &[status])
+            .await
+            .expect("snapshot should persist");
+        let error = load_snapshot(&snapshot_path)
+            .await
+            .expect_err("oversized snapshot identity should fail");
+        assert!(error.to_string().contains("invalid identity"));
 
         let _ = std::fs::remove_file(&snapshot_path);
         let _ = std::fs::remove_dir(&temp_dir);

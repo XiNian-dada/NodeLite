@@ -51,6 +51,7 @@ use self::storage::{
 use self::token::{generate_token, token_is_unexpired, verify_token};
 #[cfg(test)]
 use self::validate::validate_registered_node;
+pub(crate) use self::validate::validate_runtime_identity;
 #[cfg(test)]
 use nodelite_proto::{MAX_NODE_TAG_BYTES, normalize_string_list};
 
