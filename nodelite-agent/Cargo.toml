@@ -23,7 +23,7 @@ getrandom.workspace = true
 libc.workspace = true
 rustls.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal", "fs"] }
+tokio = { workspace = true, features = ["rt", "macros", "net", "time", "sync", "signal", "fs"] }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 toml_edit.workspace = true
 tracing.workspace = true
@@ -32,4 +32,4 @@ url.workspace = true
 nodelite-proto = { path = "../nodelite-proto" }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["test-util", "rt-multi-thread"] }
