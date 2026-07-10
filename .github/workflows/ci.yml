@@ -81,13 +81,16 @@ jobs:
         run: cargo test --workspace --locked
 
       - name: Shellcheck installers
-        run: shellcheck scripts/install-server.sh scripts/install-agent.sh scripts/server-web-update.sh scripts/test-install-server-summary.sh scripts/test-server-web-update.sh scripts/check-demo-credentials.sh scripts/check-actions-pinned.sh
+        run: shellcheck scripts/install-server.sh scripts/install-agent.sh scripts/server-web-update.sh scripts/merge-release-checksums.sh scripts/test-install-server-summary.sh scripts/test-server-web-update.sh scripts/test-release-checksums.sh scripts/check-demo-credentials.sh scripts/check-actions-pinned.sh
 
       - name: Test installer summaries
         run: sh scripts/test-install-server-summary.sh
 
       - name: Test verified web update bootstrap
         run: sh scripts/test-server-web-update.sh
+
+      - name: Test release checksum manifest
+        run: sh scripts/test-release-checksums.sh
 
       - name: Check demo credentials
         run: sh scripts/check-demo-credentials.sh
