@@ -116,6 +116,102 @@ async fn token_verify_limiter_caps_parallel_argon2_verifies() {
     let _ = std::fs::remove_dir(&temp_dir);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn current_grace_and_wrong_token_storm_shares_one_verify_limiter() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be monotonic enough")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("nodelite-token-mixed-storm-{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+    let path = temp_dir.join("server.json");
+
+    let issued = issue_node(
+        &path,
+        IssueNodeRequest {
+            node_id: "mixed-storm-01".to_string(),
+            node_label: Some("Mixed Storm 01".to_string()),
+            tags: Vec::new(),
+        },
+    )
+    .await
+    .expect("node should be issued");
+    let probe = Arc::new(TokenVerifyProbe::new(Duration::from_millis(50)));
+    let registry = NodeRegistry::load_with_token_verify_limit(&path, 1)
+        .await
+        .expect("registry should load")
+        .with_token_verify_probe_for_tests(Arc::clone(&probe));
+    let (current_token, _, current_generation) = registry
+        .refresh_token("mixed-storm-01", issued.node.token_generation)
+        .await
+        .expect("token should refresh");
+    let identity = identity_for("mixed-storm-01");
+    let cases = [
+        (current_token, Some(current_generation)),
+        (
+            issued.node_session_token,
+            Some(issued.node.token_generation),
+        ),
+        ("wrong-token-a".to_string(), None),
+    ];
+
+    let handles = cases.into_iter().map(|(token, expected_generation)| {
+        let registry = registry.clone();
+        let identity = identity.clone();
+        tokio::spawn(async move {
+            (
+                expected_generation,
+                registry.authorize(&identity, &token).await,
+            )
+        })
+    });
+    let handles = handles.collect::<Vec<_>>();
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let metrics = registry.token_verify_metrics();
+            if metrics.active == 1 && metrics.waiting >= 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("mixed token storm should queue behind the shared limiter");
+
+    for result in futures::future::join_all(handles).await {
+        let (expected_generation, authorization) = result.expect("authorize task should complete");
+        match expected_generation {
+            Some(generation) => {
+                assert_eq!(
+                    authorization
+                        .expect("current and grace tokens should authorize")
+                        .generation,
+                    generation
+                );
+            }
+            None => assert!(matches!(authorization, Err(RegistryError::Unauthorized))),
+        }
+    }
+
+    assert_eq!(
+        probe.total_entered(),
+        5,
+        "current token should verify one hash while grace and wrong tokens verify both hashes"
+    );
+    assert_eq!(
+        probe.max_active(),
+        1,
+        "current and previous hash checks must share the configured limiter"
+    );
+    let metrics = registry.token_verify_metrics();
+    assert_eq!(metrics.active, 0);
+    assert_eq!(metrics.waiting, 0);
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn token_verify_limiter_honors_reconnect_storm_matrix_and_cache() {
     for limit in [2, 4, 8] {
