@@ -151,6 +151,7 @@ pub(crate) async fn metrics(State(state): State<AppState>) -> Response {
         registry_nodes: registry_entries,
         registry_disk_entries_total,
         ws_messages: state.shared.ws_message_metrics(),
+        history_cache: state.history.query_cache_metrics(),
     });
     let body = metrics_response_body(
         cached_body,

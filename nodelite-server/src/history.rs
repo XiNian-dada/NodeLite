@@ -11,6 +11,7 @@
 //! - 对外暴露的查询入口统一返回 [`HistoryError`],让 handler 可以按类别区分
 //!   "任务调度失败" / "连接未初始化" / "查询本身失败",而不是匹配错误字符串。
 
+mod cache;
 mod init;
 mod query;
 mod writer;
@@ -23,7 +24,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow};
 use chrono::{DateTime, Utc};
-use lru::LruCache;
 use nodelite_proto::{
     DEFAULT_HISTORY_RETENTION_HOURS, DEFAULT_HISTORY_WRITE_INTERVAL_SECS, HistoryPoint, NodeStatus,
 };
@@ -42,6 +42,9 @@ use self::writer::{WriterContext, build_history_point, run_history_writer};
 use self::writer::{sqlite_busy_retry_delay, write_history_point};
 use crate::queue::{QueueSendError, bounded_mpsc_channel, record_dropped_write, try_enqueue};
 
+pub(crate) use self::cache::HistoryCacheMetrics;
+use self::cache::{CacheKey, HistoryQueryCache};
+
 /// SQLite 在并发写入冲突时的等待时长。
 const SQLITE_BUSY_MAX_RETRIES: u32 = 10;
 const SQLITE_BUSY_RETRY_BASE_MS: u64 = 50;
@@ -59,8 +62,10 @@ const HISTORY_BATCH_MAX: usize = 128;
 const HISTORY_BATCH_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 /// 距上一次 DELETE 至少要过这么长时间才再次触发清理。
 const HISTORY_PRUNE_MIN_INTERVAL: Duration = Duration::from_secs(300);
-/// 查询缓存容量:缓存最近 N 次查询结果。假设 50 个节点被高频查看,每节点最多缓存 4 次不同窗口查询。
+/// 条目数只作为异常小对象下的第二道防线,主要内存约束由字节预算提供。
 const HISTORY_CACHE_CAPACITY: usize = 200;
+/// 查询缓存的估算内存硬预算。当前默认允许约 40-80 个常见 480 点查询结果。
+const HISTORY_CACHE_MAX_BYTES: usize = 8 * 1024 * 1024;
 /// 缓存条目有效期:1 秒内的重复查询直接返回缓存。
 /// 短 TTL 确保快速写入场景（如测试 seed）能及时看到新数据,
 /// 同时仍能为真实高频刷新（浏览器每秒轮询）提供缓存收益。
@@ -73,15 +78,6 @@ pub type HistoryResult<T> = std::result::Result<T, HistoryError>;
 pub enum HistoryError {
     Query(anyhow::Error),
     TaskFailed(anyhow::Error),
-}
-
-/// 查询缓存的键:(node_id, since_ts, until_ts, max_points)。
-type CacheKey = (String, i64, i64, usize);
-
-/// 查询缓存的值:(查询结果, 缓存时间戳)。
-struct CacheEntry {
-    points: Vec<HistoryPoint>,
-    cached_at: Instant,
 }
 
 impl std::fmt::Display for HistoryError {
@@ -132,7 +128,7 @@ pub struct HistoryStore {
     /// 历史写入被静默丢弃的总数(channel 满或已关闭)。监控该值可观察反压。
     dropped_writes: Arc<AtomicU64>,
     /// 查询结果 LRU 缓存,减少重复聚合的开销。使用 parking_lot::Mutex 降低锁竞争。
-    query_cache: Arc<ParkingLotMutex<LruCache<CacheKey, CacheEntry>>>,
+    query_cache: Arc<ParkingLotMutex<HistoryQueryCache>>,
 }
 
 impl HistoryStore {
@@ -148,8 +144,11 @@ impl HistoryStore {
             writer_tx: Arc::new(RwLock::new(None)),
             writer_handle: Arc::new(Mutex::new(None)),
             dropped_writes: Arc::new(AtomicU64::new(0)),
-            query_cache: Arc::new(ParkingLotMutex::new(LruCache::new(
-                std::num::NonZeroUsize::new(HISTORY_CACHE_CAPACITY).expect("cache capacity > 0"),
+            query_cache: Arc::new(ParkingLotMutex::new(HistoryQueryCache::new(
+                std::num::NonZeroUsize::new(HISTORY_CACHE_CAPACITY)
+                    .unwrap_or(std::num::NonZeroUsize::MIN),
+                HISTORY_CACHE_MAX_BYTES,
+                HISTORY_CACHE_TTL,
             ))),
         }
     }
@@ -222,6 +221,10 @@ impl HistoryStore {
         let capacity = tx.max_capacity();
         let depth = capacity.saturating_sub(tx.capacity());
         (depth as u64, capacity as u64)
+    }
+
+    pub(crate) fn query_cache_metrics(&self) -> HistoryCacheMetrics {
+        self.query_cache.lock().metrics()
     }
 
     /// 尝试把一次节点状态记录到历史表。
@@ -369,23 +372,13 @@ impl HistoryStore {
         until: DateTime<Utc>,
         max_points: usize,
     ) -> HistoryResult<Vec<HistoryPoint>> {
-        let cache_key = (
-            node_id.to_string(),
-            since.timestamp(),
-            until.timestamp(),
-            max_points,
-        );
+        let cache_key = CacheKey::new(node_id, since.timestamp(), until.timestamp(), max_points);
 
         // 先尝试从缓存读取（parking_lot::Mutex 是同步的，不需要 await）
         {
             let mut cache = self.query_cache.lock();
-            if let Some(entry) = cache.get(&cache_key) {
-                let age = entry.cached_at.elapsed();
-                if age < HISTORY_CACHE_TTL {
-                    return Ok(entry.points.clone());
-                }
-                // TTL 过期,移除旧条目
-                cache.pop(&cache_key);
+            if let Some(points) = cache.get(&cache_key, Instant::now()) {
+                return Ok(points);
             }
         }
 
@@ -408,13 +401,7 @@ impl HistoryStore {
         // 写入缓存（只缓存非空结果，避免测试场景中缓存"数据还没写入"的空快照）
         if !points.is_empty() {
             let mut cache = self.query_cache.lock();
-            cache.put(
-                cache_key,
-                CacheEntry {
-                    points: points.clone(),
-                    cached_at: Instant::now(),
-                },
-            );
+            cache.insert(cache_key, points.clone(), Instant::now());
         }
 
         Ok(points)

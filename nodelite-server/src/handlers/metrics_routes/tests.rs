@@ -289,6 +289,12 @@ fn exporter_exposes_runtime_observability_metrics() {
             pong_total: 17,
             refresh_token_request_total: 19,
         },
+        history_cache: crate::history::HistoryCacheMetrics {
+            entries: 5,
+            estimated_bytes: 8192,
+            evictions: 7,
+            expired_removals: 11,
+        },
     });
 
     assert!(body.contains("# TYPE nodelite_process_resident_memory_bytes gauge"));
@@ -301,6 +307,14 @@ fn exporter_exposes_runtime_observability_metrics() {
     assert!(body.contains("nodelite_history_db_bytes 4096"));
     assert!(body.contains("# TYPE nodelite_history_wal_bytes gauge"));
     assert!(body.contains("nodelite_history_wal_bytes 1024"));
+    assert!(body.contains("# TYPE nodelite_history_cache_entries gauge"));
+    assert!(body.contains("nodelite_history_cache_entries 5"));
+    assert!(body.contains("# TYPE nodelite_history_cache_estimated_bytes gauge"));
+    assert!(body.contains("nodelite_history_cache_estimated_bytes 8192"));
+    assert!(body.contains("# TYPE nodelite_history_cache_evictions_total counter"));
+    assert!(body.contains("nodelite_history_cache_evictions_total 7"));
+    assert!(body.contains("# TYPE nodelite_history_cache_expired_removals_total counter"));
+    assert!(body.contains("nodelite_history_cache_expired_removals_total 11"));
     assert!(body.contains("# TYPE nodelite_sqlite_wal_checkpoint_observed gauge"));
     assert!(body.contains("nodelite_sqlite_wal_checkpoint_observed{database=\"history\"} 1"));
     assert!(body.contains("# TYPE nodelite_sqlite_wal_checkpoint_active gauge"));

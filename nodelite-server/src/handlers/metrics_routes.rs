@@ -10,6 +10,8 @@ mod token_verify;
 use emitter::MetricEmitter;
 pub(crate) use token_verify::render_token_verify_metrics;
 
+use crate::history::HistoryCacheMetrics;
+
 #[cfg(test)]
 pub(crate) fn render_prometheus_metrics(
     readiness: &ServerReadiness,
@@ -286,6 +288,7 @@ pub(crate) struct RuntimeMetrics {
     pub(crate) registry_nodes: u64,
     pub(crate) registry_disk_entries_total: u64,
     pub(crate) ws_messages: WsMessageMetrics,
+    pub(crate) history_cache: HistoryCacheMetrics,
 }
 
 pub(crate) fn render_runtime_metrics(metrics: RuntimeMetrics) -> String {
@@ -326,6 +329,30 @@ pub(crate) fn render_runtime_metrics(metrics: RuntimeMetrics) -> String {
         metrics.history_wal_bytes,
     );
     render_sqlite_wal_checkpoint_metrics(&mut emitter, metrics.sqlite_wal_checkpoint);
+    emitter.gauge(
+        "nodelite_history_cache_entries",
+        "Number of query result entries currently retained by the history cache.",
+        &[],
+        metrics.history_cache.entries,
+    );
+    emitter.gauge(
+        "nodelite_history_cache_estimated_bytes",
+        "Estimated bytes retained by history query cache keys and values.",
+        &[],
+        metrics.history_cache.estimated_bytes,
+    );
+    emitter.counter(
+        "nodelite_history_cache_evictions_total",
+        "Number of history query cache entries evicted by entry or byte limits.",
+        &[],
+        metrics.history_cache.evictions,
+    );
+    emitter.counter(
+        "nodelite_history_cache_expired_removals_total",
+        "Number of expired history query cache entries removed during global pruning.",
+        &[],
+        metrics.history_cache.expired_removals,
+    );
     emitter.gauge(
         "nodelite_registry_nodes",
         "Number of registered nodes currently loaded in memory.",
