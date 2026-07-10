@@ -56,6 +56,9 @@ pub async fn issue_node(path: &Path, request: IssueNodeRequest) -> RegistryResul
                 })?;
                 file.nodes[index].token_generation =
                     file.nodes[index].token_generation.saturating_add(1);
+                file.nodes[index].previous_token_hash.clear();
+                file.nodes[index].previous_token_generation = None;
+                file.nodes[index].previous_token_valid_until = None;
                 file.nodes[index].token_expires_at =
                     Some(now + ChronoDuration::days(DEFAULT_TOKEN_VALIDITY_DAYS));
                 file.nodes[index].token.clear();
@@ -95,6 +98,9 @@ pub async fn issue_node(path: &Path, request: IssueNodeRequest) -> RegistryResul
                 .to_string(),
             token_hash,
             token_generation: 1,
+            previous_token_hash: String::new(),
+            previous_token_generation: None,
+            previous_token_valid_until: None,
             token: String::new(),
             tags: normalized_tags.clone(),
             created_at: now,

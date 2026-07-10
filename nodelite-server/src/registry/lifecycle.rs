@@ -19,7 +19,7 @@ use super::token::{constant_time_eq, generate_token, hash_token, prune_expired_i
 use super::{
     ConsumedInstall, DEFAULT_TOKEN_VALIDITY_DAYS, NodeRegistry, RegisteredNode, RegistryError,
     RegistryFile, RegistryReloadCheckpoint, RegistryResult, TOKEN_CACHE_CAPACITY,
-    coordinate_to_microdegrees,
+    TOKEN_REFRESH_GRACE_MINUTES, coordinate_to_microdegrees,
 };
 
 impl NodeRegistry {
@@ -68,9 +68,13 @@ impl NodeRegistry {
 
                 let new_token = generate_token()?;
                 let expires_at = now + ChronoDuration::days(DEFAULT_TOKEN_VALIDITY_DAYS);
-                node.token_hash = hash_token(&new_token).map_err(|error| {
+                let new_token_hash = hash_token(&new_token).map_err(|error| {
                     RegistryError::internal("failed to hash refreshed token", error.into())
                 })?;
+                node.previous_token_hash = std::mem::replace(&mut node.token_hash, new_token_hash);
+                node.previous_token_generation = Some(node.token_generation);
+                node.previous_token_valid_until =
+                    Some(now + ChronoDuration::minutes(TOKEN_REFRESH_GRACE_MINUTES));
                 node.token_generation = node.token_generation.saturating_add(1);
                 node.token_expires_at = Some(expires_at);
                 // 升级路径残留的明文也在这里清空,确保从此刻起 disk 上彻底无明文。

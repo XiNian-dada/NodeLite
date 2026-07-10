@@ -58,6 +58,7 @@ pub(super) fn validate_registered_node(node: &RegisteredNode) -> RegistryResult<
     if node.token_hash.is_empty() && node.token.is_empty() {
         return Err(RegistryError::validation("node.token_hash is empty"));
     }
+    validate_previous_token(node)?;
     validate_tag_list("node.tags", &node.tags, MAX_NODE_TAGS, MAX_NODE_TAG_BYTES)
         .map_err(RegistryError::validation)?;
     if let Some(price) = node.renewal_price.as_deref() {
@@ -65,6 +66,18 @@ pub(super) fn validate_registered_node(node: &RegisteredNode) -> RegistryResult<
     }
     validate_location_override_fields(node)?;
     Ok(())
+}
+
+fn validate_previous_token(node: &RegisteredNode) -> RegistryResult<()> {
+    let has_hash = !node.previous_token_hash.is_empty();
+    let has_generation = node.previous_token_generation.is_some();
+    let has_deadline = node.previous_token_valid_until.is_some();
+    if has_hash == has_generation && has_generation == has_deadline {
+        return Ok(());
+    }
+    Err(RegistryError::validation(
+        "node previous token grace fields must be set or cleared together",
+    ))
 }
 
 fn validate_location_override_fields(node: &RegisteredNode) -> RegistryResult<()> {

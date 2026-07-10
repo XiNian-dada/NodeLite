@@ -9,6 +9,9 @@ fn validate_registered_node_rejects_oversized_tags() {
         node_label: "Hong Kong 01".to_string(),
         token_hash: "hash".to_string(),
         token_generation: 1,
+        previous_token_hash: String::new(),
+        previous_token_generation: None,
+        previous_token_valid_until: None,
         token: "secret-token".to_string(),
         tags: vec!["edge".to_string()],
         created_at: Utc::now(),
@@ -34,6 +37,9 @@ fn validate_registered_node_rejects_invalid_renewal_price() {
         node_label: "Hong Kong 01".to_string(),
         token_hash: "hash".to_string(),
         token_generation: 1,
+        previous_token_hash: String::new(),
+        previous_token_generation: None,
+        previous_token_valid_until: None,
         token: "secret-token".to_string(),
         tags: vec!["edge".to_string()],
         created_at: Utc::now(),
@@ -52,6 +58,23 @@ fn validate_registered_node_rejects_invalid_renewal_price() {
 
     node.renewal_price = Some("$5/mo".to_string());
     validate_registered_node(&node).expect("plain price should pass");
+}
+
+#[test]
+fn validate_registered_node_rejects_partial_previous_token_grace() {
+    let mut node = legacy_node("hk-01", "Hong Kong 01", "secret-token", None);
+    node.token_hash = "hash".to_string();
+    node.token.clear();
+    node.token_generation = 2;
+    node.previous_token_hash = "previous-hash".to_string();
+
+    let error = validate_registered_node(&node)
+        .expect_err("partial previous token fields should be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("must be set or cleared together")
+    );
 }
 
 #[test]

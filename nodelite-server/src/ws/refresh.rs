@@ -92,7 +92,11 @@ pub(crate) async fn ensure_current_token(
         return true;
     }
 
-    let Some(status) = state.registry.token_status(&session.node_id).await else {
+    let Some(status) = state
+        .registry
+        .token_status(&session.node_id, session.session_generation)
+        .await
+    else {
         warn!(node_id = %session.node_id, "{log_message}");
         return false;
     };
@@ -112,7 +116,10 @@ pub(crate) async fn should_refresh_agent_token(
         return Ok(token_needs_refresh(session.token_expires_at, refresh_after));
     }
 
-    let Some(status) = registry.token_status(&session.node_id).await else {
+    let Some(status) = registry
+        .token_status(&session.node_id, session.session_generation)
+        .await
+    else {
         return Ok(true);
     };
     if !apply_current_token_status(session, status) {
@@ -186,12 +193,19 @@ pub(crate) async fn refresh_session_token(
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
     use chrono::Utc;
+    use tokio::io::duplex;
+    use tokio_tungstenite::WebSocketStream;
+    use tokio_tungstenite::tungstenite::protocol::{Message as TungsteniteMessage, Role};
 
     use super::{
         AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS, ActiveSession, RegistryTokenStatus,
         apply_current_token_status, token_needs_refresh,
     };
+    use crate::registry::{IssueNodeRequest, NodeRegistry, issue_node};
+    use crate::ws::transport::send_message_with_timeout;
 
     fn session() -> ActiveSession {
         ActiveSession {
@@ -202,6 +216,21 @@ mod tests {
             session_generation: 3,
             token_expires_at: None,
             registry_revision: 11,
+        }
+    }
+
+    fn identity_for(node_id: &str) -> nodelite_proto::NodeIdentity {
+        nodelite_proto::NodeIdentity {
+            node_id: node_id.to_string(),
+            node_label: node_id.to_string(),
+            hostname: format!("{node_id}.internal"),
+            os: "Linux".to_string(),
+            kernel_version: None,
+            cpu_model: None,
+            cpu_cores: 2,
+            agent_version: "test".to_string(),
+            boot_time: None,
+            tags: Vec::new(),
         }
     }
 
@@ -262,5 +291,64 @@ mod tests {
         assert!(!apply_current_token_status(&mut session, status));
         assert_eq!(session.token_expires_at, None);
         assert_eq!(session.registry_revision, 11);
+    }
+
+    #[tokio::test]
+    async fn old_token_can_reconnect_after_refresh_response_send_timeout() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("nodelite-refresh-timeout-{unique}"));
+        std::fs::create_dir_all(&temp_dir).expect("temp dir");
+        let path = temp_dir.join("server.json");
+        let issued = issue_node(
+            &path,
+            IssueNodeRequest {
+                node_id: "timeout-01".to_string(),
+                node_label: Some("Timeout 01".to_string()),
+                tags: Vec::new(),
+            },
+        )
+        .await
+        .expect("node should be issued");
+        let registry = NodeRegistry::load(&path)
+            .await
+            .expect("registry should load");
+        let (new_token, expires_at, _) = registry
+            .refresh_token("timeout-01")
+            .await
+            .expect("token should be persisted before send");
+        let response = nodelite_proto::WireMessage::RefreshTokenResponse(
+            nodelite_proto::RefreshTokenResponseMessage {
+                new_token,
+                expires_at: expires_at.to_rfc3339(),
+            },
+        );
+        let payload = serde_json::to_string(&response).expect("refresh response should serialize");
+        let (stream, _blocked_peer) = duplex(1);
+        let mut socket = WebSocketStream::from_raw_socket(stream, Role::Server, None).await;
+
+        send_message_with_timeout(
+            &mut socket,
+            TungsteniteMessage::Text(payload.into()),
+            "test refresh response send",
+            Duration::from_millis(20),
+        )
+        .await
+        .expect_err("blocked refresh response should time out");
+        drop(socket);
+        drop(registry);
+
+        let restarted = NodeRegistry::load(&path)
+            .await
+            .expect("registry should reload after failed send");
+        restarted
+            .authorize(&identity_for("timeout-01"), &issued.node_session_token)
+            .await
+            .expect("old token should reconnect during persisted grace");
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&temp_dir);
     }
 }

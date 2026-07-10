@@ -51,8 +51,13 @@ pub(super) fn authorized_node_from_entry(
     identity: &NodeIdentity,
     entry: &RegisteredNode,
     registry_revision: u64,
+    generation: u64,
+    token_expires_at: Option<DateTime<Utc>>,
 ) -> RegistryResult<AuthorizedNode> {
-    if !token_is_unexpired(entry, Utc::now()) {
+    if token_expires_at
+        .map(|expires_at| Utc::now() >= expires_at)
+        .unwrap_or(false)
+    {
         return Err(RegistryError::TokenExpired {
             node_id: entry.node_id.clone(),
         });
@@ -64,8 +69,8 @@ pub(super) fn authorized_node_from_entry(
     identity.tags = entry.tags.clone();
     Ok(AuthorizedNode {
         identity,
-        generation: entry.token_generation,
-        token_expires_at: entry.token_expires_at,
+        generation,
+        token_expires_at,
         registry_revision,
         location_override: entry.location_override(),
     })

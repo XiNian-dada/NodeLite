@@ -72,7 +72,7 @@ where
     send_message_with_timeout(sender, message, operation, SEND_TIMEOUT).await
 }
 
-async fn send_message_with_timeout<S, M>(
+pub(super) async fn send_message_with_timeout<S, M>(
     sender: &mut S,
     message: M,
     operation: &'static str,

@@ -141,7 +141,7 @@ async fn token_cache_respects_ttl_and_evicts_expired_entries() {
 }
 
 #[tokio::test]
-async fn token_cache_invalidates_on_token_rotation() {
+async fn token_cache_distinguishes_current_and_grace_tokens_after_rotation() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock should be monotonic enough")
@@ -180,14 +180,13 @@ async fn token_cache_invalidates_on_token_rotation() {
         .expect("token should refresh");
     assert_eq!(new_generation, 2);
 
-    // Old token should no longer authorize (cache cleared)
-    let result = registry
+    // The old token remains usable only as the previous generation during the grace window.
+    let authorized = registry
         .authorize(&identity, &issued.node_session_token)
-        .await;
-    assert!(
-        result.is_err(),
-        "old token should not authorize after rotation"
-    );
+        .await
+        .expect("old token should authorize during refresh grace");
+    assert_eq!(authorized.generation, 1);
+    assert!(authorized.token_expires_at.is_some());
 
     // New token should authorize with updated generation
     let authorized = registry

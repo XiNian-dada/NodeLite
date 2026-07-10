@@ -37,6 +37,89 @@ async fn issued_tokens_default_to_thirty_day_expiry() {
     let _ = std::fs::remove_dir(&temp_dir);
 }
 
+#[tokio::test]
+async fn refreshed_token_grace_survives_registry_restart_and_expires() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("nodelite-refresh-grace-{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("temp dir");
+    let path = temp_dir.join("server.json");
+
+    let issued = issue_node(
+        &path,
+        IssueNodeRequest {
+            node_id: "grace-01".to_string(),
+            node_label: Some("Grace 01".to_string()),
+            tags: Vec::new(),
+        },
+    )
+    .await
+    .expect("node should be issued");
+    let registry = NodeRegistry::load(&path)
+        .await
+        .expect("registry should load");
+    let (new_token, _, new_generation) = registry
+        .refresh_token("grace-01")
+        .await
+        .expect("token should refresh");
+    assert_eq!(new_generation, 2);
+    drop(registry);
+
+    let restarted = NodeRegistry::load(&path)
+        .await
+        .expect("registry should reload after restart");
+    let identity = identity_for("grace-01");
+    let previous = restarted
+        .authorize(&identity, &issued.node_session_token)
+        .await
+        .expect("previous token should survive restart during grace");
+    assert_eq!(previous.generation, 1);
+    let grace_deadline = previous
+        .token_expires_at
+        .expect("previous token should expose its grace deadline");
+    assert!(grace_deadline > Utc::now());
+    assert!(restarted.is_token_current("grace-01", 1).await);
+    restarted
+        .authorize(&identity, &new_token)
+        .await
+        .expect("current token should survive restart");
+    drop(restarted);
+
+    let mut file: RegistryFile =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("registry should be readable"))
+            .expect("registry JSON should parse");
+    let node = file.nodes.first_mut().expect("node should exist");
+    assert!(!node.previous_token_hash.is_empty());
+    assert_eq!(node.previous_token_generation, Some(1));
+    node.previous_token_valid_until = Some(Utc::now() - ChronoDuration::seconds(1));
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&file).expect("registry should serialize"),
+    )
+    .expect("registry should be writable");
+
+    let expired = NodeRegistry::load(&path)
+        .await
+        .expect("expired grace metadata should remain loadable");
+    assert!(
+        expired
+            .authorize(&identity, &issued.node_session_token)
+            .await
+            .is_err(),
+        "previous token should fail after grace expires"
+    );
+    assert!(!expired.is_token_current("grace-01", 1).await);
+    expired
+        .authorize(&identity, &new_token)
+        .await
+        .expect("current token should remain valid after grace expires");
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
 #[test]
 fn expired_tokens_are_not_current_after_handshake() {
     let runtime = Runtime::new().expect("runtime should build");
@@ -87,6 +170,9 @@ fn token_is_expired_at_exact_expiry_moment() {
         node_label: "Boundary 01".to_string(),
         token_hash: "hash".to_string(),
         token_generation: 1,
+        previous_token_hash: String::new(),
+        previous_token_generation: None,
+        previous_token_valid_until: None,
         token: "secret".to_string(),
         tags: Vec::new(),
         created_at: expires_at - ChronoDuration::minutes(5),

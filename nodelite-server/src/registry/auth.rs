@@ -21,6 +21,12 @@ use super::{
     TOKEN_VERIFY_WAIT_WARN_AFTER, TokenCacheEntry,
 };
 
+#[derive(Debug, Clone, Copy)]
+struct MatchedToken {
+    generation: u64,
+    expires_at: Option<DateTime<Utc>>,
+}
+
 impl NodeRegistry {
     /// 校验 Agent 提交的 Hello 信息与 token,通过后返回"覆盖了注册表里权威字段"的身份
     /// 以及当时的 token 代次, 供 WS 会话后续 hot-path 比较使用。
@@ -48,10 +54,16 @@ impl NodeRegistry {
             if !token_material_matches(&entry, &current_entry) {
                 continue;
             }
-            if !token_matched {
+            let Some(token_matched) = token_matched else {
                 return Err(RegistryError::Unauthorized);
-            }
-            return authorized_node_from_entry(identity, &current_entry, registry_revision);
+            };
+            return authorized_node_from_entry(
+                identity,
+                &current_entry,
+                registry_revision,
+                token_matched.generation,
+                token_matched.expires_at,
+            );
         }
 
         warn!(
@@ -63,19 +75,27 @@ impl NodeRegistry {
 
     #[cfg(test)]
     pub async fn is_token_current(&self, node_id: &str, session_generation: u64) -> bool {
-        self.token_status(node_id)
+        self.token_status(node_id, session_generation)
             .await
-            .is_some_and(|status| status.generation == session_generation)
+            .is_some()
     }
 
     /// 返回节点当前 token 状态快照。WS 会话只在 registry revision 变化时调用它,
     /// 平常每帧只比较本地缓存与 atomic revision。
-    pub async fn token_status(&self, node_id: &str) -> Option<RegistryTokenStatus> {
+    pub async fn token_status(
+        &self,
+        node_id: &str,
+        session_generation: u64,
+    ) -> Option<RegistryTokenStatus> {
         let state = self.state.read().await;
-        state
-            .entries
-            .get(node_id)
-            .and_then(|node| token_status_for_node(node, self.registry_revision(), Utc::now()))
+        state.entries.get(node_id).and_then(|node| {
+            token_status_for_node(
+                node,
+                session_generation,
+                self.registry_revision(),
+                Utc::now(),
+            )
+        })
     }
 
     pub(super) async fn registered_node(&self, node_id: &str) -> Option<RegisteredNode> {
@@ -99,13 +119,40 @@ impl NodeRegistry {
         &self,
         input: &str,
         entry: &RegisteredNode,
-    ) -> RegistryResult<bool> {
-        if !entry.token_hash.is_empty() {
-            self.verify_hashed_token(input, &entry.token_hash).await
+    ) -> RegistryResult<Option<MatchedToken>> {
+        let current_matches = if !entry.token_hash.is_empty() {
+            self.verify_hashed_token(input, &entry.token_hash).await?
         } else if !entry.token.is_empty() {
-            Ok(constant_time_eq(input, &entry.token))
+            constant_time_eq(input, &entry.token)
         } else {
-            Ok(false)
+            false
+        };
+        if current_matches {
+            return Ok(Some(MatchedToken {
+                generation: entry.token_generation,
+                expires_at: entry.token_expires_at,
+            }));
+        }
+
+        let Some(valid_until) = entry.previous_token_valid_until else {
+            return Ok(None);
+        };
+        let Some(generation) = entry.previous_token_generation else {
+            return Ok(None);
+        };
+        if entry.previous_token_hash.is_empty() || Utc::now() >= valid_until {
+            return Ok(None);
+        }
+        if self
+            .verify_hashed_token(input, &entry.previous_token_hash)
+            .await?
+        {
+            Ok(Some(MatchedToken {
+                generation,
+                expires_at: Some(valid_until),
+            }))
+        } else {
+            Ok(None)
         }
     }
 
@@ -212,18 +259,35 @@ impl NodeRegistry {
 
 pub(super) fn token_status_for_node(
     node: &RegisteredNode,
+    session_generation: u64,
     registry_revision: u64,
     now: DateTime<Utc>,
 ) -> Option<RegistryTokenStatus> {
-    if !super::token::token_is_unexpired(node, now) {
-        return None;
+    if session_generation == node.token_generation && super::token::token_is_unexpired(node, now) {
+        return Some(RegistryTokenStatus {
+            generation: node.token_generation,
+            token_expires_at: node.token_expires_at,
+            registry_revision,
+        });
     }
 
-    Some(RegistryTokenStatus {
-        generation: node.token_generation,
-        token_expires_at: node.token_expires_at,
-        registry_revision,
-    })
+    match (
+        node.previous_token_generation,
+        node.previous_token_valid_until,
+    ) {
+        (Some(generation), Some(valid_until))
+            if session_generation == generation
+                && !node.previous_token_hash.is_empty()
+                && now < valid_until =>
+        {
+            Some(RegistryTokenStatus {
+                generation,
+                token_expires_at: Some(valid_until),
+                registry_revision,
+            })
+        }
+        _ => None,
+    }
 }
 
 pub(super) fn default_token_verify_limit() -> usize {
@@ -236,6 +300,9 @@ pub(super) fn default_token_verify_limit() -> usize {
 fn token_material_matches(left: &RegisteredNode, right: &RegisteredNode) -> bool {
     left.token_generation == right.token_generation
         && left.token_hash == right.token_hash
+        && left.previous_token_hash == right.previous_token_hash
+        && left.previous_token_generation == right.previous_token_generation
+        && left.previous_token_valid_until == right.previous_token_valid_until
         && constant_time_eq(&left.token, &right.token)
 }
 
