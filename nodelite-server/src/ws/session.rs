@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 use axum::extract::ws::{CloseFrame, Message, WebSocket, close_code};
-use futures::{SinkExt, StreamExt};
+use futures::StreamExt;
 use nodelite_proto::{
     AgentLogEntry, AgentLogsMessage, MetricsMessage, NodeSnapshot, PongMessage,
     RefreshTokenRequestMessage, ServerNoticeMessage, WireMessage,
@@ -19,6 +19,7 @@ use super::protocol::{
 use super::refresh::{
     ensure_current_token, handle_refresh_request, refresh_session_token, should_refresh_agent_token,
 };
+use super::transport::send_message;
 use super::{ActiveSession, LoopAction};
 use crate::AppState;
 use crate::sanitize::{
@@ -78,10 +79,12 @@ pub(crate) async fn run_authenticated_session(
     });
     let payload = serde_json::to_string(&notice)
         .map_err(|error| anyhow!("failed to serialize authenticated notice: {error}"))?;
-    sender
-        .send(Message::Text(payload.into()))
-        .await
-        .map_err(|error| anyhow!("failed to send authenticated notice: {error}"))?;
+    send_message(
+        &mut sender,
+        Message::Text(payload.into()),
+        "failed to send authenticated notice",
+    )
+    .await?;
 
     let mut loop_state = SessionLoopState::new(shared.config().ping_interval_secs);
     loop {
@@ -89,12 +92,14 @@ pub(crate) async fn run_authenticated_session(
             biased;
             _ = state.shutdown.cancelled() => {
                 info!(node_id = %session.node_id, session_id = session.session_id, "closing websocket session due to server shutdown");
-                let _ = sender
-                    .send(Message::Close(Some(CloseFrame {
+                let _ = send_message(
+                    &mut sender,
+                    Message::Close(Some(CloseFrame {
                         code: close_code::AWAY,
                         reason: "server shutting down".into(),
-                    })))
-                    .await;
+                    })),
+                    "failed to send shutdown close frame",
+                ).await;
                 return Ok(());
             }
             incoming = receiver.next() => {
@@ -404,10 +409,7 @@ async fn handle_ping_tick(
     loop_state.next_ping_nonce = loop_state.next_ping_nonce.saturating_add(1);
     loop_state.outstanding_pings.insert(nonce, Instant::now());
     let ping = encode_ping_message(nonce)?;
-    sender
-        .send(Message::Text(ping.into()))
-        .await
-        .map_err(|error| anyhow!("failed to send ping: {error}"))?;
+    send_message(sender, Message::Text(ping.into()), "failed to send ping").await?;
     Ok(LoopAction::Continue)
 }
 

@@ -3,10 +3,10 @@
 use anyhow::{Result, anyhow};
 use axum::extract::ws::{Message, WebSocket};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use futures::SinkExt;
 use tracing::{info, warn};
 
 use super::ActiveSession;
+use super::transport::send_message;
 use crate::AppState;
 use crate::registry::{NodeRegistry, RegistryTokenStatus};
 
@@ -45,10 +45,12 @@ pub(crate) async fn handle_refresh_request(
             );
             let payload = serde_json::to_string(&response)
                 .map_err(|error| anyhow!("failed to serialize refresh response: {error}"))?;
-            sender
-                .send(Message::Text(payload.into()))
-                .await
-                .map_err(|error| anyhow!("failed to send refresh response: {error}"))?;
+            send_message(
+                sender,
+                Message::Text(payload.into()),
+                "failed to send refresh response",
+            )
+            .await?;
             session.session_token = new_token;
             session.session_generation = new_generation;
             session.token_expires_at = Some(expires_at);
@@ -65,10 +67,12 @@ pub(crate) async fn handle_refresh_request(
                 });
             let payload = serde_json::to_string(&notice)
                 .map_err(|error| anyhow!("failed to serialize notice: {error}"))?;
-            sender
-                .send(Message::Text(payload.into()))
-                .await
-                .map_err(|error| anyhow!("failed to send notice: {error}"))?;
+            send_message(
+                sender,
+                Message::Text(payload.into()),
+                "failed to send notice",
+            )
+            .await?;
         }
     }
     Ok(super::LoopAction::Continue)
@@ -167,10 +171,12 @@ pub(crate) async fn refresh_session_token(
     );
     let payload = serde_json::to_string(&response)
         .map_err(|error| anyhow!("failed to serialize token refresh response: {error}"))?;
-    sender
-        .send(Message::Text(payload.into()))
-        .await
-        .map_err(|error| anyhow!("failed to send token refresh response: {error}"))?;
+    send_message(
+        sender,
+        Message::Text(payload.into()),
+        "failed to send token refresh response",
+    )
+    .await?;
     session.session_token = new_token;
     session.session_generation = new_generation;
     session.token_expires_at = Some(expires_at);

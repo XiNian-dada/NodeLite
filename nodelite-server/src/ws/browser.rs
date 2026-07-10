@@ -21,8 +21,8 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
+use futures::StreamExt;
 use futures::stream::SplitSink;
-use futures::{SinkExt, StreamExt};
 use nodelite_proto::BrowserMessage;
 use tokio::sync::broadcast;
 use tracing::warn;
@@ -31,7 +31,7 @@ use crate::AppState;
 use crate::admission::{resolve_client_ip, ws_admission_error_response};
 use crate::state::SharedState;
 
-use super::transport::{WebSocketPeer, configure_upgrade};
+use super::transport::{WebSocketPeer, configure_upgrade, send_message};
 
 type BrowserSink = SplitSink<WebSocket, Message>;
 
@@ -164,10 +164,12 @@ async fn send_browser_message(
 ) -> anyhow::Result<()> {
     let payload = serde_json::to_string(message)
         .map_err(|error| anyhow!("failed to serialize browser message: {error}"))?;
-    sender
-        .send(Message::Text(payload.into()))
-        .await
-        .map_err(|error| anyhow!("failed to send browser message: {error}"))
+    send_message(
+        sender,
+        Message::Text(payload.into()),
+        "failed to send browser message",
+    )
+    .await
 }
 
 #[cfg(test)]
