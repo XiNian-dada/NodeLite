@@ -31,6 +31,8 @@ use crate::AppState;
 use crate::admission::{resolve_client_ip, ws_admission_error_response};
 use crate::state::SharedState;
 
+use super::transport::{WebSocketPeer, configure_upgrade};
+
 type BrowserSink = SplitSink<WebSocket, Message>;
 
 /// `/ws/browser` 入口。认证已由 `require_readonly_auth` 中间件完成;这里只做
@@ -48,8 +50,7 @@ pub async fn ws_browser_handler(
         Err(error) => return ws_admission_error_response(error),
     };
     let max_message_bytes = config.max_message_bytes;
-    ws.max_frame_size(max_message_bytes)
-        .max_message_size(max_message_bytes)
+    configure_upgrade(ws, WebSocketPeer::Browser, max_message_bytes)
         .on_upgrade(move |socket| async move {
             // permit 持有到会话结束;drop 时自动把连接配额归还给该 IP。
             let _permit = permit;
