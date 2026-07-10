@@ -183,7 +183,7 @@ fn query_history_between_uses_covering_index() {
 #[tokio::test]
 async fn query_history_does_not_wait_for_write_connection_lock() {
     let db_path = temp_history_db_path("query-read-connection");
-    let store = HistoryStore::new(db_path.clone(), 5);
+    let store = test_history_store(db_path.clone());
     store.initialize().await;
     assert!(store.is_available());
 
@@ -214,7 +214,7 @@ async fn concurrent_history_queries_use_independent_read_connections() {
     let db_path = temp_history_db_path("query-concurrent-readers");
     let start = seed_concurrent_query_history(&db_path);
 
-    let store = HistoryStore::new(db_path.clone(), 5);
+    let store = test_history_store(db_path.clone());
     store.initialize().await;
     assert!(store.is_available());
 
@@ -244,7 +244,12 @@ async fn concurrent_history_queries_use_independent_read_connections() {
 
 #[tokio::test]
 async fn query_limiter_caps_twenty_concurrent_readers() {
-    let store = HistoryStore::new_with_query_limit(PathBuf::from("./data/history.sqlite3"), 5, 4);
+    let store = HistoryStore::new(
+        PathBuf::from("./data/history.sqlite3"),
+        5,
+        4,
+        DEFAULT_HISTORY_READ_CACHE_KIB,
+    );
     let max_active = Arc::new(AtomicUsize::new(0));
     let tasks = (0..20)
         .map(|_| {
@@ -281,7 +286,7 @@ async fn queued_same_key_queries_recheck_cache_after_acquiring_a_permit() {
     let start = seed_concurrent_query_history(&db_path);
 
     let probe = Arc::new(HistoryQueryProbe::new(std::time::Duration::from_millis(50)));
-    let store = HistoryStore::new_with_query_limit(db_path.clone(), 5, 4)
+    let store = HistoryStore::new(db_path.clone(), 5, 4, DEFAULT_HISTORY_READ_CACHE_KIB)
         .with_query_probe(Arc::clone(&probe));
     store.initialize().await;
     assert!(store.is_available());

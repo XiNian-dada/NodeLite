@@ -362,6 +362,8 @@ mod tests {
             alerting: nodelite_proto::AlertingConfig::default(),
             node_registry_path: PathBuf::from("/opt/nodelite/config/server.json"),
             history_db_path: PathBuf::from("/opt/nodelite/data/history.sqlite3"),
+            history_query_concurrency: nodelite_proto::DEFAULT_HISTORY_QUERY_CONCURRENCY,
+            history_read_cache_kib: nodelite_proto::DEFAULT_HISTORY_READ_CACHE_KIB,
             snapshot_path: PathBuf::from("/opt/nodelite/data/snapshot.json"),
             stale_after_secs: 15,
             ping_interval_secs: 60,

@@ -36,8 +36,6 @@ use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::task::JoinHandle;
 use tracing::{error, warn};
 
-#[cfg(test)]
-use self::init::HISTORY_READ_CACHE_KIB;
 use self::init::{initialize_database, open_read_connection};
 #[cfg(test)]
 use self::query::HISTORY_QUERY_SQL;
@@ -79,9 +77,6 @@ const HISTORY_CACHE_MAX_BYTES: usize = 8 * 1024 * 1024;
 /// 短 TTL 确保快速写入场景（如测试 seed）能及时看到新数据,
 /// 同时仍能为真实高频刷新（浏览器每秒轮询）提供缓存收益。
 const HISTORY_CACHE_TTL: Duration = Duration::from_secs(1);
-/// History reads retain WAL concurrency but cap private SQLite page caches in flight.
-const HISTORY_QUERY_CONCURRENCY: usize = 4;
-
 pub type HistoryResult<T> = std::result::Result<T, HistoryError>;
 
 /// 历史查询路径对外暴露的稳定错误边界。
@@ -132,6 +127,8 @@ pub struct HistoryStore {
     artifacts_hardened_after_write: Arc<AtomicBool>,
     /// SQLite 忙等待超时(秒)。
     sqlite_busy_timeout_secs: u64,
+    /// 每个临时只读连接的 SQLite 私有 page cache(KiB)。
+    history_read_cache_kib: u64,
     /// Writer task 的入口。Some 表示已初始化;关停时清空以让 record_status 进入空操作分支。
     writer_tx: Arc<RwLock<Option<mpsc::Sender<HistoryPoint>>>>,
     /// Writer task 的 join handle,用于在关停时显式 await。
@@ -146,14 +143,11 @@ pub struct HistoryStore {
 }
 
 impl HistoryStore {
-    pub fn new(db_path: PathBuf, sqlite_busy_timeout_secs: u64) -> Self {
-        Self::new_with_query_limit(db_path, sqlite_busy_timeout_secs, HISTORY_QUERY_CONCURRENCY)
-    }
-
-    fn new_with_query_limit(
+    pub fn new(
         db_path: PathBuf,
         sqlite_busy_timeout_secs: u64,
         query_limit: usize,
+        history_read_cache_kib: u64,
     ) -> Self {
         Self {
             db_path: Arc::new(db_path),
@@ -163,6 +157,7 @@ impl HistoryStore {
             last_pruned_at: Arc::new(AtomicI64::new(0)),
             artifacts_hardened_after_write: Arc::new(AtomicBool::new(false)),
             sqlite_busy_timeout_secs,
+            history_read_cache_kib,
             writer_tx: Arc::new(RwLock::new(None)),
             writer_handle: Arc::new(Mutex::new(None)),
             dropped_writes: Arc::new(AtomicU64::new(0)),
@@ -432,6 +427,7 @@ impl HistoryStore {
         let db_path = Arc::clone(&self.db_path);
         let node_id = node_id.to_string();
         let sqlite_busy_timeout_secs = self.sqlite_busy_timeout_secs;
+        let history_read_cache_kib = self.history_read_cache_kib;
         let query_permit = self.acquire_query_permit().await?;
         if let Some(points) = self.cached_query(&cache_key) {
             return Ok(points);
@@ -442,8 +438,12 @@ impl HistoryStore {
         let points = tokio::task::spawn_blocking(move || {
             #[cfg(test)]
             let _query_probe_guard = query_probe.as_ref().map(HistoryQueryProbe::enter);
-            let connection = open_read_connection(db_path.as_ref(), sqlite_busy_timeout_secs)
-                .map_err(HistoryError::Query)?;
+            let connection = open_read_connection(
+                db_path.as_ref(),
+                sqlite_busy_timeout_secs,
+                history_read_cache_kib,
+            )
+            .map_err(HistoryError::Query)?;
             query_history_between(&connection, &node_id, since, until, max_points)
                 .map_err(HistoryError::from)
         })

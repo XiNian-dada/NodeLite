@@ -95,6 +95,8 @@ pub(crate) fn test_server_config(
         alerting: nodelite_proto::AlertingConfig::default(),
         node_registry_path: registry_path,
         history_db_path: history_path,
+        history_query_concurrency: nodelite_proto::DEFAULT_HISTORY_QUERY_CONCURRENCY,
+        history_read_cache_kib: nodelite_proto::DEFAULT_HISTORY_READ_CACHE_KIB,
         snapshot_path,
         stale_after_secs: 5,
         ping_interval_secs: 60,

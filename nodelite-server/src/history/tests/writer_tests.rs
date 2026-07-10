@@ -4,7 +4,7 @@ use super::*;
 fn forget_missing_prunes_retired_nodes_from_write_throttle_state() {
     let runtime = Runtime::new().expect("runtime should build");
     runtime.block_on(async {
-        let store = HistoryStore::new(PathBuf::from("./data/history.sqlite3"), 5);
+        let store = test_history_store(PathBuf::from("./data/history.sqlite3"));
         {
             let mut guard = store.last_written_at.lock().await;
             guard.insert("hk-01".to_string(), Utc::now());
@@ -27,7 +27,7 @@ fn forget_missing_prunes_retired_nodes_from_write_throttle_state() {
 #[tokio::test]
 async fn record_status_flushes_through_writer_task_to_sqlite() {
     let db_path = temp_history_db_path("writer-task");
-    let store = HistoryStore::new(db_path.clone(), 5);
+    let store = test_history_store(db_path.clone());
     store.initialize().await;
     assert!(store.is_available());
 
@@ -63,7 +63,7 @@ async fn record_status_flushes_through_writer_task_to_sqlite() {
 #[tokio::test]
 async fn record_status_does_not_throttle_after_queue_full_drop() {
     let db_path = temp_history_db_path("queue-full-throttle");
-    let store = HistoryStore::new(db_path.clone(), 5);
+    let store = test_history_store(db_path.clone());
     store.available.store(true, Ordering::Relaxed);
     let (tx, _rx) = tokio::sync::mpsc::channel::<HistoryPoint>(HISTORY_CHANNEL_CAPACITY);
     for index in 0..HISTORY_CHANNEL_CAPACITY {
@@ -107,7 +107,7 @@ async fn record_status_does_not_throttle_after_queue_full_drop() {
 #[tokio::test]
 async fn record_status_skips_point_build_when_throttled() {
     let db_path = temp_history_db_path("throttled-builder");
-    let store = HistoryStore::new(db_path.clone(), 5);
+    let store = test_history_store(db_path.clone());
     store.available.store(true, Ordering::Relaxed);
     let (tx, _rx) = tokio::sync::mpsc::channel::<HistoryPoint>(1);
     {
@@ -145,7 +145,7 @@ async fn record_status_skips_point_build_when_throttled() {
 #[tokio::test]
 async fn record_status_is_noop_after_shutdown() {
     let db_path = temp_history_db_path("after-shutdown");
-    let store = HistoryStore::new(db_path.clone(), 5);
+    let store = test_history_store(db_path.clone());
     store.initialize().await;
     store.shutdown().await;
 

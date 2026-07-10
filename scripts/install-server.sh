@@ -554,6 +554,10 @@ load_existing_server_defaults() {
   [ -n "$value" ] && SERVER_MAX_MESSAGE_BYTES="$value"
   value="$(trim_whitespace "$(toml_get_raw "$config_path" server token_verify_max_parallelism)")"
   [ -n "$value" ] && SERVER_TOKEN_VERIFY_MAX_PARALLELISM="$value"
+  value="$(trim_whitespace "$(toml_get_raw "$config_path" server history_query_concurrency)")"
+  [ -n "$value" ] && SERVER_HISTORY_QUERY_CONCURRENCY="$value"
+  value="$(trim_whitespace "$(toml_get_raw "$config_path" server history_read_cache_kib)")"
+  [ -n "$value" ] && SERVER_HISTORY_READ_CACHE_KIB="$value"
   value="$(trim_whitespace "$(toml_get_raw "$config_path" ws max_total_connections)")"
   [ -n "$value" ] && WS_MAX_TOTAL_CONNECTIONS="$value"
   value="$(trim_whitespace "$(toml_get_raw "$config_path" ws max_connections_per_ip)")"
@@ -593,6 +597,8 @@ complete_server_config_defaults() {
   ensure_toml_default "$config_path" server trusted_proxies "trusted_proxies = []"
   ensure_toml_default "$config_path" server node_registry_path "node_registry_path = \"$REGISTRY_PATH\""
   ensure_toml_default "$config_path" server history_db_path "history_db_path = \"$DATA_DIR/history.sqlite3\""
+  ensure_toml_default "$config_path" server history_query_concurrency "history_query_concurrency = $SERVER_HISTORY_QUERY_CONCURRENCY"
+  ensure_toml_default "$config_path" server history_read_cache_kib "history_read_cache_kib = $SERVER_HISTORY_READ_CACHE_KIB"
   ensure_toml_default "$config_path" server snapshot_path "snapshot_path = \"$DATA_DIR/snapshot.json\""
   ensure_toml_default "$config_path" server stale_after_secs "stale_after_secs = $SERVER_STALE_AFTER_SECS"
   ensure_toml_default "$config_path" server ping_interval_secs "ping_interval_secs = $SERVER_PING_INTERVAL_SECS"
@@ -674,6 +680,8 @@ public_base_url = "${PUBLIC_SCHEME}://${PUBLIC_HOST}"
 insecure_allow_http = ${insecure_allow_http_value}
 node_registry_path = "${CONFIG_DIR}/server.json"
 history_db_path = "${DATA_DIR}/history.sqlite3"
+history_query_concurrency = ${SERVER_HISTORY_QUERY_CONCURRENCY}
+history_read_cache_kib = ${SERVER_HISTORY_READ_CACHE_KIB}
 snapshot_path = "${DATA_DIR}/snapshot.json"
 stale_after_secs = ${SERVER_STALE_AFTER_SECS}
 ping_interval_secs = ${SERVER_PING_INTERVAL_SECS}
@@ -792,6 +800,8 @@ fi
 SERVER_STALE_AFTER_SECS="20"
 SERVER_PING_INTERVAL_SECS="10"
 SERVER_MAX_MESSAGE_BYTES="65536"
+SERVER_HISTORY_QUERY_CONCURRENCY="4"
+SERVER_HISTORY_READ_CACHE_KIB="512"
 SERVER_HELLO_TIMEOUT_SECS="10"
 SERVER_MAX_OUTSTANDING_PINGS="32"
 SERVER_INSECURE_TRANSPORT_WARN_INTERVAL_SECS="900"

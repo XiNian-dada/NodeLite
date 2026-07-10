@@ -73,6 +73,8 @@ fn sample_config() -> ServerConfig {
         alerting: nodelite_proto::AlertingConfig::default(),
         node_registry_path: PathBuf::from("/tmp/nodelite-test-registry.json"),
         history_db_path: PathBuf::from("/tmp/nodelite-test-history.sqlite3"),
+        history_query_concurrency: nodelite_proto::DEFAULT_HISTORY_QUERY_CONCURRENCY,
+        history_read_cache_kib: nodelite_proto::DEFAULT_HISTORY_READ_CACHE_KIB,
         snapshot_path: PathBuf::from("/tmp/nodelite-test-snapshot.json"),
         stale_after_secs: 5,
         ping_interval_secs: 60,

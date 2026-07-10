@@ -12,9 +12,6 @@ use crate::fs_security::{create_private_dir_all, ensure_directory_mode};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-/// Read-only connections use a deliberately small private SQLite page cache.
-pub(super) const HISTORY_READ_CACHE_KIB: i64 = 512;
-
 /// 建库:如果父目录不存在则创建,然后建表 / 建索引并收紧权限。
 /// 返回已配置好的持久化连接(WAL 模式 + busy_timeout),供后续写入/查询复用。
 pub(super) fn initialize_database(
@@ -230,6 +227,7 @@ fn covering_index_columns(connection: &Connection) -> Result<Option<Vec<String>>
 pub(super) fn open_read_connection(
     db_path: &PathBuf,
     sqlite_busy_timeout_secs: u64,
+    history_read_cache_kib: u64,
 ) -> Result<Connection> {
     let connection = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .with_context(|| {
@@ -241,8 +239,10 @@ pub(super) fn open_read_connection(
     connection
         .busy_timeout(Duration::from_secs(sqlite_busy_timeout_secs))
         .context("failed to configure sqlite read busy timeout")?;
+    let history_read_cache_kib = i64::try_from(history_read_cache_kib)
+        .context("history read page cache exceeds SQLite integer range")?;
     connection
-        .pragma_update(None, "cache_size", -HISTORY_READ_CACHE_KIB)
+        .pragma_update(None, "cache_size", -history_read_cache_kib)
         .context("failed to configure sqlite read page cache")?;
     Ok(connection)
 }

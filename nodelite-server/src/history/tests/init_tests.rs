@@ -6,12 +6,12 @@ fn read_connection_uses_bounded_private_page_cache() {
     let write_connection = initialize_database(&db_path, 5).expect("database should initialize");
     drop(write_connection);
 
-    let read_connection =
-        open_read_connection(&db_path, 5).expect("read connection should initialize");
+    let read_connection = open_read_connection(&db_path, 5, DEFAULT_HISTORY_READ_CACHE_KIB)
+        .expect("read connection should initialize");
     let cache_size: i64 = read_connection
         .query_row("PRAGMA cache_size", [], |row| row.get(0))
         .expect("cache size should be readable");
-    assert_eq!(cache_size, -HISTORY_READ_CACHE_KIB);
+    assert_eq!(cache_size, -(DEFAULT_HISTORY_READ_CACHE_KIB as i64));
 
     drop(read_connection);
     let _ = std::fs::remove_file(&db_path);
@@ -78,7 +78,7 @@ fn history_database_artifacts_are_mode_600() {
 #[tokio::test]
 async fn query_history_reports_query_error_when_read_database_is_missing() {
     let db_path = temp_history_db_path("missing-query-db");
-    let store = HistoryStore::new(db_path.clone(), 5);
+    let store = test_history_store(db_path.clone());
     store.available.store(true, Ordering::Relaxed);
 
     let error = store
@@ -96,7 +96,7 @@ async fn query_history_reports_query_error_when_read_database_is_missing() {
 #[tokio::test]
 async fn query_history_range_reports_query_error_when_read_database_is_missing() {
     let db_path = temp_history_db_path("missing-range-query-db");
-    let store = HistoryStore::new(db_path.clone(), 5);
+    let store = test_history_store(db_path.clone());
     store.available.store(true, Ordering::Relaxed);
 
     let now = Utc::now();

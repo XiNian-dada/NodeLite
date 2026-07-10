@@ -6,20 +6,29 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Duration, Utc};
 use nodelite_proto::{
-    HistoryPoint, LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot, NodeStatus,
+    DEFAULT_HISTORY_QUERY_CONCURRENCY, DEFAULT_HISTORY_READ_CACHE_KIB, HistoryPoint, LoadAverage,
+    MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot, NodeStatus,
 };
 use tokio::runtime::Runtime;
 
 use super::{
-    HISTORY_CHANNEL_CAPACITY, HISTORY_QUERY_SQL, HISTORY_READ_CACHE_KIB, HistoryError,
-    HistoryQueryProbe, HistoryStore, SQLITE_BUSY_MAX_RETRIES, build_history_point,
-    initialize_database, open_read_connection, query_history_between, sqlite_busy_retry_delay,
-    write_history_point,
+    HISTORY_CHANNEL_CAPACITY, HISTORY_QUERY_SQL, HistoryError, HistoryQueryProbe, HistoryStore,
+    SQLITE_BUSY_MAX_RETRIES, build_history_point, initialize_database, open_read_connection,
+    query_history_between, sqlite_busy_retry_delay, write_history_point,
 };
 
 mod init_tests;
 mod reader_tests;
 mod writer_tests;
+
+fn test_history_store(db_path: PathBuf) -> HistoryStore {
+    HistoryStore::new(
+        db_path,
+        5,
+        DEFAULT_HISTORY_QUERY_CONCURRENCY,
+        DEFAULT_HISTORY_READ_CACHE_KIB,
+    )
+}
 
 fn fake_status_for(node_id: &str, recorded_at: chrono::DateTime<Utc>) -> NodeStatus {
     NodeStatus {

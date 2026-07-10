@@ -1,4 +1,4 @@
-//! Server 默认值、示例配置与 token 验证并发测试。
+//! Server 默认值、示例配置与资源并发测试。
 
 use std::path::PathBuf;
 
@@ -8,11 +8,13 @@ use super::super::{
     DEFAULT_ALERT_INSPECTION_LOCAL_TIME, DEFAULT_ALERT_INSPECTION_MEMORY_WARN_PERCENT,
     DEFAULT_ALERT_MEMORY_WINDOW_MINUTES, DEFAULT_ALERT_OFFLINE_THRESHOLD_MINUTES,
     DEFAULT_ALERT_RTT_WINDOW_MINUTES, DEFAULT_AUDIT_RETENTION_DAYS,
-    DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS, DEFAULT_MAX_MESSAGE_BYTES,
+    DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS, DEFAULT_HISTORY_QUERY_CONCURRENCY,
+    DEFAULT_HISTORY_READ_CACHE_KIB, DEFAULT_MAX_MESSAGE_BYTES,
     DEFAULT_TOKEN_VERIFY_MAX_PARALLELISM, DEFAULT_WS_AUTH_BLOCK_SECS,
     DEFAULT_WS_AUTH_FAIL_MAX_ATTEMPTS, DEFAULT_WS_AUTH_FAIL_WINDOW_SECS,
     DEFAULT_WS_MAX_CONNECTIONS_PER_IP, DEFAULT_WS_MAX_TOTAL_CONNECTIONS, GeoIpEdition,
-    GeoIpProvider, parse_server_config,
+    GeoIpProvider, MAX_HISTORY_QUERY_CONCURRENCY, MAX_HISTORY_READ_CACHE_KIB,
+    MIN_HISTORY_QUERY_CONCURRENCY, MIN_HISTORY_READ_CACHE_KIB, parse_server_config,
 };
 
 #[test]
@@ -43,6 +45,14 @@ fn server_example_documents_token_verify_parallelism() {
 }
 
 #[test]
+fn server_example_documents_history_query_limits() {
+    let example = include_str!("../../../../config/server.example.toml");
+
+    assert!(example.contains("history_query_concurrency"));
+    assert!(example.contains("history_read_cache_kib"));
+}
+
+#[test]
 fn parses_server_config_with_defaults() {
     let config = parse_server_config(
         r#"
@@ -58,6 +68,14 @@ fn parses_server_config_with_defaults() {
     assert_eq!(config.readonly_auth, None);
     assert!(config.trusted_proxies.is_empty());
     assert_eq!(config.max_message_bytes, DEFAULT_MAX_MESSAGE_BYTES);
+    assert_eq!(
+        config.history_query_concurrency,
+        DEFAULT_HISTORY_QUERY_CONCURRENCY
+    );
+    assert_eq!(
+        config.history_read_cache_kib,
+        DEFAULT_HISTORY_READ_CACHE_KIB
+    );
     assert_eq!(
         config.ws.max_total_connections,
         DEFAULT_WS_MAX_TOTAL_CONNECTIONS
@@ -156,6 +174,60 @@ fn parses_server_config_with_defaults() {
         config.alerting.inspection.local_time,
         DEFAULT_ALERT_INSPECTION_LOCAL_TIME
     );
+}
+
+#[test]
+fn parses_history_query_resource_overrides() {
+    let config = parse_server_config(
+        r#"
+        [server]
+        listen = "127.0.0.1:8080"
+        public_base_url = "https://monitor.example.com"
+        history_query_concurrency = 8
+        history_read_cache_kib = 1024
+        "#,
+    )
+    .expect("history query resource overrides should parse");
+
+    assert_eq!(config.history_query_concurrency, 8);
+    assert_eq!(config.history_read_cache_kib, 1024);
+}
+
+#[test]
+fn rejects_history_query_resource_limits_outside_safe_ranges() {
+    for (key, value, expected) in [
+        (
+            "history_query_concurrency",
+            MIN_HISTORY_QUERY_CONCURRENCY.saturating_sub(1).to_string(),
+            "server.history_query_concurrency",
+        ),
+        (
+            "history_query_concurrency",
+            MAX_HISTORY_QUERY_CONCURRENCY.saturating_add(1).to_string(),
+            "server.history_query_concurrency",
+        ),
+        (
+            "history_read_cache_kib",
+            MIN_HISTORY_READ_CACHE_KIB.saturating_sub(1).to_string(),
+            "server.history_read_cache_kib",
+        ),
+        (
+            "history_read_cache_kib",
+            MAX_HISTORY_READ_CACHE_KIB.saturating_add(1).to_string(),
+            "server.history_read_cache_kib",
+        ),
+    ] {
+        let input = format!(
+            r#"
+            [server]
+            listen = "127.0.0.1:8080"
+            public_base_url = "https://monitor.example.com"
+            {key} = {value}
+            "#,
+        );
+        let error = parse_server_config(&input).expect_err("unsafe history limit should fail");
+        assert!(error.to_string().contains(expected));
+    }
 }
 
 #[test]
