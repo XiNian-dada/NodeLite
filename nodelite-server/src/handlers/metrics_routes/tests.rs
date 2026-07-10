@@ -322,6 +322,9 @@ fn exporter_exposes_runtime_observability_metrics() {
     assert!(body.contains("# TYPE nodelite_history_cache_evictions_total counter"));
     assert!(body.contains("nodelite_history_cache_evictions_total 7"));
     assert!(body.contains("# TYPE nodelite_history_cache_expired_removals_total counter"));
+    assert!(body.contains(
+        "# HELP nodelite_history_cache_expired_removals_total Number of expired history query cache entries removed on access or periodic pruning."
+    ));
     assert!(body.contains("nodelite_history_cache_expired_removals_total 11"));
     assert!(body.contains("# TYPE nodelite_history_query_permits_in_use gauge"));
     assert!(body.contains("nodelite_history_query_permits_in_use 2"));

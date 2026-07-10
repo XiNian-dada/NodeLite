@@ -350,7 +350,7 @@ pub(crate) fn render_runtime_metrics(metrics: RuntimeMetrics) -> String {
     );
     emitter.counter(
         "nodelite_history_cache_expired_removals_total",
-        "Number of expired history query cache entries removed during global pruning.",
+        "Number of expired history query cache entries removed on access or periodic pruning.",
         &[],
         metrics.history_cache.expired_removals,
     );
