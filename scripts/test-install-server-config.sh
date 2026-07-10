@@ -34,6 +34,8 @@ READONLY_PASSWORD="test-password"
 SERVER_STALE_AFTER_SECS="20"
 SERVER_PING_INTERVAL_SECS="10"
 SERVER_MAX_MESSAGE_BYTES="65536"
+SERVER_HISTORY_QUERY_CONCURRENCY="4"
+SERVER_HISTORY_READ_CACHE_KIB="512"
 SERVER_TOKEN_VERIFY_MAX_PARALLELISM="4"
 WS_MAX_TOTAL_CONNECTIONS="1024"
 WS_MAX_CONNECTIONS_PER_IP="32"
@@ -52,13 +54,31 @@ IGNORED_FILESYSTEMS_RAW='["tmpfs", "devtmpfs", "overlay"]'
 fresh_config="$(render_server_config)"
 printf '%s\n' "$fresh_config" |
   grep -Fx 'token_verify_max_parallelism = 4' >/dev/null
+printf '%s\n' "$fresh_config" |
+  grep -Fx 'history_query_concurrency = 4' >/dev/null
+printf '%s\n' "$fresh_config" |
+  grep -Fx 'history_read_cache_kib = 512' >/dev/null
 
 existing_config="$TEMP_DIR/existing.toml"
-printf '%s\n' '[server]' 'token_verify_max_parallelism = 7' >"$existing_config"
+printf '%s\n' \
+  '[server]' \
+  'token_verify_max_parallelism = 7' \
+  'history_query_concurrency = 6' \
+  'history_read_cache_kib = 768' >"$existing_config"
 SERVER_TOKEN_VERIFY_MAX_PARALLELISM="4"
+SERVER_HISTORY_QUERY_CONCURRENCY="4"
+SERVER_HISTORY_READ_CACHE_KIB="512"
 load_existing_server_defaults "$existing_config"
 [ "$SERVER_TOKEN_VERIFY_MAX_PARALLELISM" = "7" ] || {
   printf '%s\n' "upgrade defaults did not preserve token verify parallelism" >&2
+  exit 1
+}
+[ "$SERVER_HISTORY_QUERY_CONCURRENCY" = "6" ] || {
+  printf '%s\n' "upgrade defaults did not preserve history query concurrency" >&2
+  exit 1
+}
+[ "$SERVER_HISTORY_READ_CACHE_KIB" = "768" ] || {
+  printf '%s\n' "upgrade defaults did not preserve history read cache" >&2
   exit 1
 }
 
@@ -67,6 +87,8 @@ printf '%s\n' '[server]' 'listen = "127.0.0.1:20000"' >"$missing_config"
 TMP_CONFIG=""
 CONFIG_DEFAULTS_ADDED=0
 SERVER_TOKEN_VERIFY_MAX_PARALLELISM="4"
+SERVER_HISTORY_QUERY_CONCURRENCY="4"
+SERVER_HISTORY_READ_CACHE_KIB="512"
 ensure_toml_default \
   "$missing_config" server token_verify_max_parallelism \
   "token_verify_max_parallelism = $SERVER_TOKEN_VERIFY_MAX_PARALLELISM"
@@ -75,13 +97,41 @@ grep -Fx 'token_verify_max_parallelism = 4' "$missing_config" >/dev/null
   printf '%s\n' "missing token verify default was not counted" >&2
   exit 1
 }
+ensure_toml_default \
+  "$missing_config" server history_query_concurrency \
+  "history_query_concurrency = $SERVER_HISTORY_QUERY_CONCURRENCY"
+ensure_toml_default \
+  "$missing_config" server history_read_cache_kib \
+  "history_read_cache_kib = $SERVER_HISTORY_READ_CACHE_KIB"
+grep -Fx 'history_query_concurrency = 4' "$missing_config" >/dev/null
+grep -Fx 'history_read_cache_kib = 512' "$missing_config" >/dev/null
+[ "$CONFIG_DEFAULTS_ADDED" -eq 3 ] || {
+  printf '%s\n' "missing history query defaults were not counted" >&2
+  exit 1
+}
 
 ensure_toml_default \
   "$existing_config" server token_verify_max_parallelism \
   "token_verify_max_parallelism = $SERVER_TOKEN_VERIFY_MAX_PARALLELISM"
 grep -Fx 'token_verify_max_parallelism = 7' "$existing_config" >/dev/null
+ensure_toml_default \
+  "$existing_config" server history_query_concurrency \
+  "history_query_concurrency = $SERVER_HISTORY_QUERY_CONCURRENCY"
+ensure_toml_default \
+  "$existing_config" server history_read_cache_kib \
+  "history_read_cache_kib = $SERVER_HISTORY_READ_CACHE_KIB"
+grep -Fx 'history_query_concurrency = 6' "$existing_config" >/dev/null
+grep -Fx 'history_read_cache_kib = 768' "$existing_config" >/dev/null
 
 # shellcheck disable=SC2016
 grep -F \
   'ensure_toml_default "$config_path" server token_verify_max_parallelism "token_verify_max_parallelism = $SERVER_TOKEN_VERIFY_MAX_PARALLELISM"' \
+  "$INSTALLER" >/dev/null
+# shellcheck disable=SC2016
+grep -F \
+  'ensure_toml_default "$config_path" server history_query_concurrency "history_query_concurrency = $SERVER_HISTORY_QUERY_CONCURRENCY"' \
+  "$INSTALLER" >/dev/null
+# shellcheck disable=SC2016
+grep -F \
+  'ensure_toml_default "$config_path" server history_read_cache_kib "history_read_cache_kib = $SERVER_HISTORY_READ_CACHE_KIB"' \
   "$INSTALLER" >/dev/null
