@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use nodelite_proto::{
     HistoryPoint, LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot, NodeStatus,
 };
@@ -12,8 +12,9 @@ use tokio::runtime::Runtime;
 
 use super::{
     HISTORY_CHANNEL_CAPACITY, HISTORY_QUERY_SQL, HISTORY_READ_CACHE_KIB, HistoryError,
-    HistoryStore, SQLITE_BUSY_MAX_RETRIES, build_history_point, initialize_database,
-    open_read_connection, query_history_between, sqlite_busy_retry_delay, write_history_point,
+    HistoryQueryProbe, HistoryStore, SQLITE_BUSY_MAX_RETRIES, build_history_point,
+    initialize_database, open_read_connection, query_history_between, sqlite_busy_retry_delay,
+    write_history_point,
 };
 
 mod init_tests;

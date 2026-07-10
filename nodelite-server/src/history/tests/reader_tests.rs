@@ -2,6 +2,36 @@ use std::sync::Arc;
 
 use super::*;
 
+fn seed_concurrent_query_history(db_path: &PathBuf) -> DateTime<Utc> {
+    let mut connection = initialize_database(db_path, 5).expect("database should initialize");
+    let hardened = AtomicBool::new(false);
+    let start = Utc::now() - Duration::hours(2);
+    for index in 0..240 {
+        write_history_point(
+            db_path,
+            &mut connection,
+            &HistoryPoint {
+                node_id: "hk-01".to_string(),
+                recorded_at: start + Duration::seconds(index * 30),
+                cpu_usage_percent: Some(index as f64),
+                load_one: Some(index as f64 / 10.0),
+                load_five: Some(index as f64 / 20.0),
+                load_fifteen: Some(index as f64 / 30.0),
+                memory_used_percent: 50.0,
+                rx_bytes_per_sec: Some(index as f64),
+                tx_bytes_per_sec: Some(index as f64 / 2.0),
+                latency_ms: Some((index % 10) as u64),
+                packet_loss_percent: Some(index as f64 / 100.0),
+                disk_used_percent: Some(60.0),
+            },
+            None,
+            &hardened,
+        )
+        .expect("history point should persist");
+    }
+    start
+}
+
 #[test]
 fn history_point_uses_server_last_seen_timestamp() {
     let now = Utc::now();
@@ -182,33 +212,7 @@ async fn query_history_does_not_wait_for_write_connection_lock() {
 #[tokio::test]
 async fn concurrent_history_queries_use_independent_read_connections() {
     let db_path = temp_history_db_path("query-concurrent-readers");
-    let mut connection = initialize_database(&db_path, 5).expect("database should initialize");
-    let hardened = AtomicBool::new(false);
-    let start = Utc::now() - Duration::hours(2);
-    for index in 0..240 {
-        write_history_point(
-            &db_path,
-            &mut connection,
-            &HistoryPoint {
-                node_id: "hk-01".to_string(),
-                recorded_at: start + Duration::seconds(index * 30),
-                cpu_usage_percent: Some(index as f64),
-                load_one: Some(index as f64 / 10.0),
-                load_five: Some(index as f64 / 20.0),
-                load_fifteen: Some(index as f64 / 30.0),
-                memory_used_percent: 50.0,
-                rx_bytes_per_sec: Some(index as f64),
-                tx_bytes_per_sec: Some(index as f64 / 2.0),
-                latency_ms: Some((index % 10) as u64),
-                packet_loss_percent: Some(index as f64 / 100.0),
-                disk_used_percent: Some(60.0),
-            },
-            None,
-            &hardened,
-        )
-        .expect("history point should persist");
-    }
-    drop(connection);
+    let start = seed_concurrent_query_history(&db_path);
 
     let store = HistoryStore::new(db_path.clone(), 5);
     store.initialize().await;
@@ -269,4 +273,52 @@ async fn query_limiter_caps_twenty_concurrent_readers() {
     assert_eq!(metrics.limit, 4);
     assert_eq!(metrics.wait_total, 20);
     assert!(metrics.wait_seconds_total > 0.0);
+}
+
+#[tokio::test]
+async fn queued_same_key_queries_recheck_cache_after_acquiring_a_permit() {
+    let db_path = temp_history_db_path("query-cache-recheck");
+    let start = seed_concurrent_query_history(&db_path);
+
+    let probe = Arc::new(HistoryQueryProbe::new(std::time::Duration::from_millis(50)));
+    let store = HistoryStore::new_with_query_limit(db_path.clone(), 5, 4)
+        .with_query_probe(Arc::clone(&probe));
+    store.initialize().await;
+    assert!(store.is_available());
+
+    let end = start + Duration::seconds(240 * 30);
+    let start_barrier = Arc::new(tokio::sync::Barrier::new(21));
+    let tasks = (0..20)
+        .map(|_| {
+            let store = store.clone();
+            let start_barrier = Arc::clone(&start_barrier);
+            tokio::spawn(async move {
+                start_barrier.wait().await;
+                store.query_history_range("hk-01", start, end, 120).await
+            })
+        })
+        .collect::<Vec<_>>();
+    start_barrier.wait().await;
+
+    for task in tasks {
+        let points = task
+            .await
+            .expect("query task should not panic")
+            .expect("history query should succeed");
+        assert!(!points.is_empty());
+        assert!(points.len() <= 120);
+    }
+
+    assert!(probe.total_entered() >= 1);
+    assert!(probe.total_entered() <= 4);
+    assert!(probe.max_active() <= 4);
+    let metrics = store.query_runtime_metrics();
+    assert_eq!(metrics.active, 0);
+    assert_eq!(metrics.waiting, 0);
+    store.shutdown().await;
+
+    let _ = std::fs::remove_file(&db_path);
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
 }

@@ -15,6 +15,8 @@ mod cache;
 mod init;
 mod query;
 mod query_limit;
+#[cfg(test)]
+mod test_probe;
 mod writer;
 
 use std::collections::{HashMap, HashSet};
@@ -42,6 +44,8 @@ use self::query::HISTORY_QUERY_SQL;
 use self::query::{HistoryQueryError, query_history_between};
 pub(crate) use self::query_limit::HistoryQueryRuntimeMetrics;
 use self::query_limit::{HistoryQueryLimiter, HistoryQueryPermit};
+#[cfg(test)]
+use self::test_probe::HistoryQueryProbe;
 use self::writer::{WriterContext, build_history_point, run_history_writer};
 #[cfg(test)]
 use self::writer::{sqlite_busy_retry_delay, write_history_point};
@@ -137,6 +141,8 @@ pub struct HistoryStore {
     /// 查询结果 LRU 缓存,减少重复聚合的开销。使用 parking_lot::Mutex 降低锁竞争。
     query_cache: Arc<ParkingLotMutex<HistoryQueryCache>>,
     query_limiter: HistoryQueryLimiter,
+    #[cfg(test)]
+    query_probe: Option<Arc<HistoryQueryProbe>>,
 }
 
 impl HistoryStore {
@@ -167,7 +173,15 @@ impl HistoryStore {
                 HISTORY_CACHE_TTL,
             ))),
             query_limiter: HistoryQueryLimiter::new(query_limit),
+            #[cfg(test)]
+            query_probe: None,
         }
+    }
+
+    #[cfg(test)]
+    fn with_query_probe(mut self, query_probe: Arc<HistoryQueryProbe>) -> Self {
+        self.query_probe = Some(query_probe);
+        self
     }
 
     /// 初始化数据库 + 启动 writer task。失败不会抛出,仅记录警告并保持 `available=false`。
@@ -256,6 +270,10 @@ impl HistoryStore {
         self.query_limiter.acquire().await.map_err(|error| {
             HistoryError::TaskFailed(anyhow!("history query limiter closed: {error}"))
         })
+    }
+
+    fn cached_query(&self, cache_key: &CacheKey) -> Option<Vec<HistoryPoint>> {
+        self.query_cache.lock().get(cache_key, Instant::now())
     }
 
     /// 尝试把一次节点状态记录到历史表。
@@ -406,11 +424,8 @@ impl HistoryStore {
         let cache_key = CacheKey::new(node_id, since.timestamp(), until.timestamp(), max_points);
 
         // 先尝试从缓存读取（parking_lot::Mutex 是同步的，不需要 await）
-        {
-            let mut cache = self.query_cache.lock();
-            if let Some(points) = cache.get(&cache_key, Instant::now()) {
-                return Ok(points);
-            }
+        if let Some(points) = self.cached_query(&cache_key) {
+            return Ok(points);
         }
 
         // 缓存未命中或已过期,执行实际查询
@@ -418,9 +433,15 @@ impl HistoryStore {
         let node_id = node_id.to_string();
         let sqlite_busy_timeout_secs = self.sqlite_busy_timeout_secs;
         let query_permit = self.acquire_query_permit().await?;
+        if let Some(points) = self.cached_query(&cache_key) {
+            return Ok(points);
+        }
+        #[cfg(test)]
+        let query_probe = self.query_probe.clone();
 
         let points = tokio::task::spawn_blocking(move || {
-            let _query_permit = query_permit;
+            #[cfg(test)]
+            let _query_probe_guard = query_probe.as_ref().map(HistoryQueryProbe::enter);
             let connection = open_read_connection(db_path.as_ref(), sqlite_busy_timeout_secs)
                 .map_err(HistoryError::Query)?;
             query_history_between(&connection, &node_id, since, until, max_points)
@@ -436,6 +457,7 @@ impl HistoryStore {
             let mut cache = self.query_cache.lock();
             cache.insert(cache_key, points.clone(), Instant::now());
         }
+        drop(query_permit);
 
         Ok(points)
     }
