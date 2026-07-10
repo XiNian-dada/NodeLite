@@ -217,14 +217,19 @@ async fn execute_token_verify_storm(
         handles.push(tokio::spawn(async move {
             let identity = fake_identity(&credential);
             barrier.wait().await;
-            registry.authorize(&identity, &credential.token).await
+            let started = Instant::now();
+            let result = registry.authorize(&identity, &credential.token).await;
+            (result, started.elapsed())
         }));
     }
 
     let started = Instant::now();
     barrier.wait().await;
+    let mut authorize_latencies = Vec::with_capacity(handles.len());
     for result in futures::future::join_all(handles).await {
-        result.context("join token verify storm task")??;
+        let (authorization, latency) = result.context("join token verify storm task")?;
+        authorization?;
+        authorize_latencies.push(latency);
     }
     let elapsed = started.elapsed();
     let _ = sampler_stop_tx.send(true);
@@ -241,6 +246,7 @@ async fn execute_token_verify_storm(
         final_active: final_metrics.active,
         final_waiting: final_metrics.waiting,
         wait_seconds_total: final_metrics.wait_seconds_total,
+        authorize_latency: summarize_latencies(&authorize_latencies)?,
     })
 }
 
@@ -260,15 +266,19 @@ struct TokenVerifyStormResult {
     final_active: u64,
     final_waiting: u64,
     wait_seconds_total: f64,
+    authorize_latency: super::LatencySummary,
 }
 
 impl TokenVerifyStormResult {
     fn print(self, parallelism: usize) {
         println!(
-            "TOKEN_VERIFY_STORM_RESULT nodes={} parallelism={} elapsed_ms={:.1} active_peak={} waiting_peak={} wait_seconds_total={:.6} baseline_rss_bytes={} peak_rss_bytes={} rss_delta_bytes={} argon2_budget_bytes={} rss_tolerance_bytes={}",
+            "TOKEN_VERIFY_STORM_RESULT nodes={} parallelism={} elapsed_ms={:.1} authorize_p50_ms={:.2} authorize_p95_ms={:.2} authorize_max_ms={:.2} active_peak={} waiting_peak={} wait_seconds_total={:.6} baseline_rss_bytes={} peak_rss_bytes={} rss_delta_bytes={} argon2_budget_bytes={} rss_tolerance_bytes={}",
             TOKEN_VERIFY_STORM_NODES,
             parallelism,
             self.elapsed.as_secs_f64() * 1000.0,
+            self.authorize_latency.p50_ms,
+            self.authorize_latency.p95_ms,
+            self.authorize_latency.max_ms,
             self.peak.active,
             self.peak.waiting,
             self.wait_seconds_total,
