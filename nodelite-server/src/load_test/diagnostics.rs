@@ -1,5 +1,3 @@
-use std::process::Command;
-
 use anyhow::{Context, Result};
 
 use super::server::{HistoryArtifactBytes, TestServer};
@@ -44,19 +42,7 @@ impl ResourceSnapshot {
     }
 }
 
-fn current_rss_bytes() -> Result<u64> {
-    let pid = std::process::id().to_string();
-    let output = Command::new("ps")
-        .args(["-o", "rss=", "-p", pid.as_str()])
-        .output()
-        .context("run ps to sample current process rss")?;
-    if !output.status.success() {
-        anyhow::bail!("ps rss probe exited with {}", output.status);
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let rss_kib = text
-        .trim()
-        .parse::<u64>()
-        .with_context(|| format!("parse ps rss output {text:?}"))?;
-    Ok(rss_kib.saturating_mul(1024))
+pub(super) fn current_rss_bytes() -> Result<u64> {
+    crate::handlers::process_resident_memory_bytes()
+        .context("current platform does not expose process RSS")
 }

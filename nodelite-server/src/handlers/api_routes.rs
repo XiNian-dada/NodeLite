@@ -212,7 +212,7 @@ async fn file_len(path: &Path) -> u64 {
         .unwrap_or(0)
 }
 
-fn process_resident_memory_bytes() -> Option<u64> {
+pub(crate) fn process_resident_memory_bytes() -> Option<u64> {
     #[cfg(target_os = "linux")]
     {
         let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
