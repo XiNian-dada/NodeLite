@@ -89,43 +89,20 @@ pub(super) fn is_writable_paths_subset_of_install_root(
 }
 
 pub(super) fn server_update_shell_command(log_path: &Path, cache_dir: &Path) -> String {
-    let installer_url = format!(
-        "{}/releases/latest/download/install-server.sh",
-        env!("CARGO_PKG_REPOSITORY")
-    );
     [
-        "set -u".to_string(),
-        "umask 077".to_string(),
-        format!("log={}", shell_quote(&log_path.display().to_string())),
         format!(
-            "cache_dir={}",
+            "NODELITE_UPDATE_LOG={}",
+            shell_quote(&log_path.display().to_string())
+        ),
+        format!(
+            "NODELITE_UPDATE_CACHE_DIR={}",
             shell_quote(&cache_dir.display().to_string())
         ),
-        "mkdir -p \"$cache_dir\"".to_string(),
-        "chmod 0700 \"$cache_dir\" >>\"$log\" 2>&1 || true".to_string(),
-        "tmp_script=\"$(mktemp \"$cache_dir/install-server.XXXXXX\")\"".to_string(),
-        "trap 'rm -f \"$tmp_script\"' EXIT".to_string(),
-        "chmod 0600 \"$tmp_script\" >>\"$log\" 2>&1".to_string(),
-        ": >\"$log\"".to_string(),
-        "echo \"nodelite-update: started at $(date -u +%Y-%m-%dT%H:%M:%SZ)\" >>\"$log\"".to_string(),
         format!(
-            "echo \"nodelite-update: downloading {}\" >>\"$log\"",
-            shell_quote(&installer_url)
+            "NODELITE_UPDATE_REPOSITORY={}",
+            shell_quote(env!("CARGO_PKG_REPOSITORY"))
         ),
-        format!(
-            "curl -fsSL {} -o \"$tmp_script\" >>\"$log\" 2>&1",
-            shell_quote(&installer_url)
-        ),
-        "download_status=$?".to_string(),
-        "if [ \"$download_status\" -ne 0 ]; then echo \"nodelite-update: finished exit=$download_status at $(date -u +%Y-%m-%dT%H:%M:%SZ)\" >>\"$log\"; exit \"$download_status\"; fi".to_string(),
-        "chmod 0700 \"$tmp_script\" >>\"$log\" 2>&1".to_string(),
-        "chmod_status=$?".to_string(),
-        "if [ \"$chmod_status\" -ne 0 ]; then echo \"nodelite-update: finished exit=$chmod_status at $(date -u +%Y-%m-%dT%H:%M:%SZ)\" >>\"$log\"; exit \"$chmod_status\"; fi".to_string(),
-        "echo \"nodelite-update: running installer in upgrade mode\" >>\"$log\"".to_string(),
-        format!(
-            "NODELITE_SERVER_MODE=upgrade sh \"$tmp_script\" >>\"$log\" 2>&1; update_status=$?; echo \"nodelite-update: finished exit=$update_status at $(date -u +%Y-%m-%dT%H:%M:%SZ)\" >>\"$log\"; exit \"$update_status\" # {}",
-            shell_quote(&installer_url)
-        ),
+        include_str!("../../../../scripts/server-web-update.sh").to_string(),
     ]
     .join("\n")
 }
@@ -321,18 +298,33 @@ mod tests {
     }
 
     #[test]
-    fn server_update_shell_command_uses_private_cache_dir_for_temp_script() {
+    fn server_update_shell_command_embeds_versioned_verified_bootstrap() {
         let config = sample_server_config();
         let log_path = Path::new("/tmp/nodelite-update.log");
         let cache_dir = server_update_cache_dir(&config);
         let command = server_update_shell_command(log_path, &cache_dir);
 
         assert!(command.contains("umask 077"));
-        assert!(command.contains("cache_dir='/opt/nodelite/data/.server-update-cache'"));
+        assert!(
+            command.contains("NODELITE_UPDATE_CACHE_DIR='/opt/nodelite/data/.server-update-cache'")
+        );
         assert!(command.contains("mkdir -p \"$cache_dir\""));
         assert!(command.contains("tmp_script=\"$(mktemp \"$cache_dir/install-server.XXXXXX\")\""));
         assert!(command.contains("chmod 0600 \"$tmp_script\""));
+        assert!(command.contains("asset_base_url=\"$repository/releases/download/$target_tag\""));
+        assert!(command.contains("installer sha256=$actual_sha256 verified"));
+        assert!(command.contains("NODELITE_SERVER_VERSION=\"$target_tag\""));
+        assert!(command.contains("NODELITE_SERVER_BASE_URL=\"$asset_base_url\""));
+        assert!(!command.contains("releases/latest/download/install-server.sh"));
         assert!(!command.contains("${HOME:-/tmp}/.cache"));
+
+        let verify_position = command
+            .find("installer sha256=$actual_sha256 verified")
+            .expect("checksum verification log should be present");
+        let execute_position = command
+            .find("sh \"$tmp_script\"")
+            .expect("installer execution should be present");
+        assert!(verify_position < execute_position);
     }
 
     fn sample_server_config() -> ServerConfig {

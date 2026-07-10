@@ -95,7 +95,10 @@ jobs:
         run: cargo test --workspace --locked
 
       - name: Shellcheck installers
-        run: shellcheck scripts/install-server.sh scripts/install-agent.sh scripts/test-install-server-summary.sh scripts/check-demo-credentials.sh scripts/check-actions-pinned.sh
+        run: shellcheck scripts/install-server.sh scripts/install-agent.sh scripts/server-web-update.sh scripts/test-install-server-summary.sh scripts/test-server-web-update.sh scripts/check-demo-credentials.sh scripts/check-actions-pinned.sh
+
+      - name: Test verified web update bootstrap
+        run: sh scripts/test-server-web-update.sh
 
       - name: Audit dependency advisories
         run: cargo audit --deny warnings
