@@ -126,14 +126,17 @@ async fn initialize_server_runtime(
     config: Arc<ServerConfig>,
     readonly_route_auth: ReadonlyRouteAuth,
 ) -> Result<ServerRuntime> {
-    let registry = NodeRegistry::load(config.node_registry_path.as_path())
-        .await
-        .with_context(|| {
-            format!(
-                "failed to load node registry {}",
-                config.node_registry_path.display()
-            )
-        })?;
+    let registry = NodeRegistry::load_with_token_verify_limit(
+        config.node_registry_path.as_path(),
+        config.token_verify_max_parallelism,
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "failed to load node registry {}",
+            config.node_registry_path.display()
+        )
+    })?;
     let shared = SharedState::new(Arc::clone(&config));
     let history = HistoryStore::new(
         config.history_db_path.clone(),

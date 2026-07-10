@@ -23,10 +23,11 @@ pub use config::{
     DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS, DEFAULT_HISTORY_RETENTION_HOURS,
     DEFAULT_HISTORY_WRITE_INTERVAL_SECS, DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_PING_INTERVAL_SECS,
     DEFAULT_REFRESH_INTERVAL_SECS, DEFAULT_REPORT_INTERVAL_SECS, DEFAULT_STALE_AFTER_SECS,
-    GeoIpConfig, GeoIpEdition, GeoIpProvider, InspectionConfig, MAX_NODE_IDENTITY_TEXT_BYTES,
-    MAX_NODE_TAG_BYTES, MAX_NODE_TAGS, MetricsConfig, ReadonlyAuthConfig, ServerConfig, WsConfig,
-    normalize_totp_secret, parse_agent_config, parse_server_config,
-    upsert_toml_item_preserving_decor,
+    DEFAULT_TOKEN_VERIFY_MAX_PARALLELISM, GeoIpConfig, GeoIpEdition, GeoIpProvider,
+    InspectionConfig, MAX_NODE_IDENTITY_TEXT_BYTES, MAX_NODE_TAG_BYTES, MAX_NODE_TAGS,
+    MAX_TOKEN_VERIFY_MAX_PARALLELISM, MIN_TOKEN_VERIFY_MAX_PARALLELISM, MetricsConfig,
+    ReadonlyAuthConfig, ServerConfig, WsConfig, normalize_totp_secret, parse_agent_config,
+    parse_server_config, upsert_toml_item_preserving_decor,
 };
 pub use message::{
     AgentLogEntry, AgentLogsMessage, BrowserMessage, HelloMessage,

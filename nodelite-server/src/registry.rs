@@ -12,6 +12,7 @@ mod auth;
 mod error;
 mod issue;
 mod lifecycle;
+mod metrics;
 mod migration;
 mod render;
 mod storage;
@@ -37,6 +38,7 @@ use tokio::sync::{RwLock, Semaphore};
 use self::auth::TokenVerifyProbe;
 pub use self::error::{RegistryError, RegistryResult};
 pub use self::issue::issue_node;
+pub(crate) use self::metrics::TokenVerifyMetrics;
 #[cfg(test)]
 pub use self::render::{build_agent_server_url, build_github_release_base_url};
 pub use self::render::{
@@ -71,11 +73,6 @@ const ARGON2_PARALLELISM: u32 = 1;
 
 /// 一次性安装令牌的有效期(分钟)。
 const INSTALL_TOKEN_TTL_MINUTES: i64 = 15;
-/// Argon2id 每次 verify 会短时占用约 19MiB 内存。从 2 提升至 8 以改善
-/// 重连风暴场景的排队延迟,同时内存峰值仍可控(8 × 19MiB = 152MiB)。
-/// 实际运行时会被 `available_parallelism().min(8)` 限制。
-/// TODO: 后续可考虑配置化,允许低内存 VPS 降至 2 或 4。
-const TOKEN_VERIFY_MAX_PARALLELISM: usize = 8;
 const TOKEN_VERIFY_WAIT_WARN_AFTER: Duration = Duration::from_millis(100);
 const LOCATION_COORDINATE_SCALE: f64 = 1_000_000.0;
 
@@ -225,6 +222,7 @@ pub struct NodeRegistry {
     registry_revision: Arc<AtomicU64>,
     token_verify_limit: usize,
     token_verify_limiter: Arc<Semaphore>,
+    token_verify_metrics: Arc<metrics::TokenVerifyMetricsState>,
     /// Token 验证结果缓存:减少重连场景的 Argon2id 开销。
     token_cache: Arc<ParkingLotMutex<LruCache<TokenCacheKey, TokenCacheEntry>>>,
     #[cfg(test)]

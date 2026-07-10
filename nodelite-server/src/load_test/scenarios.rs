@@ -1,14 +1,15 @@
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
-use tokio::sync::{Barrier, mpsc, watch};
+use tokio::sync::{Barrier, mpsc, oneshot, watch};
 use tokio::time::timeout;
 
+use super::diagnostics::current_rss_bytes;
 use super::fake_agent::{
-    run_fake_agent, run_fake_agent_session, seed_history_points, wait_for_all_offline,
-    wait_for_final_snapshots, wait_for_seeded_history_points,
+    fake_identity, run_fake_agent, run_fake_agent_session, seed_history_points,
+    wait_for_all_offline, wait_for_final_snapshots, wait_for_seeded_history_points,
 };
 use super::probes::{
     probe_node_history_latencies, probe_node_status_latencies, probe_nodes_latencies,
@@ -16,12 +17,17 @@ use super::probes::{
 };
 use super::server::TestServer;
 use super::{
-    AgentWorkload, ApiScenarioResult, LOAD_TEST_HISTORY_POINTS, LOAD_TEST_METRICS_PER_NODE,
-    LOAD_TEST_OVERVIEW_PROBES, LOAD_TEST_READ_PROBES, LOAD_TEST_STEADY_METRIC_DELAY_MS,
-    LOAD_TEST_STEADY_METRICS_PER_NODE, LOAD_TEST_STORM_CYCLES, LOAD_TEST_STORM_METRIC_DELAY_MS,
-    LOAD_TEST_STORM_METRICS_PER_CYCLE, LOAD_TEST_STORM_READ_PROBES, LOAD_TEST_TIMEOUT_SECS,
-    ScenarioResult, StormScenarioResult,
+    AgentCredential, AgentWorkload, ApiScenarioResult, LOAD_TEST_HISTORY_POINTS,
+    LOAD_TEST_METRICS_PER_NODE, LOAD_TEST_OVERVIEW_PROBES, LOAD_TEST_READ_PROBES,
+    LOAD_TEST_STEADY_METRIC_DELAY_MS, LOAD_TEST_STEADY_METRICS_PER_NODE, LOAD_TEST_STORM_CYCLES,
+    LOAD_TEST_STORM_METRIC_DELAY_MS, LOAD_TEST_STORM_METRICS_PER_CYCLE,
+    LOAD_TEST_STORM_READ_PROBES, LOAD_TEST_TIMEOUT_SECS, ScenarioResult, StormScenarioResult,
 };
+use crate::registry::{IssueNodeRequest, NodeRegistry, issue_node};
+
+const TOKEN_VERIFY_STORM_NODES: usize = 200;
+const ARGON2_VERIFY_WORKING_BYTES: u64 = 19 * 1024 * 1024;
+const TOKEN_VERIFY_RSS_TOLERANCE_BYTES: u64 = 16 * 1024 * 1024;
 
 pub(super) async fn run_scaling_load_test() -> Result<()> {
     let scenarios = [20_usize, 50, 100, 200];
@@ -116,6 +122,236 @@ pub(super) async fn run_reconnect_storm_load_test() -> Result<()> {
         );
     }
     Ok(())
+}
+
+pub(super) async fn run_token_verify_storm_load_test() -> Result<()> {
+    let parallelism = token_verify_storm_parallelism()?;
+    let (temp_dir, registry, credentials, baseline_rss_bytes) =
+        prepare_token_verify_storm(parallelism).await?;
+    let result = execute_token_verify_storm(registry, credentials, baseline_rss_bytes).await?;
+    result.print(parallelism);
+    result.validate(parallelism)?;
+    let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    Ok(())
+}
+
+fn token_verify_storm_parallelism() -> Result<usize> {
+    let raw = match std::env::var("NODELITE_TOKEN_VERIFY_PARALLELISM") {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => "4".to_string(),
+        Err(error) => return Err(anyhow!("read NODELITE_TOKEN_VERIFY_PARALLELISM: {error}")),
+    };
+    let parallelism = raw
+        .parse::<usize>()
+        .context("parse NODELITE_TOKEN_VERIFY_PARALLELISM")?;
+    if ![2, 4, 8].contains(&parallelism) {
+        bail!("NODELITE_TOKEN_VERIFY_PARALLELISM must be 2, 4, or 8");
+    }
+    Ok(parallelism)
+}
+
+async fn prepare_token_verify_storm(
+    parallelism: usize,
+) -> Result<(std::path::PathBuf, NodeRegistry, Vec<AgentCredential>, u64)> {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock moved backwards")?
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!(
+        "nodelite-token-verify-storm-{}-{unique}",
+        std::process::id()
+    ));
+    tokio::fs::create_dir_all(&temp_dir)
+        .await
+        .with_context(|| format!("create temp dir {}", temp_dir.display()))?;
+    let registry_path = temp_dir.join("server.json");
+    let mut credentials = Vec::with_capacity(TOKEN_VERIFY_STORM_NODES);
+    for index in 0..TOKEN_VERIFY_STORM_NODES {
+        let node_id = format!("verify-storm-{index:03}");
+        let issued = issue_node(
+            &registry_path,
+            IssueNodeRequest {
+                node_id: node_id.clone(),
+                node_label: Some(format!("Verify Storm {index:03}")),
+                tags: vec!["token-verify-storm".to_string()],
+            },
+        )
+        .await
+        .with_context(|| format!("issue node {node_id}"))?;
+        credentials.push(AgentCredential {
+            node_id,
+            node_label: issued.node.node_label,
+            token: issued.node_session_token,
+        });
+    }
+
+    let registry = NodeRegistry::load_with_token_verify_limit(&registry_path, parallelism)
+        .await
+        .context("load token verify storm registry")?;
+    let baseline_rss_bytes = current_rss_bytes()?;
+    Ok((temp_dir, registry, credentials, baseline_rss_bytes))
+}
+
+async fn execute_token_verify_storm(
+    registry: NodeRegistry,
+    credentials: Vec<AgentCredential>,
+    baseline_rss_bytes: u64,
+) -> Result<TokenVerifyStormResult> {
+    let barrier = Arc::new(Barrier::new(credentials.len() + 1));
+    let (sampler_stop_tx, sampler_stop_rx) = watch::channel(false);
+    let (sampler_ready_tx, sampler_ready_rx) = oneshot::channel();
+    let sampler_registry = registry.clone();
+    let sampler_handle = tokio::spawn(sample_token_verify_peak(
+        sampler_registry,
+        sampler_stop_rx,
+        sampler_ready_tx,
+    ));
+    sampler_ready_rx
+        .await
+        .context("token verify sampler stopped before starting")?;
+
+    let mut handles = Vec::with_capacity(credentials.len());
+    for credential in credentials {
+        let registry = registry.clone();
+        let barrier = Arc::clone(&barrier);
+        handles.push(tokio::spawn(async move {
+            let identity = fake_identity(&credential);
+            barrier.wait().await;
+            let started = Instant::now();
+            let result = registry.authorize(&identity, &credential.token).await;
+            (result, started.elapsed())
+        }));
+    }
+
+    let started = Instant::now();
+    barrier.wait().await;
+    let mut authorize_latencies = Vec::with_capacity(handles.len());
+    for result in futures::future::join_all(handles).await {
+        let (authorization, latency) = result.context("join token verify storm task")?;
+        authorization?;
+        authorize_latencies.push(latency);
+    }
+    let elapsed = started.elapsed();
+    let _ = sampler_stop_tx.send(true);
+    let peak = sampler_handle
+        .await
+        .context("join token verify sampler")??;
+    let final_metrics = registry.token_verify_metrics();
+    let rss_delta_bytes = peak.rss_bytes.saturating_sub(baseline_rss_bytes);
+    Ok(TokenVerifyStormResult {
+        elapsed,
+        peak,
+        baseline_rss_bytes,
+        rss_delta_bytes,
+        final_active: final_metrics.active,
+        final_waiting: final_metrics.waiting,
+        wait_seconds_total: final_metrics.wait_seconds_total,
+        authorize_latency: summarize_latencies(&authorize_latencies)?,
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TokenVerifyPeak {
+    rss_bytes: u64,
+    active: u64,
+    waiting: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TokenVerifyStormResult {
+    elapsed: Duration,
+    peak: TokenVerifyPeak,
+    baseline_rss_bytes: u64,
+    rss_delta_bytes: u64,
+    final_active: u64,
+    final_waiting: u64,
+    wait_seconds_total: f64,
+    authorize_latency: super::LatencySummary,
+}
+
+impl TokenVerifyStormResult {
+    fn print(self, parallelism: usize) {
+        println!(
+            "TOKEN_VERIFY_STORM_RESULT nodes={} parallelism={} elapsed_ms={:.1} authorize_p50_ms={:.2} authorize_p95_ms={:.2} authorize_max_ms={:.2} active_peak={} waiting_peak={} wait_seconds_total={:.6} baseline_rss_bytes={} peak_rss_bytes={} rss_delta_bytes={} argon2_budget_bytes={} rss_tolerance_bytes={}",
+            TOKEN_VERIFY_STORM_NODES,
+            parallelism,
+            self.elapsed.as_secs_f64() * 1000.0,
+            self.authorize_latency.p50_ms,
+            self.authorize_latency.p95_ms,
+            self.authorize_latency.max_ms,
+            self.peak.active,
+            self.peak.waiting,
+            self.wait_seconds_total,
+            self.baseline_rss_bytes,
+            self.peak.rss_bytes,
+            self.rss_delta_bytes,
+            parallelism as u64 * ARGON2_VERIFY_WORKING_BYTES,
+            TOKEN_VERIFY_RSS_TOLERANCE_BYTES,
+        );
+    }
+
+    fn validate(self, parallelism: usize) -> Result<()> {
+        if self.peak.active != parallelism as u64 {
+            bail!(
+                "token verify storm observed active peak {}, expected {}",
+                self.peak.active,
+                parallelism
+            );
+        }
+        if self.peak.waiting == 0 || self.wait_seconds_total <= 0.0 {
+            bail!("token verify storm did not exercise limiter waiting");
+        }
+        if self.final_active != 0 || self.final_waiting != 0 {
+            bail!(
+                "token verify metrics did not return to idle: active={} waiting={}",
+                self.final_active,
+                self.final_waiting
+            );
+        }
+        let budget = parallelism as u64 * ARGON2_VERIFY_WORKING_BYTES;
+        if self.rss_delta_bytes > budget + TOKEN_VERIFY_RSS_TOLERANCE_BYTES {
+            bail!(
+                "token verify RSS delta {} exceeded Argon2 budget {} plus tolerance {}",
+                self.rss_delta_bytes,
+                budget,
+                TOKEN_VERIFY_RSS_TOLERANCE_BYTES
+            );
+        }
+        Ok(())
+    }
+}
+
+async fn sample_token_verify_peak(
+    registry: NodeRegistry,
+    mut stop_rx: watch::Receiver<bool>,
+    ready_tx: oneshot::Sender<()>,
+) -> Result<TokenVerifyPeak> {
+    let metrics = registry.token_verify_metrics();
+    let mut peak = TokenVerifyPeak {
+        rss_bytes: current_rss_bytes()?,
+        active: metrics.active,
+        waiting: metrics.waiting,
+    };
+    let _ = ready_tx.send(());
+    let mut interval = tokio::time::interval(Duration::from_millis(1));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    loop {
+        tokio::select! {
+            changed = stop_rx.changed() => {
+                let _ = changed;
+                break;
+            }
+            _ = interval.tick() => {
+                let metrics = registry.token_verify_metrics();
+                peak.rss_bytes = peak.rss_bytes.max(current_rss_bytes()?);
+                peak.active = peak.active.max(metrics.active);
+                peak.waiting = peak.waiting.max(metrics.waiting);
+            }
+        }
+    }
+
+    Ok(peak)
 }
 
 async fn run_single_scenario(node_count: usize) -> Result<ScenarioResult> {

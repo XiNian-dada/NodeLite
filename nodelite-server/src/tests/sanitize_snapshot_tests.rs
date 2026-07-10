@@ -65,6 +65,7 @@ fn sanitize_snapshot_clamps_invalid_metrics() {
         max_sanitized_string_bytes: 256,
         metric_anomaly_session_limit: 5,
         sqlite_busy_timeout_secs: 5,
+        token_verify_max_parallelism: nodelite_proto::DEFAULT_TOKEN_VERIFY_MAX_PARALLELISM,
     };
     let snapshot = NodeSnapshot {
         collected_at: Utc::now(),
@@ -240,6 +241,7 @@ fn sanitize_caps_disk_field_string_length() {
         max_sanitized_string_bytes: 256,
         metric_anomaly_session_limit: 5,
         sqlite_busy_timeout_secs: 5,
+        token_verify_max_parallelism: nodelite_proto::DEFAULT_TOKEN_VERIFY_MAX_PARALLELISM,
     };
     let oversized = "x".repeat(MAX_SANITIZED_STRING_BYTES * 4);
     let snapshot = NodeSnapshot {
@@ -337,6 +339,7 @@ fn sanitize_snapshot_caps_disk_count_and_tracks_clean_reports() {
         max_sanitized_string_bytes: 256,
         metric_anomaly_session_limit: 5,
         sqlite_busy_timeout_secs: 5,
+        token_verify_max_parallelism: nodelite_proto::DEFAULT_TOKEN_VERIFY_MAX_PARALLELISM,
     };
     let disks = (0..(MAX_SANITIZED_DISKS + 3))
         .map(|index| nodelite_proto::DiskUsage {
@@ -449,6 +452,7 @@ fn sanitize_snapshot_deduplicates_repeated_disk_devices() {
         max_sanitized_string_bytes: 256,
         metric_anomaly_session_limit: 5,
         sqlite_busy_timeout_secs: 5,
+        token_verify_max_parallelism: nodelite_proto::DEFAULT_TOKEN_VERIFY_MAX_PARALLELISM,
     };
     let snapshot = NodeSnapshot {
         collected_at: Utc::now(),

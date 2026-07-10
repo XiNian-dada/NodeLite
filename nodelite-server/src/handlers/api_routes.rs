@@ -13,7 +13,7 @@ use crate::AppState;
 use crate::audit::{AuditEventType, AuditLogError, AuditQuery};
 use crate::handlers::metrics_routes::{
     RuntimeMetrics, WriterMetrics, render_api_cache_metrics, render_metrics_response_body_bytes,
-    render_runtime_metrics, render_writer_metrics,
+    render_runtime_metrics, render_token_verify_metrics, render_writer_metrics,
 };
 use crate::history::HistoryError;
 use nodelite_proto::{AgentLogEntry, GeoIpProvider};
@@ -130,6 +130,7 @@ pub(crate) async fn metrics(State(state): State<AppState>) -> Response {
         session_control_queue_full_total: state.shared.session_control_queue_full_total(),
     });
     let api_cache_metrics = render_api_cache_metrics(state.shared.api_cache_metrics());
+    let token_verify_metrics = render_token_verify_metrics(state.registry.token_verify_metrics());
     let config = state.shared.config();
     let (history_db_bytes, history_wal_bytes, history_shm_bytes) =
         sqlite_artifact_sizes(config.history_db_path.as_path()).await;
@@ -153,7 +154,7 @@ pub(crate) async fn metrics(State(state): State<AppState>) -> Response {
     });
     let body = metrics_response_body(
         cached_body,
-        format!("{writer_metrics}{api_cache_metrics}{runtime_metrics}"),
+        format!("{writer_metrics}{api_cache_metrics}{token_verify_metrics}{runtime_metrics}"),
     );
     let content_length = body.len().to_string();
     (
@@ -211,7 +212,7 @@ async fn file_len(path: &Path) -> u64 {
         .unwrap_or(0)
 }
 
-fn process_resident_memory_bytes() -> Option<u64> {
+pub(crate) fn process_resident_memory_bytes() -> Option<u64> {
     #[cfg(target_os = "linux")]
     {
         let statm = std::fs::read_to_string("/proc/self/statm").ok()?;

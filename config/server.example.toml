@@ -39,6 +39,11 @@ max_sanitized_string_bytes = 256
 metric_anomaly_session_limit = 5
 # SQLite 忙等待超时(秒)。
 sqlite_busy_timeout_secs = 5
+# 同时执行的 Argon2id 节点 Token 验证数。每个任务约需 19 MiB 临时内存。
+# 默认 4 约需 76 MiB；小内存主机可设为 2（约 38 MiB），更高并发会缩短
+# 大批 Agent 同时重连的排队时间。允许范围 1..=8，测量方法见
+# docs/token-verification.md。
+token_verify_max_parallelism = 4
 
 [metrics]
 # Prometheus 默认只导出 server/overview 与少量 node summary 指标,避免大规模 scrape 构建过大的文本体。

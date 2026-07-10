@@ -90,6 +90,23 @@ async fn registry_load_missing_file_still_returns_empty_registry() {
 }
 
 #[tokio::test]
+async fn registry_load_rejects_invalid_token_verify_limits() {
+    let path = std::env::temp_dir().join("nodelite-invalid-token-verify-limit.json");
+    for limit in [0, 9] {
+        let error = NodeRegistry::load_with_token_verify_limit(&path, limit)
+            .await
+            .expect_err("invalid token verify limits should fail before registry I/O");
+        assert!(matches!(
+            error,
+            RegistryError::InvalidConfig {
+                field: "token_verify_max_parallelism",
+                ..
+            }
+        ));
+    }
+}
+
+#[tokio::test]
 async fn refresh_token_reports_missing_nodes_with_typed_error() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

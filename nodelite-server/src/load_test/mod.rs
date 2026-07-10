@@ -4,6 +4,7 @@
 //! `cargo test -p nodelite-server load_test_scaling_scores -- --ignored --nocapture`
 //! `cargo test -p nodelite-server load_test_api_surface_scores -- --ignored --nocapture`
 //! `cargo test -p nodelite-server load_test_reconnect_storm_scores -- --ignored --nocapture`
+//! `NODELITE_TOKEN_VERIFY_PARALLELISM=2 cargo test -p nodelite-server load_test_token_verify_storm_budget -- --ignored --nocapture`
 
 mod diagnostics;
 mod fake_agent;
@@ -121,6 +122,17 @@ async fn load_test_api_surface_scores() {
 )]
 async fn load_test_reconnect_storm_scores() {
     if let Err(error) = scenarios::run_reconnect_storm_load_test().await {
+        panic!("{error:#}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[cfg_attr(
+    not(feature = "load_test"),
+    ignore = "manual token verify storm; defaults to 4, or set NODELITE_TOKEN_VERIFY_PARALLELISM=2 or 8"
+)]
+async fn load_test_token_verify_storm_budget() {
+    if let Err(error) = scenarios::run_token_verify_storm_load_test().await {
         panic!("{error:#}");
     }
 }

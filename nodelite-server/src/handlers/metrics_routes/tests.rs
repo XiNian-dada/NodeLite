@@ -6,9 +6,11 @@ use super::{
     ApiCacheMetrics, PrometheusNode, RuntimeMetrics, SqliteWalCheckpointMetrics,
     SqliteWalCheckpointStats, WriterMetrics, WsMessageMetrics, render_api_cache_metrics,
     render_metrics_response_body_bytes, render_prometheus_metrics,
-    render_prometheus_metrics_from_iter, render_runtime_metrics, render_writer_metrics,
+    render_prometheus_metrics_from_iter, render_runtime_metrics, render_token_verify_metrics,
+    render_writer_metrics,
 };
 use crate::ServerReadiness;
+use crate::registry::TokenVerifyMetrics;
 use nodelite_proto::{
     DiskUsage, LoadAverage, MemoryUsage, MetricsConfig, NetworkCounters, NodeIdentity,
     NodeSnapshot, NodeStatus, OverviewData,
@@ -327,6 +329,25 @@ fn exporter_exposes_runtime_observability_metrics() {
     assert!(body.contains("nodelite_ws_messages_total{type=\"agent_logs\"} 13"));
     assert!(body.contains("nodelite_ws_messages_total{type=\"pong\"} 17"));
     assert!(body.contains("nodelite_ws_messages_total{type=\"refresh_token_request\"} 19"));
+}
+
+#[test]
+fn exporter_exposes_token_verify_pressure_metrics() {
+    let body = render_token_verify_metrics(TokenVerifyMetrics {
+        limit: 4,
+        active: 3,
+        waiting: 7,
+        wait_seconds_total: 1.25,
+    });
+
+    assert!(body.contains("# TYPE nodelite_token_verify_limit gauge"));
+    assert!(body.contains("nodelite_token_verify_limit 4"));
+    assert!(body.contains("# TYPE nodelite_token_verify_active gauge"));
+    assert!(body.contains("nodelite_token_verify_active 3"));
+    assert!(body.contains("# TYPE nodelite_token_verify_waiting gauge"));
+    assert!(body.contains("nodelite_token_verify_waiting 7"));
+    assert!(body.contains("# TYPE nodelite_token_verify_wait_seconds_total counter"));
+    assert!(body.contains("nodelite_token_verify_wait_seconds_total 1.25"));
 }
 
 #[test]

@@ -10,7 +10,6 @@ use tokio::sync::{RwLock, Semaphore};
 
 use crate::sanitize::{sanitize_location_override, sanitize_renewal_price};
 
-use super::auth::default_token_verify_limit;
 use super::storage::{
     load_registry_state, load_registry_state_with_fingerprint, mutate_registry_file,
     registry_file_fingerprint,
@@ -24,9 +23,34 @@ use super::{
 
 impl NodeRegistry {
     /// 从磁盘加载注册表;文件不存在时返回空注册表(首次部署的合理状态)。
+    #[cfg(test)]
     pub async fn load(path: &Path) -> RegistryResult<Self> {
+        Self::load_with_token_verify_limit(
+            path,
+            nodelite_proto::DEFAULT_TOKEN_VERIFY_MAX_PARALLELISM,
+        )
+        .await
+    }
+
+    /// 从磁盘加载注册表,并使用已校验的 Argon2 token 验证并发上限。
+    pub async fn load_with_token_verify_limit(
+        path: &Path,
+        token_verify_limit: usize,
+    ) -> RegistryResult<Self> {
+        if !(nodelite_proto::MIN_TOKEN_VERIFY_MAX_PARALLELISM
+            ..=nodelite_proto::MAX_TOKEN_VERIFY_MAX_PARALLELISM)
+            .contains(&token_verify_limit)
+        {
+            return Err(RegistryError::invalid_config(
+                "token_verify_max_parallelism",
+                format!(
+                    "must be between {} and {}",
+                    nodelite_proto::MIN_TOKEN_VERIFY_MAX_PARALLELISM,
+                    nodelite_proto::MAX_TOKEN_VERIFY_MAX_PARALLELISM,
+                ),
+            ));
+        }
         let (state, fingerprint) = load_registry_state_with_fingerprint(path).await?;
-        let token_verify_limit = default_token_verify_limit();
 
         Ok(Self {
             path: Arc::new(path.to_path_buf()),
@@ -37,6 +61,7 @@ impl NodeRegistry {
             registry_revision: Arc::new(AtomicU64::new(1)),
             token_verify_limit,
             token_verify_limiter: Arc::new(Semaphore::new(token_verify_limit)),
+            token_verify_metrics: Arc::new(super::metrics::TokenVerifyMetricsState::default()),
             token_cache: Arc::new(ParkingLotMutex::new(LruCache::new(
                 std::num::NonZeroUsize::new(TOKEN_CACHE_CAPACITY).expect("cache capacity > 0"),
             ))),

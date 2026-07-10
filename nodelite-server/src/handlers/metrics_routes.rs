@@ -5,8 +5,10 @@ use nodelite_proto::{MetricsConfig, NodeIdentity, NodeSnapshot, OverviewData};
 
 mod emitter;
 mod node;
+mod token_verify;
 
 use emitter::MetricEmitter;
+pub(crate) use token_verify::render_token_verify_metrics;
 
 #[cfg(test)]
 pub(crate) fn render_prometheus_metrics(

@@ -1,151 +1,16 @@
+//! Agent 与各 Server 配置分区的解析和校验测试。
+
+mod agent;
+mod server_defaults;
+
 use std::path::PathBuf;
 
 use ipnet::IpNet;
 
 use super::{
     AlertChannel, AlertComparator, AlertMetric, AlertScopeMode, AlertSeverity, AlertSmtpTransport,
-    DEFAULT_ALERT_CPU_WINDOW_MINUTES, DEFAULT_ALERT_INSPECTION_CPU_WARN_PERCENT,
-    DEFAULT_ALERT_INSPECTION_LATENCY_WARN_MS, DEFAULT_ALERT_INSPECTION_LOCAL_TIME,
-    DEFAULT_ALERT_INSPECTION_MEMORY_WARN_PERCENT, DEFAULT_ALERT_MEMORY_WINDOW_MINUTES,
-    DEFAULT_ALERT_OFFLINE_THRESHOLD_MINUTES, DEFAULT_ALERT_RTT_WINDOW_MINUTES,
-    DEFAULT_AUDIT_RETENTION_DAYS, DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS, DEFAULT_MAX_MESSAGE_BYTES,
-    DEFAULT_WS_AUTH_BLOCK_SECS, DEFAULT_WS_AUTH_FAIL_MAX_ATTEMPTS,
-    DEFAULT_WS_AUTH_FAIL_WINDOW_SECS, DEFAULT_WS_MAX_CONNECTIONS_PER_IP,
-    DEFAULT_WS_MAX_TOTAL_CONNECTIONS, GeoIpEdition, GeoIpProvider, parse_server_config,
+    GeoIpEdition, GeoIpProvider, parse_server_config,
 };
-
-mod agent;
-
-#[test]
-fn server_example_documents_install_section() {
-    let example = include_str!("../../../config/server.example.toml");
-
-    assert!(example.contains("[install]"));
-    assert!(example.contains("agent_release_base_url"));
-    assert!(example.contains("agent_release_sha256_x86_64"));
-    assert!(example.contains("agent_release_sha256_aarch64"));
-}
-
-#[test]
-fn server_example_documents_metrics_section() {
-    let example = include_str!("../../../config/server.example.toml");
-
-    assert!(example.contains("[metrics]"));
-    assert!(example.contains("export_node_resource_metrics"));
-    assert!(example.contains("export_node_disk_metrics"));
-}
-
-#[test]
-fn parses_server_config_with_defaults() {
-    let config = parse_server_config(
-        r#"
-        [server]
-        listen = "127.0.0.1:8080"
-        public_base_url = "http://127.0.0.1:8080"
-        "#,
-    )
-    .expect("server config should parse");
-
-    assert_eq!(config.listen.to_string(), "127.0.0.1:8080");
-    assert!(!config.insecure_allow_http);
-    assert_eq!(config.readonly_auth, None);
-    assert!(config.trusted_proxies.is_empty());
-    assert_eq!(config.max_message_bytes, DEFAULT_MAX_MESSAGE_BYTES);
-    assert_eq!(
-        config.ws.max_total_connections,
-        DEFAULT_WS_MAX_TOTAL_CONNECTIONS
-    );
-    assert_eq!(
-        config.ws.max_connections_per_ip,
-        DEFAULT_WS_MAX_CONNECTIONS_PER_IP
-    );
-    assert_eq!(
-        config.ws.auth_fail_window_secs,
-        DEFAULT_WS_AUTH_FAIL_WINDOW_SECS
-    );
-    assert_eq!(
-        config.ws.auth_fail_max_attempts,
-        DEFAULT_WS_AUTH_FAIL_MAX_ATTEMPTS
-    );
-    assert_eq!(config.ws.auth_block_secs, DEFAULT_WS_AUTH_BLOCK_SECS);
-    assert!(!config.metrics.export_node_resource_metrics);
-    assert!(!config.metrics.export_node_disk_metrics);
-    assert_eq!(
-        config.node_registry_path,
-        PathBuf::from("./config/server.json")
-    );
-    assert_eq!(
-        config.ignored_filesystems,
-        vec!["devtmpfs", "overlay", "tmpfs"]
-    );
-    assert!(config.audit.enabled);
-    assert_eq!(config.audit.db_path, PathBuf::from("./data/audit.sqlite3"));
-    assert_eq!(config.audit.retention_days, DEFAULT_AUDIT_RETENTION_DAYS);
-    assert!(config.audit.log_successful_auth);
-    assert!(config.audit.log_failed_auth);
-    assert!(config.audit.log_token_events);
-    assert!(config.audit.log_rate_limit);
-    assert!(config.geoip.enabled);
-    assert_eq!(config.geoip.provider, GeoIpProvider::Ipwhois);
-    assert_eq!(config.geoip.edition, GeoIpEdition::CountryLite);
-    assert_eq!(
-        config.geoip.database_path,
-        PathBuf::from("./data/geoip/dbip.mmdb")
-    );
-    assert!(!config.geoip.auto_update);
-    assert_eq!(
-        config.geoip.update_interval_days,
-        DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS
-    );
-    assert!(!config.alerting.enabled);
-    assert_eq!(config.alerting.rules.len(), 4);
-    assert_eq!(config.alerting.rules[0].id, "node-offline");
-    assert_eq!(config.alerting.rules[0].metric, AlertMetric::OfflineMinutes);
-    assert_eq!(
-        config.alerting.rules[0].threshold,
-        DEFAULT_ALERT_OFFLINE_THRESHOLD_MINUTES
-    );
-    assert_eq!(config.alerting.rules[0].window_minutes, 1);
-    assert_eq!(config.alerting.rules[0].severity, AlertSeverity::Critical);
-    assert_eq!(config.alerting.rules[1].id, "cpu-avg-hot");
-    assert_eq!(
-        config.alerting.rules[1].threshold,
-        DEFAULT_ALERT_INSPECTION_CPU_WARN_PERCENT
-    );
-    assert_eq!(
-        config.alerting.rules[1].window_minutes,
-        DEFAULT_ALERT_CPU_WINDOW_MINUTES
-    );
-    assert_eq!(config.alerting.rules[2].id, "memory-avg-hot");
-    assert_eq!(
-        config.alerting.rules[2].threshold,
-        DEFAULT_ALERT_INSPECTION_MEMORY_WARN_PERCENT
-    );
-    assert_eq!(
-        config.alerting.rules[2].window_minutes,
-        DEFAULT_ALERT_MEMORY_WINDOW_MINUTES
-    );
-    assert_eq!(config.alerting.rules[3].id, "rtt-avg-high");
-    assert_eq!(
-        config.alerting.rules[3].threshold,
-        DEFAULT_ALERT_INSPECTION_LATENCY_WARN_MS
-    );
-    assert_eq!(
-        config.alerting.rules[3].window_minutes,
-        DEFAULT_ALERT_RTT_WINDOW_MINUTES
-    );
-    assert!(
-        config
-            .alerting
-            .rules
-            .iter()
-            .all(|rule| rule.delivery == vec![AlertChannel::Smtp, AlertChannel::Webhook])
-    );
-    assert_eq!(
-        config.alerting.inspection.local_time,
-        DEFAULT_ALERT_INSPECTION_LOCAL_TIME
-    );
-}
 
 #[test]
 fn parses_server_config_with_metrics_overrides() {

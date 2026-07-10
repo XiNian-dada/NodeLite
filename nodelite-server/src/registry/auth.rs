@@ -13,12 +13,12 @@ use sha2::{Digest, Sha256};
 use tokio::sync::Semaphore;
 use tracing::warn;
 
+use super::metrics::{TokenVerifyActiveGuard, TokenVerifyWaitingGuard};
 use super::token::{authorized_node_from_entry, constant_time_eq, verify_token};
 use super::validate::validate_runtime_identity;
 use super::{
     AuthorizedNode, NodeRegistry, RegisteredNode, RegistryError, RegistryResult,
-    RegistryTokenStatus, TOKEN_CACHE_TTL, TOKEN_VERIFY_MAX_PARALLELISM,
-    TOKEN_VERIFY_WAIT_WARN_AFTER, TokenCacheEntry,
+    RegistryTokenStatus, TOKEN_CACHE_TTL, TOKEN_VERIFY_WAIT_WARN_AFTER, TokenCacheEntry,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -182,14 +182,14 @@ impl NodeRegistry {
         }
 
         // 缓存未命中,获取 semaphore 进行验证
-        let wait_started = Instant::now();
+        let wait_guard = TokenVerifyWaitingGuard::start(Arc::clone(&self.token_verify_metrics));
         let permit = Arc::clone(&self.token_verify_limiter)
             .acquire_owned()
             .await
             .map_err(|error| {
                 RegistryError::internal("token verify limiter closed", anyhow!(error))
             })?;
-        let waited = wait_started.elapsed();
+        let waited = wait_guard.acquired();
         if waited >= TOKEN_VERIFY_WAIT_WARN_AFTER {
             warn!(
                 wait_ms = waited.as_millis(),
@@ -212,14 +212,15 @@ impl NodeRegistry {
         // 执行实际的 Argon2id 验证
         let input = input.to_string();
         let token_hash = token_hash.to_string();
+        let metrics = Arc::clone(&self.token_verify_metrics);
         #[cfg(test)]
         let probe = self.token_verify_probe.clone();
 
-        let verified = tokio::task::spawn_blocking(move || {
-            let _permit = permit;
+        let (verified, permit) = tokio::task::spawn_blocking(move || {
+            let _active_guard = TokenVerifyActiveGuard::start(metrics);
             #[cfg(test)]
             let _probe_guard = probe.as_ref().map(|probe| probe.enter());
-            verify_token(&input, &token_hash)
+            (verify_token(&input, &token_hash), permit)
         })
         .await
         .map_err(|error| RegistryError::internal("token verify task failed", anyhow!(error)))?;
@@ -235,8 +236,13 @@ impl NodeRegistry {
                 },
             );
         }
+        drop(permit);
 
         Ok(verified)
+    }
+
+    pub(crate) fn token_verify_metrics(&self) -> super::TokenVerifyMetrics {
+        self.token_verify_metrics.snapshot(self.token_verify_limit)
     }
 
     #[cfg(test)]
@@ -288,13 +294,6 @@ pub(super) fn token_status_for_node(
         }
         _ => None,
     }
-}
-
-pub(super) fn default_token_verify_limit() -> usize {
-    std::thread::available_parallelism()
-        .map(|parallelism| parallelism.get().min(TOKEN_VERIFY_MAX_PARALLELISM))
-        .unwrap_or(1)
-        .max(1)
 }
 
 fn token_material_matches(left: &RegisteredNode, right: &RegisteredNode) -> bool {
