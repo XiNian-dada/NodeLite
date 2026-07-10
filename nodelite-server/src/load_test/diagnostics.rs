@@ -70,6 +70,14 @@ pub(super) fn current_process_memory() -> Result<ProcessMemorySnapshot> {
     })
 }
 
+#[cfg(target_os = "linux")]
+pub(super) fn current_rss_bytes() -> Result<u64> {
+    linux_memory_kib("/proc/self/status", "VmRSS:")?
+        .map(kib_to_bytes)
+        .context("VmRSS is missing from /proc/self/status")
+}
+
+#[cfg(not(target_os = "linux"))]
 pub(super) fn current_rss_bytes() -> Result<u64> {
     crate::handlers::process_resident_memory_bytes()
         .context("current platform does not expose process RSS")
