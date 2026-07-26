@@ -21,11 +21,12 @@ pnpm --dir nodelite-server/web e2e
 `NODELITE_E2E_BASE_URL` defaults to Vite at `http://127.0.0.1:5173`.
 `NODELITE_E2E_USER`/`NODELITE_E2E_PASS` map to Playwright's `httpCredentials` so Basic Auth is sent automatically.
 
-## Coverage targets (12 baseline flows)
+## Coverage targets (14 spec files)
 
-The full list lives in the plan, §3.7.2. Each `*.spec.ts` file in this directory implements one flow.
-The UI-only flows run with local fixtures. WebSocket reconnect flows require a
-live backend and are skipped unless `NODELITE_E2E_BASE_URL` is set.
+The first 12 flows come from the original plan, §3.7.2. Two supplementary suites
+cover the application shell and the WebSocket-first dashboard. UI-only flows run
+with local fixtures. Live WebSocket flows require a running backend and are
+skipped unless `NODELITE_E2E_BASE_URL` is set.
 
 | # | File | Flow |
 |---|---|---|
@@ -41,5 +42,7 @@ live backend and are skipped unless `NODELITE_E2E_BASE_URL` is set.
 | 10 | `alert-settings.spec.ts` | Channel + rule CRUD (post-reauth) |
 | 11 | `map-node-location.spec.ts` | Marker click highlights + jumps to detail |
 | 12 | `ws-reconnect.spec.ts` | Drop → reconnect indicator → recovery |
+| 13 | `smoke.spec.ts` | Authenticated application shell and dashboard smoke check |
+| 14 | `ws-dashboard.spec.ts` | WS initial state, incremental updates, REST fallback, navigation, and visibility lifecycle |
 
 The plan §3.7.4 documents the accepted compromises (no pixel diffs, chart contents asserted via tooltip text).

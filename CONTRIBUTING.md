@@ -259,9 +259,12 @@ PR 会经过以下检查：
 （仅维护者）
 
 1. 更新 CHANGELOG.md
-2. 更新版本号（`Cargo.toml`）
-3. 创建 git tag
-4. 推送 tag 触发 CI 发布
+2. 确认要发布的语义化版本 tag（例如 `v3.0.2`）
+3. 创建并推送 git tag，触发 release workflow
+
+不要为每次发布修改 workspace `Cargo.toml` 的 `0.1.0`。它是未注入版本时的编译期 fallback；官方构建会将 tag 去掉前导 `v` 后作为 `NODELITE_BUILD_VERSION` 注入 Linux Server / Agent 和 macOS Agent。
+
+当前必须使用注入版本的运行时展示路径是：Agent 身份中上报并显示在面板的 `agent_version`，以及 Server 设置接口返回的 `server_version`。本地直接运行 `cargo build` 或 `cargo run` 且没有设置 `NODELITE_BUILD_VERSION` 时，这两处会显示 Cargo fallback 版本。
 
 ### 更新 CHANGELOG.md
 

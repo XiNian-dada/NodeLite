@@ -158,6 +158,14 @@ pnpm --dir nodelite-server/web lint
 pnpm --dir nodelite-server/web typecheck
 ```
 
+## 版本与发布构建
+
+- Workspace `Cargo.toml` 中的 `0.1.0` 是没有版本注入时的 fallback，不随每个 release tag 修改。
+- 官方 release workflow 将 tag 去掉前导 `v` 后，通过 `NODELITE_BUILD_VERSION` 注入 Linux Server / Agent 和 macOS Agent；`Cross.toml` 负责把该变量传入 cross 容器。
+- 当前使用注入版本的运行时路径只有 Agent 身份中的 `agent_version`（上报后显示在面板）和 Server 设置 API 的 `server_version`。两处均在变量缺失时回退到 `CARGO_PKG_VERSION`。
+- 直接使用 `env!("CARGO_PKG_VERSION")` 的字符串不会自动得到 release tag。现有 Webhook `User-Agent` 就属于这种情况，不能用它判断官方二进制版本。
+- 新增面向用户或运维的版本展示时，应复用对应的 build-version helper，而不是直接读取 Cargo package version。
+
 ## 依赖管理
 
 添加依赖原则：

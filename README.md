@@ -119,6 +119,9 @@ Browser -> https://monitor.example.com/ -> Nginx/Caddy -> 127.0.0.1:nodelite-ser
 - 敏感配置优先通过服务端文件、CLI 和受保护设置入口修改。
 - `/metrics` 与面板共用只读认证，适合接入 Prometheus。
 - 历史图用于展示基础趋势，不是每条 `metrics` 上报的完整归档。
+- GeoIP 默认启用在线 `ipwhois` provider。Server 会把解析出的 Agent 公网连接 IP，以及成功通过只读认证访问受保护面板、API、`/metrics` 或浏览器 WebSocket 的客户端公网 IP（包括完成 2FA 的登录），发送到第三方接口 `https://ipwho.is`，用于查询国家/地区以及可用的城市和坐标信息；局域网、回环和文档保留地址会在本地标记为 LAN，不发起该在线查询。
+
+不希望向第三方发送公网 IP 时，可在 `server.toml` 设置 `geoip.enabled = false` 完全关闭 GeoIP，或将 `geoip.provider` 改为 `dbip` / `custom` 并提供本地 MMDB。需要严格避免 GeoIP 相关联网时，同时保持 `geoip.auto_update = false`。
 
 Prometheus 快速验证：
 
@@ -214,6 +217,8 @@ node scripts/benchmark-index-dom.mjs --nodes 1000
 
 仓库使用 tag 驱动 GitHub Release。推送语义化版本 tag 后，CI 会构建 Linux Server / Agent、macOS Agent，上传安装脚本、`SHA256SUMS.txt` 和 CycloneDX SBOM，并创建 Release。
 
-发布产物中的 Agent 会把对应 tag 版本号上报到面板，便于确认线上节点版本。
+正式构建会将 tag 去掉前导 `v` 后作为 `NODELITE_BUILD_VERSION` 注入二进制。发布产物中的 Agent 会把该版本作为 `agent_version` 上报到面板，Server 设置接口也会通过 `server_version` 展示同一版本。
+
+Workspace `Cargo.toml` 中的 `0.1.0` 是未注入时的 fallback，不随每次发布修改。本地直接使用 `cargo build` / `cargo run` 时，如未设置 `NODELITE_BUILD_VERSION`，上述运行时字段会显示这个 Cargo fallback；这不代表官方 Release 产物的版本。
 
 `nodelite-proto.cdx.json`、`nodelite-agent.cdx.json` 和 `nodelite-server.cdx.json` 是 CycloneDX JSON 格式的软件物料清单，覆盖 workspace crate 的依赖和版本信息。它们会随发布产物一起上传，并纳入 `SHA256SUMS.txt` 统一校验。
