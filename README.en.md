@@ -211,4 +211,6 @@ node scripts/benchmark-index-dom.mjs --nodes 1000
 
 Releases are tag-driven. Pushing a semantic version tag builds Linux Server / Agent binaries, macOS Agent binaries, install scripts, `SHA256SUMS.txt`, and creates a GitHub Release.
 
-Release Agent binaries report their tag version to the dashboard, making online node versions easy to verify.
+Official builds strip the leading `v` from the tag and inject the result as `NODELITE_BUILD_VERSION`. Release Agent binaries report that value as `agent_version` to the dashboard, and the Server settings API exposes the same value as `server_version`.
+
+The workspace `Cargo.toml` version `0.1.0` is the fallback used when no build version is injected; it is not changed for each release. A local `cargo build` or `cargo run` without `NODELITE_BUILD_VERSION` therefore shows the Cargo fallback in those runtime fields, which does not identify the version of an official Release asset.

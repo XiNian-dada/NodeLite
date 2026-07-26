@@ -212,6 +212,8 @@ node scripts/benchmark-index-dom.mjs --nodes 1000
 
 仓库使用 tag 驱动 GitHub Release。推送语义化版本 tag 后，CI 会构建 Linux Server / Agent、macOS Agent，上传安装脚本、`SHA256SUMS.txt` 和 CycloneDX SBOM，并创建 Release。
 
-发布产物中的 Agent 会把对应 tag 版本号上报到面板，便于确认线上节点版本。
+正式构建会将 tag 去掉前导 `v` 后作为 `NODELITE_BUILD_VERSION` 注入二进制。发布产物中的 Agent 会把该版本作为 `agent_version` 上报到面板，Server 设置接口也会通过 `server_version` 展示同一版本。
+
+Workspace `Cargo.toml` 中的 `0.1.0` 是未注入时的 fallback，不随每次发布修改。本地直接使用 `cargo build` / `cargo run` 时，如未设置 `NODELITE_BUILD_VERSION`，上述运行时字段会显示这个 Cargo fallback；这不代表官方 Release 产物的版本。
 
 `nodelite-proto.cdx.json`、`nodelite-agent.cdx.json` 和 `nodelite-server.cdx.json` 是 CycloneDX JSON 格式的软件物料清单，覆盖 workspace crate 的依赖和版本信息。它们会随发布产物一起上传，并纳入 `SHA256SUMS.txt` 统一校验。
