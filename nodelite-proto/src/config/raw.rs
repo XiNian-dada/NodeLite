@@ -8,11 +8,13 @@ mod alerts;
 use super::defaults::{
     default_audit_db_path, default_audit_enabled, default_audit_log_failed_auth,
     default_audit_log_rate_limit, default_audit_log_successful_auth,
-    default_audit_log_token_events, default_audit_retention_days, default_connect_timeout_secs,
+    default_audit_log_token_events, default_audit_retention_days, default_audit_writer_batch_max,
+    default_audit_writer_flush_interval_ms, default_connect_timeout_secs,
     default_geoip_auto_update, default_geoip_database_path, default_geoip_edition,
     default_geoip_enabled, default_geoip_provider, default_geoip_update_interval_days,
     default_hello_timeout_secs, default_history_db_path, default_history_query_concurrency,
-    default_history_read_cache_kib, default_ignored_filesystems,
+    default_history_read_cache_kib, default_history_writer_batch_max,
+    default_history_writer_flush_interval_ms, default_ignored_filesystems,
     default_insecure_transport_warn_interval_secs, default_max_incoming_message_bytes,
     default_max_message_bytes, default_max_outstanding_pings, default_max_sanitized_disks,
     default_max_sanitized_string_bytes, default_metric_anomaly_session_limit,
@@ -32,8 +34,8 @@ use super::{
     AgentConfig, AlertingConfig, AuditConfig, ConfigError, GeoIpConfig, GeoIpEdition,
     GeoIpProvider, MAX_HISTORY_QUERY_CONCURRENCY, MAX_HISTORY_READ_CACHE_KIB,
     MAX_NODE_IDENTITY_TEXT_BYTES, MAX_TOKEN_VERIFY_MAX_PARALLELISM, MIN_HISTORY_QUERY_CONCURRENCY,
-    MIN_HISTORY_READ_CACHE_KIB, MIN_TOKEN_VERIFY_MAX_PARALLELISM, MetricsConfig,
-    ReadonlyAuthConfig, ServerConfig, WsConfig,
+    MIN_HISTORY_READ_CACHE_KIB, MIN_TOKEN_VERIFY_MAX_PARALLELISM, MIN_WRITER_FLUSH_INTERVAL_MS,
+    MetricsConfig, ReadonlyAuthConfig, ServerConfig, WsConfig,
 };
 use crate::validation::{
     ValidationError, normalize_string_list, validate_bounded_text, validate_identifier,
@@ -88,6 +90,10 @@ struct RawServerSection {
     history_query_concurrency: usize,
     #[serde(default = "default_history_read_cache_kib")]
     history_read_cache_kib: u64,
+    #[serde(default = "default_history_writer_batch_max")]
+    history_writer_batch_max: usize,
+    #[serde(default = "default_history_writer_flush_interval_ms")]
+    history_writer_flush_interval_ms: u64,
     #[serde(default = "default_snapshot_path")]
     snapshot_path: PathBuf,
     #[serde(default = "default_stale_after_secs")]
@@ -154,6 +160,10 @@ struct RawAuditSection {
     db_path: PathBuf,
     #[serde(default = "default_audit_retention_days")]
     retention_days: u64,
+    #[serde(default = "default_audit_writer_batch_max")]
+    writer_batch_max: usize,
+    #[serde(default = "default_audit_writer_flush_interval_ms")]
+    writer_flush_interval_ms: u64,
     #[serde(default = "default_audit_log_successful_auth")]
     log_successful_auth: bool,
     #[serde(default = "default_audit_log_failed_auth")]
@@ -226,6 +236,8 @@ impl Default for RawAuditSection {
             enabled: default_audit_enabled(),
             db_path: default_audit_db_path(),
             retention_days: default_audit_retention_days(),
+            writer_batch_max: default_audit_writer_batch_max(),
+            writer_flush_interval_ms: default_audit_writer_flush_interval_ms(),
             log_successful_auth: default_audit_log_successful_auth(),
             log_failed_auth: default_audit_log_failed_auth(),
             log_token_events: default_audit_log_token_events(),
@@ -341,6 +353,8 @@ impl RawServerConfigFile {
             history_db_path: self.server.history_db_path,
             history_query_concurrency: self.server.history_query_concurrency,
             history_read_cache_kib: self.server.history_read_cache_kib,
+            history_writer_batch_max: self.server.history_writer_batch_max,
+            history_writer_flush_interval_ms: self.server.history_writer_flush_interval_ms,
             snapshot_path: self.server.snapshot_path,
             stale_after_secs: self.server.stale_after_secs,
             ping_interval_secs: self.server.ping_interval_secs,
@@ -434,11 +448,23 @@ impl RawServerConfigFile {
                 "audit.retention_days must be greater than 0",
             ));
         }
+        if self.audit.writer_batch_max == 0 {
+            return Err(ConfigError::new(
+                "audit.writer_batch_max must be at least 1",
+            ));
+        }
+        if self.audit.writer_flush_interval_ms < MIN_WRITER_FLUSH_INTERVAL_MS {
+            return Err(ConfigError::new(format!(
+                "audit.writer_flush_interval_ms must be at least {MIN_WRITER_FLUSH_INTERVAL_MS} ms"
+            )));
+        }
 
         Ok(AuditConfig {
             enabled: self.audit.enabled,
             db_path: self.audit.db_path.clone(),
             retention_days: self.audit.retention_days,
+            writer_batch_max: self.audit.writer_batch_max,
+            writer_flush_interval_ms: self.audit.writer_flush_interval_ms,
             log_successful_auth: self.audit.log_successful_auth,
             log_failed_auth: self.audit.log_failed_auth,
             log_token_events: self.audit.log_token_events,
@@ -594,6 +620,16 @@ impl RawServerConfigFile {
         {
             return Err(ConfigError::new(format!(
                 "server.history_read_cache_kib must be between {MIN_HISTORY_READ_CACHE_KIB} and {MAX_HISTORY_READ_CACHE_KIB} KiB",
+            )));
+        }
+        if self.server.history_writer_batch_max == 0 {
+            return Err(ConfigError::new(
+                "server.history_writer_batch_max must be at least 1",
+            ));
+        }
+        if self.server.history_writer_flush_interval_ms < MIN_WRITER_FLUSH_INTERVAL_MS {
+            return Err(ConfigError::new(format!(
+                "server.history_writer_flush_interval_ms must be at least {MIN_WRITER_FLUSH_INTERVAL_MS} ms"
             )));
         }
         Ok(())

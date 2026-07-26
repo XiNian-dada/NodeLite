@@ -20,8 +20,10 @@ use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 
 use self::defaults::{
+    default_audit_writer_batch_max, default_audit_writer_flush_interval_ms,
     default_connect_timeout_secs, default_hello_timeout_secs, default_history_query_concurrency,
-    default_history_read_cache_kib, default_insecure_transport_warn_interval_secs,
+    default_history_read_cache_kib, default_history_writer_batch_max,
+    default_history_writer_flush_interval_ms, default_insecure_transport_warn_interval_secs,
     default_max_incoming_message_bytes, default_max_outstanding_pings, default_max_sanitized_disks,
     default_max_sanitized_string_bytes, default_metric_anomaly_session_limit,
     default_metrics_export_node_disk_metrics, default_metrics_export_node_resource_metrics,
@@ -60,6 +62,10 @@ pub const DEFAULT_HISTORY_WRITE_INTERVAL_SECS: u64 = 30;
 pub const DEFAULT_HISTORY_QUERY_CONCURRENCY: usize = 4;
 /// 历史只读连接的 SQLite 私有 page cache 默认大小(KiB)。
 pub const DEFAULT_HISTORY_READ_CACHE_KIB: u64 = 512;
+/// 历史写入器单次事务默认最多写入的记录数。
+pub const DEFAULT_HISTORY_WRITER_BATCH_MAX: usize = 128;
+/// 历史写入器默认最大攒批时间(毫秒)。
+pub const DEFAULT_HISTORY_WRITER_FLUSH_INTERVAL_MS: u64 = 100;
 /// 历史查询至少保留一个并发槽位。
 pub const MIN_HISTORY_QUERY_CONCURRENCY: usize = 1;
 /// 防止大量并发 SQLite page cache 抬高匿名内存峰值。
@@ -106,6 +112,12 @@ pub const MIN_TOKEN_VERIFY_MAX_PARALLELISM: usize = 1;
 pub const MAX_TOKEN_VERIFY_MAX_PARALLELISM: usize = 8;
 /// 审计日志默认保留天数。
 pub const DEFAULT_AUDIT_RETENTION_DAYS: u64 = 90;
+/// 审计写入器单次事务默认最多写入的记录数。
+pub const DEFAULT_AUDIT_WRITER_BATCH_MAX: usize = 128;
+/// 审计写入器默认最大攒批时间(毫秒)。
+pub const DEFAULT_AUDIT_WRITER_FLUSH_INTERVAL_MS: u64 = 100;
+/// 写入器 flush 间隔下限，避免极短定时器形成忙循环。
+pub const MIN_WRITER_FLUSH_INTERVAL_MS: u64 = 10;
 /// GeoIP 数据库默认更新间隔(天)。
 pub const DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS: u64 = 30;
 /// Agent 连接超时(秒)。
@@ -180,6 +192,12 @@ pub struct ServerConfig {
     #[serde(default = "default_history_read_cache_kib")]
     /// 每个历史只读连接的 SQLite 私有 page cache 大小(KiB)。
     pub history_read_cache_kib: u64,
+    #[serde(default = "default_history_writer_batch_max")]
+    /// 历史写入器单次事务最多写入的记录数。
+    pub history_writer_batch_max: usize,
+    #[serde(default = "default_history_writer_flush_interval_ms")]
+    /// 历史写入器最大攒批时间(毫秒)。
+    pub history_writer_flush_interval_ms: u64,
     /// 最新快照持久化文件路径。
     pub snapshot_path: PathBuf,
     /// 超过该秒数未收到上报后,节点视为离线。
@@ -281,6 +299,12 @@ pub struct AuditConfig {
     pub db_path: PathBuf,
     /// 审计记录保留天数。
     pub retention_days: u64,
+    #[serde(default = "default_audit_writer_batch_max")]
+    /// 审计写入器单次事务最多写入的记录数。
+    pub writer_batch_max: usize,
+    #[serde(default = "default_audit_writer_flush_interval_ms")]
+    /// 审计写入器最大攒批时间(毫秒)。
+    pub writer_flush_interval_ms: u64,
     /// 是否记录成功认证事件。
     pub log_successful_auth: bool,
     /// 是否记录失败认证事件。

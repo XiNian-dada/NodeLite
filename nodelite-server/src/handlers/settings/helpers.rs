@@ -346,6 +346,8 @@ mod tests {
                 enabled: true,
                 db_path: PathBuf::from("/opt/nodelite/data/audit.sqlite3"),
                 retention_days: 90,
+                writer_batch_max: nodelite_proto::DEFAULT_AUDIT_WRITER_BATCH_MAX,
+                writer_flush_interval_ms: nodelite_proto::DEFAULT_AUDIT_WRITER_FLUSH_INTERVAL_MS,
                 log_successful_auth: true,
                 log_failed_auth: true,
                 log_token_events: true,
@@ -364,6 +366,9 @@ mod tests {
             history_db_path: PathBuf::from("/opt/nodelite/data/history.sqlite3"),
             history_query_concurrency: nodelite_proto::DEFAULT_HISTORY_QUERY_CONCURRENCY,
             history_read_cache_kib: nodelite_proto::DEFAULT_HISTORY_READ_CACHE_KIB,
+            history_writer_batch_max: nodelite_proto::DEFAULT_HISTORY_WRITER_BATCH_MAX,
+            history_writer_flush_interval_ms:
+                nodelite_proto::DEFAULT_HISTORY_WRITER_FLUSH_INTERVAL_MS,
             snapshot_path: PathBuf::from("/opt/nodelite/data/snapshot.json"),
             stale_after_secs: 15,
             ping_interval_secs: 60,
