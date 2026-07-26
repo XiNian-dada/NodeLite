@@ -117,7 +117,7 @@ Browser -> https://monitor.example.com/ -> Nginx/Caddy -> 127.0.0.1:nodelite-ser
 - 敏感配置优先通过服务端文件、CLI 和受保护设置入口修改。
 - `/metrics` 与面板共用只读认证，适合接入 Prometheus。
 - 历史图用于展示基础趋势，不是每条 `metrics` 上报的完整归档。
-- GeoIP 默认启用在线 `ipwhois` provider。Server 会把解析出的 Agent 公网连接 IP 发送到第三方接口 `https://ipwho.is`，用于查询国家/地区以及可用的城市和坐标信息；局域网、回环和文档保留地址会在本地标记为 LAN，不发起该在线查询。
+- GeoIP 默认启用在线 `ipwhois` provider。Server 会把解析出的 Agent 公网连接 IP，以及成功登录面板的浏览器客户端公网 IP，发送到第三方接口 `https://ipwho.is`，用于查询国家/地区以及可用的城市和坐标信息；局域网、回环和文档保留地址会在本地标记为 LAN，不发起该在线查询。
 
 不希望向第三方发送公网 IP 时，可在 `server.toml` 设置 `geoip.enabled = false` 完全关闭 GeoIP，或将 `geoip.provider` 改为 `dbip` / `custom` 并提供本地 MMDB。需要严格避免 GeoIP 相关联网时，同时保持 `geoip.auto_update = false`。
 
