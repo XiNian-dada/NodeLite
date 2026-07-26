@@ -216,6 +216,7 @@ describe('useNodeStatusStore', () => {
         latency_ms: 320,
         online: false,
       }),
+      '2026-06-01T12:00:00Z',
     );
 
     expect(store.data).toMatchObject({
@@ -256,6 +257,7 @@ describe('useNodeStatusStore', () => {
         identity: { node_id: 'b', node_label: 'B', hostname: 'b', tags: [] },
         latency_ms: 999,
       }),
+      '2026-06-01T12:00:00Z',
     );
 
     expect(store.data).toEqual(initial);
@@ -273,9 +275,35 @@ describe('useNodeStatusStore', () => {
         identity: { node_id: 'a', node_label: 'A', hostname: 'a', tags: [] },
         snapshot: null,
       }),
+      '2026-06-01T12:00:00Z',
     );
 
     expect(store.data?.snapshot).toBeNull();
+  });
+
+  it('uses the server message time when realtime data creates the first snapshot', async () => {
+    mockStatus.mockResolvedValueOnce(
+      makeNodeStatus({
+        identity: { ...makeNodeStatus().identity, node_id: 'a' },
+        snapshot: null,
+      }),
+    );
+    const store = useNodeStatusStore();
+    await store.load('a');
+
+    store.applyRealtimeSummary(
+      makeNode({
+        identity: { node_id: 'a', node_label: 'A', hostname: 'a', tags: [] },
+        snapshot: {
+          cpu_usage_percent: 50,
+          load: { one: 1.5 },
+          memory: { total_bytes: 100, used_bytes: 60 },
+        },
+      }),
+      '2026-06-01T12:34:56Z',
+    );
+
+    expect(store.data?.snapshot?.collected_at).toBe('2026-06-01T12:34:56Z');
   });
 
   it('marks the active node as removed and ignores its late REST response', async () => {

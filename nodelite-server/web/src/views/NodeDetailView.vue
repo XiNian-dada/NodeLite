@@ -109,13 +109,15 @@ function ensureTabData(): void {
 async function loadNode(id: string): Promise<void> {
   await store.load(id);
   const summary = nodesStore.nodesById.get(id);
-  if (summary) store.applyRealtimeSummary(summary);
+  const generatedAt = nodesStore.lastGeneratedAt;
+  if (summary && generatedAt) store.applyRealtimeSummary(summary, generatedAt);
 }
 
 const currentSummary = computed(() => nodesStore.nodesById.get(nodeId.value) ?? null);
 
 watch(currentSummary, (summary) => {
-  if (summary) store.applyRealtimeSummary(summary);
+  const generatedAt = nodesStore.lastGeneratedAt;
+  if (summary && generatedAt) store.applyRealtimeSummary(summary, generatedAt);
 });
 
 const wsUnsubscribers: Array<() => void> = [];
@@ -124,6 +126,7 @@ onMounted(() => {
   wsUnsubscribers.push(
     ws.on('initial_state', (msg) => {
       nodesStore.applyServerState(msg.nodes, msg.generated_at);
+      if (!nodesStore.nodesById.has(nodeId.value)) store.markRemoved(nodeId.value);
     }),
     ws.on('node_upsert', (msg) => {
       nodesStore.upsertNode(msg.node, msg.generated_at);

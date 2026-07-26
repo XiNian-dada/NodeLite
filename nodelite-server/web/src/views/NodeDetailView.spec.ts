@@ -439,4 +439,31 @@ describe('NodeDetailView', () => {
     expect(wrapper.find('[data-test="node-detail-view"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="node-not-found"]').exists()).toBe(false);
   });
+
+  it('treats an authoritative initial state without the active node as removed', async () => {
+    let resolve: (value: ReturnType<typeof makeNodeStatus>) => void = () => {};
+    mockStatus.mockReset();
+    mockStatus.mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    const { wrapper } = await mountDetail('srv-1');
+
+    wsMock.emit('initial_state', {
+      type: 'initial_state',
+      generated_at: '2026-06-01T12:01:00Z',
+      overview: {},
+      nodes: [],
+    });
+    resolve(
+      makeNodeStatus({
+        identity: { ...makeNodeStatus().identity, node_id: 'srv-1' },
+      }),
+    );
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="node-not-found"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="node-detail-view"]').exists()).toBe(false);
+  });
 });

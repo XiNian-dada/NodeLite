@@ -54,14 +54,14 @@ export const useNodeStatusStore = defineStore('nodeStatus', () => {
     await fetchFor(nodeId.value);
   }
 
-  function applyRealtimeSummary(summary: NodeListItem): void {
+  function applyRealtimeSummary(summary: NodeListItem, generatedAt: string): void {
     const current = data.value;
     if (!current || nodeId.value !== summary.identity.node_id) return;
 
     const snapshot = summary.snapshot
       ? {
           ...current.snapshot,
-          collected_at: current.snapshot?.collected_at ?? new Date().toISOString(),
+          collected_at: current.snapshot?.collected_at ?? generatedAt,
           cpu_usage_percent: summary.snapshot.cpu_usage_percent,
           load: {
             one: summary.snapshot.load.one,
