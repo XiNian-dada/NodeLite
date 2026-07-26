@@ -47,11 +47,14 @@ pub(crate) async fn healthz() -> StatusCode {
     StatusCode::OK
 }
 
-/// 就绪检查接口:保留 200/503 语义,同时返回结构化诊断方便排障。
+/// 就绪检查接口。
+///
+/// HTTP 状态码和 `ready` 仅反映承载流量所需的硬依赖；审计与写入异常属于诊断信号，
+/// 只会把 `status` 标为 `degraded` 并写入 `problems`，不会单独触发 503。
 pub(crate) async fn readyz(State(state): State<AppState>) -> Response {
     let history_available = state.readiness.history_available();
     let registry_reload_healthy = state.readiness.registry_reload_healthy();
-    let ready = history_available && registry_reload_healthy;
+    let hard_ready = history_available && registry_reload_healthy;
     let audit_enabled = state.audit_log.enabled();
     let audit_available = state.audit_log.is_available().await;
     let history_dropped_writes = state.history.dropped_writes();
@@ -88,7 +91,7 @@ pub(crate) async fn readyz(State(state): State<AppState>) -> Response {
         } else {
             "degraded"
         },
-        ready,
+        ready: hard_ready,
         problems,
         checks: ReadyzChecks {
             history_available,
@@ -112,7 +115,7 @@ pub(crate) async fn readyz(State(state): State<AppState>) -> Response {
             browser_ws_max_connections_per_ip: browser_ws_snapshot.max_connections_per_ip,
         },
     };
-    let status = if ready {
+    let status = if hard_ready {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE

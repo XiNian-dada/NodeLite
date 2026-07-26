@@ -7,15 +7,17 @@ use std::time::Duration;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use nodelite_proto::{DEFAULT_HISTORY_RETENTION_HOURS, HistoryPoint, NodeStatus, percentage};
+use nodelite_proto::{
+    DEFAULT_HISTORY_RETENTION_HOURS, HistoryPoint, MAX_WRITER_BATCH_SIZE, NodeStatus, percentage,
+};
 use rusqlite::{Connection, Error as SqliteError, ErrorCode, params};
 use tokio::sync::{Mutex, mpsc};
 use tokio::time::MissedTickBehavior;
 use tracing::{debug, warn};
 
 use super::{
-    HISTORY_BATCH_FLUSH_INTERVAL, HISTORY_BATCH_MAX, HISTORY_PRUNE_MIN_INTERVAL,
-    SQLITE_BUSY_MAX_RETRIES, SQLITE_BUSY_RETRY_BASE_MS, SQLITE_BUSY_RETRY_MAX_MS,
+    HISTORY_PRUNE_MIN_INTERVAL, SQLITE_BUSY_MAX_RETRIES, SQLITE_BUSY_RETRY_BASE_MS,
+    SQLITE_BUSY_RETRY_MAX_MS,
 };
 use crate::history::init::harden_database_artifacts;
 
@@ -25,6 +27,8 @@ pub(super) struct WriterContext {
     pub(super) write_connection: Arc<Mutex<Option<Connection>>>,
     pub(super) last_pruned_at: Arc<AtomicI64>,
     pub(super) artifacts_hardened_after_write: Arc<AtomicBool>,
+    pub(super) batch_max: usize,
+    pub(super) flush_interval: Duration,
 }
 
 /// 单一 writer 任务:对外的所有 record_status 都经过 mpsc 灌入此处。
@@ -39,8 +43,9 @@ pub(super) async fn run_history_writer(
     mut rx: mpsc::Receiver<HistoryPoint>,
     context: WriterContext,
 ) {
-    let mut batch: Vec<HistoryPoint> = Vec::with_capacity(HISTORY_BATCH_MAX);
-    let mut flush_timer = tokio::time::interval(HISTORY_BATCH_FLUSH_INTERVAL);
+    let batch_max = context.batch_max.clamp(1, MAX_WRITER_BATCH_SIZE);
+    let mut batch: Vec<HistoryPoint> = Vec::with_capacity(batch_max);
+    let mut flush_timer = tokio::time::interval(context.flush_interval);
     flush_timer.set_missed_tick_behavior(MissedTickBehavior::Delay);
     flush_timer.tick().await;
 
@@ -50,7 +55,7 @@ pub(super) async fn run_history_writer(
             received = rx.recv() => match received {
                 Some(point) => {
                     batch.push(point);
-                    if batch.len() >= HISTORY_BATCH_MAX {
+                    if batch.len() >= batch_max {
                         flush_history_batch(&mut batch, &context).await;
                     }
                 }
@@ -66,7 +71,7 @@ pub(super) async fn run_history_writer(
 
     while let Ok(point) = rx.try_recv() {
         batch.push(point);
-        if batch.len() >= HISTORY_BATCH_MAX {
+        if batch.len() >= batch_max {
             flush_history_batch(&mut batch, &context).await;
         }
     }

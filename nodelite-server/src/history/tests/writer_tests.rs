@@ -1,5 +1,28 @@
 use super::*;
 
+fn persisted_history_point_count(db_path: &PathBuf) -> i64 {
+    let connection = rusqlite::Connection::open(db_path).expect("history database should open");
+    connection
+        .query_row("SELECT COUNT(*) FROM history_points", [], |row| row.get(0))
+        .expect("history count query should succeed")
+}
+
+async fn wait_for_persisted_history_point_count(db_path: &PathBuf, expected: i64) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        let actual = persisted_history_point_count(db_path);
+        if actual == expected {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "expected {expected} persisted history points, found {actual}"
+        );
+        tokio::task::yield_now().await;
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
 #[test]
 fn forget_missing_prunes_retired_nodes_from_write_throttle_state() {
     let runtime = Runtime::new().expect("runtime should build");
@@ -54,6 +77,77 @@ async fn record_status_flushes_through_writer_task_to_sqlite() {
         .expect("count query");
     assert_eq!(count, 5);
 
+    let _ = std::fs::remove_file(&db_path);
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn history_writer_flushes_when_configured_batch_max_is_reached() {
+    let db_path = temp_history_db_path("writer-configured-batch");
+    let store = HistoryStore::new_with_writer_schedule(
+        db_path.clone(),
+        5,
+        DEFAULT_HISTORY_QUERY_CONCURRENCY,
+        DEFAULT_HISTORY_READ_CACHE_KIB,
+        2,
+        std::time::Duration::from_secs(60),
+    );
+    store.initialize().await;
+    assert!(store.is_available());
+    tokio::task::yield_now().await;
+
+    let paused_at = tokio::time::Instant::now();
+    store
+        .record_status(&fake_status_for("batch-node-01", Utc::now()))
+        .await;
+    tokio::task::yield_now().await;
+    assert_eq!(persisted_history_point_count(&db_path), 0);
+
+    store
+        .record_status(&fake_status_for("batch-node-02", Utc::now()))
+        .await;
+    wait_for_persisted_history_point_count(&db_path, 2).await;
+    assert_eq!(tokio::time::Instant::now(), paused_at);
+
+    store.shutdown().await;
+    let _ = std::fs::remove_file(&db_path);
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn history_writer_flushes_at_configured_interval() {
+    let db_path = temp_history_db_path("writer-configured-interval");
+    let store = HistoryStore::new_with_writer_schedule(
+        db_path.clone(),
+        5,
+        DEFAULT_HISTORY_QUERY_CONCURRENCY,
+        DEFAULT_HISTORY_READ_CACHE_KIB,
+        128,
+        std::time::Duration::from_millis(10),
+    );
+    store.initialize().await;
+    assert!(store.is_available());
+    tokio::task::yield_now().await;
+
+    store
+        .record_status(&fake_status_for("interval-node", Utc::now()))
+        .await;
+    tokio::task::yield_now().await;
+    assert_eq!(persisted_history_point_count(&db_path), 0);
+
+    let before_advance = tokio::time::Instant::now();
+    tokio::time::advance(std::time::Duration::from_millis(10)).await;
+    wait_for_persisted_history_point_count(&db_path, 1).await;
+    assert_eq!(
+        tokio::time::Instant::now(),
+        before_advance + std::time::Duration::from_millis(10)
+    );
+
+    store.shutdown().await;
     let _ = std::fs::remove_file(&db_path);
     if let Some(parent) = db_path.parent() {
         let _ = std::fs::remove_dir(parent);

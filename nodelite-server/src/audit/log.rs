@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use nodelite_proto::AuditConfig;
@@ -76,6 +77,8 @@ impl AuditLog {
         let context = AuditWriterContext {
             connection: Arc::clone(&self.connection),
             write_failures: Arc::clone(&self.write_failures),
+            batch_max: self.config.writer_batch_max,
+            flush_interval: Duration::from_millis(self.config.writer_flush_interval_ms),
         };
         let handle = tokio::spawn(run_audit_writer(rx, context));
         let mut guard = self.writer_handle.lock().await;

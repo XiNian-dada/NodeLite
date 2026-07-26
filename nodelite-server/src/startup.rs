@@ -138,11 +138,13 @@ async fn initialize_server_runtime(
         )
     })?;
     let shared = SharedState::new(Arc::clone(&config));
-    let history = HistoryStore::new(
+    let history = HistoryStore::new_with_writer_schedule(
         config.history_db_path.clone(),
         config.sqlite_busy_timeout_secs,
         config.history_query_concurrency,
         config.history_read_cache_kib,
+        config.history_writer_batch_max,
+        Duration::from_millis(config.history_writer_flush_interval_ms),
     );
     let audit_log = AuditLog::new(config.audit.clone(), config.sqlite_busy_timeout_secs);
     history.initialize().await;

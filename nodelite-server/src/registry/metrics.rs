@@ -10,6 +10,9 @@ pub(crate) struct TokenVerifyMetrics {
     pub(crate) active: u64,
     pub(crate) waiting: u64,
     pub(crate) wait_seconds_total: f64,
+    pub(crate) token_cache_hits_total: u64,
+    pub(crate) token_cache_misses_total: u64,
+    pub(crate) token_cache_evictions_total: u64,
 }
 
 #[derive(Debug, Default)]
@@ -17,6 +20,9 @@ pub(super) struct TokenVerifyMetricsState {
     active: AtomicU64,
     waiting: AtomicU64,
     wait_nanos_total: AtomicU64,
+    token_cache_hits_total: AtomicU64,
+    token_cache_misses_total: AtomicU64,
+    token_cache_evictions_total: AtomicU64,
 }
 
 impl TokenVerifyMetricsState {
@@ -27,7 +33,24 @@ impl TokenVerifyMetricsState {
             waiting: self.waiting.load(Ordering::Relaxed),
             wait_seconds_total: self.wait_nanos_total.load(Ordering::Relaxed) as f64
                 / 1_000_000_000.0,
+            token_cache_hits_total: self.token_cache_hits_total.load(Ordering::Relaxed),
+            token_cache_misses_total: self.token_cache_misses_total.load(Ordering::Relaxed),
+            token_cache_evictions_total: self.token_cache_evictions_total.load(Ordering::Relaxed),
         }
+    }
+
+    pub(super) fn record_cache_hit(&self) {
+        self.token_cache_hits_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(super) fn record_cache_miss(&self) {
+        self.token_cache_misses_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(super) fn record_cache_eviction(&self) {
+        self.token_cache_evictions_total
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     fn record_wait(&self, waited: Duration) {

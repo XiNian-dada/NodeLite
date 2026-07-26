@@ -28,7 +28,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, anyhow};
 use chrono::{DateTime, Utc};
 use nodelite_proto::{
-    DEFAULT_HISTORY_RETENTION_HOURS, DEFAULT_HISTORY_WRITE_INTERVAL_SECS, HistoryPoint, NodeStatus,
+    DEFAULT_HISTORY_RETENTION_HOURS, DEFAULT_HISTORY_WRITE_INTERVAL_SECS,
+    DEFAULT_HISTORY_WRITER_BATCH_MAX, DEFAULT_HISTORY_WRITER_FLUSH_INTERVAL_MS, HistoryPoint,
+    NodeStatus,
 };
 use parking_lot::Mutex as ParkingLotMutex;
 use rusqlite::Connection;
@@ -61,12 +63,6 @@ const SQLITE_BUSY_RETRY_MAX_MS: u64 = 1_000;
 /// 在 100ms flush 间隔下,稳态 backlog ≤ ~100。1024 留出 10x 余量
 /// (突发重连 / Burst 上报),仍然不至于让 record_status 真的被反压。
 const HISTORY_CHANNEL_CAPACITY: usize = 1024;
-/// 一次事务里最多打包多少条 INSERT。给上限是为了在极端 burst 下
-/// 防止单个 fsync 周期被一直推迟。
-const HISTORY_BATCH_MAX: usize = 128;
-/// 没有新写入到达时,writer 也每隔这段时间 flush 一次当前 batch,
-/// 保证最后几条样本不会无限期停留在内存。
-const HISTORY_BATCH_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 /// 距上一次 DELETE 至少要过这么长时间才再次触发清理。
 const HISTORY_PRUNE_MIN_INTERVAL: Duration = Duration::from_secs(300);
 /// 条目数只作为异常小对象下的第二道防线,主要内存约束由字节预算提供。
@@ -129,6 +125,10 @@ pub struct HistoryStore {
     sqlite_busy_timeout_secs: u64,
     /// 每个临时只读连接的 SQLite 私有 page cache(KiB)。None 仅供测试旧版默认值。
     history_read_cache_kib: Option<u64>,
+    /// 一次事务里最多打包多少条 INSERT。
+    writer_batch_max: usize,
+    /// 当前 batch 在内存中的最长停留时间。
+    writer_flush_interval: Duration,
     /// Writer task 的入口。Some 表示已初始化;关停时清空以让 record_status 进入空操作分支。
     writer_tx: Arc<RwLock<Option<mpsc::Sender<HistoryPoint>>>>,
     /// Writer task 的 join handle,用于在关停时显式 await。
@@ -149,12 +149,33 @@ impl HistoryStore {
         query_limit: usize,
         history_read_cache_kib: u64,
     ) -> Self {
-        Self::new_with_read_cache(
+        Self::new_with_options(
             db_path,
             sqlite_busy_timeout_secs,
             query_limit,
             Some(history_read_cache_kib),
+            DEFAULT_HISTORY_WRITER_BATCH_MAX,
+            Duration::from_millis(DEFAULT_HISTORY_WRITER_FLUSH_INTERVAL_MS),
         )
+    }
+
+    pub(crate) fn new_with_writer_schedule(
+        db_path: PathBuf,
+        sqlite_busy_timeout_secs: u64,
+        query_limit: usize,
+        history_read_cache_kib: u64,
+        writer_batch_max: usize,
+        writer_flush_interval: Duration,
+    ) -> Self {
+        let mut store = Self::new(
+            db_path,
+            sqlite_busy_timeout_secs,
+            query_limit,
+            history_read_cache_kib,
+        );
+        store.writer_batch_max = writer_batch_max;
+        store.writer_flush_interval = writer_flush_interval;
+        store
     }
 
     #[cfg(test)]
@@ -163,14 +184,23 @@ impl HistoryStore {
         sqlite_busy_timeout_secs: u64,
         query_limit: usize,
     ) -> Self {
-        Self::new_with_read_cache(db_path, sqlite_busy_timeout_secs, query_limit, None)
+        Self::new_with_options(
+            db_path,
+            sqlite_busy_timeout_secs,
+            query_limit,
+            None,
+            DEFAULT_HISTORY_WRITER_BATCH_MAX,
+            Duration::from_millis(DEFAULT_HISTORY_WRITER_FLUSH_INTERVAL_MS),
+        )
     }
 
-    fn new_with_read_cache(
+    fn new_with_options(
         db_path: PathBuf,
         sqlite_busy_timeout_secs: u64,
         query_limit: usize,
         history_read_cache_kib: Option<u64>,
+        writer_batch_max: usize,
+        writer_flush_interval: Duration,
     ) -> Self {
         Self {
             db_path: Arc::new(db_path),
@@ -181,6 +211,8 @@ impl HistoryStore {
             artifacts_hardened_after_write: Arc::new(AtomicBool::new(false)),
             sqlite_busy_timeout_secs,
             history_read_cache_kib,
+            writer_batch_max,
+            writer_flush_interval,
             writer_tx: Arc::new(RwLock::new(None)),
             writer_handle: Arc::new(Mutex::new(None)),
             dropped_writes: Arc::new(AtomicU64::new(0)),
@@ -246,6 +278,8 @@ impl HistoryStore {
             write_connection: Arc::clone(&self.write_connection),
             last_pruned_at: Arc::clone(&self.last_pruned_at),
             artifacts_hardened_after_write: Arc::clone(&self.artifacts_hardened_after_write),
+            batch_max: self.writer_batch_max,
+            flush_interval: self.writer_flush_interval,
         };
         let handle = tokio::spawn(run_history_writer(rx, context));
         let mut guard = self.writer_handle.lock().await;

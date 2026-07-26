@@ -21,7 +21,16 @@ NodeLite 使用 Argon2id 验证 Agent Token。每次冷缓存验证约需要 19 
 - `nodelite_token_verify_limit`：当前配置的最大并发数；
 - `nodelite_token_verify_active`：正在执行 Argon2 的任务数；
 - `nodelite_token_verify_waiting`：正在等待并发许可的请求数；
-- `nodelite_token_verify_wait_seconds_total`：所有请求累计等待许可的秒数。
+- `nodelite_token_verify_wait_seconds_total`：所有请求累计等待许可的秒数；
+- `nodelite_token_cache_hits_total`：由未过期缓存直接返回的验证次数，包括获取并发许可后的二次检查命中；
+- `nodelite_token_cache_misses_total`：实际执行 Argon2 验证的次数；
+- `nodelite_token_cache_evictions_total`：缓存达到容量上限后发生的 LRU 驱逐次数。
+
+缓存命中包含成功和失败的验证结果。`evictions_total` 只统计容量驱逐，不统计 TTL 过期
+清理或 Token 轮换触发的显式清空。诊断命中率时可比较
+`rate(nodelite_token_cache_hits_total[5m])` 与 hits、misses 两者速率之和；如果 miss 较高但
+eviction 保持为 0，应优先检查并发冷启动、注册表 revision 变化或 Token 轮换，而不是直接
+增大缓存。
 
 如果 `waiting` 长时间大于 0，且主机仍有足够内存，可以逐步提高并发。小内存主机应优先
 保持 2 或 4，并结合进程 RSS、cgroup `MemoryCurrent` 和 OOM 日志判断，而不是只看单次

@@ -7,14 +7,16 @@ use super::super::{
     DEFAULT_ALERT_INSPECTION_CPU_WARN_PERCENT, DEFAULT_ALERT_INSPECTION_LATENCY_WARN_MS,
     DEFAULT_ALERT_INSPECTION_LOCAL_TIME, DEFAULT_ALERT_INSPECTION_MEMORY_WARN_PERCENT,
     DEFAULT_ALERT_MEMORY_WINDOW_MINUTES, DEFAULT_ALERT_OFFLINE_THRESHOLD_MINUTES,
-    DEFAULT_ALERT_RTT_WINDOW_MINUTES, DEFAULT_AUDIT_RETENTION_DAYS,
-    DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS, DEFAULT_HISTORY_QUERY_CONCURRENCY,
-    DEFAULT_HISTORY_READ_CACHE_KIB, DEFAULT_MAX_MESSAGE_BYTES,
-    DEFAULT_TOKEN_VERIFY_MAX_PARALLELISM, DEFAULT_WS_AUTH_BLOCK_SECS,
+    DEFAULT_ALERT_RTT_WINDOW_MINUTES, DEFAULT_AUDIT_RETENTION_DAYS, DEFAULT_AUDIT_WRITER_BATCH_MAX,
+    DEFAULT_AUDIT_WRITER_FLUSH_INTERVAL_MS, DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS,
+    DEFAULT_HISTORY_QUERY_CONCURRENCY, DEFAULT_HISTORY_READ_CACHE_KIB,
+    DEFAULT_HISTORY_WRITER_BATCH_MAX, DEFAULT_HISTORY_WRITER_FLUSH_INTERVAL_MS,
+    DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_TOKEN_VERIFY_MAX_PARALLELISM, DEFAULT_WS_AUTH_BLOCK_SECS,
     DEFAULT_WS_AUTH_FAIL_MAX_ATTEMPTS, DEFAULT_WS_AUTH_FAIL_WINDOW_SECS,
     DEFAULT_WS_MAX_CONNECTIONS_PER_IP, DEFAULT_WS_MAX_TOTAL_CONNECTIONS, GeoIpEdition,
     GeoIpProvider, MAX_HISTORY_QUERY_CONCURRENCY, MAX_HISTORY_READ_CACHE_KIB,
-    MIN_HISTORY_QUERY_CONCURRENCY, MIN_HISTORY_READ_CACHE_KIB, parse_server_config,
+    MAX_WRITER_BATCH_SIZE, MIN_HISTORY_QUERY_CONCURRENCY, MIN_HISTORY_READ_CACHE_KIB,
+    MIN_WRITER_FLUSH_INTERVAL_MS, parse_server_config,
 };
 
 #[test]
@@ -53,6 +55,21 @@ fn server_example_documents_history_query_limits() {
 }
 
 #[test]
+fn server_example_documents_writer_scheduling() {
+    let example = include_str!("../../../../config/server.example.toml");
+
+    for expected in [
+        "history_writer_batch_max = 128",
+        "history_writer_flush_interval_ms = 100",
+        "writer_batch_max = 128",
+        "writer_flush_interval_ms = 100",
+    ] {
+        assert!(example.lines().any(|line| line == expected));
+    }
+    assert_eq!(example.matches("允许 1-4096").count(), 2);
+}
+
+#[test]
 fn parses_server_config_with_defaults() {
     let config = parse_server_config(
         r#"
@@ -75,6 +92,14 @@ fn parses_server_config_with_defaults() {
     assert_eq!(
         config.history_read_cache_kib,
         DEFAULT_HISTORY_READ_CACHE_KIB
+    );
+    assert_eq!(
+        config.history_writer_batch_max,
+        DEFAULT_HISTORY_WRITER_BATCH_MAX
+    );
+    assert_eq!(
+        config.history_writer_flush_interval_ms,
+        DEFAULT_HISTORY_WRITER_FLUSH_INTERVAL_MS
     );
     assert_eq!(
         config.ws.max_total_connections,
@@ -110,6 +135,14 @@ fn parses_server_config_with_defaults() {
     assert!(config.audit.enabled);
     assert_eq!(config.audit.db_path, PathBuf::from("./data/audit.sqlite3"));
     assert_eq!(config.audit.retention_days, DEFAULT_AUDIT_RETENTION_DAYS);
+    assert_eq!(
+        config.audit.writer_batch_max,
+        DEFAULT_AUDIT_WRITER_BATCH_MAX
+    );
+    assert_eq!(
+        config.audit.writer_flush_interval_ms,
+        DEFAULT_AUDIT_WRITER_FLUSH_INTERVAL_MS
+    );
     assert!(config.audit.log_successful_auth);
     assert!(config.audit.log_failed_auth);
     assert!(config.audit.log_token_events);
@@ -191,6 +224,134 @@ fn parses_history_query_resource_overrides() {
 
     assert_eq!(config.history_query_concurrency, 8);
     assert_eq!(config.history_read_cache_kib, 1024);
+}
+
+#[test]
+fn parses_writer_scheduling_overrides() {
+    let config = parse_server_config(
+        r#"
+        [server]
+        listen = "127.0.0.1:8080"
+        public_base_url = "https://monitor.example.com"
+        history_writer_batch_max = 64
+        history_writer_flush_interval_ms = 25
+
+        [audit]
+        writer_batch_max = 32
+        writer_flush_interval_ms = 50
+        "#,
+    )
+    .expect("writer scheduling overrides should parse");
+
+    assert_eq!(config.history_writer_batch_max, 64);
+    assert_eq!(config.history_writer_flush_interval_ms, 25);
+    assert_eq!(config.audit.writer_batch_max, 32);
+    assert_eq!(config.audit.writer_flush_interval_ms, 50);
+}
+
+#[test]
+fn accepts_writer_batch_size_upper_bound() {
+    let config = parse_server_config(&format!(
+        r#"
+        [server]
+        listen = "127.0.0.1:8080"
+        public_base_url = "https://monitor.example.com"
+        history_writer_batch_max = {MAX_WRITER_BATCH_SIZE}
+
+        [audit]
+        writer_batch_max = {MAX_WRITER_BATCH_SIZE}
+        "#,
+    ))
+    .expect("writer batch upper bound should parse");
+
+    assert_eq!(config.history_writer_batch_max, MAX_WRITER_BATCH_SIZE);
+    assert_eq!(config.audit.writer_batch_max, MAX_WRITER_BATCH_SIZE);
+}
+
+#[test]
+fn rejects_invalid_writer_scheduling_values() {
+    assert_eq!(MIN_WRITER_FLUSH_INTERVAL_MS, 10);
+    assert_eq!(MAX_WRITER_BATCH_SIZE, 4096);
+    for (section, key, value, expected) in [
+        (
+            "server",
+            "history_writer_batch_max",
+            0,
+            "server.history_writer_batch_max",
+        ),
+        ("audit", "writer_batch_max", 0, "audit.writer_batch_max"),
+        (
+            "server",
+            "history_writer_batch_max",
+            MAX_WRITER_BATCH_SIZE.saturating_add(1),
+            "server.history_writer_batch_max",
+        ),
+        (
+            "audit",
+            "writer_batch_max",
+            MAX_WRITER_BATCH_SIZE.saturating_add(1),
+            "audit.writer_batch_max",
+        ),
+    ] {
+        let setting = if section == "server" {
+            format!("{key} = {value}")
+        } else {
+            format!("[audit]\n{key} = {value}")
+        };
+        let input = format!(
+            r#"
+            [server]
+            listen = "127.0.0.1:8080"
+            public_base_url = "https://monitor.example.com"
+            {setting}
+            "#,
+        );
+        let error = parse_server_config(&input).expect_err("invalid writer batch should fail");
+        assert!(error.to_string().contains(expected));
+    }
+
+    for (section, key, value, expected) in [
+        (
+            "server",
+            "history_writer_flush_interval_ms",
+            0,
+            "server.history_writer_flush_interval_ms",
+        ),
+        (
+            "audit",
+            "writer_flush_interval_ms",
+            0,
+            "audit.writer_flush_interval_ms",
+        ),
+        (
+            "server",
+            "history_writer_flush_interval_ms",
+            MIN_WRITER_FLUSH_INTERVAL_MS - 1,
+            "server.history_writer_flush_interval_ms",
+        ),
+        (
+            "audit",
+            "writer_flush_interval_ms",
+            MIN_WRITER_FLUSH_INTERVAL_MS - 1,
+            "audit.writer_flush_interval_ms",
+        ),
+    ] {
+        let setting = if section == "server" {
+            format!("{key} = {value}")
+        } else {
+            format!("[audit]\n{key} = {value}")
+        };
+        let input = format!(
+            r#"
+            [server]
+            listen = "127.0.0.1:8080"
+            public_base_url = "https://monitor.example.com"
+            {setting}
+            "#,
+        );
+        let error = parse_server_config(&input).expect_err("invalid writer interval should fail");
+        assert!(error.to_string().contains(expected));
+    }
 }
 
 #[test]

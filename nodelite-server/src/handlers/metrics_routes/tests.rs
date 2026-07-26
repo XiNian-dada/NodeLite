@@ -375,6 +375,9 @@ fn exporter_exposes_token_verify_pressure_metrics() {
         active: 3,
         waiting: 7,
         wait_seconds_total: 1.25,
+        token_cache_hits_total: 11,
+        token_cache_misses_total: 13,
+        token_cache_evictions_total: 17,
     });
 
     assert!(body.contains("# TYPE nodelite_token_verify_limit gauge"));
@@ -385,6 +388,12 @@ fn exporter_exposes_token_verify_pressure_metrics() {
     assert!(body.contains("nodelite_token_verify_waiting 7"));
     assert!(body.contains("# TYPE nodelite_token_verify_wait_seconds_total counter"));
     assert!(body.contains("nodelite_token_verify_wait_seconds_total 1.25"));
+    assert!(body.contains("# TYPE nodelite_token_cache_hits_total counter"));
+    assert!(body.contains("nodelite_token_cache_hits_total 11"));
+    assert!(body.contains("# TYPE nodelite_token_cache_misses_total counter"));
+    assert!(body.contains("nodelite_token_cache_misses_total 13"));
+    assert!(body.contains("# TYPE nodelite_token_cache_evictions_total counter"));
+    assert!(body.contains("nodelite_token_cache_evictions_total 17"));
 }
 
 #[test]

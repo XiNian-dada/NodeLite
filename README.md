@@ -85,6 +85,8 @@ sudo systemctl status nodelite-agent.service
 sudo journalctl -u nodelite-agent.service -f
 ```
 
+反向代理、负载均衡器和告警系统接入前，请确认 [`/healthz` 与 `/readyz` 的探针语义](docs/readiness.md)，避免把诊断降级误判为实例不可接流量。
+
 升级建议由管理员手动触发：先确认 release notes 和协议兼容，再升级 Server 或 Agent。
 
 ## 常见排障
