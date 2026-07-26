@@ -116,6 +116,9 @@ Browser -> https://monitor.example.com/ -> Nginx/Caddy -> 127.0.0.1:nodelite-ser
 - Sensitive settings are primarily changed through server-side config files, CLI commands, and protected settings endpoints.
 - `/metrics` shares read-only authentication with the dashboard and can be scraped by Prometheus.
 - History charts show basic trends; they are not a full archive of every `metrics` report.
+- GeoIP is enabled by default with the online `ipwhois` provider. The Server sends the resolved public connection IP of an Agent, and the public IP of a client that successfully passes read-only authentication for the protected dashboard, API, `/metrics`, or browser WebSocket (including a completed 2FA login), to the third-party endpoint `https://ipwho.is` to look up country/region and, when available, city and coordinates. Private, loopback, and documentation-only addresses are classified as LAN locally and are not sent to that endpoint.
+
+To avoid sending public IPs to a third party, set `geoip.enabled = false`, or switch `geoip.provider` to `dbip` / `custom` and supply a local MMDB file. Keep `geoip.auto_update = false` as well when GeoIP operation must not make any network requests.
 
 Quick Prometheus check:
 
@@ -211,4 +214,6 @@ node scripts/benchmark-index-dom.mjs --nodes 1000
 
 Releases are tag-driven. Pushing a semantic version tag builds Linux Server / Agent binaries, macOS Agent binaries, install scripts, `SHA256SUMS.txt`, and creates a GitHub Release.
 
-Release Agent binaries report their tag version to the dashboard, making online node versions easy to verify.
+Official builds strip the leading `v` from the tag and inject the result as `NODELITE_BUILD_VERSION`. Release Agent binaries report that value as `agent_version` to the dashboard, and the Server settings API exposes the same value as `server_version`.
+
+The workspace `Cargo.toml` version `0.1.0` is the fallback used when no build version is injected; it is not changed for each release. A local `cargo build` or `cargo run` without `NODELITE_BUILD_VERSION` therefore shows the Cargo fallback in those runtime fields, which does not identify the version of an official Release asset.
