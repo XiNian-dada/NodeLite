@@ -12,12 +12,11 @@ use tracing::{debug, warn};
 
 use super::types::NewAuditEvent;
 
-const AUDIT_BATCH_MAX: usize = 128;
-const AUDIT_BATCH_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
-
 pub(super) struct AuditWriterContext {
     pub(super) connection: Arc<Mutex<Option<Connection>>>,
     pub(super) write_failures: Arc<AtomicU64>,
+    pub(super) batch_max: usize,
+    pub(super) flush_interval: Duration,
 }
 
 pub(super) enum AuditWriterCommand {
@@ -29,8 +28,8 @@ pub(super) async fn run_audit_writer(
     mut rx: mpsc::Receiver<AuditWriterCommand>,
     context: AuditWriterContext,
 ) {
-    let mut batch = Vec::with_capacity(AUDIT_BATCH_MAX);
-    let mut flush_timer = tokio::time::interval(AUDIT_BATCH_FLUSH_INTERVAL);
+    let mut batch = Vec::with_capacity(context.batch_max);
+    let mut flush_timer = tokio::time::interval(context.flush_interval);
     flush_timer.set_missed_tick_behavior(MissedTickBehavior::Delay);
     flush_timer.tick().await;
 
@@ -40,7 +39,7 @@ pub(super) async fn run_audit_writer(
             received = rx.recv() => match received {
                 Some(AuditWriterCommand::Event(event)) => {
                     batch.push(event);
-                    if batch.len() >= AUDIT_BATCH_MAX {
+                    if batch.len() >= context.batch_max {
                         flush_audit_batch(&mut batch, &context).await;
                     }
                 }
@@ -64,7 +63,7 @@ pub(super) async fn run_audit_writer(
         match command {
             AuditWriterCommand::Event(event) => {
                 batch.push(event);
-                if batch.len() >= AUDIT_BATCH_MAX {
+                if batch.len() >= context.batch_max {
                     flush_audit_batch(&mut batch, &context).await;
                 }
             }
