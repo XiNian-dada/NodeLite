@@ -83,10 +83,13 @@ log_token_events = true
 log_rate_limit = true
 
 [geoip]
-# 自动根据 Agent 连接 IP 推断国家/地区。默认开启;需要完全关闭时改为 false。
+# 默认开启在线 GeoIP:Server 会把解析出的 Agent 公网连接 IP 发送到第三方
+# https://ipwho.is,查询国家/地区以及可用的城市和坐标信息。
+# 局域网、回环和文档保留地址只会在本地标记为 LAN,不会发送到该接口。
+# 不希望发送公网 IP 时可改为 false,或改用下方的 dbip/custom 本地 provider。
 enabled = true
-# provider = "ipwhois" 会按 IP 变化在线查询; provider = "dbip" 会使用 DB-IP Lite;
-# provider = "custom" 时只读取本地 database_path。
+# provider = "ipwhois" 会向上述第三方接口在线查询;provider = "dbip" 会使用 DB-IP Lite;
+# provider = "custom" 时只读取本地 database_path。要求完全离线时还需保持 auto_update = false。
 provider = "ipwhois"
 # DB-IP/custom 本地 MMDB 粒度:country-lite 只提供国家; city-lite 会额外填充 city/latitude/longitude。
 edition = "country-lite"
