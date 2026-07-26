@@ -75,38 +75,14 @@ fn router_builds_with_v08_path_syntax() {
 }
 
 #[test]
-fn readyz_reports_json_diagnostics_for_degraded_state() {
+fn readyz_returns_503_for_hard_dependency_failure() {
     let runtime = Runtime::new().expect("runtime should build");
     runtime.block_on(async {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock should be monotonic enough")
-            .as_nanos();
-        let registry_path =
-            std::env::temp_dir().join(format!("nodelite-readyz-test-{unique}.json"));
-        let mut config = test_server_config(
-            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8080)),
-            "http://127.0.0.1:8080".to_string(),
-            registry_path,
-            PathBuf::from("./data/history.sqlite3"),
-            PathBuf::from("./data/snapshot.json"),
-        );
-        config.readonly_auth = None;
-        config.ws = test_ws_config(32, 8);
-        let state = AppState::test_fixture(
-            Arc::new(config),
-            Arc::new(PathBuf::from("config/server.toml")),
-        )
-        .await
-        .expect("state fixture should build");
+        let (state, temp_dir) = readyz_test_state("hard-failure").await;
         state.readiness.mark_history_available(false);
 
-        let response = readyz(State(state.clone())).await.into_response();
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let body = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("readyz body should collect");
-        let payload: Value = serde_json::from_slice(&body).expect("readyz body should be json");
+        let (status, payload) = readyz_payload(state.clone()).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(payload["ready"], Value::Bool(false));
         assert_eq!(payload["status"], Value::String("degraded".to_string()));
         assert_eq!(
@@ -116,7 +92,76 @@ fn readyz_reports_json_diagnostics_for_degraded_state() {
 
         state.history.shutdown().await;
         state.audit_log.shutdown().await;
+        drop(state);
+        std::fs::remove_dir_all(temp_dir).expect("readyz temp dir should be removable");
     });
+}
+
+#[test]
+fn readyz_returns_200_for_audit_only_degradation() {
+    let runtime = Runtime::new().expect("runtime should build");
+    runtime.block_on(async {
+        let (state, temp_dir) = readyz_test_state("audit-degraded").await;
+        state.audit_log.shutdown().await;
+
+        let (status, payload) = readyz_payload(state.clone()).await;
+        let (repeat_status, repeat_payload) = readyz_payload(state.clone()).await;
+        assert_eq!(repeat_status, status);
+        assert_eq!(repeat_payload, payload);
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(payload["ready"], Value::Bool(true));
+        assert_eq!(payload["status"], Value::String("degraded".to_string()));
+        assert_eq!(
+            payload["problems"],
+            Value::Array(vec![Value::String("audit_unavailable".to_string())])
+        );
+        assert_eq!(payload["checks"]["history_available"], Value::Bool(true));
+        assert_eq!(
+            payload["checks"]["registry_reload_healthy"],
+            Value::Bool(true)
+        );
+        assert_eq!(payload["signals"]["audit_enabled"], Value::Bool(true));
+        assert_eq!(payload["signals"]["audit_available"], Value::Bool(false));
+
+        state.history.shutdown().await;
+        drop(state);
+        std::fs::remove_dir_all(temp_dir).expect("readyz temp dir should be removable");
+    });
+}
+
+async fn readyz_test_state(test_name: &str) -> (AppState, PathBuf) {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be monotonic enough")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("nodelite-readyz-{test_name}-{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("readyz temp dir should exist");
+    let mut config = test_server_config(
+        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8080)),
+        "http://127.0.0.1:8080".to_string(),
+        temp_dir.join("registry.json"),
+        temp_dir.join("history.sqlite3"),
+        temp_dir.join("snapshot.json"),
+    );
+    config.readonly_auth = None;
+    config.ws = test_ws_config(32, 8);
+    let state = AppState::test_fixture(
+        Arc::new(config),
+        Arc::new(PathBuf::from("config/server.toml")),
+    )
+    .await
+    .expect("state fixture should build");
+    (state, temp_dir)
+}
+
+async fn readyz_payload(state: AppState) -> (StatusCode, Value) {
+    let response = readyz(State(state)).await.into_response();
+    let status = response.status();
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("readyz body should collect");
+    let payload = serde_json::from_slice(&body).expect("readyz body should be json");
+    (status, payload)
 }
 
 #[test]
