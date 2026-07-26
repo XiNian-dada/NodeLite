@@ -116,7 +116,7 @@ Browser -> https://monitor.example.com/ -> Nginx/Caddy -> 127.0.0.1:nodelite-ser
 - Sensitive settings are primarily changed through server-side config files, CLI commands, and protected settings endpoints.
 - `/metrics` shares read-only authentication with the dashboard and can be scraped by Prometheus.
 - History charts show basic trends; they are not a full archive of every `metrics` report.
-- GeoIP is enabled by default with the online `ipwhois` provider. The Server sends the resolved public connection IP of an Agent, and the public IP of a browser client after a successful dashboard login, to the third-party endpoint `https://ipwho.is` to look up country/region and, when available, city and coordinates. Private, loopback, and documentation-only addresses are classified as LAN locally and are not sent to that endpoint.
+- GeoIP is enabled by default with the online `ipwhois` provider. The Server sends the resolved public connection IP of an Agent, and the public IP of a client that successfully passes read-only authentication for the protected dashboard, API, `/metrics`, or browser WebSocket (including a completed 2FA login), to the third-party endpoint `https://ipwho.is` to look up country/region and, when available, city and coordinates. Private, loopback, and documentation-only addresses are classified as LAN locally and are not sent to that endpoint.
 
 To avoid sending public IPs to a third party, set `geoip.enabled = false`, or switch `geoip.provider` to `dbip` / `custom` and supply a local MMDB file. Keep `geoip.auto_update = false` as well when GeoIP operation must not make any network requests.
 

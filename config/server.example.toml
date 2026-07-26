@@ -83,9 +83,9 @@ log_token_events = true
 log_rate_limit = true
 
 [geoip]
-# 默认开启在线 GeoIP:Server 会把解析出的 Agent 公网连接 IP,以及成功登录
-# 面板的浏览器客户端公网 IP,发送到第三方 https://ipwho.is,查询国家/地区
-# 以及可用的城市和坐标信息。
+# 默认开启在线 GeoIP:Server 会把解析出的 Agent 公网连接 IP,以及成功通过
+# 只读认证访问受保护面板/API/metrics/浏览器 WebSocket 的客户端公网 IP
+# (包括完成 2FA 的登录),发送到第三方 https://ipwho.is 查询地理信息。
 # 局域网、回环和文档保留地址只会在本地标记为 LAN,不会发送到该接口。
 # 不希望发送公网 IP 时可改为 false,或改用下方的 dbip/custom 本地 provider。
 enabled = true
