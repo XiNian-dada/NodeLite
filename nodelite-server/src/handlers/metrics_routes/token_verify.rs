@@ -30,5 +30,23 @@ pub(crate) fn render_token_verify_metrics(metrics: TokenVerifyMetrics) -> String
         &[],
         metrics.wait_seconds_total,
     );
+    emitter.counter(
+        "nodelite_token_cache_hits_total",
+        "Number of token verification requests served by a live cached result.",
+        &[],
+        metrics.token_cache_hits_total,
+    );
+    emitter.counter(
+        "nodelite_token_cache_misses_total",
+        "Number of token verification requests that executed Argon2 after cache lookup.",
+        &[],
+        metrics.token_cache_misses_total,
+    );
+    emitter.counter(
+        "nodelite_token_cache_evictions_total",
+        "Number of token verification cache entries evicted because the cache was at capacity.",
+        &[],
+        metrics.token_cache_evictions_total,
+    );
     emitter.finish()
 }

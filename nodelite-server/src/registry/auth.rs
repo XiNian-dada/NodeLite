@@ -7,7 +7,11 @@ use std::time::Instant;
 
 use anyhow::anyhow;
 use chrono::{DateTime, Utc};
+#[cfg(test)]
+use lru::LruCache;
 use nodelite_proto::{NodeIdentity, validate_non_empty};
+#[cfg(test)]
+use parking_lot::Mutex as ParkingLotMutex;
 use sha2::{Digest, Sha256};
 #[cfg(test)]
 use tokio::sync::Semaphore;
@@ -19,6 +23,7 @@ use super::validate::validate_runtime_identity;
 use super::{
     AuthorizedNode, NodeRegistry, RegisteredNode, RegistryError, RegistryResult,
     RegistryTokenStatus, TOKEN_CACHE_TTL, TOKEN_VERIFY_WAIT_WARN_AFTER, TokenCacheEntry,
+    TokenCacheKey,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -168,17 +173,8 @@ impl NodeRegistry {
         };
         let cache_key = (cache_key_hash.clone(), self.registry_revision());
 
-        // 检查缓存（parking_lot::Mutex 是同步的）
-        {
-            let mut cache = self.token_cache.lock();
-            if let Some(entry) = cache.get(&cache_key) {
-                let age = entry.cached_at.elapsed();
-                if age < TOKEN_CACHE_TTL {
-                    return Ok(entry.verified);
-                }
-                // TTL 过期,移除旧条目
-                cache.pop(&cache_key);
-            }
+        if let Some(verified) = self.cached_token_result(&cache_key) {
+            return Ok(verified);
         }
 
         // 缓存未命中,获取 semaphore 进行验证
@@ -199,14 +195,8 @@ impl NodeRegistry {
         }
 
         // 获取 permit 后再次检查缓存（并发场景下可能已经被其他请求填充）
-        {
-            let mut cache = self.token_cache.lock();
-            if let Some(entry) = cache.get(&cache_key) {
-                let age = entry.cached_at.elapsed();
-                if age < TOKEN_CACHE_TTL {
-                    return Ok(entry.verified);
-                }
-            }
+        if let Some(verified) = self.cached_token_result(&cache_key) {
+            return Ok(verified);
         }
 
         // 执行实际的 Argon2id 验证
@@ -217,6 +207,7 @@ impl NodeRegistry {
         let probe = self.token_verify_probe.clone();
 
         let (verified, permit) = tokio::task::spawn_blocking(move || {
+            metrics.record_cache_miss();
             let _active_guard = TokenVerifyActiveGuard::start(metrics);
             #[cfg(test)]
             let _probe_guard = probe.as_ref().map(|probe| probe.enter());
@@ -228,6 +219,7 @@ impl NodeRegistry {
         // 写入缓存
         {
             let mut cache = self.token_cache.lock();
+            let capacity_eviction = cache.len() == cache.cap().get() && !cache.contains(&cache_key);
             cache.put(
                 cache_key,
                 TokenCacheEntry {
@@ -235,10 +227,34 @@ impl NodeRegistry {
                     cached_at: Instant::now(),
                 },
             );
+            if capacity_eviction {
+                self.token_verify_metrics.record_cache_eviction();
+            }
         }
         drop(permit);
 
         Ok(verified)
+    }
+
+    fn cached_token_result(&self, cache_key: &TokenCacheKey) -> Option<bool> {
+        let cached_result = {
+            let mut cache = self.token_cache.lock();
+            match cache
+                .get(cache_key)
+                .map(|entry| (entry.verified, entry.cached_at.elapsed()))
+            {
+                Some((verified, age)) if age < TOKEN_CACHE_TTL => Some(verified),
+                Some(_) => {
+                    cache.pop(cache_key);
+                    None
+                }
+                None => None,
+            }
+        };
+        if cached_result.is_some() {
+            self.token_verify_metrics.record_cache_hit();
+        }
+        cached_result
     }
 
     pub(crate) fn token_verify_metrics(&self) -> super::TokenVerifyMetrics {
@@ -259,6 +275,14 @@ impl NodeRegistry {
         probe: Arc<TokenVerifyProbe>,
     ) -> Self {
         self.token_verify_probe = Some(probe);
+        self
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_token_cache_capacity_for_tests(mut self, capacity: usize) -> Self {
+        assert!(capacity > 0, "test token cache capacity must be positive");
+        let capacity = std::num::NonZeroUsize::new(capacity).unwrap_or(std::num::NonZeroUsize::MIN);
+        self.token_cache = Arc::new(ParkingLotMutex::new(LruCache::new(capacity)));
         self
     }
 }

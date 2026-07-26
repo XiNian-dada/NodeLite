@@ -1,5 +1,69 @@
 use super::*;
 
+#[tokio::test]
+async fn token_cache_miss_counter_tracks_argon2_work() {
+    let (registry, credentials, temp_dir) =
+        token_cache_fixture("miss-metric", &["miss-01"], 2).await;
+    let (identity, token) = &credentials[0];
+
+    registry
+        .authorize(identity, token)
+        .await
+        .expect("cold token should authorize");
+
+    let metrics = registry.token_verify_metrics();
+    assert_eq!(metrics.token_cache_hits_total, 0);
+    assert_eq!(metrics.token_cache_misses_total, 1);
+    assert_eq!(metrics.token_cache_evictions_total, 0);
+
+    drop(registry);
+    std::fs::remove_dir_all(temp_dir).expect("cache metric temp dir should be removable");
+}
+
+#[tokio::test]
+async fn token_cache_hit_counter_tracks_warm_results() {
+    let (registry, credentials, temp_dir) = token_cache_fixture("hit-metric", &["hit-01"], 2).await;
+    let (identity, token) = &credentials[0];
+
+    registry
+        .authorize(identity, token)
+        .await
+        .expect("cold token should authorize");
+    registry
+        .authorize(identity, token)
+        .await
+        .expect("warm token should authorize");
+
+    let metrics = registry.token_verify_metrics();
+    assert_eq!(metrics.token_cache_hits_total, 1);
+    assert_eq!(metrics.token_cache_misses_total, 1);
+    assert_eq!(metrics.token_cache_evictions_total, 0);
+
+    drop(registry);
+    std::fs::remove_dir_all(temp_dir).expect("cache metric temp dir should be removable");
+}
+
+#[tokio::test]
+async fn token_cache_eviction_counter_tracks_capacity_pressure() {
+    let (registry, credentials, temp_dir) =
+        token_cache_fixture("eviction-metric", &["evict-01", "evict-02"], 1).await;
+
+    for (identity, token) in &credentials {
+        registry
+            .authorize(identity, token)
+            .await
+            .expect("token should authorize");
+    }
+
+    let metrics = registry.token_verify_metrics();
+    assert_eq!(metrics.token_cache_hits_total, 0);
+    assert_eq!(metrics.token_cache_misses_total, 2);
+    assert_eq!(metrics.token_cache_evictions_total, 1);
+
+    drop(registry);
+    std::fs::remove_dir_all(temp_dir).expect("cache metric temp dir should be removable");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn token_cache_prevents_redundant_argon2_verifies_on_concurrent_requests() {
     let unique = SystemTime::now()
@@ -77,6 +141,13 @@ async fn token_cache_prevents_redundant_argon2_verifies_on_concurrent_requests()
         probe.total_entered(),
         total_verifies,
         "warm cache hit should not run another Argon2 verify"
+    );
+    let metrics = registry.token_verify_metrics();
+    assert_eq!(metrics.token_cache_misses_total, total_verifies as u64);
+    assert_eq!(
+        metrics.token_cache_hits_total + metrics.token_cache_misses_total,
+        11,
+        "each authorization should produce exactly one cache outcome"
     );
 
     let _ = std::fs::remove_file(&path);
@@ -197,4 +268,41 @@ async fn token_cache_distinguishes_current_and_grace_tokens_after_rotation() {
 
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_dir(&temp_dir);
+}
+
+async fn token_cache_fixture(
+    prefix: &str,
+    node_ids: &[&str],
+    capacity: usize,
+) -> (
+    NodeRegistry,
+    Vec<(NodeIdentity, String)>,
+    std::path::PathBuf,
+) {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be monotonic enough")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("nodelite-token-cache-{prefix}-{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("cache metric temp dir should exist");
+    let path = temp_dir.join("server.json");
+    let mut credentials = Vec::with_capacity(node_ids.len());
+    for node_id in node_ids {
+        let issued = issue_node(
+            &path,
+            IssueNodeRequest {
+                node_id: (*node_id).to_string(),
+                node_label: Some((*node_id).to_string()),
+                tags: Vec::new(),
+            },
+        )
+        .await
+        .expect("cache metric node should be issued");
+        credentials.push((identity_for(node_id), issued.node_session_token));
+    }
+    let registry = NodeRegistry::load(&path)
+        .await
+        .expect("cache metric registry should load")
+        .with_token_cache_capacity_for_tests(capacity);
+    (registry, credentials, temp_dir)
 }

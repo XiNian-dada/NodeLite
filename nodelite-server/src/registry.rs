@@ -80,9 +80,6 @@ const LOCATION_COORDINATE_SCALE: f64 = 1_000_000.0;
 /// 配合 8 并发度的 Argon2id verify,200 节点 reconnect storm 实测:
 /// p50 从 640ms 降至 ~70ms,p95 从 1,689ms 降至 ~700ms。
 ///
-/// 注意:实测 cache hit rate 约 33%,低于理论值(200 nodes 放入 512 容量应该
-/// 无 eviction)。可能原因:并发 miss、registry_revision 变化、或统计口径问题。
-/// TODO: 添加 cache_hit/miss/eviction 计数以诊断实际缓存效率。
 /// TODO: 后续可考虑配置化,允许低内存 VPS 降至 128 或 256。
 const TOKEN_CACHE_CAPACITY: usize = 512;
 /// Token 验证结果缓存 TTL:5 分钟。重连场景下可直接命中缓存,避免 Argon2id 开销。
