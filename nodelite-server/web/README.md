@@ -57,7 +57,7 @@ web/
 
 ## Prerequisites
 
-- Node.js 20 or newer
+- Node.js 20.19+ (20.x), 22.13+ (22.x), or 24+, matching `package.json`'s `engines` range
 - pnpm 10.11.0 (`corepack enable` is sufficient when Corepack is available)
 - A Rust toolchain when running the NodeLite backend
 
