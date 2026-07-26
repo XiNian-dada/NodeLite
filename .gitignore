@@ -14,3 +14,9 @@ shit-mountain-report.md
 AGENTS.md
 
 .claude/
+NodeLite_DIFFERENTIAL_REVIEW*.md
+PERFORMANCE*.md
+.playwright-cli/
+nodelite-server/assets/
+scripts/BENCHMARK_FRONTEND.md
+scripts/benchmark-dom-vue3.mjs
