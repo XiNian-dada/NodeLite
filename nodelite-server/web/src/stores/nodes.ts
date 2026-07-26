@@ -1,12 +1,13 @@
 import { defineStore } from 'pinia';
-import { computed, ref } from 'vue';
+import { ref, shallowRef, triggerRef } from 'vue';
 import { apiClient, type NodeListItem } from '@/api';
 import { ApiAbortError } from '@/api/client';
 
 /**
- * Node list state. Refactored to Map-keyed for O(1) incremental upserts
- * from WebSocket (Stage 3.5b). Polling lifecycle is NOT owned by the store —
- * see composables/usePolling.ts. Stores hold state + refresh() only.
+ * Node list state. A Map and index table keep WebSocket upserts O(1), while a
+ * shallow array preserves iteration order without rebuilding via Array.from
+ * for every message. Polling lifecycle is NOT owned by the store — see
+ * composables/usePolling.ts. Stores hold state + refresh() only.
  *
  * Timestamp guard: single global `lastGeneratedAt` protects against stale
  * messages (e.g., a delayed incremental arriving after a fresh InitialState).
@@ -16,13 +17,12 @@ import { ApiAbortError } from '@/api/client';
  * updates.
  */
 export const useNodesStore = defineStore('nodes', () => {
-  const nodesById = ref<Map<string, NodeListItem>>(new Map());
+  const nodes = shallowRef<NodeListItem[]>([]);
+  const nodesById = shallowRef<Map<string, NodeListItem>>(new Map());
+  const nodeIndexById = new Map<string, number>();
   const lastGeneratedAt = ref<string | null>(null);
   const loading = ref(false);
   const error = ref<Error | null>(null);
-
-  // Computed array for components that iterate (preserves existing API)
-  const nodes = computed(() => Array.from(nodesById.value.values()));
 
   async function refresh(): Promise<void> {
     if (loading.value) return;
@@ -45,6 +45,12 @@ export const useNodesStore = defineStore('nodes', () => {
   function applyServerState(items: NodeListItem[], generatedAt: string): void {
     const next = new Map<string, NodeListItem>();
     for (const item of items) next.set(item.identity.node_id, item);
+    const nextItems = Array.from(next.values());
+    nodeIndexById.clear();
+    nextItems.forEach((item, index) => {
+      nodeIndexById.set(item.identity.node_id, index);
+    });
+    nodes.value = nextItems;
     nodesById.value = next;
     lastGeneratedAt.value = generatedAt;
   }
@@ -53,7 +59,17 @@ export const useNodesStore = defineStore('nodes', () => {
   function upsertNode(node: NodeListItem, generatedAt: string): void {
     if (lastGeneratedAt.value && Date.parse(generatedAt) < Date.parse(lastGeneratedAt.value))
       return;
-    nodesById.value.set(node.identity.node_id, node);
+    const nodeId = node.identity.node_id;
+    const index = nodeIndexById.get(nodeId);
+    if (index === undefined) {
+      nodeIndexById.set(nodeId, nodes.value.length);
+      nodes.value.push(node);
+    } else {
+      nodes.value[index] = node;
+    }
+    nodesById.value.set(nodeId, node);
+    triggerRef(nodes);
+    triggerRef(nodesById);
     lastGeneratedAt.value = generatedAt;
   }
 
@@ -62,7 +78,17 @@ export const useNodesStore = defineStore('nodes', () => {
     if (lastGeneratedAt.value && Date.parse(generatedAt) < Date.parse(lastGeneratedAt.value)) {
       return false;
     }
-    nodesById.value.delete(nodeId);
+    const index = nodeIndexById.get(nodeId);
+    if (index !== undefined) {
+      nodes.value.splice(index, 1);
+      nodeIndexById.delete(nodeId);
+      for (let nextIndex = index; nextIndex < nodes.value.length; nextIndex++) {
+        const nextNode = nodes.value[nextIndex];
+        if (nextNode) nodeIndexById.set(nextNode.identity.node_id, nextIndex);
+      }
+      triggerRef(nodes);
+    }
+    if (nodesById.value.delete(nodeId)) triggerRef(nodesById);
     lastGeneratedAt.value = generatedAt;
     return true;
   }

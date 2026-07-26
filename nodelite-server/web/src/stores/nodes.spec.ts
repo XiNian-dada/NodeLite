@@ -100,6 +100,25 @@ describe('useNodesStore', () => {
       expect(store.nodes).toContainEqual(b);
     });
 
+    it('updates an existing node without rebuilding the list or map', () => {
+      const store = useNodesStore();
+      const a = makeNode({ identity: { node_id: 'a', node_label: 'A', hostname: 'a', tags: [] } });
+      const b = makeNode({ identity: { node_id: 'b', node_label: 'B', hostname: 'b', tags: [] } });
+      const updatedA = makeNode({
+        identity: { node_id: 'a', node_label: 'A Updated', hostname: 'a', tags: [] },
+      });
+      store.applyServerState([a, b], '2026-06-01T12:00:00Z');
+      const listReference = store.nodes;
+      const mapReference = store.nodesById;
+
+      store.upsertNode(updatedA, '2026-06-01T12:01:00Z');
+
+      expect(store.nodes).toBe(listReference);
+      expect(store.nodesById).toBe(mapReference);
+      expect(store.nodes).toEqual([updatedA, b]);
+      expect(store.nodesById.get('a')).toEqual(updatedA);
+    });
+
     it('removeNode deletes from the Map', () => {
       const store = useNodesStore();
       const a = makeNode({ identity: { node_id: 'a', node_label: 'A', hostname: 'a', tags: [] } });
@@ -109,6 +128,23 @@ describe('useNodesStore', () => {
       store.removeNode('a', '2026-06-01T12:01:00Z');
 
       expect(store.nodes).toEqual([b]);
+    });
+
+    it('reindexes nodes after removal for later in-place updates', () => {
+      const store = useNodesStore();
+      const a = makeNode({ identity: { node_id: 'a', node_label: 'A', hostname: 'a', tags: [] } });
+      const b = makeNode({ identity: { node_id: 'b', node_label: 'B', hostname: 'b', tags: [] } });
+      const c = makeNode({ identity: { node_id: 'c', node_label: 'C', hostname: 'c', tags: [] } });
+      const updatedC = makeNode({
+        identity: { node_id: 'c', node_label: 'C Updated', hostname: 'c', tags: [] },
+      });
+      store.applyServerState([a, b, c], '2026-06-01T12:00:00Z');
+
+      store.removeNode('a', '2026-06-01T12:01:00Z');
+      store.upsertNode(updatedC, '2026-06-01T12:02:00Z');
+
+      expect(store.nodes).toEqual([b, updatedC]);
+      expect(store.nodesById.get('c')).toEqual(updatedC);
     });
 
     it('applyServerState always accepts (no guard)', () => {
