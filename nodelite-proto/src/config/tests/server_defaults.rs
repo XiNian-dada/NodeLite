@@ -15,8 +15,8 @@ use super::super::{
     DEFAULT_WS_AUTH_FAIL_MAX_ATTEMPTS, DEFAULT_WS_AUTH_FAIL_WINDOW_SECS,
     DEFAULT_WS_MAX_CONNECTIONS_PER_IP, DEFAULT_WS_MAX_TOTAL_CONNECTIONS, GeoIpEdition,
     GeoIpProvider, MAX_HISTORY_QUERY_CONCURRENCY, MAX_HISTORY_READ_CACHE_KIB,
-    MIN_HISTORY_QUERY_CONCURRENCY, MIN_HISTORY_READ_CACHE_KIB, MIN_WRITER_FLUSH_INTERVAL_MS,
-    parse_server_config,
+    MAX_WRITER_BATCH_SIZE, MIN_HISTORY_QUERY_CONCURRENCY, MIN_HISTORY_READ_CACHE_KIB,
+    MIN_WRITER_FLUSH_INTERVAL_MS, parse_server_config,
 };
 
 #[test]
@@ -66,6 +66,7 @@ fn server_example_documents_writer_scheduling() {
     ] {
         assert!(example.lines().any(|line| line == expected));
     }
+    assert_eq!(example.matches("允许 1-4096").count(), 2);
 }
 
 #[test]
@@ -249,8 +250,28 @@ fn parses_writer_scheduling_overrides() {
 }
 
 #[test]
+fn accepts_writer_batch_size_upper_bound() {
+    let config = parse_server_config(&format!(
+        r#"
+        [server]
+        listen = "127.0.0.1:8080"
+        public_base_url = "https://monitor.example.com"
+        history_writer_batch_max = {MAX_WRITER_BATCH_SIZE}
+
+        [audit]
+        writer_batch_max = {MAX_WRITER_BATCH_SIZE}
+        "#,
+    ))
+    .expect("writer batch upper bound should parse");
+
+    assert_eq!(config.history_writer_batch_max, MAX_WRITER_BATCH_SIZE);
+    assert_eq!(config.audit.writer_batch_max, MAX_WRITER_BATCH_SIZE);
+}
+
+#[test]
 fn rejects_invalid_writer_scheduling_values() {
     assert_eq!(MIN_WRITER_FLUSH_INTERVAL_MS, 10);
+    assert_eq!(MAX_WRITER_BATCH_SIZE, 4096);
     for (section, key, value, expected) in [
         (
             "server",
@@ -259,6 +280,37 @@ fn rejects_invalid_writer_scheduling_values() {
             "server.history_writer_batch_max",
         ),
         ("audit", "writer_batch_max", 0, "audit.writer_batch_max"),
+        (
+            "server",
+            "history_writer_batch_max",
+            MAX_WRITER_BATCH_SIZE.saturating_add(1),
+            "server.history_writer_batch_max",
+        ),
+        (
+            "audit",
+            "writer_batch_max",
+            MAX_WRITER_BATCH_SIZE.saturating_add(1),
+            "audit.writer_batch_max",
+        ),
+    ] {
+        let setting = if section == "server" {
+            format!("{key} = {value}")
+        } else {
+            format!("[audit]\n{key} = {value}")
+        };
+        let input = format!(
+            r#"
+            [server]
+            listen = "127.0.0.1:8080"
+            public_base_url = "https://monitor.example.com"
+            {setting}
+            "#,
+        );
+        let error = parse_server_config(&input).expect_err("invalid writer batch should fail");
+        assert!(error.to_string().contains(expected));
+    }
+
+    for (section, key, value, expected) in [
         (
             "server",
             "history_writer_flush_interval_ms",
@@ -297,7 +349,7 @@ fn rejects_invalid_writer_scheduling_values() {
             {setting}
             "#,
         );
-        let error = parse_server_config(&input).expect_err("invalid writer setting should fail");
+        let error = parse_server_config(&input).expect_err("invalid writer interval should fail");
         assert!(error.to_string().contains(expected));
     }
 }

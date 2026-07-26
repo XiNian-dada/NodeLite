@@ -116,6 +116,8 @@ pub const DEFAULT_AUDIT_RETENTION_DAYS: u64 = 90;
 pub const DEFAULT_AUDIT_WRITER_BATCH_MAX: usize = 128;
 /// 审计写入器默认最大攒批时间(毫秒)。
 pub const DEFAULT_AUDIT_WRITER_FLUSH_INTERVAL_MS: u64 = 100;
+/// 历史与审计写入器单次事务允许的最大记录数。
+pub const MAX_WRITER_BATCH_SIZE: usize = 4096;
 /// 写入器 flush 间隔下限，避免极短定时器形成忙循环。
 pub const MIN_WRITER_FLUSH_INTERVAL_MS: u64 = 10;
 /// GeoIP 数据库默认更新间隔(天)。

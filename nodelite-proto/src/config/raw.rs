@@ -33,9 +33,9 @@ use super::helpers::{
 use super::{
     AgentConfig, AlertingConfig, AuditConfig, ConfigError, GeoIpConfig, GeoIpEdition,
     GeoIpProvider, MAX_HISTORY_QUERY_CONCURRENCY, MAX_HISTORY_READ_CACHE_KIB,
-    MAX_NODE_IDENTITY_TEXT_BYTES, MAX_TOKEN_VERIFY_MAX_PARALLELISM, MIN_HISTORY_QUERY_CONCURRENCY,
-    MIN_HISTORY_READ_CACHE_KIB, MIN_TOKEN_VERIFY_MAX_PARALLELISM, MIN_WRITER_FLUSH_INTERVAL_MS,
-    MetricsConfig, ReadonlyAuthConfig, ServerConfig, WsConfig,
+    MAX_NODE_IDENTITY_TEXT_BYTES, MAX_TOKEN_VERIFY_MAX_PARALLELISM, MAX_WRITER_BATCH_SIZE,
+    MIN_HISTORY_QUERY_CONCURRENCY, MIN_HISTORY_READ_CACHE_KIB, MIN_TOKEN_VERIFY_MAX_PARALLELISM,
+    MIN_WRITER_FLUSH_INTERVAL_MS, MetricsConfig, ReadonlyAuthConfig, ServerConfig, WsConfig,
 };
 use crate::validation::{
     ValidationError, normalize_string_list, validate_bounded_text, validate_identifier,
@@ -448,10 +448,10 @@ impl RawServerConfigFile {
                 "audit.retention_days must be greater than 0",
             ));
         }
-        if self.audit.writer_batch_max == 0 {
-            return Err(ConfigError::new(
-                "audit.writer_batch_max must be at least 1",
-            ));
+        if !(1..=MAX_WRITER_BATCH_SIZE).contains(&self.audit.writer_batch_max) {
+            return Err(ConfigError::new(format!(
+                "audit.writer_batch_max must be between 1 and {MAX_WRITER_BATCH_SIZE}"
+            )));
         }
         if self.audit.writer_flush_interval_ms < MIN_WRITER_FLUSH_INTERVAL_MS {
             return Err(ConfigError::new(format!(
@@ -622,10 +622,10 @@ impl RawServerConfigFile {
                 "server.history_read_cache_kib must be between {MIN_HISTORY_READ_CACHE_KIB} and {MAX_HISTORY_READ_CACHE_KIB} KiB",
             )));
         }
-        if self.server.history_writer_batch_max == 0 {
-            return Err(ConfigError::new(
-                "server.history_writer_batch_max must be at least 1",
-            ));
+        if !(1..=MAX_WRITER_BATCH_SIZE).contains(&self.server.history_writer_batch_max) {
+            return Err(ConfigError::new(format!(
+                "server.history_writer_batch_max must be between 1 and {MAX_WRITER_BATCH_SIZE}"
+            )));
         }
         if self.server.history_writer_flush_interval_ms < MIN_WRITER_FLUSH_INTERVAL_MS {
             return Err(ConfigError::new(format!(

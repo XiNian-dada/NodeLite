@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use nodelite_proto::MAX_WRITER_BATCH_SIZE;
 use rusqlite::{Connection, params};
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::time::MissedTickBehavior;
@@ -28,7 +29,8 @@ pub(super) async fn run_audit_writer(
     mut rx: mpsc::Receiver<AuditWriterCommand>,
     context: AuditWriterContext,
 ) {
-    let mut batch = Vec::with_capacity(context.batch_max);
+    let batch_max = context.batch_max.clamp(1, MAX_WRITER_BATCH_SIZE);
+    let mut batch = Vec::with_capacity(batch_max);
     let mut flush_timer = tokio::time::interval(context.flush_interval);
     flush_timer.set_missed_tick_behavior(MissedTickBehavior::Delay);
     flush_timer.tick().await;
@@ -39,7 +41,7 @@ pub(super) async fn run_audit_writer(
             received = rx.recv() => match received {
                 Some(AuditWriterCommand::Event(event)) => {
                     batch.push(event);
-                    if batch.len() >= context.batch_max {
+                    if batch.len() >= batch_max {
                         flush_audit_batch(&mut batch, &context).await;
                     }
                 }
@@ -63,7 +65,7 @@ pub(super) async fn run_audit_writer(
         match command {
             AuditWriterCommand::Event(event) => {
                 batch.push(event);
-                if batch.len() >= context.batch_max {
+                if batch.len() >= batch_max {
                     flush_audit_batch(&mut batch, &context).await;
                 }
             }

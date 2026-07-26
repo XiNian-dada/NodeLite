@@ -29,10 +29,10 @@ pub use config::{
     DEFAULT_STALE_AFTER_SECS, DEFAULT_TOKEN_VERIFY_MAX_PARALLELISM, GeoIpConfig, GeoIpEdition,
     GeoIpProvider, InspectionConfig, MAX_HISTORY_QUERY_CONCURRENCY, MAX_HISTORY_READ_CACHE_KIB,
     MAX_NODE_IDENTITY_TEXT_BYTES, MAX_NODE_TAG_BYTES, MAX_NODE_TAGS,
-    MAX_TOKEN_VERIFY_MAX_PARALLELISM, MIN_HISTORY_QUERY_CONCURRENCY, MIN_HISTORY_READ_CACHE_KIB,
-    MIN_TOKEN_VERIFY_MAX_PARALLELISM, MIN_WRITER_FLUSH_INTERVAL_MS, MetricsConfig,
-    ReadonlyAuthConfig, ServerConfig, WsConfig, normalize_totp_secret, parse_agent_config,
-    parse_server_config, upsert_toml_item_preserving_decor,
+    MAX_TOKEN_VERIFY_MAX_PARALLELISM, MAX_WRITER_BATCH_SIZE, MIN_HISTORY_QUERY_CONCURRENCY,
+    MIN_HISTORY_READ_CACHE_KIB, MIN_TOKEN_VERIFY_MAX_PARALLELISM, MIN_WRITER_FLUSH_INTERVAL_MS,
+    MetricsConfig, ReadonlyAuthConfig, ServerConfig, WsConfig, normalize_totp_secret,
+    parse_agent_config, parse_server_config, upsert_toml_item_preserving_decor,
 };
 pub use message::{
     AgentLogEntry, AgentLogsMessage, BrowserMessage, HelloMessage,

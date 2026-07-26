@@ -21,7 +21,7 @@ history_db_path = "./data/history.sqlite3"
 history_query_concurrency = 4
 # 每个历史只读连接的 SQLite 私有 page cache(KiB),允许 64-1024,不等同于 Linux filesystem page cache。
 history_read_cache_kib = 512
-# 历史 writer 单次 SQLite 事务最多写入的记录数,必须至少为 1。
+# 历史 writer 单次 SQLite 事务最多写入的记录数,允许 1-4096。
 history_writer_batch_max = 128
 # 历史 writer 最大攒批时间(毫秒),必须至少为 10,更小会导致高频唤醒。
 history_writer_flush_interval_ms = 100
@@ -77,7 +77,7 @@ enabled = true
 db_path = "./data/audit.sqlite3"
 # 仅保留最近 N 天的安全事件。
 retention_days = 90
-# 审计 writer 单次 SQLite 事务最多写入的事件数,必须至少为 1。
+# 审计 writer 单次 SQLite 事务最多写入的事件数,允许 1-4096。
 writer_batch_max = 128
 # 审计 writer 最大攒批时间(毫秒),必须至少为 10。
 writer_flush_interval_ms = 100

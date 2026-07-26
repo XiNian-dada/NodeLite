@@ -7,7 +7,9 @@ use std::time::Duration;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use nodelite_proto::{DEFAULT_HISTORY_RETENTION_HOURS, HistoryPoint, NodeStatus, percentage};
+use nodelite_proto::{
+    DEFAULT_HISTORY_RETENTION_HOURS, HistoryPoint, MAX_WRITER_BATCH_SIZE, NodeStatus, percentage,
+};
 use rusqlite::{Connection, Error as SqliteError, ErrorCode, params};
 use tokio::sync::{Mutex, mpsc};
 use tokio::time::MissedTickBehavior;
@@ -41,7 +43,8 @@ pub(super) async fn run_history_writer(
     mut rx: mpsc::Receiver<HistoryPoint>,
     context: WriterContext,
 ) {
-    let mut batch: Vec<HistoryPoint> = Vec::with_capacity(context.batch_max);
+    let batch_max = context.batch_max.clamp(1, MAX_WRITER_BATCH_SIZE);
+    let mut batch: Vec<HistoryPoint> = Vec::with_capacity(batch_max);
     let mut flush_timer = tokio::time::interval(context.flush_interval);
     flush_timer.set_missed_tick_behavior(MissedTickBehavior::Delay);
     flush_timer.tick().await;
@@ -52,7 +55,7 @@ pub(super) async fn run_history_writer(
             received = rx.recv() => match received {
                 Some(point) => {
                     batch.push(point);
-                    if batch.len() >= context.batch_max {
+                    if batch.len() >= batch_max {
                         flush_history_batch(&mut batch, &context).await;
                     }
                 }
@@ -68,7 +71,7 @@ pub(super) async fn run_history_writer(
 
     while let Ok(point) = rx.try_recv() {
         batch.push(point);
-        if batch.len() >= context.batch_max {
+        if batch.len() >= batch_max {
             flush_history_batch(&mut batch, &context).await;
         }
     }
