@@ -142,9 +142,10 @@ describe('useNodesStore', () => {
       const a = makeNode({ identity: { node_id: 'a', node_label: 'A', hostname: 'a', tags: [] } });
 
       store.applyServerState([a], '2026-06-01T12:01:00Z');
-      store.removeNode('a', '2026-06-01T12:00:00Z');
+      const removed = store.removeNode('a', '2026-06-01T12:00:00Z');
 
       expect(store.nodes).toEqual([a]);
+      expect(removed).toBe(false);
     });
 
     it('InitialState resets timestamp guard (Lagged resync)', () => {

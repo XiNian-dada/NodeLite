@@ -7,7 +7,28 @@ import { createApp, defineComponent, h } from 'vue';
 import NodeDetailView from './NodeDetailView.vue';
 import { setupI18n, getI18n, __resetI18nForTest } from '@/i18n';
 import { apiClient } from '@/api';
-import { makeNodeStatus } from '@/api/__fixtures__/nodes';
+import { makeNode, makeNodeStatus } from '@/api/__fixtures__/nodes';
+
+const wsMock = vi.hoisted(() => {
+  const handlers = new Map<string, Set<(message: never) => void>>();
+
+  return {
+    on: vi.fn((type: string, handler: (message: never) => void) => {
+      const existing = handlers.get(type) ?? new Set<(message: never) => void>();
+      existing.add(handler);
+      handlers.set(type, existing);
+      return () => {
+        existing.delete(handler);
+      };
+    }),
+    emit(type: string, message: unknown): void {
+      for (const handler of handlers.get(type) ?? []) handler(message as never);
+    },
+    reset(): void {
+      handlers.clear();
+    },
+  };
+});
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api');
@@ -21,6 +42,8 @@ vi.mock('@/api', async () => {
     },
   };
 });
+
+vi.mock('@/ws', () => ({ useWebSocket: () => wsMock }));
 
 const mockStatus = vi.mocked(apiClient.nodeStatus);
 const mockHistory = vi.mocked(apiClient.nodeHistory);
@@ -137,6 +160,7 @@ const FAKE_DICT = {
 };
 
 const Stub = defineComponent({ render: () => h('div') });
+const mountedWrappers = new Set<{ unmount: () => void }>();
 
 function makeRouter(): Router {
   return createRouter({
@@ -157,6 +181,7 @@ async function mountDetail(id = 'srv-1') {
   const wrapper = mount(NodeDetailView, {
     global: { plugins: [pinia, router, getI18n()] },
   });
+  mountedWrappers.add(wrapper);
   await flushPromises();
   return { wrapper, router };
 }
@@ -165,6 +190,7 @@ describe('NodeDetailView', () => {
   beforeEach(async () => {
     window.localStorage.clear();
     __resetI18nForTest();
+    wsMock.reset();
     mockStatus.mockResolvedValue(
       makeNodeStatus({
         identity: {
@@ -190,10 +216,13 @@ describe('NodeDetailView', () => {
   });
 
   afterEach(() => {
+    for (const wrapper of mountedWrappers) wrapper.unmount();
+    mountedWrappers.clear();
     window.localStorage.clear();
     __resetI18nForTest();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+    vi.useRealTimers();
   });
 
   it('loads the node status for the route id', async () => {
@@ -321,5 +350,93 @@ describe('NodeDetailView', () => {
     await flushPromises();
     expect(wrapper.find('[data-test="log-panel"]').exists()).toBe(true);
     expect(mockLogs).toHaveBeenCalledWith('srv-1', 200);
+  });
+
+  it('applies websocket node updates without polling the full status', async () => {
+    vi.useFakeTimers();
+    const { wrapper } = await mountDetail('srv-1');
+    expect(mockStatus).toHaveBeenCalledTimes(1);
+
+    wsMock.emit('node_upsert', {
+      type: 'node_upsert',
+      generated_at: '2026-06-01T12:00:00Z',
+      node: makeNode({
+        identity: {
+          node_id: 'srv-1',
+          node_label: 'Realtime Server',
+          hostname: 'realtime-server',
+          tags: ['region:us'],
+        },
+        snapshot: {
+          cpu_usage_percent: 88,
+          load: { one: 2.5 },
+          memory: { total_bytes: 8_000_000_000, used_bytes: 4_000_000_000 },
+        },
+        latency_ms: 320,
+        online: true,
+      }),
+    });
+    await flushPromises();
+
+    expect(wrapper.find('.node-title__name').text()).toBe('Realtime Server');
+    expect(wrapper.find('[data-test="node-status-badge"]').classes()).toContain('latency');
+    expect(wrapper.find('[data-test="summary-cpu"]').text()).toContain('88%');
+    expect(wrapper.find('[data-test="summary-latency"]').text()).toContain('320 ms');
+
+    await vi.advanceTimersByTimeAsync(5000);
+    await flushPromises();
+    expect(mockStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not poll the full status while waiting for websocket reconnects', async () => {
+    vi.useFakeTimers();
+    await mountDetail('srv-1');
+    expect(mockStatus).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(5000);
+    await flushPromises();
+    expect(mockStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows not-found when the active node is removed over websocket', async () => {
+    const { wrapper } = await mountDetail('srv-1');
+
+    wsMock.emit('node_removed', {
+      type: 'node_removed',
+      generated_at: '2026-06-01T12:00:00Z',
+      node_id: 'srv-1',
+    });
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="node-not-found"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="node-detail-view"]').exists()).toBe(false);
+  });
+
+  it('ignores stale websocket removal messages', async () => {
+    const { wrapper } = await mountDetail('srv-1');
+    wsMock.emit('initial_state', {
+      type: 'initial_state',
+      generated_at: '2026-06-01T12:01:00Z',
+      overview: {},
+      nodes: [
+        makeNode({
+          identity: {
+            node_id: 'srv-1',
+            node_label: 'Server One',
+            hostname: 'server-one',
+            tags: [],
+          },
+        }),
+      ],
+    });
+    wsMock.emit('node_removed', {
+      type: 'node_removed',
+      generated_at: '2026-06-01T12:00:00Z',
+      node_id: 'srv-1',
+    });
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="node-detail-view"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="node-not-found"]').exists()).toBe(false);
   });
 });

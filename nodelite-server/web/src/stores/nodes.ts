@@ -51,16 +51,20 @@ export const useNodesStore = defineStore('nodes', () => {
 
   // From WS NodeUpsert
   function upsertNode(node: NodeListItem, generatedAt: string): void {
-    if (lastGeneratedAt.value && Date.parse(generatedAt) < Date.parse(lastGeneratedAt.value)) return;
+    if (lastGeneratedAt.value && Date.parse(generatedAt) < Date.parse(lastGeneratedAt.value))
+      return;
     nodesById.value.set(node.identity.node_id, node);
     lastGeneratedAt.value = generatedAt;
   }
 
   // From WS NodeRemoved
-  function removeNode(nodeId: string, generatedAt: string): void {
-    if (lastGeneratedAt.value && Date.parse(generatedAt) < Date.parse(lastGeneratedAt.value)) return;
+  function removeNode(nodeId: string, generatedAt: string): boolean {
+    if (lastGeneratedAt.value && Date.parse(generatedAt) < Date.parse(lastGeneratedAt.value)) {
+      return false;
+    }
     nodesById.value.delete(nodeId);
     lastGeneratedAt.value = generatedAt;
+    return true;
   }
 
   return {

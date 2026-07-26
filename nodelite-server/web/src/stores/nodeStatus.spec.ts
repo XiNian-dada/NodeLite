@@ -2,7 +2,7 @@ import { setActivePinia, createPinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiAbortError, ApiError } from '@/api/client';
 import { apiClient } from '@/api';
-import { makeNodeStatus } from '@/api/__fixtures__/nodes';
+import { makeNode, makeNodeStatus } from '@/api/__fixtures__/nodes';
 import { useNodeStatusStore } from './nodeStatus';
 
 vi.mock('@/api', async () => {
@@ -190,5 +190,125 @@ describe('useNodeStatusStore', () => {
     resolve(makeNodeStatus());
     await Promise.all([first, second]);
     expect(mockStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('merges realtime summaries while preserving full detail fields', async () => {
+    const initial = makeNodeStatus({
+      identity: { ...makeNodeStatus().identity, node_id: 'a', os: 'freebsd' },
+    });
+    mockStatus.mockResolvedValueOnce(initial);
+    const store = useNodeStatusStore();
+    await store.load('a');
+
+    store.applyRealtimeSummary(
+      makeNode({
+        identity: {
+          node_id: 'a',
+          node_label: 'Realtime A',
+          hostname: 'realtime-a',
+          tags: ['edge'],
+        },
+        snapshot: {
+          cpu_usage_percent: 88,
+          load: { one: 4.2 },
+          memory: { total_bytes: 16_000, used_bytes: 12_000 },
+        },
+        latency_ms: 320,
+        online: false,
+      }),
+    );
+
+    expect(store.data).toMatchObject({
+      identity: {
+        node_id: 'a',
+        node_label: 'Realtime A',
+        hostname: 'realtime-a',
+        os: 'freebsd',
+        tags: ['edge'],
+      },
+      snapshot: {
+        collected_at: initial.snapshot?.collected_at,
+        cpu_usage_percent: 88,
+        load: { one: 4.2, five: 0.4, fifteen: 0.5 },
+        memory: {
+          total_bytes: 16_000,
+          used_bytes: 12_000,
+          available_bytes: 4_000,
+        },
+        disks: initial.snapshot?.disks,
+        network: initial.snapshot?.network,
+      },
+      latency_ms: 320,
+      online: false,
+    });
+  });
+
+  it('ignores realtime summaries for a different active node', async () => {
+    const initial = makeNodeStatus({
+      identity: { ...makeNodeStatus().identity, node_id: 'a' },
+    });
+    mockStatus.mockResolvedValueOnce(initial);
+    const store = useNodeStatusStore();
+    await store.load('a');
+
+    store.applyRealtimeSummary(
+      makeNode({
+        identity: { node_id: 'b', node_label: 'B', hostname: 'b', tags: [] },
+        latency_ms: 999,
+      }),
+    );
+
+    expect(store.data).toEqual(initial);
+  });
+
+  it('accepts a null realtime snapshot', async () => {
+    mockStatus.mockResolvedValueOnce(
+      makeNodeStatus({ identity: { ...makeNodeStatus().identity, node_id: 'a' } }),
+    );
+    const store = useNodeStatusStore();
+    await store.load('a');
+
+    store.applyRealtimeSummary(
+      makeNode({
+        identity: { node_id: 'a', node_label: 'A', hostname: 'a', tags: [] },
+        snapshot: null,
+      }),
+    );
+
+    expect(store.data?.snapshot).toBeNull();
+  });
+
+  it('marks the active node as removed and ignores its late REST response', async () => {
+    let resolve: (value: ReturnType<typeof makeNodeStatus>) => void = () => {};
+    mockStatus.mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    const store = useNodeStatusStore();
+    const pending = store.load('a');
+
+    store.markRemoved('a');
+    expect(store.data).toBeNull();
+    expect(store.error).toMatchObject({ status: 404 });
+    expect(store.loading).toBe(false);
+
+    resolve(makeNodeStatus({ identity: { ...makeNodeStatus().identity, node_id: 'a' } }));
+    await pending;
+    expect(store.data).toBeNull();
+    expect(store.error).toMatchObject({ status: 404 });
+  });
+
+  it('ignores removal events for a different node', async () => {
+    const initial = makeNodeStatus({
+      identity: { ...makeNodeStatus().identity, node_id: 'a' },
+    });
+    mockStatus.mockResolvedValueOnce(initial);
+    const store = useNodeStatusStore();
+    await store.load('a');
+
+    store.markRemoved('b');
+    expect(store.data).toEqual(initial);
+    expect(store.error).toBeNull();
   });
 });
