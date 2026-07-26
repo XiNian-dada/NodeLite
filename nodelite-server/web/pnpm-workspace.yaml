@@ -7,6 +7,9 @@ allowBuilds:
 
 overrides:
   vite: ^6.4.3
+  js-beautify@1.15.4: 2.0.3
+  nopt@10.0.1: 9.0.0
+  postcss@8.5.15: 8.5.23
 
 onlyBuiltDependencies:
   - esbuild
