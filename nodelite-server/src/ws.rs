@@ -43,6 +43,7 @@ use self::transport::{WebSocketPeer, configure_upgrade};
 struct ActiveSession {
     node_id: String,
     node_label: String,
+    agent_protocol_version: u16,
     session_id: u64,
     session_token: String,
     session_generation: u64,
@@ -281,6 +282,7 @@ mod tests {
         let session = ActiveSession {
             node_id: authorized.identity.node_id.clone(),
             node_label: authorized.identity.node_label.clone(),
+            agent_protocol_version: WIRE_PROTOCOL_VERSION,
             session_id: state
                 .shared
                 .register_node(

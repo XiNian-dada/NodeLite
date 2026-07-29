@@ -7,9 +7,9 @@ use chrono::Utc;
 use futures::{SinkExt, StreamExt};
 use getrandom::fill as fill_random;
 use nodelite_proto::{
-    AgentConfig, AgentLogEntry, AgentLogsMessage, HelloMessage, MetricsMessage, NoticeLevel,
-    PingMessage, PongMessage, ServerNoticeCode, ServerNoticeMessage, WIRE_PROTOCOL_VERSION,
-    WireMessage, truncate_to_byte_boundary,
+    AgentConfig, AgentLogEntry, AgentLogsMessage, HelloMessage, MetricsMessage,
+    NetworkThrottleMessage, NoticeLevel, PingMessage, PongMessage, ServerNoticeCode,
+    ServerNoticeMessage, WIRE_PROTOCOL_VERSION, WireMessage, truncate_to_byte_boundary,
 };
 use tokio::time::{MissedTickBehavior, interval, sleep, timeout};
 use tokio_tungstenite::connect_async_with_config;
@@ -19,6 +19,7 @@ use tracing::{info, warn};
 
 use crate::collector::{HostCollector, collect_snapshot_blocking};
 use crate::config_io::update_token_in_config;
+use crate::traffic_control::{TrafficControlOutcome, TrafficController};
 
 /// Agent 本地最多暂存的待上报日志条数。超出后丢弃最旧项,避免断线期间内存无限增长。
 const MAX_PENDING_AGENT_LOGS: usize = 256;
@@ -218,6 +219,7 @@ pub async fn run_session(
     let mut report_ticker = interval(Duration::from_secs(config.report_interval_secs));
     report_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut authenticated = false;
+    let mut traffic_controller = TrafficController::default();
 
     loop {
         tokio::select! {
@@ -306,6 +308,17 @@ pub async fn run_session(
                                     .await
                                     .map_err(|error| session_error(authenticated, error))?;
                             }
+                            WireMessage::NetworkThrottle(NetworkThrottleMessage { rate_kbps }) => {
+                                apply_network_throttle(
+                                    &mut traffic_controller,
+                                    &mut sender,
+                                    log_buffer,
+                                    authenticated,
+                                    rate_kbps,
+                                )
+                                .await
+                                .map_err(|error| session_error(authenticated, error))?;
+                            }
                             WireMessage::Hello(_)
                             | WireMessage::Metrics(_)
                             | WireMessage::Pong(_)
@@ -339,6 +352,46 @@ pub async fn run_session(
             }
         }
     }
+}
+
+async fn apply_network_throttle(
+    controller: &mut TrafficController,
+    sender: &mut AgentWsSender,
+    log_buffer: &mut AgentLogBuffer,
+    authenticated: bool,
+    rate_kbps: Option<u64>,
+) -> Result<()> {
+    match controller.apply(rate_kbps).await {
+        Ok(TrafficControlOutcome::Applied) => {
+            if let Some(rate_kbps) = rate_kbps {
+                info!(rate_kbps, "applied server-requested network traffic limit");
+                log_buffer.push(
+                    NoticeLevel::Info,
+                    format!("applied server-requested network traffic limit: {rate_kbps} kbit/s"),
+                );
+            } else {
+                info!("cleared server-requested network traffic limit");
+            }
+        }
+        Ok(TrafficControlOutcome::Unsupported) => {
+            warn!("server requested a network limit, but this platform is unsupported");
+            log_buffer.push(
+                NoticeLevel::Warn,
+                "server requested a network limit, but this platform is unsupported",
+            );
+        }
+        Err(error) => {
+            warn!(error = ?error, "failed to apply server-requested network traffic limit");
+            log_buffer.push(
+                NoticeLevel::Warn,
+                format!("failed to apply server-requested network traffic limit: {error}"),
+            );
+        }
+    }
+    if authenticated && !log_buffer.is_empty() {
+        flush_agent_logs(sender, log_buffer).await?;
+    }
+    Ok(())
 }
 
 fn session_error(established_session: bool, source: anyhow::Error) -> SessionError {

@@ -36,9 +36,9 @@ pub use config::{
 };
 pub use message::{
     AgentLogEntry, AgentLogsMessage, BrowserMessage, HelloMessage,
-    MIN_SUPPORTED_WIRE_PROTOCOL_VERSION, MetricsMessage, NoticeLevel, PingMessage, PongMessage,
-    RefreshTokenRequestMessage, RefreshTokenResponseMessage, ServerNoticeCode, ServerNoticeMessage,
-    WIRE_PROTOCOL_VERSION, WireMessage,
+    MIN_SUPPORTED_WIRE_PROTOCOL_VERSION, MetricsMessage, NetworkThrottleMessage, NoticeLevel,
+    PingMessage, PongMessage, RefreshTokenRequestMessage, RefreshTokenResponseMessage,
+    ServerNoticeCode, ServerNoticeMessage, WIRE_PROTOCOL_VERSION, WireMessage,
 };
 pub use model::{
     DiskUsage, GeoIpLocation, HistoryPoint, LoadAverage, MemoryUsage, NetworkCounters,

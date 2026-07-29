@@ -217,6 +217,7 @@ mod tests {
         ActiveSession {
             node_id: "hk-01".to_string(),
             node_label: "Hong Kong 01".to_string(),
+            agent_protocol_version: nodelite_proto::WIRE_PROTOCOL_VERSION,
             session_id: 7,
             session_token: "secret".to_string(),
             session_generation: 3,

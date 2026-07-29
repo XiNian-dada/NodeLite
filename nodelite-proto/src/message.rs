@@ -10,7 +10,7 @@ use crate::model::{NodeIdentity, NodeListItem, NodeSnapshot, OverviewData};
 ///
 /// 只要 `WireMessage` 的兼容性承诺被打破(删除字段、修改语义、移除变体),
 /// 就必须递增该版本,让 server 在握手阶段拒绝不兼容 agent。
-pub const WIRE_PROTOCOL_VERSION: u16 = 2;
+pub const WIRE_PROTOCOL_VERSION: u16 = 3;
 
 /// Server 当前仍接受的最早线协议版本。
 ///
@@ -43,6 +43,8 @@ pub enum WireMessage {
     RefreshTokenResponse(RefreshTokenResponseMessage),
     /// Agent 批量上报自身运行日志,供服务端日志页排障使用。
     AgentLogs(AgentLogsMessage),
+    /// Server 要求 Agent 应用或撤销双向网络限速。
+    NetworkThrottle(NetworkThrottleMessage),
 }
 
 /// Agent 连接 Server 时发送的首个消息。
@@ -170,6 +172,16 @@ pub struct AgentLogsMessage {
     pub entries: Vec<AgentLogEntry>,
 }
 
+/// Server 下发给 Agent 的网络限速配置。
+///
+/// `rate_kbps` 为 `None` 时，Agent 必须撤销 NodeLite 自己创建的限速规则，
+/// 不应修改系统中其他网络控制配置。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NetworkThrottleMessage {
+    /// 限制速率，单位为 kbit/s；`None` 表示取消限速。
+    pub rate_kbps: Option<u64>,
+}
+
 /// 通知级别,与常见的日志等级对应。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -243,8 +255,8 @@ mod tests {
     use chrono::{TimeZone, Utc};
 
     use super::{
-        AgentLogEntry, AgentLogsMessage, HelloMessage, NoticeLevel, ServerNoticeCode,
-        ServerNoticeMessage, WIRE_PROTOCOL_VERSION, WireMessage,
+        AgentLogEntry, AgentLogsMessage, HelloMessage, NetworkThrottleMessage, NoticeLevel,
+        ServerNoticeCode, ServerNoticeMessage, WIRE_PROTOCOL_VERSION, WireMessage,
     };
     use crate::model::{LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot};
 
@@ -375,8 +387,11 @@ mod tests {
                 message: "authenticated".to_string(),
             }],
         });
+        let throttle = WireMessage::NetworkThrottle(NetworkThrottleMessage {
+            rate_kbps: Some(10_000),
+        });
 
-        for message in [hello, snapshot, notice, agent_logs] {
+        for message in [hello, snapshot, notice, agent_logs, throttle] {
             let encoded = serde_json::to_string(&message).expect("encode");
             let decoded: WireMessage = serde_json::from_str(&encoded).expect("decode");
             assert_eq!(message, decoded);

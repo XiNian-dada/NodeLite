@@ -1193,6 +1193,7 @@ dependencies = [
  "nodelite-proto",
  "rustls",
  "serde_json",
+ "thiserror",
  "tokio",
  "tokio-tungstenite",
  "toml_edit",

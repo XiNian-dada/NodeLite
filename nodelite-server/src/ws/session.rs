@@ -7,8 +7,9 @@ use anyhow::{Result, anyhow};
 use axum::extract::ws::{CloseFrame, Message, WebSocket, close_code};
 use futures::StreamExt;
 use nodelite_proto::{
-    AgentLogEntry, AgentLogsMessage, MetricsMessage, NodeSnapshot, PongMessage,
-    RefreshTokenRequestMessage, ServerNoticeMessage, WireMessage,
+    AgentLogEntry, AgentLogsMessage, MetricsMessage, NetworkThrottleMessage, NodeSnapshot,
+    PongMessage, RefreshTokenRequestMessage, ServerNoticeMessage, WIRE_PROTOCOL_VERSION,
+    WireMessage,
 };
 use tokio::time::{MissedTickBehavior, interval};
 use tracing::{info, warn};
@@ -34,6 +35,7 @@ pub(crate) struct SessionLoopState {
     outstanding_pings: HashMap<u64, Instant>,
     next_ping_nonce: u64,
     metric_anomaly_window: VecDeque<Instant>,
+    last_sent_throttle_kbps: Option<Option<u64>>,
 }
 
 impl SessionLoopState {
@@ -48,6 +50,7 @@ impl SessionLoopState {
             outstanding_pings: HashMap::new(),
             next_ping_nonce: 1,
             metric_anomaly_window: VecDeque::new(),
+            last_sent_throttle_kbps: None,
         }
     }
 }
@@ -165,7 +168,7 @@ async fn handle_wire_message(
     match classify_agent_wire_message(message) {
         AgentWireAction::Metrics(snapshot) => {
             shared.record_ws_metrics_message();
-            handle_metrics_message(state, shared, session, loop_state, snapshot).await
+            handle_metrics_message(state, shared, session, sender, loop_state, snapshot).await
         }
         AgentWireAction::AgentLogs(entries) => {
             shared.record_ws_agent_logs_message();
@@ -206,6 +209,9 @@ fn classify_agent_wire_message(message: WireMessage) -> AgentWireAction {
         WireMessage::RefreshTokenResponse(_) => {
             AgentWireAction::Reject("agent must not send refresh_token_response messages")
         }
+        WireMessage::NetworkThrottle(_) => {
+            AgentWireAction::Reject("agent must not send network_throttle messages")
+        }
     }
 }
 
@@ -213,6 +219,7 @@ async fn handle_metrics_message(
     state: &AppState,
     shared: &crate::state::SharedState,
     session: &mut ActiveSession,
+    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
     loop_state: &mut SessionLoopState,
     snapshot: nodelite_proto::NodeSnapshot,
 ) -> Result<LoopAction, super::ProtocolError> {
@@ -269,30 +276,80 @@ async fn handle_metrics_message(
         ),
         None => return Ok(LoopAction::Continue),
     };
-    if let Some(quota) = state.registry.traffic_quota(&session.node_id).await {
-        let _ = state
-            .history
-            .record_traffic(
-                &session.node_id,
-                total_rx_bytes,
-                total_tx_bytes,
-                quota.accounting,
-                true,
-            )
-            .await;
-    } else {
-        let _ = state
-            .history
-            .record_traffic(
-                &session.node_id,
-                total_rx_bytes,
-                total_tx_bytes,
-                crate::registry::TrafficAccounting::Bidirectional,
-                false,
-            )
-            .await;
-    }
+    let desired_throttle_kbps =
+        if let Some(quota) = state.registry.traffic_quota(&session.node_id).await {
+            state
+                .history
+                .record_traffic(
+                    &session.node_id,
+                    total_rx_bytes,
+                    total_tx_bytes,
+                    quota.accounting,
+                    true,
+                )
+                .await
+                .and_then(|usage| {
+                    (quota.throttle_kbps.is_some()
+                        && traffic_usage_reached_throttle_threshold(
+                            usage.used_bytes,
+                            quota.limit_bytes,
+                        ))
+                    .then_some(quota.throttle_kbps)
+                    .flatten()
+                })
+        } else {
+            let _ = state
+                .history
+                .record_traffic(
+                    &session.node_id,
+                    total_rx_bytes,
+                    total_tx_bytes,
+                    crate::registry::TrafficAccounting::Bidirectional,
+                    false,
+                )
+                .await;
+            None
+        };
+    maybe_send_network_throttle(session, sender, loop_state, desired_throttle_kbps).await?;
     Ok(LoopAction::Continue)
+}
+
+fn traffic_usage_reached_throttle_threshold(used_bytes: u64, limit_bytes: u64) -> bool {
+    u128::from(used_bytes) * 100 >= u128::from(limit_bytes) * 95
+}
+
+async fn maybe_send_network_throttle(
+    session: &ActiveSession,
+    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
+    loop_state: &mut SessionLoopState,
+    rate_kbps: Option<u64>,
+) -> Result<(), super::ProtocolError> {
+    if !should_send_network_throttle(
+        session.agent_protocol_version,
+        loop_state.last_sent_throttle_kbps,
+        rate_kbps,
+    ) {
+        return Ok(());
+    }
+    let message = WireMessage::NetworkThrottle(NetworkThrottleMessage { rate_kbps });
+    let payload = serde_json::to_string(&message)
+        .map_err(|error| anyhow!("failed to serialize network throttle message: {error}"))?;
+    send_message(
+        sender,
+        Message::Text(payload.into()),
+        "failed to send network throttle message",
+    )
+    .await?;
+    loop_state.last_sent_throttle_kbps = Some(rate_kbps);
+    Ok(())
+}
+
+fn should_send_network_throttle(
+    agent_protocol_version: u16,
+    last_sent_rate_kbps: Option<Option<u64>>,
+    rate_kbps: Option<u64>,
+) -> bool {
+    agent_protocol_version >= WIRE_PROTOCOL_VERSION && last_sent_rate_kbps != Some(rate_kbps)
 }
 
 async fn handle_agent_logs_message(
@@ -449,7 +506,7 @@ mod tests {
 
     use axum::extract::ws::Message;
     use nodelite_proto::{
-        HelloMessage, NodeIdentity, NoticeLevel, PingMessage, PongMessage,
+        HelloMessage, NetworkThrottleMessage, NodeIdentity, NoticeLevel, PingMessage, PongMessage,
         RefreshTokenResponseMessage, ServerNoticeMessage, WIRE_PROTOCOL_VERSION, WireMessage,
     };
 
@@ -487,6 +544,7 @@ mod tests {
         assert_eq!(state.ping_expiry, Duration::from_secs(21));
         assert_eq!(state.next_ping_nonce, 1);
         assert!(state.outstanding_pings.is_empty());
+        assert_eq!(state.last_sent_throttle_kbps, None);
     }
 
     #[test]
@@ -521,6 +579,12 @@ mod tests {
                     expires_at: "2026-01-01T00:00:00Z".to_string(),
                 }),
                 "agent must not send refresh_token_response messages",
+            ),
+            (
+                WireMessage::NetworkThrottle(NetworkThrottleMessage {
+                    rate_kbps: Some(10_000),
+                }),
+                "agent must not send network_throttle messages",
             ),
         ];
 
@@ -560,6 +624,40 @@ mod tests {
         assert!(matches!(
             super::super::protocol::parse_wire_message(Message::Close(None)),
             Ok(super::super::protocol::ParsedFrame::Close)
+        ));
+    }
+
+    #[test]
+    fn traffic_limit_uses_a_95_percent_threshold_without_overflow() {
+        assert!(!super::traffic_usage_reached_throttle_threshold(949, 1_000));
+        assert!(super::traffic_usage_reached_throttle_threshold(950, 1_000));
+        assert!(super::traffic_usage_reached_throttle_threshold(
+            u64::MAX,
+            u64::MAX
+        ));
+    }
+
+    #[test]
+    fn traffic_throttle_commands_are_version_gated_and_deduplicated() {
+        assert!(!super::should_send_network_throttle(
+            WIRE_PROTOCOL_VERSION - 1,
+            None,
+            Some(10_000),
+        ));
+        assert!(super::should_send_network_throttle(
+            WIRE_PROTOCOL_VERSION,
+            None,
+            Some(10_000),
+        ));
+        assert!(!super::should_send_network_throttle(
+            WIRE_PROTOCOL_VERSION,
+            Some(Some(10_000)),
+            Some(10_000),
+        ));
+        assert!(super::should_send_network_throttle(
+            WIRE_PROTOCOL_VERSION,
+            Some(Some(10_000)),
+            None,
         ));
     }
 }

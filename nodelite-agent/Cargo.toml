@@ -28,6 +28,7 @@ tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 toml_edit.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "tracing-log"] }
+thiserror.workspace = true
 url.workspace = true
 nodelite-proto = { path = "../nodelite-proto" }
 
