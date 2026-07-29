@@ -85,6 +85,24 @@ const TOKEN_CACHE_CAPACITY: usize = 512;
 /// Token 验证结果缓存 TTL:5 分钟。重连场景下可直接命中缓存,避免 Argon2id 开销。
 const TOKEN_CACHE_TTL: Duration = Duration::from_secs(300);
 
+/// Agent 可接受的最大限速值(100 Gbit/s),用于拒绝明显错误的运营配置。
+pub(crate) const MAX_TRAFFIC_THROTTLE_KBPS: u64 = 100_000_000;
+
+/// 流量套餐的计费口径。
+///
+/// 单向套餐通常只计算出站流量,但某些供应商按入站计费,因此两个方向均可选择。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TrafficAccounting {
+    /// 收、发字节之和计入套餐。
+    #[default]
+    Bidirectional,
+    /// 只计入收到的字节。
+    Inbound,
+    /// 只计入发出的字节。
+    Outbound,
+}
+
 /// 已登记节点的持久化条目。
 ///
 /// Token 存储语义 (#56):
@@ -135,6 +153,15 @@ pub struct RegisteredNode {
     /// 运营侧记录的续费价格,例如 "¥30/月" 或 "$5/mo"。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub renewal_price: Option<String>,
+    /// 自然月流量上限,单位为字节。None 表示该节点不做流量套餐核算。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traffic_limit_bytes: Option<u64>,
+    /// 流量套餐的计费口径。旧注册表缺省时保持双向统计。
+    #[serde(default, skip_serializing_if = "is_bidirectional")]
+    pub traffic_accounting: TrafficAccounting,
+    /// 达到流量套餐 95% 后下发给 Agent 的每方向限速,单位为 Kbit/s。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traffic_throttle_kbps: Option<u64>,
     /// 手动位置覆盖。设置后 UI 地图与位置文本优先使用这里的值。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location_override_country: Option<String>,
@@ -148,6 +175,10 @@ pub struct RegisteredNode {
 
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+fn is_bidirectional(value: &TrafficAccounting) -> bool {
+    matches!(value, TrafficAccounting::Bidirectional)
 }
 
 /// 一次成功的 token 验证 / 颁发结果:返回身份与 token 状态快照,

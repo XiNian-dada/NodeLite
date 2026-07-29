@@ -40,6 +40,17 @@ const FAKE_DICT = {
     'node.settings.service_unlimited': 'Unlimited',
     'node.settings.service_unlimited_hint': 'No limit',
     'node.settings.renewal_price': 'Renewal price',
+    'node.settings.traffic_limit': 'Monthly traffic limit (GiB)',
+    'node.settings.traffic_limit_placeholder': '1024',
+    'node.settings.traffic_accounting': 'Traffic accounting',
+    'node.settings.traffic_accounting_bidirectional': 'Bidirectional',
+    'node.settings.traffic_accounting_inbound': 'Inbound',
+    'node.settings.traffic_accounting_outbound': 'Outbound',
+    'node.settings.traffic_throttle': 'Limit rate',
+    'node.settings.traffic_throttle_placeholder': '10',
+    'node.settings.traffic_throttle_hint': 'Applied after 95%',
+    'node.settings.traffic_invalid_number': 'Invalid traffic value',
+    'node.settings.traffic_throttle_requires_limit': 'Limit required',
     'node.settings.service_meta_save': 'Save',
     'node.settings.service_meta_saving': 'Saving…',
     'node.settings.service_meta_saved': 'Saved',
@@ -90,6 +101,9 @@ describe('NodeSettingsPanel', () => {
             service_expires_at: '2026-12-31T00:00:00Z',
             service_unlimited: false,
             renewal_price: '$4/mo',
+            traffic_limit_bytes: null,
+            traffic_accounting: 'bidirectional',
+            traffic_throttle_kbps: null,
             geoip_country: 'CN',
             geoip_city: 'Shenyang',
             geoip_latitude: 41.8057,
@@ -111,6 +125,9 @@ describe('NodeSettingsPanel', () => {
             service_expires_at: null,
             service_unlimited: false,
             renewal_price: null,
+            traffic_limit_bytes: null,
+            traffic_accounting: 'bidirectional',
+            traffic_throttle_kbps: null,
             geoip_country: null,
             geoip_city: null,
             geoip_latitude: null,
@@ -220,6 +237,9 @@ describe('NodeSettingsPanel', () => {
       service_expires_at: '2027-01-15T00:00:00Z',
       service_unlimited: false,
       renewal_price: '$5/mo',
+      traffic_limit_bytes: null,
+      traffic_accounting: 'bidirectional',
+      traffic_throttle_kbps: null,
     });
     expect(mockSettings).toHaveBeenCalledTimes(2);
     expect(wrapper.find('[data-test="settings-message"]').text()).toBe('Saved');
@@ -236,6 +256,27 @@ describe('NodeSettingsPanel', () => {
       service_expires_at: null,
       service_unlimited: true,
       renewal_price: '$4/mo',
+      traffic_limit_bytes: null,
+      traffic_accounting: 'bidirectional',
+      traffic_throttle_kbps: null,
+    });
+  });
+
+  it('saves a directional traffic budget and its optional throttle', async () => {
+    const wrapper = await mountPanel('node-a');
+    await wrapper.find('[data-test="node-traffic-limit-input"]').setValue('1024');
+    await wrapper.find('[data-test="node-traffic-accounting-input"]').setValue('outbound');
+    await wrapper.find('[data-test="node-traffic-throttle-input"]').setValue('10');
+    await wrapper.find('[data-test="node-service-meta-save"]').trigger('click');
+    await flushPromises();
+
+    expect(mockUpdateMeta).toHaveBeenCalledWith('node-a', {
+      service_expires_at: '2026-12-31T00:00:00Z',
+      service_unlimited: false,
+      renewal_price: '$4/mo',
+      traffic_limit_bytes: 1_099_511_627_776,
+      traffic_accounting: 'outbound',
+      traffic_throttle_kbps: 10_000,
     });
   });
 

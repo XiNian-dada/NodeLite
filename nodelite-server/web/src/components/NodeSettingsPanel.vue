@@ -97,6 +97,46 @@ const {
               data-test="node-renewal-price-input"
             />
           </label>
+          <label class="field">
+            <span>{{ t('node.settings.traffic_limit') }}</span>
+            <input
+              v-model="serviceDraft.trafficLimitGiB"
+              class="field-input"
+              type="number"
+              min="0.01"
+              step="0.01"
+              :placeholder="t('node.settings.traffic_limit_placeholder')"
+              data-test="node-traffic-limit-input"
+            />
+          </label>
+          <label class="field">
+            <span>{{ t('node.settings.traffic_accounting') }}</span>
+            <select
+              v-model="serviceDraft.trafficAccounting"
+              class="field-input"
+              data-test="node-traffic-accounting-input"
+            >
+              <option value="bidirectional">
+                {{ t('node.settings.traffic_accounting_bidirectional') }}
+              </option>
+              <option value="inbound">{{ t('node.settings.traffic_accounting_inbound') }}</option>
+              <option value="outbound">{{ t('node.settings.traffic_accounting_outbound') }}</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>{{ t('node.settings.traffic_throttle') }}</span>
+            <input
+              v-model="serviceDraft.trafficThrottleMbps"
+              class="field-input"
+              type="number"
+              min="0.001"
+              step="0.001"
+              :disabled="!serviceDraft.trafficLimitGiB"
+              :placeholder="t('node.settings.traffic_throttle_placeholder')"
+              data-test="node-traffic-throttle-input"
+            />
+          </label>
+          <p class="traffic-hint">{{ t('node.settings.traffic_throttle_hint') }}</p>
           <button
             type="button"
             class="btn btn--primary service-save"
@@ -298,9 +338,15 @@ const {
 }
 .service-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(140px, 0.65fr) minmax(0, 1fr) auto;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 12px;
   align-items: end;
+}
+.traffic-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 .location-current {
   margin-bottom: 12px;

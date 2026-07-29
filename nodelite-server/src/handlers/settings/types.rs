@@ -4,6 +4,8 @@ use nodelite_proto::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::registry::TrafficAccounting;
+
 /// 设置页读取的服务端与安全状态。这里刻意不包含任何 token / password 明文。
 #[derive(Debug, Serialize)]
 pub(crate) struct SettingsResponse {
@@ -53,6 +55,9 @@ pub(crate) struct SettingsAgentToken {
     pub(crate) service_expires_at: Option<DateTime<Utc>>,
     pub(crate) service_unlimited: bool,
     pub(crate) renewal_price: Option<String>,
+    pub(crate) traffic_limit_bytes: Option<u64>,
+    pub(crate) traffic_accounting: TrafficAccounting,
+    pub(crate) traffic_throttle_kbps: Option<u64>,
     pub(crate) geoip_country: Option<String>,
     pub(crate) geoip_city: Option<String>,
     pub(crate) geoip_latitude: Option<f64>,
@@ -71,6 +76,12 @@ pub(crate) struct UpdateNodeServiceMetadataRequest {
     pub(crate) service_unlimited: bool,
     #[serde(default)]
     pub(crate) renewal_price: Option<String>,
+    #[serde(default)]
+    pub(crate) traffic_limit_bytes: Option<u64>,
+    #[serde(default)]
+    pub(crate) traffic_accounting: TrafficAccounting,
+    #[serde(default)]
+    pub(crate) traffic_throttle_kbps: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -189,6 +189,9 @@ pub(crate) async fn update_node_service_metadata(
             request.service_expires_at,
             request.service_unlimited,
             request.renewal_price,
+            request.traffic_limit_bytes,
+            request.traffic_accounting,
+            request.traffic_throttle_kbps,
         )
         .await
     {

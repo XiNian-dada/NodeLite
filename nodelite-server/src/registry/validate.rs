@@ -8,7 +8,10 @@ use nodelite_proto::{
 
 use crate::sanitize::{validate_location_override, validate_renewal_price};
 
-use super::{InstallSession, RegisteredNode, RegistryError, RegistryFile, RegistryResult};
+use super::{
+    InstallSession, MAX_TRAFFIC_THROTTLE_KBPS, RegisteredNode, RegistryError, RegistryFile,
+    RegistryResult,
+};
 
 pub(super) fn validate_registry_file(path: &Path, file: &RegistryFile) -> RegistryResult<()> {
     let mut seen_nodes = HashMap::with_capacity(file.nodes.len());
@@ -64,7 +67,24 @@ pub(super) fn validate_registered_node(node: &RegisteredNode) -> RegistryResult<
     if let Some(price) = node.renewal_price.as_deref() {
         validate_renewal_price(price).map_err(RegistryError::validation)?;
     }
+    validate_traffic_settings(node)?;
     validate_location_override_fields(node)?;
+    Ok(())
+}
+
+fn validate_traffic_settings(node: &RegisteredNode) -> RegistryResult<()> {
+    if node.traffic_throttle_kbps.is_some() && node.traffic_limit_bytes.is_none() {
+        return Err(RegistryError::validation(
+            "node.traffic_throttle_kbps requires node.traffic_limit_bytes",
+        ));
+    }
+    if let Some(rate) = node.traffic_throttle_kbps
+        && (rate == 0 || rate > MAX_TRAFFIC_THROTTLE_KBPS)
+    {
+        return Err(RegistryError::validation(format!(
+            "node.traffic_throttle_kbps must be between 1 and {MAX_TRAFFIC_THROTTLE_KBPS}"
+        )));
+    }
     Ok(())
 }
 

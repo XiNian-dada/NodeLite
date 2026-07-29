@@ -74,6 +74,7 @@ export type {
   SettingsResponse,
   SettingsUpdates,
   ServerUpdateLogResponse,
+  TrafficAccounting,
   TriggeredRulePreview,
   TwoFactorSetupResponse,
   UpdateAlertRuleRequest,

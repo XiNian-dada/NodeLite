@@ -143,17 +143,32 @@ fn update_service_metadata_persists_display_fields() {
                 Some(expires_at),
                 false,
                 Some("  $5/mo  ".to_string()),
+                Some(1_073_741_824),
+                super::super::TrafficAccounting::Outbound,
+                Some(10_000),
             )
             .await
             .expect("service metadata should save");
         assert_eq!(updated.service_expires_at, Some(expires_at));
         assert!(!updated.service_unlimited);
         assert_eq!(updated.renewal_price.as_deref(), Some("$5/mo"));
+        assert_eq!(updated.traffic_limit_bytes, Some(1_073_741_824));
+        assert_eq!(
+            updated.traffic_accounting,
+            super::super::TrafficAccounting::Outbound
+        );
+        assert_eq!(updated.traffic_throttle_kbps, Some(10_000));
 
         let nodes = registry.list_registered_nodes().await;
         assert_eq!(nodes[0].service_expires_at, Some(expires_at));
         assert!(!nodes[0].service_unlimited);
         assert_eq!(nodes[0].renewal_price.as_deref(), Some("$5/mo"));
+        assert_eq!(nodes[0].traffic_limit_bytes, Some(1_073_741_824));
+        assert_eq!(
+            nodes[0].traffic_accounting,
+            super::super::TrafficAccounting::Outbound
+        );
+        assert_eq!(nodes[0].traffic_throttle_kbps, Some(10_000));
 
         let stored = std::fs::read_to_string(&path).expect("registry should be readable");
         let parsed: RegistryFile =
@@ -161,6 +176,12 @@ fn update_service_metadata_persists_display_fields() {
         assert_eq!(parsed.nodes[0].service_expires_at, Some(expires_at));
         assert!(!parsed.nodes[0].service_unlimited);
         assert_eq!(parsed.nodes[0].renewal_price.as_deref(), Some("$5/mo"));
+        assert_eq!(parsed.nodes[0].traffic_limit_bytes, Some(1_073_741_824));
+        assert_eq!(
+            parsed.nodes[0].traffic_accounting,
+            super::super::TrafficAccounting::Outbound
+        );
+        assert_eq!(parsed.nodes[0].traffic_throttle_kbps, Some(10_000));
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&temp_dir);
@@ -196,7 +217,15 @@ fn update_service_metadata_can_mark_service_unlimited() {
         let expires_at = Utc.with_ymd_and_hms(2026, 12, 31, 0, 0, 0).unwrap();
 
         let updated = registry
-            .update_service_metadata("hk-01", Some(expires_at), true, None)
+            .update_service_metadata(
+                "hk-01",
+                Some(expires_at),
+                true,
+                None,
+                None,
+                super::super::TrafficAccounting::Bidirectional,
+                None,
+            )
             .await
             .expect("service metadata should save");
         assert_eq!(updated.service_expires_at, None);
@@ -207,6 +236,50 @@ fn update_service_metadata_can_mark_service_unlimited() {
             serde_json::from_str(&stored).expect("stored registry should parse");
         assert_eq!(parsed.nodes[0].service_expires_at, None);
         assert!(parsed.nodes[0].service_unlimited);
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&temp_dir);
+    });
+}
+
+#[test]
+fn update_service_metadata_rejects_throttle_without_traffic_limit() {
+    let runtime = Runtime::new().expect("runtime should build");
+    runtime.block_on(async {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic enough")
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("nodelite-traffic-config-test-{unique}"));
+        std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+        let path = temp_dir.join("server.json");
+        issue_node(
+            &path,
+            IssueNodeRequest {
+                node_id: "hk-01".to_string(),
+                node_label: None,
+                tags: Vec::new(),
+            },
+        )
+        .await
+        .expect("node should be issued");
+        let registry = NodeRegistry::load(&path)
+            .await
+            .expect("registry should load");
+
+        let error = registry
+            .update_service_metadata(
+                "hk-01",
+                None,
+                false,
+                None,
+                None,
+                super::super::TrafficAccounting::Bidirectional,
+                Some(10_000),
+            )
+            .await
+            .expect_err("throttle must require a quota");
+        assert!(error.to_string().contains("requires traffic_limit_bytes"));
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&temp_dir);

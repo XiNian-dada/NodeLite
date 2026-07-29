@@ -3,6 +3,8 @@ import { makeSettings } from '@/api/__fixtures__/nodes';
 import {
   dateInputValue,
   optionalNumber,
+  optionalTrafficBytes,
+  optionalTrafficKbps,
   reauthBody,
   serviceExpiresAt,
   syncDraftsFromAgent,
@@ -26,6 +28,14 @@ describe('useNodeSettingsDraft helpers', () => {
     expect(optionalNumber('abc')).toBeUndefined();
   });
 
+  it('converts positive traffic settings without accepting zero or unsafe values', () => {
+    expect(optionalTrafficBytes('1.5')).toBe(1_610_612_736);
+    expect(optionalTrafficKbps('12.5')).toBe(12_500);
+    expect(optionalTrafficBytes('')).toBeNull();
+    expect(optionalTrafficKbps('0')).toBeUndefined();
+    expect(optionalTrafficBytes('invalid')).toBeUndefined();
+  });
+
   it('omits blank reauth fields from refresh payloads', () => {
     expect(reauthBody({ current_password: '', code: '' })).toEqual({});
     expect(reauthBody({ current_password: 'hunter2', code: '' })).toEqual({
@@ -42,6 +52,9 @@ describe('useNodeSettingsDraft helpers', () => {
           service_expires_at: '2026-12-31T00:00:00Z',
           service_unlimited: true,
           renewal_price: '$9/mo',
+          traffic_limit_bytes: 1_073_741_824,
+          traffic_accounting: 'outbound',
+          traffic_throttle_kbps: 12_500,
           location_override_country: 'HK',
           location_override_city: 'Hong Kong',
           location_override_latitude: 22.3193,
@@ -53,6 +66,9 @@ describe('useNodeSettingsDraft helpers', () => {
       serviceDate: '',
       serviceUnlimited: false,
       renewalPrice: '',
+      trafficLimitGiB: '',
+      trafficAccounting: 'bidirectional',
+      trafficThrottleMbps: '',
     };
     const locationDraft: LocationDraft = {
       country: '',
@@ -67,6 +83,9 @@ describe('useNodeSettingsDraft helpers', () => {
       serviceDate: '2026-12-31',
       serviceUnlimited: true,
       renewalPrice: '$9/mo',
+      trafficLimitGiB: '1',
+      trafficAccounting: 'outbound',
+      trafficThrottleMbps: '12.5',
     });
     expect(locationDraft).toEqual({
       country: 'HK',
@@ -80,6 +99,9 @@ describe('useNodeSettingsDraft helpers', () => {
       serviceDate: '',
       serviceUnlimited: false,
       renewalPrice: '',
+      trafficLimitGiB: '',
+      trafficAccounting: 'bidirectional',
+      trafficThrottleMbps: '',
     });
     expect(locationDraft).toEqual({
       country: '',

@@ -1,5 +1,5 @@
 import { computed, onMounted, reactive, watch, type Ref } from 'vue';
-import { apiClient, type SettingsAgentToken } from '@/api';
+import { apiClient, type SettingsAgentToken, type TrafficAccounting } from '@/api';
 import { ApiAbortError } from '@/api/client';
 import { messageFromError } from '@/lib/apiError';
 import { fmtDateTime } from '@/lib/format';
@@ -19,6 +19,9 @@ export interface ServiceDraft {
   serviceDate: string;
   serviceUnlimited: boolean;
   renewalPrice: string;
+  trafficLimitGiB: string;
+  trafficAccounting: TrafficAccounting;
+  trafficThrottleMbps: string;
 }
 
 export interface LocationDraft {
@@ -51,6 +54,31 @@ export function optionalNumber(value: string | number): number | null | undefine
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+const BYTES_PER_GIB = 1024 ** 3;
+const KBPS_PER_MBPS = 1000;
+
+export function optionalTrafficBytes(value: string | number): number | null | undefined {
+  const gib = optionalNumber(value);
+  if (gib == null) return gib;
+  const bytes = Math.round(gib * BYTES_PER_GIB);
+  return gib > 0 && Number.isSafeInteger(bytes) ? bytes : undefined;
+}
+
+export function optionalTrafficKbps(value: string | number): number | null | undefined {
+  const mbps = optionalNumber(value);
+  if (mbps == null) return mbps;
+  const kbps = Math.round(mbps * KBPS_PER_MBPS);
+  return mbps > 0 && Number.isSafeInteger(kbps) ? kbps : undefined;
+}
+
+function gibInputValue(value: number | null | undefined): string {
+  return value == null ? '' : String(value / BYTES_PER_GIB);
+}
+
+function mbpsInputValue(value: number | null | undefined): string {
+  return value == null ? '' : String(value / KBPS_PER_MBPS);
+}
+
 export function reauthBody(reauth: ReauthDraft): { current_password?: string; code?: string } {
   const body: { current_password?: string; code?: string } = {};
   if (reauth.current_password) body.current_password = reauth.current_password;
@@ -66,6 +94,9 @@ export function syncDraftsFromAgent(
   serviceDraft.serviceDate = dateInputValue(agent?.service_expires_at);
   serviceDraft.serviceUnlimited = agent?.service_unlimited ?? false;
   serviceDraft.renewalPrice = agent?.renewal_price ?? '';
+  serviceDraft.trafficLimitGiB = gibInputValue(agent?.traffic_limit_bytes);
+  serviceDraft.trafficAccounting = agent?.traffic_accounting ?? 'bidirectional';
+  serviceDraft.trafficThrottleMbps = mbpsInputValue(agent?.traffic_throttle_kbps);
   locationDraft.country = agent?.location_override_country ?? '';
   locationDraft.city = agent?.location_override_city ?? '';
   locationDraft.latitude =
@@ -89,6 +120,9 @@ export function useNodeSettingsDraft(nodeId: Ref<string>, t: NodeSettingsTransla
     serviceDate: '',
     serviceUnlimited: false,
     renewalPrice: '',
+    trafficLimitGiB: '',
+    trafficAccounting: 'bidirectional',
+    trafficThrottleMbps: '',
   });
   const serviceMessage = reactive<SettingsMessageState>({
     state: null,
@@ -152,12 +186,27 @@ export function useNodeSettingsDraft(nodeId: Ref<string>, t: NodeSettingsTransla
     serviceSaving.value = true;
     try {
       const renewalPrice = serviceDraft.renewalPrice.trim();
+      const trafficLimitBytes = optionalTrafficBytes(serviceDraft.trafficLimitGiB);
+      const trafficThrottleKbps = optionalTrafficKbps(serviceDraft.trafficThrottleMbps);
+      if (trafficLimitBytes === undefined || trafficThrottleKbps === undefined) {
+        serviceMessage.state = 'error';
+        serviceMessage.text = t('node.settings.traffic_invalid_number');
+        return;
+      }
+      if (trafficLimitBytes == null && trafficThrottleKbps != null) {
+        serviceMessage.state = 'error';
+        serviceMessage.text = t('node.settings.traffic_throttle_requires_limit');
+        return;
+      }
       const resp = await apiClient.updateNodeServiceMetadata(nodeId.value, {
         service_expires_at: serviceDraft.serviceUnlimited
           ? null
           : serviceExpiresAt(serviceDraft.serviceDate),
         service_unlimited: serviceDraft.serviceUnlimited,
         renewal_price: renewalPrice || null,
+        traffic_limit_bytes: trafficLimitBytes,
+        traffic_accounting: serviceDraft.trafficAccounting,
+        traffic_throttle_kbps: trafficThrottleKbps,
       });
       await settingsStore.refresh();
       serviceDraft.renewalPrice = renewalPrice;

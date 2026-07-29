@@ -14,6 +14,9 @@ interface ServiceDraft {
   serviceDate: string;
   serviceUnlimited: boolean;
   renewalPrice: string;
+  trafficLimitBytes: number | null;
+  trafficAccounting: SettingsAgentToken['traffic_accounting'];
+  trafficThrottleKbps: number | null;
   saving: boolean;
   state: 'ok' | 'error' | null;
   message: string;
@@ -26,6 +29,9 @@ function draftFromAgent(agent: SettingsAgentToken, existing?: ServiceDraft): Ser
     serviceDate: dateInputValue(agent.service_expires_at),
     serviceUnlimited: agent.service_unlimited,
     renewalPrice: agent.renewal_price ?? '',
+    trafficLimitBytes: agent.traffic_limit_bytes,
+    trafficAccounting: agent.traffic_accounting,
+    trafficThrottleKbps: agent.traffic_throttle_kbps,
     saving: false,
     state: existing?.state ?? null,
     message: existing?.message ?? '',
@@ -90,6 +96,9 @@ async function saveServiceMetadata(nodeId: string): Promise<void> {
       service_expires_at: draft.serviceUnlimited ? null : serviceExpiresAt(draft.serviceDate),
       service_unlimited: draft.serviceUnlimited,
       renewal_price: renewalPrice || null,
+      traffic_limit_bytes: draft.trafficLimitBytes,
+      traffic_accounting: draft.trafficAccounting,
+      traffic_throttle_kbps: draft.trafficThrottleKbps,
     });
     draft.renewalPrice = renewalPrice;
     draft.state = 'ok';

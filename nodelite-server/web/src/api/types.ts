@@ -230,6 +230,9 @@ export interface SettingsAgentToken {
   service_expires_at: string | null;
   service_unlimited: boolean;
   renewal_price: string | null;
+  traffic_limit_bytes: number | null;
+  traffic_accounting: TrafficAccounting;
+  traffic_throttle_kbps: number | null;
   geoip_country: string | null;
   geoip_city: string | null;
   geoip_latitude: number | null;
@@ -271,10 +274,15 @@ export interface ReauthPayload {
 }
 
 /** POST /api/nodes/{id}/service-meta */
+export type TrafficAccounting = 'bidirectional' | 'inbound' | 'outbound';
+
 export interface UpdateNodeServiceMetadataRequest {
   service_expires_at: string | null;
   service_unlimited: boolean;
   renewal_price: string | null;
+  traffic_limit_bytes: number | null;
+  traffic_accounting: TrafficAccounting;
+  traffic_throttle_kbps: number | null;
 }
 
 /** POST /api/nodes/{id}/location-override */

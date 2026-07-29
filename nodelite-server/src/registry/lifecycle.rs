@@ -16,9 +16,10 @@ use super::storage::{
 };
 use super::token::{constant_time_eq, generate_token, hash_token, prune_expired_install_sessions};
 use super::{
-    ConsumedInstall, DEFAULT_TOKEN_VALIDITY_DAYS, NodeRegistry, RegisteredNode, RegistryError,
-    RegistryFile, RegistryReloadCheckpoint, RegistryResult, TOKEN_CACHE_CAPACITY,
-    TOKEN_REFRESH_GRACE_MINUTES, coordinate_to_microdegrees,
+    ConsumedInstall, DEFAULT_TOKEN_VALIDITY_DAYS, MAX_TRAFFIC_THROTTLE_KBPS, NodeRegistry,
+    RegisteredNode, RegistryError, RegistryFile, RegistryReloadCheckpoint, RegistryResult,
+    TOKEN_CACHE_CAPACITY, TOKEN_REFRESH_GRACE_MINUTES, TrafficAccounting,
+    coordinate_to_microdegrees,
 };
 
 impl NodeRegistry {
@@ -196,6 +197,9 @@ impl NodeRegistry {
         service_expires_at: Option<DateTime<Utc>>,
         service_unlimited: bool,
         renewal_price: Option<String>,
+        traffic_limit_bytes: Option<u64>,
+        traffic_accounting: TrafficAccounting,
+        traffic_throttle_kbps: Option<u64>,
     ) -> RegistryResult<RegisteredNode> {
         validate_identifier("node_id", node_id).map_err(RegistryError::validation)?;
         let renewal_price =
@@ -205,6 +209,7 @@ impl NodeRegistry {
         } else {
             service_expires_at
         };
+        validate_traffic_settings(traffic_limit_bytes, traffic_throttle_kbps)?;
         let node_id = node_id.to_string();
         let path = Arc::clone(&self.path);
         let (node, file) = mutate_registry_file(path.as_ref(), move |file| {
@@ -214,6 +219,9 @@ impl NodeRegistry {
             node.service_expires_at = service_expires_at;
             node.service_unlimited = service_unlimited;
             node.renewal_price = renewal_price.clone();
+            node.traffic_limit_bytes = traffic_limit_bytes;
+            node.traffic_accounting = traffic_accounting;
+            node.traffic_throttle_kbps = traffic_throttle_kbps;
             super::validate::validate_registered_node(node)?;
             Ok((node.clone(), true))
         })
@@ -349,4 +357,23 @@ impl NodeRegistry {
         let _ = acquired.send(());
         let _ = release.await;
     }
+}
+
+fn validate_traffic_settings(
+    traffic_limit_bytes: Option<u64>,
+    traffic_throttle_kbps: Option<u64>,
+) -> RegistryResult<()> {
+    if traffic_throttle_kbps.is_some() && traffic_limit_bytes.is_none() {
+        return Err(RegistryError::validation(
+            "traffic_throttle_kbps requires traffic_limit_bytes",
+        ));
+    }
+    if let Some(rate) = traffic_throttle_kbps
+        && (rate == 0 || rate > MAX_TRAFFIC_THROTTLE_KBPS)
+    {
+        return Err(RegistryError::validation(format!(
+            "traffic_throttle_kbps must be between 1 and {MAX_TRAFFIC_THROTTLE_KBPS}"
+        )));
+    }
+    Ok(())
 }
