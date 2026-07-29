@@ -160,7 +160,7 @@ fn parses_server_config_with_defaults() {
         DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS
     );
     assert!(!config.alerting.enabled);
-    assert_eq!(config.alerting.rules.len(), 4);
+    assert_eq!(config.alerting.rules.len(), 9);
     assert_eq!(config.alerting.rules[0].id, "node-offline");
     assert_eq!(config.alerting.rules[0].metric, AlertMetric::OfflineMinutes);
     assert_eq!(
@@ -196,6 +196,14 @@ fn parses_server_config_with_defaults() {
         config.alerting.rules[3].window_minutes,
         DEFAULT_ALERT_RTT_WINDOW_MINUTES
     );
+    let traffic_thresholds = config
+        .alerting
+        .rules
+        .iter()
+        .filter(|rule| rule.metric == AlertMetric::TrafficUsagePercent)
+        .map(|rule| rule.threshold)
+        .collect::<Vec<_>>();
+    assert_eq!(traffic_thresholds, vec![50, 70, 80, 90, 95]);
     assert!(
         config
             .alerting

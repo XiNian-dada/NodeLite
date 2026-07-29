@@ -231,6 +231,7 @@ export interface SettingsAgentToken {
   service_unlimited: boolean;
   renewal_price: string | null;
   traffic_limit_bytes: number | null;
+  traffic_used_bytes: number | null;
   traffic_accounting: TrafficAccounting;
   traffic_throttle_kbps: number | null;
   geoip_country: string | null;
@@ -329,7 +330,8 @@ export type AlertMetric =
   | 'memory_usage_percent'
   | 'disk_usage_percent'
   | 'latency_ms'
-  | 'offline_minutes';
+  | 'offline_minutes'
+  | 'traffic_usage_percent';
 export type AlertComparator = 'gt' | 'lt';
 export type AlertSeverity = 'warning' | 'critical';
 export type AlertScopeMode = 'all' | 'node_ids' | 'tags';

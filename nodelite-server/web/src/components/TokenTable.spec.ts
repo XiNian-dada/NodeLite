@@ -54,7 +54,7 @@ function agent(over: Partial<SettingsAgentToken>): SettingsAgentToken {
     node_id: 'n', node_label: 'N', online: true, agent_version: '1.0',
     remote_ip: '10.0.0.1', tags: [], token_expires_at: '2026-12-01T00:00:00Z',
     token_expires_in_secs: 1_000_000, service_expires_at: null, service_unlimited: false, renewal_price: null,
-    traffic_limit_bytes: null, traffic_accounting: 'bidirectional', traffic_throttle_kbps: null,
+    traffic_limit_bytes: null, traffic_used_bytes: null, traffic_accounting: 'bidirectional', traffic_throttle_kbps: null,
     geoip_country: null, geoip_city: null, geoip_latitude: null, geoip_longitude: null,
     location_override_country: null, location_override_city: null,
     location_override_latitude: null, location_override_longitude: null, ...over,

@@ -103,6 +103,14 @@ pub enum TrafficAccounting {
     Outbound,
 }
 
+/// 运行时流量累计和限速决策所需的最小节点套餐配置。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TrafficQuota {
+    pub(crate) limit_bytes: u64,
+    pub(crate) accounting: TrafficAccounting,
+    pub(crate) throttle_kbps: Option<u64>,
+}
+
 /// 已登记节点的持久化条目。
 ///
 /// Token 存储语义 (#56):

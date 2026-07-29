@@ -3,7 +3,7 @@ use std::path::Path;
 use axum::Json;
 use axum::extract::State;
 use axum::response::IntoResponse;
-use chrono::Utc;
+use chrono::{Datelike, Utc};
 
 use crate::AppState;
 use crate::auth::{TWO_FACTOR_AUTH_SECS, TWO_FACTOR_PENDING_SECS};
@@ -27,6 +27,17 @@ pub(crate) async fn settings(State(state): State<AppState>) -> impl IntoResponse
         .map(|status| (status.identity.node_id.clone(), status))
         .collect::<std::collections::HashMap<_, _>>();
     let now = Utc::now();
+    let traffic_usage_by_node = state
+        .history
+        .traffic_usages()
+        .await
+        .into_iter()
+        .filter(|usage| {
+            usage.cycle_started_at.year() == now.year()
+                && usage.cycle_started_at.month() == now.month()
+        })
+        .map(|usage| (usage.node_id.clone(), usage))
+        .collect::<std::collections::HashMap<_, _>>();
     let agents = state
         .registry
         .list_registered_nodes()
@@ -34,6 +45,10 @@ pub(crate) async fn settings(State(state): State<AppState>) -> impl IntoResponse
         .into_iter()
         .map(|node| {
             let status = status_by_id.get(&node.node_id);
+            let traffic_used_bytes = traffic_usage_by_node
+                .get(&node.node_id)
+                .filter(|usage| usage.accounting == node.traffic_accounting)
+                .map(|usage| usage.used_bytes);
             SettingsAgentToken {
                 node_id: node.node_id,
                 node_label: node.node_label,
@@ -49,6 +64,7 @@ pub(crate) async fn settings(State(state): State<AppState>) -> impl IntoResponse
                 service_unlimited: node.service_unlimited,
                 renewal_price: node.renewal_price,
                 traffic_limit_bytes: node.traffic_limit_bytes,
+                traffic_used_bytes,
                 traffic_accounting: node.traffic_accounting,
                 traffic_throttle_kbps: node.traffic_throttle_kbps,
                 geoip_country: status.and_then(|status| status.geoip_country.clone()),

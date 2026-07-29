@@ -50,6 +50,9 @@ pub(crate) trait AlertStatusView {
     fn last_seen(&self) -> Option<DateTime<Utc>>;
     fn latency_ms(&self) -> Option<u64>;
     fn online(&self) -> bool;
+    fn traffic_usage_percent(&self) -> Option<u64> {
+        None
+    }
 }
 
 impl AlertStatusView for NodeStatus {
@@ -113,7 +116,7 @@ where
     S: AlertStatusView + ?Sized,
 {
     let value = rule_metric_value(rule, status, now)?;
-    if !comparator_matches(rule.comparator.clone(), value, rule.threshold) {
+    if !rule_comparator_matches(rule, value) {
         return None;
     }
     Some(EvaluatedRule {
@@ -258,7 +261,17 @@ where
         AlertMetric::DiskUsagePercent => max_disk_percent(status),
         AlertMetric::LatencyMs => status.latency_ms(),
         AlertMetric::OfflineMinutes => offline_minutes(status, now),
+        AlertMetric::TrafficUsagePercent => status.traffic_usage_percent(),
     }
+}
+
+fn rule_comparator_matches(rule: &AlertRuleConfig, value: u64) -> bool {
+    if matches!(rule.metric, AlertMetric::TrafficUsagePercent)
+        && matches!(rule.comparator, AlertComparator::Gt)
+    {
+        return value >= rule.threshold;
+    }
+    comparator_matches(rule.comparator.clone(), value, rule.threshold)
 }
 
 pub(crate) fn comparator_matches(comparator: AlertComparator, left: u64, right: u64) -> bool {
@@ -337,7 +350,7 @@ mod tests {
         InspectionConfig, NodeStatus,
     };
 
-    use super::{build_inspection_report, evaluate_rule};
+    use super::{AlertStatusView, build_inspection_report, evaluate_rule};
     use crate::test_support::{fake_snapshot, synthetic_identity};
 
     fn sample_status(
@@ -389,6 +402,42 @@ mod tests {
         }
     }
 
+    struct TrafficStatus;
+
+    impl AlertStatusView for TrafficStatus {
+        fn node_id(&self) -> &str {
+            "traffic-node"
+        }
+
+        fn node_label(&self) -> &str {
+            "Traffic node"
+        }
+
+        fn tags(&self) -> &[String] {
+            &[]
+        }
+
+        fn snapshot(&self) -> Option<&nodelite_proto::NodeSnapshot> {
+            None
+        }
+
+        fn last_seen(&self) -> Option<chrono::DateTime<Utc>> {
+            None
+        }
+
+        fn latency_ms(&self) -> Option<u64> {
+            None
+        }
+
+        fn online(&self) -> bool {
+            true
+        }
+
+        fn traffic_usage_percent(&self) -> Option<u64> {
+            Some(50)
+        }
+    }
+
     #[test]
     fn evaluate_rule_uses_scope_and_threshold() {
         let now = Utc::now();
@@ -420,6 +469,29 @@ mod tests {
             evaluate_rule(&lt_rule, &status, now).is_none(),
             "equal values must not trigger lt rules"
         );
+    }
+
+    #[test]
+    fn traffic_usage_rule_matches_its_exact_threshold() {
+        let now = Utc::now();
+        let rule = AlertRuleConfig {
+            id: "traffic-50".to_string(),
+            name: "Traffic usage".to_string(),
+            enabled: true,
+            metric: AlertMetric::TrafficUsagePercent,
+            comparator: AlertComparator::Gt,
+            threshold: 50,
+            window_minutes: 1,
+            severity: AlertSeverity::Warning,
+            scope_mode: AlertScopeMode::All,
+            node_ids: Vec::new(),
+            tags: Vec::new(),
+            delivery: vec![AlertChannel::Smtp],
+            cooldown_minutes: 30,
+            send_resolved: true,
+        };
+
+        assert!(evaluate_rule(&rule, &TrafficStatus, now).is_some());
     }
 
     #[test]

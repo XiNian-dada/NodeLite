@@ -265,6 +265,7 @@ fn alert_metric_label(metric: &nodelite_proto::AlertMetric) -> &'static str {
         nodelite_proto::AlertMetric::DiskUsagePercent => "Disk usage",
         nodelite_proto::AlertMetric::LatencyMs => "RTT",
         nodelite_proto::AlertMetric::OfflineMinutes => "Offline duration",
+        nodelite_proto::AlertMetric::TrafficUsagePercent => "Monthly traffic usage",
     }
 }
 
@@ -272,7 +273,8 @@ fn format_alert_metric_value(metric: &nodelite_proto::AlertMetric, value: u64) -
     match metric {
         nodelite_proto::AlertMetric::CpuUsagePercent
         | nodelite_proto::AlertMetric::MemoryUsagePercent
-        | nodelite_proto::AlertMetric::DiskUsagePercent => format!("{value}%"),
+        | nodelite_proto::AlertMetric::DiskUsagePercent
+        | nodelite_proto::AlertMetric::TrafficUsagePercent => format!("{value}%"),
         nodelite_proto::AlertMetric::LatencyMs => format!("{value} ms"),
         nodelite_proto::AlertMetric::OfflineMinutes => format!("{value} min"),
     }

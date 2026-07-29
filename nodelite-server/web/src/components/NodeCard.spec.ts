@@ -159,6 +159,7 @@ describe('NodeCard', () => {
           service_unlimited: true,
           renewal_price: null,
           traffic_limit_bytes: null,
+          traffic_used_bytes: null,
           traffic_accounting: 'bidirectional',
           traffic_throttle_kbps: null,
           geoip_country: null,

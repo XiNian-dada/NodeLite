@@ -18,7 +18,7 @@ use super::token::{constant_time_eq, generate_token, hash_token, prune_expired_i
 use super::{
     ConsumedInstall, DEFAULT_TOKEN_VALIDITY_DAYS, MAX_TRAFFIC_THROTTLE_KBPS, NodeRegistry,
     RegisteredNode, RegistryError, RegistryFile, RegistryReloadCheckpoint, RegistryResult,
-    TOKEN_CACHE_CAPACITY, TOKEN_REFRESH_GRACE_MINUTES, TrafficAccounting,
+    TOKEN_CACHE_CAPACITY, TOKEN_REFRESH_GRACE_MINUTES, TrafficAccounting, TrafficQuota,
     coordinate_to_microdegrees,
 };
 
@@ -188,6 +188,22 @@ impl NodeRegistry {
                 .then_with(|| left.node_id.cmp(&right.node_id))
         });
         nodes
+    }
+
+    /// 返回节点启用中的流量套餐；未设置上限的节点不参与用量累计。
+    pub(crate) async fn traffic_quota(&self, node_id: &str) -> Option<TrafficQuota> {
+        self.state
+            .read()
+            .await
+            .entries
+            .get(node_id)
+            .and_then(|node| {
+                node.traffic_limit_bytes.map(|limit_bytes| TrafficQuota {
+                    limit_bytes,
+                    accounting: node.traffic_accounting,
+                    throttle_kbps: node.traffic_throttle_kbps,
+                })
+            })
     }
 
     /// 更新设置页展示用的节点运营元数据。

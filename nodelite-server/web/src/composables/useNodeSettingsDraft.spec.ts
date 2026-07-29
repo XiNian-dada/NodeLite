@@ -53,6 +53,7 @@ describe('useNodeSettingsDraft helpers', () => {
           service_unlimited: true,
           renewal_price: '$9/mo',
           traffic_limit_bytes: 1_073_741_824,
+          traffic_used_bytes: null,
           traffic_accounting: 'outbound',
           traffic_throttle_kbps: 12_500,
           location_override_country: 'HK',

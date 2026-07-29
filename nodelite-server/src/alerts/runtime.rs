@@ -11,6 +11,7 @@ use tracing::{info, warn};
 
 use crate::history::HistoryStore;
 use crate::queue::{bounded_mpsc_channel, try_enqueue};
+use crate::registry::NodeRegistry;
 use crate::state::SharedState;
 
 use super::delivery::AlertDeliveryError;
@@ -67,10 +68,11 @@ pub(crate) fn spawn_alert_runtime(
     alerting: Arc<RwLock<Arc<AlertingConfig>>>,
     shared: SharedState,
     history: HistoryStore,
+    registry: NodeRegistry,
     shutdown: CancellationToken,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        run_alert_runtime(alerting, shared, history, shutdown).await;
+        run_alert_runtime(alerting, shared, history, registry, shutdown).await;
     })
 }
 
@@ -78,6 +80,7 @@ async fn run_alert_runtime(
     alerting: Arc<RwLock<Arc<AlertingConfig>>>,
     shared: SharedState,
     history: HistoryStore,
+    registry: NodeRegistry,
     shutdown: CancellationToken,
 ) {
     let mut tracker = AlertStateTracker::new();
@@ -113,7 +116,13 @@ async fn run_alert_runtime(
                     tracker.clear();
                 } else {
                     let matches =
-                        evaluate_alert_rules_with_history(&shared, &history, &config.rules, now)
+                        evaluate_alert_rules_with_history(
+                            &shared,
+                            &history,
+                            &registry,
+                            &config.rules,
+                            now,
+                        )
                             .await;
                     for event in tracker.update(&config.rules, &matches, now) {
                         log_alert_event(&event);

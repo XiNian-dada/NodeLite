@@ -17,6 +17,7 @@ mod query;
 mod query_limit;
 #[cfg(test)]
 mod test_probe;
+mod traffic;
 mod writer;
 
 use std::collections::{HashMap, HashSet};
@@ -46,10 +47,12 @@ pub(crate) use self::query_limit::HistoryQueryRuntimeMetrics;
 use self::query_limit::{HistoryQueryLimiter, HistoryQueryPermit};
 #[cfg(test)]
 use self::test_probe::HistoryQueryProbe;
+use self::traffic::{TrafficTracker, TrafficUsage};
 use self::writer::{WriterContext, build_history_point, run_history_writer};
 #[cfg(test)]
 use self::writer::{sqlite_busy_retry_delay, write_history_point};
 use crate::queue::{QueueSendError, bounded_mpsc_channel, record_dropped_write, try_enqueue};
+use crate::registry::TrafficAccounting;
 
 pub(crate) use self::cache::HistoryCacheMetrics;
 use self::cache::{CacheKey, HistoryQueryCache};
@@ -133,6 +136,7 @@ pub struct HistoryStore {
     writer_tx: Arc<RwLock<Option<mpsc::Sender<HistoryPoint>>>>,
     /// Writer task 的 join handle,用于在关停时显式 await。
     writer_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
+    traffic: TrafficTracker,
     /// 历史写入被静默丢弃的总数(channel 满或已关闭)。监控该值可观察反压。
     dropped_writes: Arc<AtomicU64>,
     /// 查询结果 LRU 缓存,减少重复聚合的开销。使用 parking_lot::Mutex 降低锁竞争。
@@ -202,8 +206,9 @@ impl HistoryStore {
         writer_batch_max: usize,
         writer_flush_interval: Duration,
     ) -> Self {
+        let db_path = Arc::new(db_path);
         Self {
-            db_path: Arc::new(db_path),
+            db_path: Arc::clone(&db_path),
             available: Arc::new(AtomicBool::new(false)),
             write_connection: Arc::new(Mutex::new(None)),
             last_written_at: Arc::new(Mutex::new(HashMap::new())),
@@ -215,6 +220,7 @@ impl HistoryStore {
             writer_flush_interval,
             writer_tx: Arc::new(RwLock::new(None)),
             writer_handle: Arc::new(Mutex::new(None)),
+            traffic: TrafficTracker::new(Arc::clone(&db_path), sqlite_busy_timeout_secs),
             dropped_writes: Arc::new(AtomicU64::new(0)),
             query_cache: Arc::new(ParkingLotMutex::new(HistoryQueryCache::new(
                 std::num::NonZeroUsize::new(HISTORY_CACHE_CAPACITY)
@@ -253,6 +259,9 @@ impl HistoryStore {
                 }
                 self.available.store(true, Ordering::Relaxed);
                 self.spawn_writer_task().await;
+                if let Err(error) = self.traffic.initialize().await {
+                    warn!(error = ?error, "traffic usage persistence unavailable; quota tracking will reset after restart");
+                }
             }
             Ok(Err(error)) => {
                 error!(
@@ -337,6 +346,27 @@ impl HistoryStore {
             .await;
     }
 
+    /// 记录一个配置了流量套餐的节点的累计网卡计数，并返回本自然月的已用流量。
+    pub(crate) async fn record_traffic(
+        &self,
+        node_id: &str,
+        total_rx_bytes: u64,
+        total_tx_bytes: u64,
+        accounting: TrafficAccounting,
+        enabled: bool,
+    ) -> Option<TrafficUsage> {
+        if !self.is_available() {
+            return None;
+        }
+        self.traffic
+            .record(node_id, total_rx_bytes, total_tx_bytes, accounting, enabled)
+            .await
+    }
+
+    pub(crate) async fn traffic_usages(&self) -> Vec<TrafficUsage> {
+        self.traffic.usages().await
+    }
+
     async fn record_status_with_builder<F>(&self, status: &NodeStatus, build_point: F)
     where
         F: FnOnce(&NodeStatus) -> Option<HistoryPoint>,
@@ -417,6 +447,7 @@ impl HistoryStore {
         {
             warn!(error = ?error, "history writer task join failed during shutdown");
         }
+        self.traffic.shutdown().await;
     }
 
     /// 按"过去 N 小时"窗口查询历史记录。

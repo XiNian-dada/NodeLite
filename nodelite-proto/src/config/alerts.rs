@@ -61,6 +61,8 @@ pub enum AlertMetric {
     LatencyMs,
     /// 节点离线持续分钟数。
     OfflineMinutes,
+    /// 节点本自然月套餐流量已使用百分比。
+    TrafficUsagePercent,
 }
 
 /// 告警阈值比较方式。
@@ -320,5 +322,29 @@ pub(crate) fn default_alert_rules() -> Vec<AlertRuleConfig> {
             cooldown_minutes: DEFAULT_ALERT_RULE_COOLDOWN_MINUTES,
             send_resolved: true,
         },
+        traffic_usage_rule(50, AlertSeverity::Warning),
+        traffic_usage_rule(70, AlertSeverity::Warning),
+        traffic_usage_rule(80, AlertSeverity::Warning),
+        traffic_usage_rule(90, AlertSeverity::Critical),
+        traffic_usage_rule(95, AlertSeverity::Critical),
     ]
+}
+
+fn traffic_usage_rule(threshold: u64, severity: AlertSeverity) -> AlertRuleConfig {
+    AlertRuleConfig {
+        id: format!("traffic-usage-{threshold}"),
+        name: format!("Monthly traffic usage reaches {threshold}%"),
+        enabled: true,
+        metric: AlertMetric::TrafficUsagePercent,
+        comparator: AlertComparator::Gt,
+        threshold,
+        window_minutes: 1,
+        severity,
+        scope_mode: AlertScopeMode::All,
+        node_ids: Vec::new(),
+        tags: Vec::new(),
+        delivery: vec![AlertChannel::Smtp, AlertChannel::Webhook],
+        cooldown_minutes: DEFAULT_ALERT_RULE_COOLDOWN_MINUTES,
+        send_resolved: true,
+    }
 }

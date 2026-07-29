@@ -225,6 +225,7 @@ fn spawn_server_background_tasks(config: &ServerConfig, state: &AppState) -> Vec
             state.alerting.clone(),
             state.shared.clone(),
             state.history.clone(),
+            state.registry.clone(),
             state.shutdown.clone(),
         ),
         spawn_geoip_database_preparer(

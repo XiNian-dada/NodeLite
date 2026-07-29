@@ -29,6 +29,7 @@ const metrics: AlertMetric[] = [
   'disk_usage_percent',
   'latency_ms',
   'offline_minutes',
+  'traffic_usage_percent',
 ];
 const comparators: AlertComparator[] = ['gt', 'lt'];
 const severities: AlertSeverity[] = ['warning', 'critical'];
@@ -41,6 +42,7 @@ const METRIC_LABEL_KEY: Record<AlertMetric, string> = {
   disk_usage_percent: 'alerts.metric.disk',
   latency_ms: 'alerts.metric.latency',
   offline_minutes: 'alerts.metric.offline',
+  traffic_usage_percent: 'alerts.metric.traffic_usage',
 };
 
 function scopeLabel(): string {

@@ -56,6 +56,7 @@ pub(crate) struct SettingsAgentToken {
     pub(crate) service_unlimited: bool,
     pub(crate) renewal_price: Option<String>,
     pub(crate) traffic_limit_bytes: Option<u64>,
+    pub(crate) traffic_used_bytes: Option<u64>,
     pub(crate) traffic_accounting: TrafficAccounting,
     pub(crate) traffic_throttle_kbps: Option<u64>,
     pub(crate) geoip_country: Option<String>,

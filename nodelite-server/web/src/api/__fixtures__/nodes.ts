@@ -63,6 +63,7 @@ export function makeSettings(overrides: Partial<SettingsResponse> = {}): Setting
         service_unlimited: false,
         renewal_price: null,
         traffic_limit_bytes: null,
+        traffic_used_bytes: null,
         traffic_accounting: 'bidirectional',
         traffic_throttle_kbps: null,
         geoip_country: null,

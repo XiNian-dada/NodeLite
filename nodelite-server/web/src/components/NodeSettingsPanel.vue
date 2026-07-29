@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import ReauthFields from '@/components/ReauthFields.vue';
 import SettingsMessage from '@/components/SettingsMessage.vue';
 import { useNodeSettingsDraft } from '@/composables/useNodeSettingsDraft';
+import { fmtBytes } from '@/lib/format';
 
 /**
  * Per-node settings tab: shows the current node's token info (from the global
@@ -136,6 +137,18 @@ const {
               data-test="node-traffic-throttle-input"
             />
           </label>
+          <p
+            v-if="agent.traffic_limit_bytes != null"
+            class="traffic-hint"
+            data-test="node-traffic-usage"
+          >
+            {{
+              t('node.settings.traffic_usage', {
+                used: fmtBytes(agent.traffic_used_bytes ?? 0),
+                limit: fmtBytes(agent.traffic_limit_bytes),
+              })
+            }}
+          </p>
           <p class="traffic-hint">{{ t('node.settings.traffic_throttle_hint') }}</p>
           <button
             type="button"

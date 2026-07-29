@@ -215,6 +215,88 @@ delivery = ["smtp", "webhook"]
 cooldown_minutes = 30
 send_resolved = true
 
+# 每月流量套餐用量。节点套餐中需要先设置流量上限，并选择双向、入站或出站计费。
+# 下列规则使用同一套 SMTP/WebHook 通知渠道；按需删除或调整阈值。
+[[alerts.rules]]
+id = "traffic-usage-50"
+name = "Monthly traffic usage reaches 50%"
+enabled = true
+metric = "traffic_usage_percent"
+comparator = "gt"
+threshold = 50
+window_minutes = 1
+severity = "warning"
+scope_mode = "all"
+node_ids = []
+tags = []
+delivery = ["smtp", "webhook"]
+cooldown_minutes = 30
+send_resolved = true
+
+[[alerts.rules]]
+id = "traffic-usage-70"
+name = "Monthly traffic usage reaches 70%"
+enabled = true
+metric = "traffic_usage_percent"
+comparator = "gt"
+threshold = 70
+window_minutes = 1
+severity = "warning"
+scope_mode = "all"
+node_ids = []
+tags = []
+delivery = ["smtp", "webhook"]
+cooldown_minutes = 30
+send_resolved = true
+
+[[alerts.rules]]
+id = "traffic-usage-80"
+name = "Monthly traffic usage reaches 80%"
+enabled = true
+metric = "traffic_usage_percent"
+comparator = "gt"
+threshold = 80
+window_minutes = 1
+severity = "warning"
+scope_mode = "all"
+node_ids = []
+tags = []
+delivery = ["smtp", "webhook"]
+cooldown_minutes = 30
+send_resolved = true
+
+[[alerts.rules]]
+id = "traffic-usage-90"
+name = "Monthly traffic usage reaches 90%"
+enabled = true
+metric = "traffic_usage_percent"
+comparator = "gt"
+threshold = 90
+window_minutes = 1
+severity = "critical"
+scope_mode = "all"
+node_ids = []
+tags = []
+delivery = ["smtp", "webhook"]
+cooldown_minutes = 30
+send_resolved = true
+
+[[alerts.rules]]
+id = "traffic-usage-95"
+name = "Monthly traffic usage reaches 95%"
+enabled = true
+metric = "traffic_usage_percent"
+comparator = "gt"
+threshold = 95
+window_minutes = 1
+severity = "critical"
+scope_mode = "all"
+node_ids = []
+tags = []
+delivery = ["smtp", "webhook"]
+cooldown_minutes = 30
+send_resolved = true
+
 [ws]
 # 全局并发 WebSocket 连接上限。
 max_total_connections = 1024

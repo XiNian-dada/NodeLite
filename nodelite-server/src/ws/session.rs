@@ -262,6 +262,36 @@ async fn handle_metrics_message(
         return Ok(LoopAction::Break);
     };
     state.history.record_status(&status).await;
+    let (total_rx_bytes, total_tx_bytes) = match status.snapshot.as_ref() {
+        Some(snapshot) => (
+            snapshot.network.total_rx_bytes,
+            snapshot.network.total_tx_bytes,
+        ),
+        None => return Ok(LoopAction::Continue),
+    };
+    if let Some(quota) = state.registry.traffic_quota(&session.node_id).await {
+        let _ = state
+            .history
+            .record_traffic(
+                &session.node_id,
+                total_rx_bytes,
+                total_tx_bytes,
+                quota.accounting,
+                true,
+            )
+            .await;
+    } else {
+        let _ = state
+            .history
+            .record_traffic(
+                &session.node_id,
+                total_rx_bytes,
+                total_tx_bytes,
+                crate::registry::TrafficAccounting::Bidirectional,
+                false,
+            )
+            .await;
+    }
     Ok(LoopAction::Continue)
 }
 
