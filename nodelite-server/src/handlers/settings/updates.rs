@@ -11,6 +11,7 @@ use tokio::time::timeout;
 use tracing::{error, info};
 
 use crate::AppState;
+use crate::registry::NodeServiceMetadata;
 
 use super::security::settings_confirmation_error_for_sensitive_action;
 use super::{
@@ -186,12 +187,14 @@ pub(crate) async fn update_node_service_metadata(
         .registry
         .update_service_metadata(
             &node_id,
-            request.service_expires_at,
-            request.service_unlimited,
-            request.renewal_price,
-            request.traffic_limit_bytes,
-            request.traffic_accounting,
-            request.traffic_throttle_kbps,
+            NodeServiceMetadata {
+                service_expires_at: request.service_expires_at,
+                service_unlimited: request.service_unlimited,
+                renewal_price: request.renewal_price,
+                traffic_limit_bytes: request.traffic_limit_bytes,
+                traffic_accounting: request.traffic_accounting,
+                traffic_throttle_kbps: request.traffic_throttle_kbps,
+            },
         )
         .await
     {

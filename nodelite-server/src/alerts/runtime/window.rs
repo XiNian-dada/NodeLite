@@ -132,10 +132,7 @@ fn traffic_usage_percent(used_bytes: u64, limit_bytes: u64) -> u64 {
         return u64::MAX;
     }
     let percent = (u128::from(used_bytes) * 100) / u128::from(limit_bytes);
-    match u64::try_from(percent) {
-        Ok(percent) => percent,
-        Err(_) => u64::MAX,
-    }
+    u64::try_from(percent).unwrap_or(u64::MAX)
 }
 
 async fn load_alert_history(

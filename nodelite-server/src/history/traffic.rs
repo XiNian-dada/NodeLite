@@ -5,7 +5,7 @@
 //! 不同套餐的字节数混合在同一个使用量中。
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -210,7 +210,7 @@ fn utc_month_start(now: DateTime<Utc>) -> DateTime<Utc> {
 }
 
 fn load_traffic_state(
-    db_path: &PathBuf,
+    db_path: &Path,
     sqlite_busy_timeout_secs: u64,
 ) -> Result<HashMap<String, TrafficUsageState>> {
     let connection = open_traffic_connection(db_path, sqlite_busy_timeout_secs)?;
@@ -277,14 +277,19 @@ async fn run_traffic_writer(
                 Some(write) => record_pending(&mut pending, write),
                 None => break,
             },
-            _ = ticker.tick(), if !pending.is_empty() => flush_traffic_writes(&mut pending, db_path.as_ref(), sqlite_busy_timeout_secs).await,
+            _ = ticker.tick(), if !pending.is_empty() => flush_traffic_writes(&mut pending, db_path.as_ref().as_path(), sqlite_busy_timeout_secs).await,
         }
     }
     while let Ok(write) = rx.try_recv() {
         record_pending(&mut pending, write);
     }
     if !pending.is_empty() {
-        flush_traffic_writes(&mut pending, db_path.as_ref(), sqlite_busy_timeout_secs).await;
+        flush_traffic_writes(
+            &mut pending,
+            db_path.as_ref().as_path(),
+            sqlite_busy_timeout_secs,
+        )
+        .await;
     }
 }
 
@@ -298,11 +303,11 @@ fn record_pending(pending: &mut HashMap<String, TrafficWrite>, write: TrafficWri
 
 async fn flush_traffic_writes(
     pending: &mut HashMap<String, TrafficWrite>,
-    db_path: &PathBuf,
+    db_path: &Path,
     sqlite_busy_timeout_secs: u64,
 ) {
     let writes = std::mem::take(pending);
-    let db_path = db_path.clone();
+    let db_path = db_path.to_path_buf();
     let result = tokio::task::spawn_blocking(move || {
         write_traffic_states(&db_path, sqlite_busy_timeout_secs, writes)
     })
@@ -313,7 +318,7 @@ async fn flush_traffic_writes(
 }
 
 fn write_traffic_states(
-    db_path: &PathBuf,
+    db_path: &Path,
     sqlite_busy_timeout_secs: u64,
     writes: HashMap<String, TrafficWrite>,
 ) -> Result<()> {
@@ -346,7 +351,7 @@ fn write_traffic_states(
     Ok(())
 }
 
-fn open_traffic_connection(db_path: &PathBuf, sqlite_busy_timeout_secs: u64) -> Result<Connection> {
+fn open_traffic_connection(db_path: &Path, sqlite_busy_timeout_secs: u64) -> Result<Connection> {
     let connection = Connection::open(db_path).with_context(|| {
         format!(
             "failed to open traffic usage database {}",
@@ -388,17 +393,11 @@ fn accounting_from_db(value: &str) -> Option<TrafficAccounting> {
 }
 
 fn u64_to_sqlite_integer(value: u64) -> i64 {
-    match i64::try_from(value) {
-        Ok(value) => value,
-        Err(_) => i64::MAX,
-    }
+    i64::try_from(value).unwrap_or(i64::MAX)
 }
 
 fn sqlite_integer_to_u64(value: i64) -> u64 {
-    match u64::try_from(value) {
-        Ok(value) => value,
-        Err(_) => 0,
-    }
+    u64::try_from(value).unwrap_or_default()
 }
 
 #[cfg(test)]

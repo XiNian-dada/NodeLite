@@ -111,6 +111,17 @@ pub(crate) struct TrafficQuota {
     pub(crate) throttle_kbps: Option<u64>,
 }
 
+/// 设置页保存的节点服务与流量套餐元数据。
+#[derive(Debug, Clone)]
+pub(crate) struct NodeServiceMetadata {
+    pub(crate) service_expires_at: Option<DateTime<Utc>>,
+    pub(crate) service_unlimited: bool,
+    pub(crate) renewal_price: Option<String>,
+    pub(crate) traffic_limit_bytes: Option<u64>,
+    pub(crate) traffic_accounting: TrafficAccounting,
+    pub(crate) traffic_throttle_kbps: Option<u64>,
+}
+
 /// 已登记节点的持久化条目。
 ///
 /// Token 存储语义 (#56):

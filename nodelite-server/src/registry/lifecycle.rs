@@ -17,8 +17,8 @@ use super::storage::{
 use super::token::{constant_time_eq, generate_token, hash_token, prune_expired_install_sessions};
 use super::{
     ConsumedInstall, DEFAULT_TOKEN_VALIDITY_DAYS, MAX_TRAFFIC_THROTTLE_KBPS, NodeRegistry,
-    RegisteredNode, RegistryError, RegistryFile, RegistryReloadCheckpoint, RegistryResult,
-    TOKEN_CACHE_CAPACITY, TOKEN_REFRESH_GRACE_MINUTES, TrafficAccounting, TrafficQuota,
+    NodeServiceMetadata, RegisteredNode, RegistryError, RegistryFile, RegistryReloadCheckpoint,
+    RegistryResult, TOKEN_CACHE_CAPACITY, TOKEN_REFRESH_GRACE_MINUTES, TrafficQuota,
     coordinate_to_microdegrees,
 };
 
@@ -210,13 +210,16 @@ impl NodeRegistry {
     pub async fn update_service_metadata(
         &self,
         node_id: &str,
-        service_expires_at: Option<DateTime<Utc>>,
-        service_unlimited: bool,
-        renewal_price: Option<String>,
-        traffic_limit_bytes: Option<u64>,
-        traffic_accounting: TrafficAccounting,
-        traffic_throttle_kbps: Option<u64>,
+        metadata: NodeServiceMetadata,
     ) -> RegistryResult<RegisteredNode> {
+        let NodeServiceMetadata {
+            service_expires_at,
+            service_unlimited,
+            renewal_price,
+            traffic_limit_bytes,
+            traffic_accounting,
+            traffic_throttle_kbps,
+        } = metadata;
         validate_identifier("node_id", node_id).map_err(RegistryError::validation)?;
         let renewal_price =
             sanitize_renewal_price(renewal_price).map_err(RegistryError::validation)?;

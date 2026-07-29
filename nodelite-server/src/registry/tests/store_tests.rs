@@ -140,12 +140,14 @@ fn update_service_metadata_persists_display_fields() {
         let updated = registry
             .update_service_metadata(
                 "hk-01",
-                Some(expires_at),
-                false,
-                Some("  $5/mo  ".to_string()),
-                Some(1_073_741_824),
-                super::super::TrafficAccounting::Outbound,
-                Some(10_000),
+                NodeServiceMetadata {
+                    service_expires_at: Some(expires_at),
+                    service_unlimited: false,
+                    renewal_price: Some("  $5/mo  ".to_string()),
+                    traffic_limit_bytes: Some(1_073_741_824),
+                    traffic_accounting: super::super::TrafficAccounting::Outbound,
+                    traffic_throttle_kbps: Some(10_000),
+                },
             )
             .await
             .expect("service metadata should save");
@@ -219,12 +221,14 @@ fn update_service_metadata_can_mark_service_unlimited() {
         let updated = registry
             .update_service_metadata(
                 "hk-01",
-                Some(expires_at),
-                true,
-                None,
-                None,
-                super::super::TrafficAccounting::Bidirectional,
-                None,
+                NodeServiceMetadata {
+                    service_expires_at: Some(expires_at),
+                    service_unlimited: true,
+                    renewal_price: None,
+                    traffic_limit_bytes: None,
+                    traffic_accounting: super::super::TrafficAccounting::Bidirectional,
+                    traffic_throttle_kbps: None,
+                },
             )
             .await
             .expect("service metadata should save");
@@ -270,12 +274,14 @@ fn update_service_metadata_rejects_throttle_without_traffic_limit() {
         let error = registry
             .update_service_metadata(
                 "hk-01",
-                None,
-                false,
-                None,
-                None,
-                super::super::TrafficAccounting::Bidirectional,
-                Some(10_000),
+                NodeServiceMetadata {
+                    service_expires_at: None,
+                    service_unlimited: false,
+                    renewal_price: None,
+                    traffic_limit_bytes: None,
+                    traffic_accounting: super::super::TrafficAccounting::Bidirectional,
+                    traffic_throttle_kbps: Some(10_000),
+                },
             )
             .await
             .expect_err("throttle must require a quota");
