@@ -274,6 +274,24 @@ export interface ReauthPayload {
   code?: string;
 }
 
+/** POST /api/settings/agents/install */
+export interface GenerateAgentInstallRequest extends ReauthPayload {
+  node_id: string;
+  node_label?: string;
+  tags: string[];
+}
+
+/** One-time command returned after registering or rotating an Agent node. */
+export interface GenerateAgentInstallResponse {
+  ok: boolean;
+  message: string;
+  node_id: string;
+  node_label: string;
+  created: boolean;
+  install_token_expires_at: string;
+  install_command: string;
+}
+
 /** POST /api/nodes/{id}/service-meta */
 export type TrafficAccounting = 'bidirectional' | 'inbound' | 'outbound';
 

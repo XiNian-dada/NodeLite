@@ -26,6 +26,12 @@ const FAKE_DICT = {
     'settings.summary.token_expiring': '{count} expiring',
     'settings.summary.token_attention': '{count} expired',
     'settings.summary.operations': 'Operations',
+    'settings.install.kicker': 'Agents',
+    'settings.install.title': 'Install Agent',
+    'settings.install.note': 'note',
+    'settings.install.open': 'Install Agent',
+    'settings.install.unavailable': 'unavailable',
+    'settings.install.rotate_notice': 'notice',
     'common.waiting_for_data': 'Waiting…',
     'common.language': 'Language',
     'common.theme_toggle': 'Toggle theme',
@@ -104,7 +110,8 @@ describe('SettingsView', () => {
         Promise.resolve({
           ok: true,
           status: 200,
-          json: () => Promise.resolve(String(url).includes('ui-i18n') ? FAKE_DICT : { tag_name: 'v2.3.0' }),
+          json: () =>
+            Promise.resolve(String(url).includes('ui-i18n') ? FAKE_DICT : { tag_name: 'v2.3.0' }),
         } as unknown as Response),
       ),
     );
@@ -134,6 +141,7 @@ describe('SettingsView', () => {
     expect(mockSettings).toHaveBeenCalled();
     expect(wrapper.find('[data-test="settings-view"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="settings-summary"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="install-agent-card"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="server-update-card"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="ops-card"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="token-table"]').exists()).toBe(true);

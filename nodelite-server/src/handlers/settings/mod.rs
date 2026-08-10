@@ -3,6 +3,7 @@
 //! 这里保留共享类型与导出,把读路径、认证变更、更新相关流程拆到独立子模块,
 //! 避免继续膨胀成一个数百行的 monolith。
 
+mod agent_install;
 mod alerts;
 mod config_edit;
 mod helpers;
@@ -12,6 +13,7 @@ mod subprocess;
 mod types;
 mod updates;
 
+pub(crate) use agent_install::generate_agent_install;
 pub(crate) use alerts::{alert_settings, update_alert_settings};
 pub(crate) use query::settings;
 pub(crate) use security::{
@@ -32,10 +34,10 @@ use helpers::{
 use subprocess::{UpdateLaunchMode, spawn_server_update_subprocess};
 use types::{
     ChangePasswordRequest, DisableTwoFactorRequest, EnableTwoFactorRequest,
-    NodeTokenRefreshResponse, ServerUpdateLogQuery, ServerUpdateLogResponse,
-    SettingsActionResponse, SettingsAgentToken, SettingsAuth, SettingsResponse, SettingsUpdates,
-    StartServerUpdateRequest, TwoFactorSetupResponse, UpdateNodeLocationOverrideRequest,
-    UpdateNodeServiceMetadataRequest,
+    GenerateAgentInstallRequest, GenerateAgentInstallResponse, NodeTokenRefreshResponse,
+    ServerUpdateLogQuery, ServerUpdateLogResponse, SettingsActionResponse, SettingsAgentToken,
+    SettingsAuth, SettingsResponse, SettingsUpdates, StartServerUpdateRequest,
+    TwoFactorSetupResponse, UpdateNodeLocationOverrideRequest, UpdateNodeServiceMetadataRequest,
 };
 
 pub(super) const MAX_UPDATE_LOG_CHUNK_BYTES: u64 = 128 * 1024;

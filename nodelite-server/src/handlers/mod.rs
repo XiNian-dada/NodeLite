@@ -30,8 +30,9 @@ pub(crate) use install_routes::{install_agent_script, install_bootstrap};
 pub(crate) use page_routes::{index, node_detail, static_asset, verify_2fa_page};
 pub(crate) use settings::{
     alert_settings, change_readonly_password, disable_two_factor, enable_two_factor,
-    refresh_node_token, server_update_log, settings, start_server_update, start_two_factor_setup,
-    update_alert_settings, update_node_location_override, update_node_service_metadata,
+    generate_agent_install, refresh_node_token, server_update_log, settings, start_server_update,
+    start_two_factor_setup, update_alert_settings, update_node_location_override,
+    update_node_service_metadata,
 };
 
 async fn record_audit_event(

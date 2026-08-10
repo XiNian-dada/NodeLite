@@ -2,6 +2,7 @@
 import { computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AppLayout from '@/components/AppLayout.vue';
+import InstallAgentCard from '@/components/InstallAgentCard.vue';
 import ServerUpdateCard from '@/components/ServerUpdateCard.vue';
 import OpsCard from '@/components/OpsCard.vue';
 import TokenTable from '@/components/TokenTable.vue';
@@ -22,8 +23,12 @@ const summaryTiles = computed(() => {
   const agents = settings.agents;
   const online = agents.filter((agent) => agent.online).length;
   const offline = agents.length - online;
-  const expired = agents.filter((agent) => tokenSeverity(agent.token_expires_in_secs) === 'expired').length;
-  const expiring = agents.filter((agent) => tokenSeverity(agent.token_expires_in_secs) === 'expiring').length;
+  const expired = agents.filter(
+    (agent) => tokenSeverity(agent.token_expires_in_secs) === 'expired',
+  ).length;
+  const expiring = agents.filter(
+    (agent) => tokenSeverity(agent.token_expires_in_secs) === 'expiring',
+  ).length;
   const tokenHealth =
     expired > 0
       ? t('settings.summary.token_attention', { count: expired })
@@ -88,6 +93,11 @@ const summaryTiles = computed(() => {
         </div>
 
         <div class="settings__grid">
+          <InstallAgentCard
+            class="settings__card settings__install"
+            :settings="store.data"
+            @created="store.refresh()"
+          />
           <ServerUpdateCard class="settings__card" :settings="store.data" />
           <OpsCard class="settings__card" :settings="store.data" />
         </div>
@@ -179,6 +189,9 @@ const summaryTiles = computed(() => {
 }
 .settings__card {
   height: 100%;
+}
+.settings__install {
+  grid-column: 1 / -1;
 }
 .page-heading {
   margin: 0;

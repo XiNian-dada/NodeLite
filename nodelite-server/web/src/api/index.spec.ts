@@ -92,3 +92,38 @@ describe('apiClient.nodeLogs', () => {
     expect(fetchMock.mock.calls[0]![0]).toBe('/api/nodes/n/logs?limit=50');
   });
 });
+
+describe('apiClient.generateAgentInstall', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('posts node details and sensitive confirmation to the installation endpoint', async () => {
+    await apiClient.generateAgentInstall({
+      node_id: 'sg-01',
+      node_label: 'Singapore 01',
+      tags: ['edge'],
+      current_password: 'secret',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/settings/agents/install',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          node_id: 'sg-01',
+          node_label: 'Singapore 01',
+          tags: ['edge'],
+          current_password: 'secret',
+        }),
+      }),
+    );
+  });
+});

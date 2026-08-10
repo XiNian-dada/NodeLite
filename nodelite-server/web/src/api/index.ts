@@ -12,6 +12,8 @@ import type {
   ChangePasswordRequest,
   DisableTwoFactorRequest,
   EnableTwoFactorRequest,
+  GenerateAgentInstallRequest,
+  GenerateAgentInstallResponse,
   HistoryPoint,
   HistoryQuery,
   LastLoginInfo,
@@ -50,6 +52,8 @@ export type {
   DisableTwoFactorRequest,
   DiskUsage,
   EnableTwoFactorRequest,
+  GenerateAgentInstallRequest,
+  GenerateAgentInstallResponse,
   HistoryPoint,
   HistoryQuery,
   InspectionHighlight,
@@ -125,6 +129,8 @@ export const apiClient = {
 
   // --- Settings ---
   settings: () => api<SettingsResponse>('/api/settings'),
+  generateAgentInstall: (body: GenerateAgentInstallRequest) =>
+    postJson<GenerateAgentInstallResponse>('/api/settings/agents/install', body),
   updateServer: (body: ReauthPayload) =>
     postJson<SettingsActionResponse>('/api/settings/update/server', body),
   serverUpdateLog: (offset = 0) => {

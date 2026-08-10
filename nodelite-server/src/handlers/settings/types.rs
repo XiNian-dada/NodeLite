@@ -148,6 +148,31 @@ pub(crate) struct SettingsActionResponse {
     pub(crate) message: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GenerateAgentInstallRequest {
+    pub(crate) node_id: String,
+    #[serde(default)]
+    pub(crate) node_label: Option<String>,
+    #[serde(default)]
+    pub(crate) tags: Vec<String>,
+    #[serde(default)]
+    pub(crate) current_password: Option<String>,
+    #[serde(default)]
+    pub(crate) code: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct GenerateAgentInstallResponse {
+    pub(crate) ok: bool,
+    pub(crate) message: String,
+    pub(crate) node_id: String,
+    pub(crate) node_label: String,
+    pub(crate) created: bool,
+    pub(crate) install_token_expires_at: DateTime<Utc>,
+    pub(crate) install_command: String,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct NodeTokenRefreshResponse {
     pub(crate) ok: bool,
