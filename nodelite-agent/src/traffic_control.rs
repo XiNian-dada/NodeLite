@@ -9,8 +9,10 @@ use std::process::Command;
 
 use thiserror::Error;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 const FILTER_PRIORITY: &str = "49152";
+#[cfg(any(target_os = "linux", test))]
+const FILTER_HANDLE: &str = "0x4e4c";
 const MAX_TRAFFIC_RATE_KBPS: u64 = 100_000_000;
 
 /// 网络限速操作的结果。
@@ -139,7 +141,7 @@ fn delete_police_filter_if_present(
         "reading traffic filters",
         filter_show_args(interface, direction),
     )?;
-    if !existing.contains(&format!("pref {FILTER_PRIORITY}")) {
+    if !has_nodelite_police_filter(&existing) {
         return Ok(());
     }
     tc_success(
@@ -214,7 +216,7 @@ fn filter_show_args(interface: &str, direction: &str) -> Vec<String> {
     ]
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 fn filter_delete_args(interface: &str, direction: &str) -> Vec<String> {
     vec![
         "filter".to_string(),
@@ -224,10 +226,15 @@ fn filter_delete_args(interface: &str, direction: &str) -> Vec<String> {
         direction.to_string(),
         "pref".to_string(),
         FILTER_PRIORITY.to_string(),
+        "handle".to_string(),
+        FILTER_HANDLE.to_string(),
+        "protocol".to_string(),
+        "all".to_string(),
+        "matchall".to_string(),
     ]
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 fn police_filter_args(interface: &str, direction: &str, rate_kbps: u64) -> Vec<String> {
     let burst_kbit = (rate_kbps / 10).clamp(16, 4_096);
     vec![
@@ -238,6 +245,8 @@ fn police_filter_args(interface: &str, direction: &str, rate_kbps: u64) -> Vec<S
         direction.to_string(),
         "pref".to_string(),
         FILTER_PRIORITY.to_string(),
+        "handle".to_string(),
+        FILTER_HANDLE.to_string(),
         "protocol".to_string(),
         "all".to_string(),
         "matchall".to_string(),
@@ -250,6 +259,15 @@ fn police_filter_args(interface: &str, direction: &str, rate_kbps: u64) -> Vec<S
         "conform-exceed".to_string(),
         "drop/ok".to_string(),
     ]
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn has_nodelite_police_filter(output: &str) -> bool {
+    let priority = format!("pref {FILTER_PRIORITY}");
+    let handle = format!("handle {FILTER_HANDLE}");
+    output
+        .lines()
+        .any(|line| line.contains(&priority) && line.contains("matchall") && line.contains(&handle))
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -274,7 +292,7 @@ fn valid_interface_name(interface: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_default_route_interface, valid_interface_name};
+    use super::{has_nodelite_police_filter, parse_default_route_interface, valid_interface_name};
 
     #[test]
     fn parses_a_valid_default_route_interface() {
@@ -293,6 +311,16 @@ mod tests {
         assert_eq!(parse_default_route_interface(routes), None);
         assert!(valid_interface_name("enp0s3.100"));
         assert!(!valid_interface_name("bad name"));
+    }
+
+    #[test]
+    fn identifies_only_the_nodelite_traffic_filter() {
+        assert!(has_nodelite_police_filter(
+            "filter protocol all pref 49152 matchall chain 0 handle 0x4e4c\n"
+        ));
+        assert!(!has_nodelite_police_filter(
+            "filter protocol all pref 49152 matchall chain 0 handle 0x1\n"
+        ));
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -322,13 +350,23 @@ mod tests {
         ));
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn police_filter_uses_the_fixed_priority_and_requested_rate() {
         let args = super::police_filter_args("eth0", "egress", 10_000);
 
         assert!(args.windows(2).any(|pair| pair == ["pref", "49152"]));
+        assert!(args.windows(2).any(|pair| pair == ["handle", "0x4e4c"]));
         assert!(args.windows(2).any(|pair| pair == ["rate", "10000kbit"]));
         assert!(args.windows(2).any(|pair| pair == ["burst", "1000kbit"]));
+    }
+
+    #[test]
+    fn delete_filter_targets_only_the_nodelite_handle() {
+        let args = super::filter_delete_args("eth0", "ingress");
+
+        assert!(args.windows(2).any(|pair| pair == ["pref", "49152"]));
+        assert!(args.windows(2).any(|pair| pair == ["handle", "0x4e4c"]));
+        assert!(args.windows(2).any(|pair| pair == ["protocol", "all"]));
+        assert!(args.iter().any(|arg| arg == "matchall"));
     }
 }
