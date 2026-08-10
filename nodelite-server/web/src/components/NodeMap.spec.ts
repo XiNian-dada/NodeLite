@@ -16,6 +16,7 @@ const FAKE_DICT = {
     'index.map.legend_online': 'Online',
     'index.map.legend_latency': 'High latency',
     'index.map.legend_offline': 'Offline',
+    'index.map.nodes': 'Nodes ({count})',
     'index.node.load': 'Load',
     'index.node.latency': 'Latency',
     'common.online': 'Online',
@@ -27,6 +28,7 @@ const FAKE_DICT = {
     'index.map.legend_online': '在线',
     'index.map.legend_latency': '高延迟',
     'index.map.legend_offline': '离线',
+    'index.map.nodes': '节点（{count}）',
     'index.node.load': '负载',
     'index.node.latency': '延迟',
     'common.online': '在线',
@@ -152,6 +154,40 @@ describe('NodeMap', () => {
 
     await wrapper.find('[data-test="map-dot"]').trigger('pointerleave');
     expect(wrapper.find('[data-test="map-hover-card"]').exists()).toBe(false);
+  });
+
+  it('groups nodes at the same map point and shows every node on hover', async () => {
+    const wrapper = await mountWithNodes([
+      makeNode({
+        identity: { node_id: 'a', node_label: 'Tokyo Edge A', hostname: 'tokyo-a', tags: [] },
+        geoip_city: 'Tokyo',
+        geoip_country: 'JP',
+        geoip_latitude: 35.6762,
+        geoip_longitude: 139.6503,
+        online: true,
+        latency_ms: 42,
+      }),
+      makeNode({
+        identity: { node_id: 'b', node_label: 'Tokyo Edge B', hostname: 'tokyo-b', tags: [] },
+        geoip_city: 'Tokyo',
+        geoip_country: 'JP',
+        geoip_latitude: 35.6762,
+        geoip_longitude: 139.6503,
+        online: true,
+        latency_ms: 55,
+      }),
+    ]);
+
+    const dots = wrapper.findAll('[data-test="map-dot"]');
+    expect(dots).toHaveLength(1);
+
+    await dots[0]!.trigger('pointerenter');
+    const card = wrapper.find('[data-test="map-hover-card"]');
+    expect(card.text()).toContain('Nodes (2)');
+    expect(card.text()).toContain('Tokyo Edge A');
+    expect(card.text()).toContain('Tokyo Edge B');
+    expect(card.text()).toContain('42 ms');
+    expect(card.text()).toContain('55 ms');
   });
 
   it('repaints the canvas when the theme changes', async () => {

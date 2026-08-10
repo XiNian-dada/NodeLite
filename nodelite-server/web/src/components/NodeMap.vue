@@ -5,7 +5,7 @@ import type { NodeListItem } from '@/api';
 import { useNodesStore } from '@/stores/nodes';
 import { useWorldGeoJson } from '@/composables/useWorldGeoJson';
 import { useTheme } from '@/composables/useTheme';
-import { nodePosition, nodeStatusKey } from '@/lib/map/projection';
+import { nodePosition, nodeStatusKey, type NodeStatus } from '@/lib/map/projection';
 import { drawFallbackMask, drawGeoJsonMask, paintWorldDotMap } from '@/lib/map/landMask';
 import { locationFromNode } from '@/lib/nodeMeta';
 
@@ -16,24 +16,39 @@ const { t } = useI18n();
 
 const canvas = ref<HTMLCanvasElement | null>(null);
 const activeDotId = ref<string | null>(null);
-
 const CROWD_THRESHOLD = 3;
 
-const dots = computed(() => {
-  const positions = nodesStore.nodes.map((node) => {
-    const pos = nodePosition(node);
-    return { x: pos.x * 100, y: pos.y * 100 };
-  });
+interface MapNode {
+  id: string;
+  label: string;
+  status: NodeStatus;
+  statusLabelKey: string;
+  location: string;
+  load: string;
+  latency: string;
+}
 
-  return nodesStore.nodes.map((node, i) => {
-    const { x, y } = positions[i]!;
-    const crowded = positions.some(
-      (other, j) =>
-        j !== i &&
-        Math.abs(other.x - x) < CROWD_THRESHOLD &&
-        Math.abs(other.y - y) < CROWD_THRESHOLD,
-    );
-    return {
+interface MapDot {
+  id: string;
+  nodes: MapNode[];
+  status: NodeStatus;
+  left: string;
+  top: string;
+  edgeX: 'left' | 'center' | 'right';
+  edgeY: 'top' | 'bottom';
+  crowded: boolean;
+}
+
+const dots = computed<MapDot[]>(() => {
+  const groups = new Map<string, { x: number; y: number; nodes: MapNode[] }>();
+
+  for (const node of nodesStore.nodes) {
+    const pos = nodePosition(node);
+    const x = pos.x * 100;
+    const y = pos.y * 100;
+    const id = `${pos.x}:${pos.y}`;
+    const group = groups.get(id) ?? { x, y, nodes: [] };
+    group.nodes.push({
       id: node.identity.node_id,
       label: node.identity.node_label || node.identity.node_id,
       status: nodeStatusKey(node),
@@ -41,11 +56,27 @@ const dots = computed(() => {
       location: locationText(node),
       load: node.snapshot?.load.one == null ? '—' : node.snapshot.load.one.toFixed(2),
       latency: node.latency_ms == null ? '—' : `${Math.round(node.latency_ms)} ms`,
+    });
+    groups.set(id, group);
+  }
+
+  const groupedDots = Array.from(groups, ([id, group]) => ({ id, ...group }));
+
+  return groupedDots.map(({ id, x, y, nodes }) => {
+    return {
+      id,
+      nodes,
+      status: groupStatus(nodes),
       left: `${x.toFixed(2)}%`,
       top: `${y.toFixed(2)}%`,
       edgeX: x > 72 ? 'right' : x < 28 ? 'left' : 'center',
       edgeY: y < 28 ? 'bottom' : 'top',
-      crowded,
+      crowded: groupedDots.some(
+        (other) =>
+          other.id !== id &&
+          Math.abs(other.x - x) < CROWD_THRESHOLD &&
+          Math.abs(other.y - y) < CROWD_THRESHOLD,
+      ),
     };
   });
 });
@@ -61,6 +92,17 @@ function statusLabelKey(node: NodeListItem): string {
     default:
       return 'common.online';
   }
+}
+
+function groupStatus(nodes: MapNode[]): NodeStatus {
+  if (nodes.some((node) => node.status === 'offline')) return 'offline';
+  if (nodes.some((node) => node.status === 'latency')) return 'latency';
+  return 'online';
+}
+
+function dotTitle(dot: MapDot): string {
+  if (dot.nodes.length === 1) return dot.nodes[0]!.label;
+  return t('index.map.nodes', { count: dot.nodes.length });
 }
 
 function locationText(node: NodeListItem): string {
@@ -121,7 +163,7 @@ watch([geojson, theme], repaint);
           class="map-dot"
           :class="[dot.status, { 'map-dot--small': dot.crowded }]"
           :style="{ left: dot.left, top: dot.top }"
-          :title="dot.label"
+          :title="dotTitle(dot)"
           tabindex="0"
           data-test="map-dot"
           @pointerenter="activeDotId = dot.id"
@@ -140,22 +182,27 @@ watch([geojson, theme], repaint);
         :style="{ left: activeDot.left, top: activeDot.top }"
         data-test="map-hover-card"
       >
-        <div class="map-hover-card__head">
-          <span class="map-hover-card__title">{{ activeDot.label }}</span>
-          <span class="map-hover-card__status" :class="activeDot.status">
-            {{ t(activeDot.statusLabelKey) }}
-          </span>
+        <div v-if="activeDot.nodes.length > 1" class="map-hover-card__group-label">
+          {{ t('index.map.nodes', { count: activeDot.nodes.length }) }}
         </div>
-        <div class="map-hover-card__location">{{ activeDot.location }}</div>
-        <div class="map-hover-card__metrics">
-          <span>
-            <small>{{ t('index.node.load') }}</small>
-            <strong>{{ activeDot.load }}</strong>
-          </span>
-          <span>
-            <small>{{ t('index.node.latency') }}</small>
-            <strong>{{ activeDot.latency }}</strong>
-          </span>
+        <div v-for="node in activeDot.nodes" :key="node.id" class="map-hover-card__node">
+          <div class="map-hover-card__head">
+            <span class="map-hover-card__title">{{ node.label }}</span>
+            <span class="map-hover-card__status" :class="node.status">
+              {{ t(node.statusLabelKey) }}
+            </span>
+          </div>
+          <div class="map-hover-card__location">{{ node.location }}</div>
+          <div class="map-hover-card__metrics">
+            <span>
+              <small>{{ t('index.node.load') }}</small>
+              <strong>{{ node.load }}</strong>
+            </span>
+            <span>
+              <small>{{ t('index.node.latency') }}</small>
+              <strong>{{ node.latency }}</strong>
+            </span>
+          </div>
         </div>
       </div>
     </div>
@@ -337,6 +384,17 @@ watch([geojson, theme], repaint);
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+.map-hover-card__group-label {
+  margin-bottom: 9px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.map-hover-card__node + .map-hover-card__node {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-soft);
 }
 .map-hover-card__title {
   min-width: 0;
