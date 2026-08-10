@@ -373,6 +373,7 @@ async fn apply_network_throttle(
                 info!("cleared server-requested network traffic limit");
             }
         }
+        #[cfg(not(target_os = "linux"))]
         Ok(TrafficControlOutcome::Unsupported) => {
             warn!("server requested a network limit, but this platform is unsupported");
             log_buffer.push(

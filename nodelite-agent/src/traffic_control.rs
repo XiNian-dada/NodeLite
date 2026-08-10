@@ -21,6 +21,7 @@ pub(crate) enum TrafficControlOutcome {
     /// Linux 规则已经应用或撤销。
     Applied,
     /// 当前平台没有可安全使用的实现。
+    #[cfg(not(target_os = "linux"))]
     Unsupported,
 }
 
@@ -72,7 +73,7 @@ impl TrafficController {
         {
             tokio::task::spawn_blocking(move || apply_linux_traffic_rate(rate_kbps)).await??;
             self.last_applied_rate_kbps = Some(rate_kbps);
-            return Ok(TrafficControlOutcome::Applied);
+            Ok(TrafficControlOutcome::Applied)
         }
 
         #[cfg(not(target_os = "linux"))]
