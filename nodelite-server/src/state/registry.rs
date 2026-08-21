@@ -144,6 +144,13 @@ impl Registry {
         false
     }
 
+    pub(super) fn remove_node(&self, node_id: &str) -> bool {
+        write_lock(self.shard_for(node_id))
+            .nodes
+            .remove(node_id)
+            .is_some()
+    }
+
     pub(super) fn attach_session_control(
         &self,
         node_id: &str,

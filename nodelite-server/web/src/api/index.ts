@@ -98,6 +98,14 @@ function postJson<T>(path: string, body: unknown): Promise<T> {
   });
 }
 
+function deleteJson<T>(path: string, body: unknown): Promise<T> {
+  return api<T>(path, {
+    method: 'DELETE',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
 export const apiClient = {
   bootstrap: () => api<BootstrapResponse>('/api/bootstrap'),
   overview: () => api<OverviewData>('/api/overview'),
@@ -131,6 +139,8 @@ export const apiClient = {
   settings: () => api<SettingsResponse>('/api/settings'),
   generateAgentInstall: (body: GenerateAgentInstallRequest) =>
     postJson<GenerateAgentInstallResponse>('/api/settings/agents/install', body),
+  deleteAgent: (id: string, body: ReauthPayload) =>
+    deleteJson<SettingsActionResponse>(`/api/settings/agents/${encodeURIComponent(id)}`, body),
   updateServer: (body: ReauthPayload) =>
     postJson<SettingsActionResponse>('/api/settings/update/server', body),
   serverUpdateLog: (offset = 0) => {

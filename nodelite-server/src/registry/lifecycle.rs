@@ -190,6 +190,30 @@ impl NodeRegistry {
         nodes
     }
 
+    /// 从注册表移除节点，并一并撤销尚未消费的安装令牌。
+    pub async fn remove_node(&self, node_id: &str) -> RegistryResult<RegisteredNode> {
+        validate_identifier("node_id", node_id).map_err(RegistryError::validation)?;
+
+        let node_id = node_id.to_string();
+        let path = Arc::clone(&self.path);
+        let (removed, file) = mutate_registry_file(path.as_ref(), move |file| {
+            prune_expired_install_sessions(file, Utc::now());
+            let Some(index) = file.nodes.iter().position(|node| node.node_id == node_id) else {
+                return Err(RegistryError::NodeNotFound(node_id.clone()));
+            };
+
+            let removed = file.nodes.remove(index);
+            file.install_sessions
+                .retain(|session| session.node_id != removed.node_id);
+            Ok((removed, true))
+        })
+        .await?;
+
+        self.replace_state_from_file(file).await?;
+        self.token_cache.lock().clear();
+        Ok(removed)
+    }
+
     /// 返回节点启用中的流量套餐；未设置上限的节点不参与用量累计。
     pub(crate) async fn traffic_quota(&self, node_id: &str) -> Option<TrafficQuota> {
         self.state

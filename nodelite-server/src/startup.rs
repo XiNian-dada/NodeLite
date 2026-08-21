@@ -9,7 +9,7 @@ use axum::extract::{DefaultBodyLimit, Request};
 use axum::http::{HeaderValue, header};
 use axum::middleware::{Next, from_fn, from_fn_with_state};
 use axum::response::Response;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use nodelite_proto::{ServerConfig, parse_server_config};
 use tokio::fs;
 use tokio::net::TcpListener;
@@ -35,13 +35,13 @@ use crate::background::{
 use crate::fs_security::log_if_directory_is_not_private;
 use crate::geoip::GeoIpResolver;
 use crate::handlers::{
-    alert_settings, audit_log, bootstrap, change_readonly_password, disable_two_factor,
-    enable_two_factor, generate_agent_install, healthz, index, install_agent_script,
-    install_bootstrap, last_login, logout_and_reauth, metrics, node_detail, node_history,
-    node_logs, node_status, nodes, overview, readyz, refresh_node_token, require_readonly_auth,
-    server_update_log, settings, start_server_update, start_two_factor_setup, static_asset,
-    update_alert_settings, update_node_location_override, update_node_service_metadata,
-    verify_2fa_api, verify_2fa_page,
+    alert_settings, audit_log, bootstrap, change_readonly_password, delete_agent,
+    disable_two_factor, enable_two_factor, generate_agent_install, healthz, index,
+    install_agent_script, install_bootstrap, last_login, logout_and_reauth, metrics, node_detail,
+    node_history, node_logs, node_status, nodes, overview, readyz, refresh_node_token,
+    require_readonly_auth, server_update_log, settings, start_server_update,
+    start_two_factor_setup, static_asset, update_alert_settings, update_node_location_override,
+    update_node_service_metadata, verify_2fa_api, verify_2fa_page,
 };
 use crate::history::HistoryStore;
 use crate::registry::NodeRegistry;
@@ -370,6 +370,7 @@ pub(crate) fn build_router(state: AppState) -> Router {
         )
         .route("/api/settings/password", post(change_readonly_password))
         .route("/api/settings/agents/install", post(generate_agent_install))
+        .route("/api/settings/agents/{node_id}", delete(delete_agent))
         .route("/api/settings/alerts", post(update_alert_settings))
         .route("/api/settings/update/server", post(start_server_update))
         .route("/api/settings/2fa/enable", post(enable_two_factor))

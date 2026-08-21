@@ -8,7 +8,7 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, Response, StatusCode, header};
 use axum::middleware::{from_fn, from_fn_with_state};
-use axum::routing::post;
+use axum::routing::{delete, post};
 use base64::Engine;
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -19,12 +19,13 @@ use tower::ServiceExt;
 use super::*;
 use crate::auth::{TWO_FACTOR_AUTH_COOKIE, decode_totp_secret};
 use crate::handlers::{
-    change_readonly_password, disable_two_factor, enable_two_factor, refresh_node_token,
-    require_readonly_auth, start_server_update, start_two_factor_setup,
+    change_readonly_password, delete_agent, disable_two_factor, enable_two_factor,
+    refresh_node_token, require_readonly_auth, start_server_update, start_two_factor_setup,
     update_node_location_override,
 };
 use crate::registry::{IssueNodeRequest, issue_node};
 use crate::set_protected_response_headers;
+use crate::snapshot::{load_snapshot, persist_snapshot};
 use crate::state::{SessionCommand, SessionControlHandle, SessionRefreshReply};
 use crate::test_support::{fake_snapshot, synthetic_identity, test_server_config};
 use nodelite_proto::{GeoIpLocation, ReadonlyAuthConfig, parse_server_config};
@@ -527,6 +528,111 @@ async fn settings_node_location_override_persists_and_updates_runtime_view() -> 
 }
 
 #[tokio::test]
+async fn settings_agent_delete_revokes_enrollment_and_removes_runtime_node() -> Result<()> {
+    let harness = SettingsHarness::new(readonly_auth(false, None)).await?;
+    let issued = issue_node(
+        harness.state.registry.path(),
+        IssueNodeRequest {
+            node_id: "edge-sin-01".to_string(),
+            node_label: Some("Edge SIN 01".to_string()),
+            tags: Vec::new(),
+        },
+    )
+    .await?;
+    harness.state.registry.reload().await?;
+    harness
+        .state
+        .shared
+        .register_node(
+            synthetic_identity("edge-sin-01", "Edge SIN 01", "test", None, "itest"),
+            Some("203.0.113.8".to_string()),
+            None,
+            None,
+        )
+        .await;
+    assert!(
+        harness
+            .state
+            .shared
+            .get_status("edge-sin-01")
+            .await
+            .is_some()
+    );
+    let snapshot_path = harness.state.shared.config().snapshot_path.clone();
+    persist_snapshot(
+        snapshot_path.as_path(),
+        &harness.state.shared.list_statuses().await,
+    )
+    .await?;
+
+    let rejected = harness
+        .app
+        .clone()
+        .oneshot(json_delete_request(
+            "/api/settings/agents/edge-sin-01",
+            &basic_auth_header("secret"),
+            None,
+            json!({ "current_password": "wrong" }),
+        ))
+        .await?;
+    assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(harness.state.registry.count().await, 1);
+
+    let deleted = harness
+        .app
+        .clone()
+        .oneshot(json_delete_request(
+            "/api/settings/agents/edge-sin-01",
+            &basic_auth_header("secret"),
+            None,
+            json!({ "current_password": "secret" }),
+        ))
+        .await?;
+    assert_status(deleted.status(), StatusCode::OK, deleted).await?;
+
+    assert!(
+        harness
+            .state
+            .registry
+            .list_registered_nodes()
+            .await
+            .is_empty()
+    );
+    assert!(
+        harness
+            .state
+            .shared
+            .get_status("edge-sin-01")
+            .await
+            .is_none()
+    );
+    assert!(load_snapshot(snapshot_path.as_path()).await?.is_empty());
+    assert!(
+        harness
+            .state
+            .registry
+            .consume_install_token(&issued.install_token)
+            .await?
+            .is_none()
+    );
+
+    let missing = harness
+        .app
+        .clone()
+        .oneshot(json_delete_request(
+            "/api/settings/agents/edge-sin-01",
+            &basic_auth_header("secret"),
+            None,
+            json!({ "current_password": "secret" }),
+        ))
+        .await?;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+
+    harness.cleanup().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn settings_server_update_requires_sensitive_confirmation() -> Result<()> {
     let harness = SettingsHarness::new(readonly_auth(false, None)).await?;
 
@@ -561,6 +667,7 @@ async fn settings_server_update_requires_sensitive_confirmation() -> Result<()> 
 fn settings_app(state: crate::AppState) -> Router {
     let protected_routes = Router::new()
         .route("/api/settings/password", post(change_readonly_password))
+        .route("/api/settings/agents/{node_id}", delete(delete_agent))
         .route("/api/settings/update/server", post(start_server_update))
         .route("/api/settings/2fa/start", post(start_two_factor_setup))
         .route("/api/settings/2fa/enable", post(enable_two_factor))
@@ -657,6 +764,25 @@ fn json_request(
 ) -> Request<Body> {
     let mut builder = Request::builder()
         .method("POST")
+        .uri(uri)
+        .header(header::AUTHORIZATION, authorization)
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(cookie) = cookie {
+        builder = builder.header(header::COOKIE, cookie);
+    }
+    builder
+        .body(Body::from(body.to_string()))
+        .expect("request should build")
+}
+
+fn json_delete_request(
+    uri: &str,
+    authorization: &str,
+    cookie: Option<&str>,
+    body: Value,
+) -> Request<Body> {
+    let mut builder = Request::builder()
+        .method("DELETE")
         .uri(uri)
         .header(header::AUTHORIZATION, authorization)
         .header(header::CONTENT_TYPE, "application/json");

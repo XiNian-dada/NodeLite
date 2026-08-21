@@ -3,6 +3,7 @@
 //! 这里保留共享类型与导出,把读路径、认证变更、更新相关流程拆到独立子模块,
 //! 避免继续膨胀成一个数百行的 monolith。
 
+mod agent_delete;
 mod agent_install;
 mod alerts;
 mod config_edit;
@@ -13,6 +14,7 @@ mod subprocess;
 mod types;
 mod updates;
 
+pub(crate) use agent_delete::delete_agent;
 pub(crate) use agent_install::generate_agent_install;
 pub(crate) use alerts::{alert_settings, update_alert_settings};
 pub(crate) use query::settings;
@@ -33,7 +35,7 @@ use helpers::{
 };
 use subprocess::{UpdateLaunchMode, spawn_server_update_subprocess};
 use types::{
-    ChangePasswordRequest, DisableTwoFactorRequest, EnableTwoFactorRequest,
+    ChangePasswordRequest, DeleteAgentRequest, DisableTwoFactorRequest, EnableTwoFactorRequest,
     GenerateAgentInstallRequest, GenerateAgentInstallResponse, NodeTokenRefreshResponse,
     ServerUpdateLogQuery, ServerUpdateLogResponse, SettingsActionResponse, SettingsAgentToken,
     SettingsAuth, SettingsResponse, SettingsUpdates, StartServerUpdateRequest,

@@ -173,6 +173,15 @@ pub(crate) struct GenerateAgentInstallResponse {
     pub(crate) install_command: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DeleteAgentRequest {
+    #[serde(default)]
+    pub(crate) current_password: Option<String>,
+    #[serde(default)]
+    pub(crate) code: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct NodeTokenRefreshResponse {
     pub(crate) ok: bool,

@@ -224,6 +224,15 @@ impl SharedState {
         }
     }
 
+    /// 从运行态视图中移除已注销的节点，并通知已订阅的浏览器刷新。
+    pub(crate) async fn remove_node(&self, node_id: &str) -> bool {
+        let removed = self.registry.remove_node(node_id);
+        if removed {
+            self.bump_view_revision();
+        }
+        removed
+    }
+
     /// 把在线会话的控制通道挂到节点上,供 HTTP 处理器向该节点下发命令。
     pub async fn attach_session_control(
         &self,

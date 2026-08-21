@@ -127,3 +127,28 @@ describe('apiClient.generateAgentInstall', () => {
     );
   });
 });
+
+describe('apiClient.deleteAgent', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true, message: 'Agent removed' }));
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('deletes the encoded node path with a reauthentication payload', async () => {
+    await apiClient.deleteAgent('a b/c', { current_password: 'secret' });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/settings/agents/a%20b%2Fc',
+      expect.objectContaining({
+        method: 'DELETE',
+        body: JSON.stringify({ current_password: 'secret' }),
+      }),
+    );
+  });
+});

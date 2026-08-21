@@ -1,13 +1,18 @@
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { apiClient, type SettingsAgentToken } from '@/api';
 import { ApiAbortError } from '@/api/client';
 import { messageFromError } from '@/lib/apiError';
 import { tokenRemaining, tokenSeverity } from '@/lib/format';
+import DeleteAgentDialog from './DeleteAgentDialog.vue';
 
-const props = defineProps<{ agents: SettingsAgentToken[] }>();
-const emit = defineEmits<{ saved: [] }>();
+const props = defineProps<{
+  agents: SettingsAgentToken[];
+  authEnabled: boolean;
+  twoFactorEnabled: boolean;
+}>();
+const emit = defineEmits<{ saved: []; deleted: [] }>();
 const { t, locale } = useI18n();
 
 interface ServiceDraft {
@@ -23,6 +28,7 @@ interface ServiceDraft {
 }
 
 const drafts = reactive<Record<string, ServiceDraft>>({});
+const deleteTarget = ref<SettingsAgentToken | null>(null);
 
 function draftFromAgent(agent: SettingsAgentToken, existing?: ServiceDraft): ServiceDraft {
   return {
@@ -115,6 +121,20 @@ async function saveServiceMetadata(nodeId: string): Promise<void> {
   }
 }
 
+function openDelete(agent: SettingsAgentToken): void {
+  if (!props.authEnabled) return;
+  deleteTarget.value = agent;
+}
+
+function closeDelete(): void {
+  deleteTarget.value = null;
+}
+
+function agentDeleted(): void {
+  deleteTarget.value = null;
+  emit('deleted');
+}
+
 const rows = computed(() =>
   props.agents.map((a) => {
     const draft = drafts[a.node_id] ?? draftFromAgent(a);
@@ -130,6 +150,7 @@ const rows = computed(() =>
       remaining: remainingText(a.token_expires_in_secs),
       severity: tokenSeverity(a.token_expires_in_secs),
       draft,
+      agentToken: a,
     };
   }),
 );
@@ -165,7 +186,8 @@ const rows = computed(() =>
       <tbody>
         <tr v-for="row in rows" :key="row.id" data-test="token-row">
           <td :data-label="t('settings.tokens.node')">
-            {{ row.label }}<div class="subnote">{{ row.nodeId }}</div>
+            {{ row.label }}
+            <div class="subnote">{{ row.nodeId }}</div>
           </td>
           <td :data-label="t('settings.tokens.status')">
             <span class="status-pill" :class="row.online ? 'online' : 'offline'">
@@ -221,6 +243,15 @@ const rows = computed(() =>
                   : t('settings.tokens.service_meta_save')
               }}
             </button>
+            <button
+              class="agent-delete"
+              type="button"
+              :disabled="!authEnabled"
+              data-test="delete-agent"
+              @click="openDelete(row.agentToken)"
+            >
+              {{ t('settings.tokens.delete') }}
+            </button>
             <div
               v-if="row.draft.message"
               class="meta-message"
@@ -233,6 +264,14 @@ const rows = computed(() =>
         </tr>
       </tbody>
     </table>
+
+    <DeleteAgentDialog
+      v-if="deleteTarget"
+      :agent="deleteTarget"
+      :two-factor-enabled="twoFactorEnabled"
+      @close="closeDelete"
+      @deleted="agentDeleted"
+    />
   </article>
 </template>
 
@@ -376,6 +415,22 @@ const rows = computed(() =>
   font-weight: 600;
 }
 .meta-save:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+.agent-delete {
+  min-width: 64px;
+  height: 32px;
+  margin-top: 6px;
+  color: var(--accent-red);
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+.agent-delete:disabled {
   cursor: not-allowed;
   opacity: 0.58;
 }

@@ -111,6 +111,50 @@ fn install_tokens_are_one_time_use() {
 }
 
 #[test]
+fn remove_node_revokes_pending_install_tokens() {
+    let runtime = Runtime::new().expect("runtime should build");
+    runtime.block_on(async {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic enough")
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("nodelite-remove-node-test-{unique}"));
+        std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+        let path = temp_dir.join("server.json");
+        let issued = issue_node(
+            &path,
+            IssueNodeRequest {
+                node_id: "hk-01".to_string(),
+                node_label: Some("Hong Kong 01".to_string()),
+                tags: Vec::new(),
+            },
+        )
+        .await
+        .expect("node should be issued");
+        let registry = NodeRegistry::load(&path)
+            .await
+            .expect("registry should load");
+
+        let removed = registry
+            .remove_node("hk-01")
+            .await
+            .expect("node should be removed");
+        assert_eq!(removed.node_id, "hk-01");
+        assert!(registry.list_registered_nodes().await.is_empty());
+        assert!(
+            registry
+                .consume_install_token(&issued.install_token)
+                .await
+                .expect("removed install token lookup should succeed")
+                .is_none()
+        );
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&temp_dir);
+    });
+}
+
+#[test]
 fn update_service_metadata_persists_display_fields() {
     let runtime = Runtime::new().expect("runtime should build");
     runtime.block_on(async {
