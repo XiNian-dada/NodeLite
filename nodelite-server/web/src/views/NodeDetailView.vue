@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import AppLayout from '@/components/AppLayout.vue';
 import NodeHardwarePanel from '@/components/NodeHardwarePanel.vue';
@@ -22,9 +22,11 @@ import { useNodeStatusStore } from '@/stores/nodeStatus';
 import { useDetailHistoryStore } from '@/stores/detailHistory';
 import { useMonitorHistoryStore } from '@/stores/monitorHistory';
 import { useNodeLogsStore } from '@/stores/nodeLogs';
+import { useNodesStore } from '@/stores/nodes';
+import { useWebSocket } from '@/ws';
 import { ApiError } from '@/api/client';
 
-const NODE_DETAIL_REFRESH_MS = 5000;
+const NODE_DETAIL_AUX_REFRESH_MS = 5000;
 
 const TABS = ['overview', 'network', 'hardware', 'logs', 'settings'] as const;
 type TabId = (typeof TABS)[number];
@@ -40,7 +42,9 @@ const store = useNodeStatusStore();
 const historyStore = useDetailHistoryStore();
 const monitorStore = useMonitorHistoryStore();
 const logsStore = useNodeLogsStore();
+const nodesStore = useNodesStore();
 const selection = useChartSelection();
+const ws = useWebSocket();
 
 const nodeId = computed(() => String(route.params.id ?? ''));
 const node = computed(() => store.data);
@@ -102,15 +106,50 @@ function ensureTabData(): void {
   if (logsNeeded.value) void logsStore.loadIfStale(id);
 }
 
+async function loadNode(id: string): Promise<void> {
+  await store.load(id);
+  const summary = nodesStore.nodesById.get(id);
+  const generatedAt = nodesStore.lastGeneratedAt;
+  if (summary && generatedAt) store.applyRealtimeSummary(summary, generatedAt);
+}
+
+const currentSummary = computed(() => nodesStore.nodesById.get(nodeId.value) ?? null);
+
+watch(currentSummary, (summary) => {
+  const generatedAt = nodesStore.lastGeneratedAt;
+  if (summary && generatedAt) store.applyRealtimeSummary(summary, generatedAt);
+});
+
+const wsUnsubscribers: Array<() => void> = [];
+
 onMounted(() => {
-  void store.load(nodeId.value);
+  wsUnsubscribers.push(
+    ws.on('initial_state', (msg) => {
+      nodesStore.applyServerState(msg.nodes, msg.generated_at);
+      if (!nodesStore.nodesById.has(nodeId.value)) store.markRemoved(nodeId.value);
+    }),
+    ws.on('node_upsert', (msg) => {
+      nodesStore.upsertNode(msg.node, msg.generated_at);
+    }),
+    ws.on('node_removed', (msg) => {
+      if (nodesStore.removeNode(msg.node_id, msg.generated_at)) {
+        store.markRemoved(msg.node_id);
+      }
+    }),
+  );
+
+  void loadNode(nodeId.value);
   ensureTabData();
+});
+
+onUnmounted(() => {
+  for (const unsubscribe of wsUnsubscribers) unsubscribe();
 });
 
 // Navigating between nodes (same component, new :id) reloads.
 watch(nodeId, (id) => {
   closeZoom();
-  if (id) void store.load(id);
+  if (id) void loadNode(id);
   ensureTabData();
 });
 
@@ -121,13 +160,12 @@ watch([activeTab, selection.windowHours], ([tab]) => {
 });
 
 usePolling(() => {
-  void store.refresh();
   if (historyNeeded.value) void historyStore.refresh();
   if (monitorNeeded.value && nodeId.value) {
     void monitorStore.refresh(nodeId.value, selection.windowHours.value);
   }
   if (logsNeeded.value) void logsStore.refresh();
-}, NODE_DETAIL_REFRESH_MS);
+}, NODE_DETAIL_AUX_REFRESH_MS);
 
 // --- Monitor zoom modal ---
 const modalMetric = ref<OverviewMonitorMetric | null>(null);
@@ -217,7 +255,12 @@ const modalConfig = computed(() => {
             :title="$t(ipRevealed ? 'node.meta.ip_hide' : 'node.meta.ip_reveal')"
             data-test="node-ip-toggle"
             @click="ipRevealed = !ipRevealed"
-          >IP: <span class="node-ip-value" :class="{ 'node-ip-value--revealed': ipRevealed }">{{ ip }}</span><template v-if="isLan"> (LAN)</template></span>
+            >IP:
+            <span class="node-ip-value" :class="{ 'node-ip-value--revealed': ipRevealed }">{{
+              ip
+            }}</span
+            ><template v-if="isLan"> (LAN)</template></span
+          >
           <span v-if="location && !isLan">{{ location }}</span>
           <span v-if="uptime && uptime.days > 0">{{
             $t('node.meta.uptime_days', { days: uptime.days })
