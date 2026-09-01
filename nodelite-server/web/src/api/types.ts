@@ -528,7 +528,7 @@ export interface RefreshNodeTokenRequest {
 }
 
 // --- WebSocket Browser Messages (nodelite-proto/src/message.rs BrowserMessage) ---
-// TODO(Stage 6.2): Auto-generate from proto crate instead of hand-writing.
+// Cross-language fixtures lock these definitions to Rust serialization in CI.
 
 export type BrowserMessage =
   | {

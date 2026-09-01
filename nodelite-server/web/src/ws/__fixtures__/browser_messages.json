@@ -1,0 +1,115 @@
+{
+  "server_to_browser": {
+    "initial_state": {
+      "type": "initial_state",
+      "generated_at": "2026-07-01T12:34:56Z",
+      "overview": {
+        "generated_at": "2026-07-01T12:34:56Z",
+        "total_nodes": 1,
+        "online_nodes": 1,
+        "offline_nodes": 0,
+        "total_rx_bytes": 123456,
+        "total_tx_bytes": 654321,
+        "current_rx_bytes_per_sec": 128.5,
+        "current_tx_bytes_per_sec": 256.25,
+        "average_latency_ms": 15.5
+      },
+      "nodes": [
+        {
+          "identity": {
+            "node_id": "contract-node-01",
+            "node_label": "Contract Node",
+            "hostname": "contract.example",
+            "tags": [
+              "contract",
+              "edge"
+            ]
+          },
+          "geoip_country": "Singapore",
+          "geoip_city": "Singapore",
+          "geoip_latitude": 1.3521,
+          "geoip_longitude": 103.8198,
+          "location_override_country": null,
+          "location_override_city": null,
+          "location_override_latitude": null,
+          "location_override_longitude": null,
+          "snapshot": {
+            "cpu_usage_percent": 37.5,
+            "load": {
+              "one": 0.75
+            },
+            "memory": {
+              "total_bytes": 8589934592,
+              "used_bytes": 3221225472
+            }
+          },
+          "latency_ms": 12,
+          "online": true
+        }
+      ]
+    },
+    "overview_update": {
+      "type": "overview_update",
+      "generated_at": "2026-07-01T12:34:56Z",
+      "overview": {
+        "generated_at": "2026-07-01T12:34:56Z",
+        "total_nodes": 1,
+        "online_nodes": 1,
+        "offline_nodes": 0,
+        "total_rx_bytes": 123456,
+        "total_tx_bytes": 654321,
+        "current_rx_bytes_per_sec": 128.5,
+        "current_tx_bytes_per_sec": 256.25,
+        "average_latency_ms": 15.5
+      }
+    },
+    "node_upsert": {
+      "type": "node_upsert",
+      "generated_at": "2026-07-01T12:34:56Z",
+      "node": {
+        "identity": {
+          "node_id": "contract-node-01",
+          "node_label": "Contract Node",
+          "hostname": "contract.example",
+          "tags": [
+            "contract",
+            "edge"
+          ]
+        },
+        "geoip_country": "Singapore",
+        "geoip_city": "Singapore",
+        "geoip_latitude": 1.3521,
+        "geoip_longitude": 103.8198,
+        "location_override_country": null,
+        "location_override_city": null,
+        "location_override_latitude": null,
+        "location_override_longitude": null,
+        "snapshot": {
+          "cpu_usage_percent": 37.5,
+          "load": {
+            "one": 0.75
+          },
+          "memory": {
+            "total_bytes": 8589934592,
+            "used_bytes": 3221225472
+          }
+        },
+        "latency_ms": 12,
+        "online": true
+      }
+    },
+    "node_removed": {
+      "type": "node_removed",
+      "generated_at": "2026-07-01T12:34:56Z",
+      "node_id": "contract-node-01"
+    },
+    "pong": {
+      "type": "pong"
+    }
+  },
+  "browser_to_server": {
+    "ping": {
+      "type": "ping"
+    }
+  }
+}
