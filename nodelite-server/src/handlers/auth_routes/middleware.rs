@@ -349,7 +349,7 @@ async fn record_basic_auth_login_success(state: &AppState, meta: &ReadonlyAuthMe
 
 async fn issue_basic_auth_session_and_continue(
     state: &AppState,
-    request: Request,
+    mut request: Request,
     next: Next,
     login_event_id: Option<i64>,
 ) -> Response {
@@ -363,6 +363,13 @@ async fn issue_basic_auth_session_and_continue(
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
+    let Some(lifetime) = state
+        .two_factor_sessions
+        .basic_auth_lifetime(&session_token)
+    else {
+        return readonly_auth_unauthorized_response();
+    };
+    request.extensions_mut().insert(lifetime);
     let secure = secure_cookies(state.shared.config());
     let mut response = next.run(request).await;
     response.headers_mut().insert(

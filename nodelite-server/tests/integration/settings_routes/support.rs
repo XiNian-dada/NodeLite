@@ -63,6 +63,10 @@ pub(super) fn settings_app(state: crate::AppState) -> Router {
     let protected_routes = Router::new()
         .route("/api/settings/password", post(change_readonly_password))
         .route(
+            "/ws/browser",
+            axum::routing::get(crate::ws::ws_browser_handler),
+        )
+        .route(
             "/api/settings/alerts",
             post(crate::handlers::update_alert_settings),
         )
@@ -81,7 +85,13 @@ pub(super) fn settings_app(state: crate::AppState) -> Router {
         )
         .route_layer(from_fn(set_protected_response_headers))
         .route_layer(from_fn_with_state(state.clone(), require_readonly_auth));
-    Router::new().merge(protected_routes).with_state(state)
+    Router::new()
+        .route(
+            "/logout-and-reauth",
+            axum::routing::get(crate::handlers::logout_and_reauth),
+        )
+        .merge(protected_routes)
+        .with_state(state)
 }
 
 pub(super) async fn registered_node(

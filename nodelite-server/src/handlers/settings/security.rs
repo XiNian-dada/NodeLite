@@ -65,9 +65,10 @@ async fn change_readonly_password_inner(
     }
     {
         let mut auth = state.readonly_auth.write().await;
+        auth.revoked.cancel();
         *auth = ReadonlyRouteAuth::from_config(Some(next_auth));
+        state.two_factor_sessions.clear_authenticated();
     }
-    state.two_factor_sessions.clear_authenticated();
     let secure = secure_cookies(state.shared.config());
     (
         StatusCode::OK,
@@ -265,9 +266,10 @@ async fn enable_two_factor_inner(state: AppState, request: EnableTwoFactorReques
     }
     {
         let mut auth = state.readonly_auth.write().await;
+        auth.revoked.cancel();
         *auth = ReadonlyRouteAuth::from_config(Some(next_auth));
+        state.two_factor_sessions.clear_authenticated();
     }
-    state.two_factor_sessions.clear_authenticated();
     let auth_token = match state.two_factor_sessions.create_authenticated() {
         Ok(token) => token,
         Err(error) => {
@@ -357,9 +359,10 @@ async fn disable_two_factor_inner(state: AppState, request: DisableTwoFactorRequ
     }
     {
         let mut auth = state.readonly_auth.write().await;
+        auth.revoked.cancel();
         *auth = ReadonlyRouteAuth::from_config(Some(next_auth));
+        state.two_factor_sessions.clear_authenticated();
     }
-    state.two_factor_sessions.clear_authenticated();
     let secure = secure_cookies(state.shared.config());
     (
         StatusCode::OK,

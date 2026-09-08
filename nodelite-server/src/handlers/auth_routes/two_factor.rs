@@ -57,6 +57,9 @@ pub(crate) async fn logout_and_reauth(
     if let Some(token) = cookie_value(&headers, TWO_FACTOR_AUTH_COOKIE) {
         state.two_factor_sessions.remove_authenticated(&token);
     }
+    if let Some(token) = cookie_value(&headers, BASIC_AUTH_SESSION_COOKIE) {
+        state.two_factor_sessions.remove_basic_auth_session(&token);
+    }
     let secure = secure_cookies(state.shared.config());
     (
         StatusCode::UNAUTHORIZED,

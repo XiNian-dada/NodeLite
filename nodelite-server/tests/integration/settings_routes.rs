@@ -33,6 +33,7 @@ use nodelite_proto::{GeoIpLocation, ReadonlyAuthConfig, parse_server_config};
 mod support;
 use support::*;
 
+mod browser_auth;
 mod concurrency;
 
 #[tokio::test]
