@@ -62,7 +62,8 @@ SHA256_X86_64="${NODELITE_AGENT_SHA256_X86_64:-}"
 SHA256_AARCH64="${NODELITE_AGENT_SHA256_AARCH64:-}"
 SERVICE_USER="nodelite-agent"
 SERVICE_GROUP="nodelite-agent"
-STATE_DIR="/var/lib/nodelite-agent"
+STATE_DIR="${NODELITE_AGENT_STATE_DIR:-/var/lib/nodelite-agent}"
+LEGACY_CONFIG_PATH=""
 BIN_PATH=""
 CONFIG_PATH=""
 OS_NAME=""
@@ -310,14 +311,24 @@ prepare_service_account() {
   SERVICE_GROUP="$(id -gn root)"
 }
 
+configure_agent_config_paths() {
+  LEGACY_CONFIG_PATH="$CONFIG_DIR/agent.toml"
+  CONFIG_PATH="$LEGACY_CONFIG_PATH"
+  if [ "$SERVICE_KIND" = "systemd" ]; then
+    CONFIG_PATH="$STATE_DIR/agent.toml"
+  fi
+}
+
 prepare_directories() {
   mkdir -p "$INSTALL_DIR" "$CONFIG_DIR" "$STATE_DIR"
   chown root:root "$INSTALL_DIR"
   chmod 0755 "$INSTALL_DIR"
 
   if [ "$SERVICE_KIND" = "systemd" ]; then
-    chown root:"$SERVICE_GROUP" "$CONFIG_DIR" "$STATE_DIR"
-    chmod 0750 "$CONFIG_DIR" "$STATE_DIR"
+    chown root:"$SERVICE_GROUP" "$CONFIG_DIR"
+    chmod 0750 "$CONFIG_DIR"
+    chown "$SERVICE_USER:$SERVICE_GROUP" "$STATE_DIR"
+    chmod 0700 "$STATE_DIR"
     return 0
   fi
 
@@ -326,18 +337,18 @@ prepare_directories() {
 }
 
 install_agent_config() {
-  config_mode="0640"
-  if [ "$SERVICE_KIND" = "launchd" ]; then
-    config_mode="0600"
-  fi
-
   if [ "$config_refreshed" -eq 1 ]; then
-    install -o root -g "$SERVICE_GROUP" -m "$config_mode" "$BOOTSTRAP_TMP" "$CONFIG_PATH"
+    install -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0600 "$BOOTSTRAP_TMP" "$CONFIG_PATH"
     return 0
   fi
 
-  chown root:"$SERVICE_GROUP" "$CONFIG_PATH"
-  chmod "$config_mode" "$CONFIG_PATH"
+  if [ ! -f "$CONFIG_PATH" ] && [ -f "$LEGACY_CONFIG_PATH" ]; then
+    install -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0600 "$LEGACY_CONFIG_PATH" "$CONFIG_PATH"
+    chmod 0600 "$LEGACY_CONFIG_PATH"
+    printf '%s\n' "Migrated active Agent configuration to $CONFIG_PATH"
+  fi
+  chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_PATH"
+  chmod 0600 "$CONFIG_PATH"
 }
 
 # 自动更新支持已移除。升级时顺手清理旧版本曾经写入的 timer / service,
@@ -374,7 +385,8 @@ UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
-ProtectSystem=full
+ProtectSystem=strict
+ReadWritePaths=$STATE_DIR
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true
@@ -503,6 +515,11 @@ while [ "$#" -gt 0 ]; do
       CONFIG_DIR="$2"
       shift 2
       ;;
+    --state-dir)
+      [ "$#" -ge 2 ] || fail "--state-dir requires a value"
+      STATE_DIR="$2"
+      shift 2
+      ;;
     --mode)
       [ "$#" -ge 2 ] || fail "--mode requires a value"
       MODE="$2"
@@ -550,6 +567,7 @@ Optional:
   --install-token-file <path>
   --install-dir <dir>
   --config-dir <dir>
+  --state-dir <dir>
   --mode <install|upgrade|auto>
   --base-url <release-base-url>
   --checksums-url <release-checksums-url>
@@ -558,6 +576,9 @@ Optional:
   --sha256-aarch64 <sha256-override>
 
 Notes:
+  Linux keeps its writable agent.toml in /var/lib/nodelite-agent (0700/0600).
+  --state-dir overrides that directory. Existing --config-dir/agent.toml is
+  imported once; subsequent upgrades preserve the active state's credentials.
   This script no longer installs unattended auto-update timers. Use
   --mode upgrade manually, or trigger an upgrade from the authenticated
   dashboard after checking the target release.
@@ -627,10 +648,10 @@ else
 fi
 
 BIN_PATH="$INSTALL_DIR/nodelite-agent"
-CONFIG_PATH="$CONFIG_DIR/agent.toml"
+configure_agent_config_paths
 
 existing_install=0
-if [ -e "$CONFIG_PATH" ] || [ -e "$SERVICE_DEFINITION_PATH" ] || [ -e "$BIN_PATH" ]; then
+if [ -e "$CONFIG_PATH" ] || [ -e "$LEGACY_CONFIG_PATH" ] || [ -e "$SERVICE_DEFINITION_PATH" ] || [ -e "$BIN_PATH" ]; then
   existing_install=1
 fi
 
@@ -657,7 +678,7 @@ prepare_service_account
 prepare_directories
 
 TMP_PATH="$(mktemp "$INSTALL_DIR/nodelite-agent.XXXXXX")"
-BOOTSTRAP_TMP="$(mktemp "$CONFIG_DIR/agent.toml.XXXXXX")"
+BOOTSTRAP_TMP="$(mktemp "$STATE_DIR/agent.toml.XXXXXX")"
 CURL_AUTH_CONFIG="$(mktemp "$STATE_DIR/install-curl.XXXXXX")"
 CHECKSUMS_TMP="$(mktemp "$STATE_DIR/install-sha256.XXXXXX")"
 
@@ -665,7 +686,7 @@ config_refreshed=0
 if [ "$MODE" = "install" ] || [ -n "$BOOTSTRAP_URL" ]; then
   fetch_bootstrap_config
   config_refreshed=1
-elif [ ! -f "$CONFIG_PATH" ]; then
+elif [ ! -f "$CONFIG_PATH" ] && [ ! -f "$LEGACY_CONFIG_PATH" ]; then
   fail "upgrade mode requires an existing $CONFIG_PATH or a bootstrap URL to recreate it"
 fi
 
@@ -677,6 +698,9 @@ ACTUAL_SHA256="$(calculate_sha256 "$TMP_PATH")"
 [ "$ACTUAL_SHA256" = "$EXPECTED_SHA256" ] || fail "downloaded agent checksum mismatch"
 
 install -o root -g root -m 0755 "$TMP_PATH" "$BIN_PATH"
+if [ "$SERVICE_KIND" = "systemd" ] && systemctl is-active --quiet nodelite-agent.service; then
+  systemctl stop nodelite-agent.service
+fi
 install_agent_config
 write_service_definition
 restart_service

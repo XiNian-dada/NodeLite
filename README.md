@@ -75,6 +75,8 @@ Agent 升级命令可在服务端生成：
   upgrade-agent
 ```
 
+Linux Agent 的活动配置保存在 `/var/lib/nodelite-agent/agent.toml`，目录和文件分别为服务账户独占的 `0700` / `0600`，以便续期凭证安全落盘。升级时会从旧配置目录导入一次，后续修改请使用安装器输出的活动配置路径；可用 `--state-dir` 指定其他状态目录。
+
 常用状态检查：
 
 ```bash

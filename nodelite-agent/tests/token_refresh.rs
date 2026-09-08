@@ -167,6 +167,17 @@ report_interval_secs = 5
     // Verify token was updated in memory config
     assert_eq!(config.token, "refreshed-rotated-token-12345");
 
+    let restarted = nodelite_agent::config_io::load_agent_config(&config_path).await?;
+    assert_eq!(restarted.token, expected_new_token);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&config_path)?.permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
     // 清理由 `TempDir` 的 Drop 负责。
     server_task
         .await

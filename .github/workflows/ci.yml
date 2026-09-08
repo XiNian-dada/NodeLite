@@ -89,6 +89,9 @@ jobs:
       - name: Test server config templates
         run: sh scripts/test-install-server-config.sh
 
+      - name: Test Agent configuration migration and permissions
+        run: sudo sh scripts/test-install-agent.sh
+
       - name: Test verified web update bootstrap
         run: sh scripts/test-server-web-update.sh
 
