@@ -24,8 +24,13 @@ pub(super) fn initialize_database(
         create_private_dir_all(parent)?;
     }
 
-    let connection = open_database_connection(db_path, true, sqlite_busy_timeout_secs)?;
-    connection.execute_batch(
+    let mut connection = open_database_connection(db_path, true, sqlite_busy_timeout_secs)?;
+    // Schema changes and recovery must commit together so an interrupted upgrade
+    // cannot expose a new empty table while the samples remain in the old one.
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    recover_interrupted_cpu_migration(&transaction)?;
+    transaction.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS history_points (
             node_id TEXT NOT NULL,
@@ -43,12 +48,47 @@ pub(super) fn initialize_database(
         );
         "#,
     )?;
-    migrate_nullable_cpu_usage(&connection)?;
-    migrate_history_metric_columns(&connection)?;
-    ensure_history_indexes(&connection)?;
+    migrate_nullable_cpu_usage(&transaction)?;
+    migrate_history_metric_columns(&transaction)?;
+    ensure_history_indexes(&transaction)?;
+    transaction.commit()?;
     harden_database_artifacts(db_path)?;
 
     Ok(connection)
+}
+
+fn recover_interrupted_cpu_migration(connection: &Connection) -> Result<()> {
+    let legacy_exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+        ["history_points_legacy_not_null_cpu"],
+        |row| row.get(0),
+    )?;
+    if !legacy_exists {
+        return Ok(());
+    }
+    let active_exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+        ["history_points"],
+        |row| row.get(0),
+    )?;
+    if active_exists {
+        let active_has_rows: bool =
+            connection.query_row("SELECT EXISTS(SELECT 1 FROM history_points)", [], |row| {
+                row.get(0)
+            })?;
+        // Both tables may contain independently collected samples. Refusing the
+        // ambiguous merge preserves them for an operator instead of losing data.
+        anyhow::ensure!(
+            !active_has_rows,
+            "interrupted history migration: history_points and history_points_legacy_not_null_cpu both exist with active samples; recover the legacy table before starting history storage"
+        );
+        connection.execute("DROP TABLE history_points", [])?;
+    }
+    connection.execute(
+        "ALTER TABLE history_points_legacy_not_null_cpu RENAME TO history_points",
+        [],
+    )?;
+    Ok(())
 }
 
 fn migrate_nullable_cpu_usage(connection: &Connection) -> Result<()> {

@@ -18,6 +18,7 @@ use super::{
 };
 
 mod init_tests;
+mod migration_tests;
 mod reader_tests;
 mod writer_tests;
 
