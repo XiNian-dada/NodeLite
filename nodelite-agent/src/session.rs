@@ -250,6 +250,9 @@ pub async fn run_session(
                                     && message == "authenticated"
                                 {
                                     authenticated = true;
+                                    traffic_controller.probe();
+                                    send_traffic_control_status(&mut sender, &traffic_controller).await
+                                        .map_err(|error| session_error(authenticated, error))?;
                                     log_buffer.push(
                                         NoticeLevel::Info,
                                         format!("authenticated with {}", config.server),
@@ -373,12 +376,11 @@ async fn apply_network_throttle(
                 info!("cleared server-requested network traffic limit");
             }
         }
-        #[cfg(not(target_os = "linux"))]
-        Ok(TrafficControlOutcome::Unsupported) => {
-            warn!("server requested a network limit, but this platform is unsupported");
+        Ok(TrafficControlOutcome::Unavailable) => {
+            warn!("network traffic control is unavailable; check Agent capability status");
             log_buffer.push(
                 NoticeLevel::Warn,
-                "server requested a network limit, but this platform is unsupported",
+                "network traffic control is unavailable; check Agent capability status",
             );
         }
         Err(error) => {
@@ -389,10 +391,27 @@ async fn apply_network_throttle(
             );
         }
     }
+    if authenticated {
+        send_traffic_control_status(sender, controller).await?;
+    }
     if authenticated && !log_buffer.is_empty() {
         flush_agent_logs(sender, log_buffer).await?;
     }
     Ok(())
+}
+
+async fn send_traffic_control_status(
+    sender: &mut AgentWsSender,
+    controller: &TrafficController,
+) -> Result<()> {
+    send_wire_message(
+        sender,
+        &WireMessage::AgentLogs(AgentLogsMessage {
+            entries: Vec::new(),
+            traffic_control: controller.status(),
+        }),
+    )
+    .await
 }
 
 fn session_error(established_session: bool, source: anyhow::Error) -> SessionError {
@@ -444,6 +463,7 @@ async fn flush_agent_logs(
         send_wire_message(
             sender,
             &WireMessage::AgentLogs(AgentLogsMessage {
+                traffic_control: None,
                 entries: batch.clone(),
             }),
         )

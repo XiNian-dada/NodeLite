@@ -161,6 +161,7 @@ async fn initialize_server_runtime(
     let shutdown = CancellationToken::new();
     let state = AppState {
         agent_logs: AgentLogStore::new(),
+        traffic_control: crate::traffic_control::TrafficControlStatuses::default(),
         history,
         audit_log,
         geoip,

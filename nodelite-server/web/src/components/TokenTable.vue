@@ -6,6 +6,7 @@ import { ApiAbortError } from '@/api/client';
 import { messageFromError } from '@/lib/apiError';
 import { tokenRemaining, tokenSeverity } from '@/lib/format';
 import DeleteAgentDialog from './DeleteAgentDialog.vue';
+import TrafficControlStatus from './TrafficControlStatus.vue';
 
 const props = defineProps<{
   agents: SettingsAgentToken[];
@@ -193,6 +194,7 @@ const rows = computed(() =>
             <span class="status-pill" :class="row.online ? 'online' : 'offline'">
               {{ row.status }}
             </span>
+            <TrafficControlStatus :status="row.online ? row.agentToken.traffic_control : null" />
           </td>
           <td :data-label="t('settings.tokens.agent')">{{ row.agent }}</td>
           <td :data-label="t('settings.tokens.ip')">{{ row.ip }}</td>

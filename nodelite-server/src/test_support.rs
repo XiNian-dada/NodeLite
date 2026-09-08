@@ -131,6 +131,7 @@ impl TestServer {
         let shutdown = state.shutdown.clone();
         let protected_routes = Router::new()
             .route("/api/overview", get(overview))
+            .route("/api/settings", get(crate::handlers::settings))
             .route("/metrics", get(metrics))
             .route("/api/nodes", get(nodes))
             .route("/api/nodes/{node_id}", get(node_status))
@@ -335,7 +336,7 @@ impl TestServer {
         self.shutdown.cancel();
     }
 
-    async fn fetch_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+    pub(crate) async fn fetch_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         let body = fetch_http_body(self.addr, path).await?;
         serde_json::from_str(&body).with_context(|| format!("decode json body for {path}"))
     }
@@ -387,6 +388,20 @@ impl TestAgent {
 
     pub async fn send_fake_metrics(&mut self, uptime_secs: u64) -> Result<()> {
         self.send_snapshot(fake_snapshot(uptime_secs)).await
+    }
+
+    pub async fn send_traffic_control_status(
+        &mut self,
+        status: nodelite_proto::TrafficControlStatus,
+    ) -> Result<()> {
+        send_wire_message(
+            &mut self.socket,
+            &WireMessage::AgentLogs(nodelite_proto::AgentLogsMessage {
+                entries: Vec::new(),
+                traffic_control: Some(status),
+            }),
+        )
+        .await
     }
 
     pub async fn send_snapshot(&mut self, snapshot: NodeSnapshot) -> Result<()> {

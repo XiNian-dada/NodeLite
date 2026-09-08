@@ -11,6 +11,7 @@ eval "$(awk '/^configure_agent_config_paths\(\)/ { printing=1 } /^cleanup_legacy
 eval "$(awk '/^write_systemd_unit\(\)/ { printing=1 } /^write_launchd_plist\(\)/ { exit } printing { print }' "$INSTALLER")"
 
 SERVICE_KIND=systemd
+TRAFFIC_CONTROL=0
 SERVICE_USER=$(id -un)
 SERVICE_GROUP=$(id -gn)
 if [ "$(id -u)" -eq 0 ] && [ "$(uname -s)" = Linux ]; then
@@ -55,6 +56,15 @@ write_systemd_unit
 grep -Fx "ExecStart=$BIN_PATH --config $STATE_DIR/agent.toml" "$UNIT_PATH" >/dev/null
 grep -Fx 'ProtectSystem=strict' "$UNIT_PATH" >/dev/null
 grep -Fx "ReadWritePaths=$STATE_DIR" "$UNIT_PATH" >/dev/null
+grep -Fx 'CapabilityBoundingSet=' "$UNIT_PATH" >/dev/null
+grep -Fx 'AmbientCapabilities=' "$UNIT_PATH" >/dev/null
+grep -Fx 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6' "$UNIT_PATH" >/dev/null
+TRAFFIC_CONTROL=1
+write_systemd_unit
+grep -Fx 'User='"$SERVICE_USER" "$UNIT_PATH" >/dev/null
+grep -Fx 'CapabilityBoundingSet=CAP_NET_ADMIN' "$UNIT_PATH" >/dev/null
+grep -Fx 'AmbientCapabilities=CAP_NET_ADMIN' "$UNIT_PATH" >/dev/null
+grep -Fx 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK' "$UNIT_PATH" >/dev/null
 
 BOOTSTRAP_TMP="$TEMP_DIR/bootstrap.toml"
 printf '%s\n' 'replacement-test-fixture' >"$BOOTSTRAP_TMP"

@@ -92,6 +92,12 @@ jobs:
       - name: Test Agent configuration migration and permissions
         run: sudo sh scripts/test-install-agent.sh
 
+      - name: Test traffic control in the installed systemd sandbox
+        run: |
+          sudo apt-get install -y iproute2
+          test_binary=$(cargo test -p nodelite-agent --lib --no-run --locked --message-format=json | jq -r 'select(.reason == "compiler-artifact" and .profile.test == true) | .executable // empty')
+          sudo sh scripts/test-traffic-control-systemd.sh "$test_binary"
+
       - name: Test verified web update bootstrap
         run: sh scripts/test-server-web-update.sh
 

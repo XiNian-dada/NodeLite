@@ -24,6 +24,19 @@ pub const MAX_LOCATION_OVERRIDE_TEXT_BYTES: usize = 64;
 /// 计算 anomaly 触发阈值时使用的滑动窗口(秒),默认 5 分钟。
 pub const METRIC_ANOMALY_WINDOW_SECS: u64 = 300;
 
+pub(crate) fn validate_traffic_control_status(
+    status: &nodelite_proto::TrafficControlStatus,
+) -> Result<(), &'static str> {
+    if [status.desired_rate_kbps, status.applied_rate_kbps]
+        .into_iter()
+        .flatten()
+        .any(|rate| !(1..=100_000_000).contains(&rate))
+    {
+        return Err("invalid traffic control rate");
+    }
+    Ok(())
+}
+
 /// 对来自 Agent 的快照进行二次校验。
 /// 把所有疑似越界的字段统一约束到合法范围,避免它们污染 UI 汇总、聚合或历史表。
 ///

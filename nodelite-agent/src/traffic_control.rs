@@ -7,7 +7,12 @@
 #[cfg(target_os = "linux")]
 use std::process::Command;
 
+use nodelite_proto::{TrafficControlState, TrafficControlStatus};
 use thiserror::Error;
+
+mod capability;
+#[cfg(all(test, target_os = "linux"))]
+mod linux_system_tests;
 
 #[cfg(any(target_os = "linux", test))]
 const FILTER_PRIORITY: &str = "49152";
@@ -21,14 +26,14 @@ pub(crate) enum TrafficControlOutcome {
     /// Linux 规则已经应用或撤销。
     Applied,
     /// 当前平台没有可安全使用的实现。
-    #[cfg(not(target_os = "linux"))]
-    Unsupported,
+    Unavailable,
 }
 
 /// Agent 只跟踪自身已确认过的配置，避免重复执行 `tc`。
 #[derive(Default)]
 pub(crate) struct TrafficController {
     last_applied_rate_kbps: Option<Option<u64>>,
+    status: Option<TrafficControlStatus>,
 }
 
 /// 应用限速时发生的可恢复错误。
@@ -57,6 +62,24 @@ pub(crate) enum TrafficControlError {
 }
 
 impl TrafficController {
+    pub(crate) fn probe(&mut self) {
+        let reason = capability::unavailable_reason();
+        self.status = Some(TrafficControlStatus {
+            state: if reason.is_some() {
+                TrafficControlState::Unavailable
+            } else {
+                TrafficControlState::Ready
+            },
+            reason,
+            desired_rate_kbps: None,
+            applied_rate_kbps: None,
+        });
+    }
+
+    pub(crate) fn status(&self) -> Option<TrafficControlStatus> {
+        self.status.clone()
+    }
+
     /// 应用或撤销 Server 下发的速率；同一配置不会重复触发系统命令。
     pub(crate) async fn apply(
         &mut self,
@@ -65,21 +88,45 @@ impl TrafficController {
         if rate_kbps.is_some_and(|rate| rate == 0 || rate > MAX_TRAFFIC_RATE_KBPS) {
             return Err(TrafficControlError::InvalidRate);
         }
+        self.probe();
+        if let Some(status) = &mut self.status {
+            status.desired_rate_kbps = rate_kbps;
+            if status.state == TrafficControlState::Unavailable {
+                return Ok(TrafficControlOutcome::Unavailable);
+            }
+        }
         if self.last_applied_rate_kbps == Some(rate_kbps) {
+            self.record_applied(rate_kbps);
             return Ok(TrafficControlOutcome::Applied);
         }
 
         #[cfg(target_os = "linux")]
         {
-            tokio::task::spawn_blocking(move || apply_linux_traffic_rate(rate_kbps)).await??;
+            let result = tokio::task::spawn_blocking(move || apply_linux_traffic_rate(rate_kbps))
+                .await
+                .map_err(TrafficControlError::Task)
+                .and_then(|result| result);
+            if let Err(error) = result {
+                if let Some(status) = &mut self.status {
+                    status.state = TrafficControlState::Failed;
+                }
+                return Err(error);
+            }
             self.last_applied_rate_kbps = Some(rate_kbps);
+            self.record_applied(rate_kbps);
             Ok(TrafficControlOutcome::Applied)
         }
 
         #[cfg(not(target_os = "linux"))]
         {
-            self.last_applied_rate_kbps = Some(rate_kbps);
-            Ok(TrafficControlOutcome::Unsupported)
+            Ok(TrafficControlOutcome::Unavailable)
+        }
+    }
+
+    fn record_applied(&mut self, rate_kbps: Option<u64>) {
+        if let Some(status) = &mut self.status {
+            status.state = TrafficControlState::Applied;
+            status.applied_rate_kbps = rate_kbps;
         }
     }
 }
@@ -331,7 +378,7 @@ mod tests {
 
         assert!(matches!(
             controller.apply(Some(10_000)).await,
-            Ok(super::TrafficControlOutcome::Unsupported)
+            Ok(super::TrafficControlOutcome::Unavailable)
         ));
     }
 

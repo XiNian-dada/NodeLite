@@ -63,6 +63,7 @@ SHA256_AARCH64="${NODELITE_AGENT_SHA256_AARCH64:-}"
 SERVICE_USER="nodelite-agent"
 SERVICE_GROUP="nodelite-agent"
 STATE_DIR="${NODELITE_AGENT_STATE_DIR:-/var/lib/nodelite-agent}"
+TRAFFIC_CONTROL="${NODELITE_AGENT_TRAFFIC_CONTROL:-auto}"
 LEGACY_CONFIG_PATH=""
 BIN_PATH=""
 CONFIG_PATH=""
@@ -365,7 +366,30 @@ cleanup_legacy_auto_update() {
     "$LEGACY_AUTO_UPDATE_TIMER_PATH"
 }
 
+configure_traffic_control() {
+  if [ "$TRAFFIC_CONTROL" = auto ]; then
+    TRAFFIC_CONTROL=0
+    if [ -f "$UNIT_PATH" ] && grep -Fx 'AmbientCapabilities=CAP_NET_ADMIN' "$UNIT_PATH" >/dev/null; then
+      TRAFFIC_CONTROL=1
+    fi
+  fi
+  case "$TRAFFIC_CONTROL" in
+    0) ;;
+    1)
+      [ "$SERVICE_KIND" = systemd ] || fail 'traffic control requires Linux with systemd'
+      need_cmd tc
+      ;;
+    *) fail 'NODELITE_AGENT_TRAFFIC_CONTROL must be 0 or 1' ;;
+  esac
+}
+
 write_systemd_unit() {
+  traffic_capabilities=""
+  traffic_address_family=""
+  if [ "$TRAFFIC_CONTROL" = 1 ]; then
+    traffic_capabilities=CAP_NET_ADMIN
+    traffic_address_family=" AF_NETLINK"
+  fi
   cat >"$UNIT_PATH" <<EOF
 [Unit]
 Description=NodeLite Agent
@@ -397,8 +421,11 @@ RestrictNamespaces=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
 SystemCallArchitectures=native
-CapabilityBoundingSet=
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=$traffic_capabilities
+AmbientCapabilities=$traffic_capabilities
+Environment=NODELITE_AGENT_TRAFFIC_CONTROL=$TRAFFIC_CONTROL
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6$traffic_address_family
 SystemCallFilter=@system-service
 
 [Install]
@@ -520,6 +547,14 @@ while [ "$#" -gt 0 ]; do
       STATE_DIR="$2"
       shift 2
       ;;
+    --enable-traffic-control)
+      TRAFFIC_CONTROL=1
+      shift
+      ;;
+    --disable-traffic-control)
+      TRAFFIC_CONTROL=0
+      shift
+      ;;
     --mode)
       [ "$#" -ge 2 ] || fail "--mode requires a value"
       MODE="$2"
@@ -568,6 +603,8 @@ Optional:
   --install-dir <dir>
   --config-dir <dir>
   --state-dir <dir>
+  --enable-traffic-control
+  --disable-traffic-control
   --mode <install|upgrade|auto>
   --base-url <release-base-url>
   --checksums-url <release-checksums-url>
@@ -609,6 +646,7 @@ need_cmd sed
 need_cmd chown
 need_cmd chmod
 configure_platform
+configure_traffic_control
 
 if [ "$SERVICE_KIND" = "systemd" ]; then
   need_cmd systemctl

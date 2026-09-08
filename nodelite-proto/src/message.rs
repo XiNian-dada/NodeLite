@@ -168,6 +168,8 @@ pub struct AgentLogEntry {
 /// Agent 批量上传的运行时日志。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentLogsMessage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traffic_control: Option<TrafficControlStatus>,
     /// 本批次内的日志事件列表。
     pub entries: Vec<AgentLogEntry>,
 }
@@ -180,6 +182,33 @@ pub struct AgentLogsMessage {
 pub struct NetworkThrottleMessage {
     /// 限制速率，单位为 kbit/s；`None` 表示取消限速。
     pub rate_kbps: Option<u64>,
+}
+
+/// Optional telemetry separates policy from execution while remaining compatible with v3 peers.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TrafficControlStatus {
+    pub state: TrafficControlState,
+    pub reason: Option<TrafficControlUnavailableReason>,
+    pub desired_rate_kbps: Option<u64>,
+    pub applied_rate_kbps: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TrafficControlState {
+    Ready,
+    Applied,
+    Unavailable,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TrafficControlUnavailableReason {
+    Disabled,
+    UnsupportedPlatform,
+    MissingTc,
+    MissingCapability,
 }
 
 /// 通知级别,与常见的日志等级对应。
@@ -252,6 +281,16 @@ pub enum BrowserMessage {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn traffic_control_telemetry_is_optional_for_older_agents() {
+        let message: super::AgentLogsMessage =
+            serde_json::from_str(r#"{"entries":[]}"#).expect("legacy log message");
+        assert!(message.traffic_control.is_none());
+        assert_eq!(
+            serde_json::to_value(message).expect("serialize"),
+            serde_json::json!({"entries": []})
+        );
+    }
     use chrono::{TimeZone, Utc};
 
     use super::{
@@ -378,6 +417,7 @@ mod tests {
             message: "careful".to_string(),
         });
         let agent_logs = WireMessage::AgentLogs(AgentLogsMessage {
+            traffic_control: None,
             entries: vec![AgentLogEntry {
                 occurred_at: Utc
                     .with_ymd_and_hms(2026, 5, 7, 1, 2, 3)

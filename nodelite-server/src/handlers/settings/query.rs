@@ -50,6 +50,7 @@ pub(crate) async fn settings(State(state): State<AppState>) -> impl IntoResponse
                 .filter(|usage| usage.accounting == node.traffic_accounting)
                 .map(|usage| usage.used_bytes);
             SettingsAgentToken {
+                traffic_control: state.traffic_control.get(&node.node_id),
                 node_id: node.node_id,
                 node_label: node.node_label,
                 online: status.is_some_and(|status| status.online),

@@ -7,9 +7,8 @@ use anyhow::{Result, anyhow};
 use axum::extract::ws::{CloseFrame, Message, WebSocket, close_code};
 use futures::StreamExt;
 use nodelite_proto::{
-    AgentLogEntry, AgentLogsMessage, MetricsMessage, NetworkThrottleMessage, NodeSnapshot,
-    PongMessage, RefreshTokenRequestMessage, ServerNoticeMessage, WIRE_PROTOCOL_VERSION,
-    WireMessage,
+    AgentLogsMessage, MetricsMessage, NetworkThrottleMessage, NodeSnapshot, PongMessage,
+    RefreshTokenRequestMessage, ServerNoticeMessage, WIRE_PROTOCOL_VERSION, WireMessage,
 };
 use tokio::time::{MissedTickBehavior, interval};
 use tracing::{info, warn};
@@ -170,9 +169,9 @@ async fn handle_wire_message(
             shared.record_ws_metrics_message();
             handle_metrics_message(state, shared, session, sender, loop_state, snapshot).await
         }
-        AgentWireAction::AgentLogs(entries) => {
+        AgentWireAction::AgentLogs(message) => {
             shared.record_ws_agent_logs_message();
-            handle_agent_logs_message(state, session, entries).await
+            handle_agent_logs_message(state, session, message).await
         }
         AgentWireAction::Pong(nonce) => {
             shared.record_ws_pong_message();
@@ -189,7 +188,7 @@ async fn handle_wire_message(
 #[derive(Debug)]
 enum AgentWireAction {
     Metrics(NodeSnapshot),
-    AgentLogs(Vec<AgentLogEntry>),
+    AgentLogs(AgentLogsMessage),
     Pong(u64),
     RefreshTokenRequest(RefreshTokenRequestMessage),
     Reject(&'static str),
@@ -198,7 +197,7 @@ enum AgentWireAction {
 fn classify_agent_wire_message(message: WireMessage) -> AgentWireAction {
     match message {
         WireMessage::Metrics(MetricsMessage { snapshot }) => AgentWireAction::Metrics(snapshot),
-        WireMessage::AgentLogs(AgentLogsMessage { entries }) => AgentWireAction::AgentLogs(entries),
+        WireMessage::AgentLogs(message) => AgentWireAction::AgentLogs(message),
         WireMessage::Pong(PongMessage { nonce }) => AgentWireAction::Pong(nonce),
         WireMessage::RefreshTokenRequest(request) => AgentWireAction::RefreshTokenRequest(request),
         WireMessage::Hello(_) => AgentWireAction::Reject("duplicate hello message"),
@@ -358,7 +357,7 @@ fn should_send_network_throttle(
 async fn handle_agent_logs_message(
     state: &AppState,
     session: &mut ActiveSession,
-    entries: Vec<nodelite_proto::AgentLogEntry>,
+    message: AgentLogsMessage,
 ) -> Result<LoopAction, super::ProtocolError> {
     if !ensure_current_token(
         state,
@@ -369,9 +368,16 @@ async fn handle_agent_logs_message(
     {
         return Ok(LoopAction::Break);
     }
+    if let Some(status) = message.traffic_control {
+        crate::sanitize::validate_traffic_control_status(&status)
+            .map_err(|reason| super::ProtocolError::Client(reason.to_string()))?;
+        state
+            .traffic_control
+            .record(&session.node_id, session.session_id, status);
+    }
     let result = state
         .agent_logs
-        .record_entries(&session.node_id, entries)
+        .record_entries(&session.node_id, message.entries)
         .await;
     if result.accepted > 0 {
         info!(node_id = %session.node_id, accepted = result.accepted, "recorded agent runtime log entries");
