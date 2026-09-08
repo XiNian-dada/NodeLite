@@ -4,21 +4,27 @@
 //! police filter；绝不替换 root qdisc，也不会删除不属于 NodeLite 的规则。这样
 //! 即使限速配置被撤销，主机原有的整形策略仍保持不变。
 
-#[cfg(target_os = "linux")]
-use std::process::Command;
+use std::time::Duration;
 
-use nodelite_proto::{TrafficControlState, TrafficControlStatus};
 use thiserror::Error;
+#[cfg(target_os = "linux")]
+use tokio::process::Command;
+use tokio::time::Instant;
+
+use nodelite_proto::{TrafficControlState, TrafficControlStatus, TrafficControlUnavailableReason};
 
 mod capability;
 #[cfg(all(test, target_os = "linux"))]
 mod linux_system_tests;
+#[cfg(test)]
+mod retry_tests;
 
 #[cfg(any(target_os = "linux", test))]
 const FILTER_PRIORITY: &str = "49152";
 #[cfg(any(target_os = "linux", test))]
 const FILTER_HANDLE: &str = "0x4e4c";
 const MAX_TRAFFIC_RATE_KBPS: u64 = 100_000_000;
+const MAX_APPLY_ATTEMPTS: u32 = 10;
 
 /// 网络限速操作的结果。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +40,9 @@ pub(crate) enum TrafficControlOutcome {
 pub(crate) struct TrafficController {
     last_applied_rate_kbps: Option<Option<u64>>,
     status: Option<TrafficControlStatus>,
+    desired_rate_kbps: Option<Option<u64>>,
+    retry_at: Option<Instant>,
+    attempts: u32,
 }
 
 /// 应用限速时发生的可恢复错误。
@@ -57,8 +66,12 @@ pub(crate) enum TrafficControlError {
         operation: &'static str,
         status_code: Option<i32>,
     },
-    #[error("traffic control worker task failed: {0}")]
-    Task(#[from] tokio::task::JoinError),
+    #[cfg(target_os = "linux")]
+    #[error("tc timed out while {operation}")]
+    CommandTimeout { operation: &'static str },
+    #[cfg(test)]
+    #[error("injected tc failure")]
+    Injected,
 }
 
 impl TrafficController {
@@ -80,46 +93,85 @@ impl TrafficController {
         self.status.clone()
     }
 
-    /// 应用或撤销 Server 下发的速率；同一配置不会重复触发系统命令。
+    pub(crate) fn retry_policy(&self) -> Option<(Instant, Option<u64>)> {
+        self.retry_at.zip(self.desired_rate_kbps)
+    }
+
     pub(crate) async fn apply(
         &mut self,
         rate_kbps: Option<u64>,
     ) -> Result<TrafficControlOutcome, TrafficControlError> {
+        self.apply_with(rate_kbps, capability::unavailable_reason(), || async {
+            #[cfg(target_os = "linux")]
+            {
+                apply_linux_traffic_rate(rate_kbps).await
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                Ok(())
+            }
+        })
+        .await
+    }
+
+    async fn apply_with<F, Fut>(
+        &mut self,
+        rate_kbps: Option<u64>,
+        unavailable: Option<TrafficControlUnavailableReason>,
+        operation: F,
+    ) -> Result<TrafficControlOutcome, TrafficControlError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<(), TrafficControlError>>,
+    {
         if rate_kbps.is_some_and(|rate| rate == 0 || rate > MAX_TRAFFIC_RATE_KBPS) {
             return Err(TrafficControlError::InvalidRate);
         }
-        self.probe();
-        if let Some(status) = &mut self.status {
-            status.desired_rate_kbps = rate_kbps;
-            if status.state == TrafficControlState::Unavailable {
-                return Ok(TrafficControlOutcome::Unavailable);
+        if self.desired_rate_kbps != Some(rate_kbps) {
+            self.desired_rate_kbps = Some(rate_kbps);
+            self.attempts = 0;
+        }
+        self.retry_at = None;
+        self.status = Some(TrafficControlStatus {
+            state: TrafficControlState::Unavailable,
+            reason: unavailable,
+            desired_rate_kbps: rate_kbps,
+            applied_rate_kbps: None,
+        });
+        if let Some(reason) = unavailable {
+            if reason == TrafficControlUnavailableReason::MissingTc {
+                self.schedule_retry();
             }
+            return Ok(TrafficControlOutcome::Unavailable);
         }
         if self.last_applied_rate_kbps == Some(rate_kbps) {
             self.record_applied(rate_kbps);
             return Ok(TrafficControlOutcome::Applied);
         }
-
-        #[cfg(target_os = "linux")]
-        {
-            let result = tokio::task::spawn_blocking(move || apply_linux_traffic_rate(rate_kbps))
-                .await
-                .map_err(TrafficControlError::Task)
-                .and_then(|result| result);
-            if let Err(error) = result {
-                if let Some(status) = &mut self.status {
-                    status.state = TrafficControlState::Failed;
-                }
-                return Err(error);
+        if let Err(error) = operation().await {
+            // A partially changed kernel policy no longer matches the last confirmed value.
+            self.last_applied_rate_kbps = None;
+            self.schedule_retry();
+            if let Some(status) = &mut self.status {
+                status.state = if self.retry_at.is_some() {
+                    TrafficControlState::Retrying
+                } else {
+                    TrafficControlState::Failed
+                };
             }
-            self.last_applied_rate_kbps = Some(rate_kbps);
-            self.record_applied(rate_kbps);
-            Ok(TrafficControlOutcome::Applied)
+            return Err(error);
         }
+        self.last_applied_rate_kbps = Some(rate_kbps);
+        self.attempts = 0;
+        self.record_applied(rate_kbps);
+        Ok(TrafficControlOutcome::Applied)
+    }
 
-        #[cfg(not(target_os = "linux"))]
-        {
-            Ok(TrafficControlOutcome::Unavailable)
+    fn schedule_retry(&mut self) {
+        self.attempts = self.attempts.saturating_add(1);
+        if self.attempts < MAX_APPLY_ATTEMPTS {
+            let delay = Duration::from_secs((1_u64 << self.attempts.min(6)).min(60));
+            self.retry_at = Some(Instant::now() + delay);
         }
     }
 
@@ -132,17 +184,17 @@ impl TrafficController {
 }
 
 #[cfg(target_os = "linux")]
-fn apply_linux_traffic_rate(rate_kbps: Option<u64>) -> Result<(), TrafficControlError> {
+async fn apply_linux_traffic_rate(rate_kbps: Option<u64>) -> Result<(), TrafficControlError> {
     let interface = default_route_interface()?;
     match rate_kbps {
         Some(rate_kbps) => {
-            ensure_clsact(&interface)?;
-            replace_police_filter(&interface, "ingress", rate_kbps)?;
-            replace_police_filter(&interface, "egress", rate_kbps)?;
+            ensure_clsact(&interface).await?;
+            replace_police_filter(&interface, "ingress", rate_kbps).await?;
+            replace_police_filter(&interface, "egress", rate_kbps).await?;
         }
         None => {
-            delete_police_filter_if_present(&interface, "ingress")?;
-            delete_police_filter_if_present(&interface, "egress")?;
+            delete_police_filter_if_present(&interface, "ingress").await?;
+            delete_police_filter_if_present(&interface, "egress").await?;
         }
     }
     Ok(())
@@ -160,16 +212,16 @@ fn default_route_interface() -> Result<String, TrafficControlError> {
 }
 
 #[cfg(target_os = "linux")]
-fn ensure_clsact(interface: &str) -> Result<(), TrafficControlError> {
-    let existing = tc_output("reading qdisc configuration", qdisc_show_args(interface))?;
+async fn ensure_clsact(interface: &str) -> Result<(), TrafficControlError> {
+    let existing = tc_output("reading qdisc configuration", qdisc_show_args(interface)).await?;
     if existing.contains("qdisc clsact") {
         return Ok(());
     }
-    tc_success("adding clsact qdisc", qdisc_add_args(interface))
+    tc_success("adding clsact qdisc", qdisc_add_args(interface)).await
 }
 
 #[cfg(target_os = "linux")]
-fn replace_police_filter(
+async fn replace_police_filter(
     interface: &str,
     direction: &str,
     rate_kbps: u64,
@@ -178,17 +230,19 @@ fn replace_police_filter(
         "applying traffic police filter",
         police_filter_args(interface, direction, rate_kbps),
     )
+    .await
 }
 
 #[cfg(target_os = "linux")]
-fn delete_police_filter_if_present(
+async fn delete_police_filter_if_present(
     interface: &str,
     direction: &str,
 ) -> Result<(), TrafficControlError> {
     let existing = tc_output(
         "reading traffic filters",
         filter_show_args(interface, direction),
-    )?;
+    )
+    .await?;
     if !has_nodelite_police_filter(&existing) {
         return Ok(());
     }
@@ -196,17 +250,24 @@ fn delete_police_filter_if_present(
         "removing traffic police filter",
         filter_delete_args(interface, direction),
     )
+    .await
 }
 
 #[cfg(target_os = "linux")]
-fn tc_output(
+async fn tc_output(
     operation: &'static str,
     arguments: Vec<String>,
 ) -> Result<String, TrafficControlError> {
-    let output = Command::new("tc")
-        .args(arguments)
-        .output()
-        .map_err(|source| TrafficControlError::Command { operation, source })?;
+    let output = tokio::time::timeout(
+        Duration::from_secs(5),
+        Command::new("tc")
+            .args(arguments)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .map_err(|_| TrafficControlError::CommandTimeout { operation })?
+    .map_err(|source| TrafficControlError::Command { operation, source })?;
     if !output.status.success() {
         return Err(TrafficControlError::CommandFailed {
             operation,
@@ -217,19 +278,11 @@ fn tc_output(
 }
 
 #[cfg(target_os = "linux")]
-fn tc_success(operation: &'static str, arguments: Vec<String>) -> Result<(), TrafficControlError> {
-    let output = Command::new("tc")
-        .args(arguments)
-        .output()
-        .map_err(|source| TrafficControlError::Command { operation, source })?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(TrafficControlError::CommandFailed {
-            operation,
-            status_code: output.status.code(),
-        })
-    }
+async fn tc_success(
+    operation: &'static str,
+    arguments: Vec<String>,
+) -> Result<(), TrafficControlError> {
+    tc_output(operation, arguments).await.map(|_| ())
 }
 
 #[cfg(target_os = "linux")]

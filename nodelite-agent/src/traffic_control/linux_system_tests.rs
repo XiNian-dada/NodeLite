@@ -22,6 +22,7 @@ async fn applies_changes_and_removes_only_owned_filters() {
                 "inspect test filters",
                 filter_show_args("nltest0", direction),
             )
+            .await
             .expect("read filters");
             assert!(
                 filters.contains("pref 42"),

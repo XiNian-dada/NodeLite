@@ -246,7 +246,7 @@ export interface SettingsAgentToken {
 }
 
 export interface TrafficControlStatus {
-  state: 'ready' | 'applied' | 'unavailable' | 'failed';
+  state: 'ready' | 'applied' | 'unavailable' | 'failed' | 'retrying';
   reason: 'disabled' | 'unsupported_platform' | 'missing_tc' | 'missing_capability' | null;
   desired_rate_kbps: number | null;
   applied_rate_kbps: number | null;

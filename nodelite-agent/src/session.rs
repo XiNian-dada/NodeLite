@@ -222,7 +222,20 @@ pub async fn run_session(
     let mut traffic_controller = TrafficController::default();
 
     loop {
+        let throttle_retry = traffic_controller.retry_policy();
         tokio::select! {
+            _ = async {
+                match throttle_retry {
+                    Some((deadline, _)) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending::<()>().await,
+                }
+            }, if authenticated => {
+                if let Some((_, rate_kbps)) = throttle_retry {
+                    apply_network_throttle(&mut traffic_controller, &mut sender, log_buffer, true, rate_kbps)
+                        .await.map_err(|error| session_error(true, error))?;
+                }
+            }
+
             _ = report_ticker.tick(), if authenticated => {
                 send_metrics(&mut sender, collector)
                     .await

@@ -36,4 +36,24 @@ describe('Agent traffic control status', () => {
     });
     expect(wrapper.text()).toContain('No limit applied');
   });
+
+  it('distinguishes retrying from terminal failure and confirmed application', async () => {
+    const wrapper = mount(TrafficControlStatus, {
+      props: {
+        status: {
+          state: 'retrying' as const,
+          reason: null,
+          desired_rate_kbps: 1000,
+          applied_rate_kbps: null,
+        },
+      },
+      global: { plugins: [createI18n({ legacy: false, locale: 'en' })] },
+    });
+    expect(wrapper.text()).toContain('retry scheduled');
+    expect(wrapper.text()).not.toContain('Applied: 1000');
+    await wrapper.setProps({
+      status: { state: 'failed', reason: null, desired_rate_kbps: 1000, applied_rate_kbps: null },
+    });
+    expect(wrapper.text()).toContain('retry limit reached');
+  });
 });
