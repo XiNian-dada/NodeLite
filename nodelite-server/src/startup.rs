@@ -185,6 +185,7 @@ async fn initialize_server_runtime(
         alerting: Arc::new(RwLock::new(Arc::new(config.alerting.clone()))),
         two_factor_sessions: TwoFactorSessions::new(),
         config_path: Arc::new(config_path.to_path_buf()),
+        settings_write_lock: Arc::new(tokio::sync::Mutex::new(())),
         shutdown: shutdown.clone(),
     };
     let mut background_tasks = spawn_server_background_tasks(&config, &state);
