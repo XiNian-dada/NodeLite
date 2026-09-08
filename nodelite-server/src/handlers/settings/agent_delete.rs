@@ -8,7 +8,7 @@ use tracing::{error, info};
 
 use crate::AppState;
 use crate::registry::RegistryError;
-use crate::snapshot::persist_snapshot;
+use crate::snapshot::persist_current_snapshot;
 
 use super::security::settings_confirmation_error_for_sensitive_action;
 use super::{DeleteAgentRequest, SettingsActionResponse, settings_json_error};
@@ -53,12 +53,8 @@ pub(crate) async fn delete_agent(
     };
 
     state.shared.remove_node(&removed.node_id).await;
-    let remaining_statuses = state.shared.list_statuses().await;
-    if let Err(error) = persist_snapshot(
-        state.shared.config().snapshot_path.as_path(),
-        &remaining_statuses,
-    )
-    .await
+    if let Err(error) =
+        persist_current_snapshot(&state.shared, state.shared.config().snapshot_path.as_path()).await
     {
         error!(
             error = ?error,

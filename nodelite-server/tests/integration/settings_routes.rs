@@ -35,6 +35,7 @@ use support::*;
 
 mod browser_auth;
 mod concurrency;
+mod snapshot_concurrency;
 
 #[tokio::test]
 async fn settings_password_change_covers_failure_and_persistence_paths() -> Result<()> {
