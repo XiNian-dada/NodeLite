@@ -24,8 +24,8 @@ use super::transport::send_message;
 use super::{ActiveSession, LoopAction};
 use crate::AppState;
 use crate::sanitize::{
-    METRIC_ANOMALY_SESSION_LIMIT, METRIC_ANOMALY_WINDOW_SECS, sanitize_snapshot,
-    should_disconnect_for_metric_anomalies, update_metric_anomaly_window,
+    METRIC_ANOMALY_WINDOW_SECS, sanitize_snapshot, should_disconnect_for_metric_anomalies,
+    update_metric_anomaly_window,
 };
 use crate::state::{SessionCommand, SessionRefreshReply};
 
@@ -246,11 +246,14 @@ async fn handle_metrics_message(
             anomaly_window_size = loop_state.metric_anomaly_window.len(),
             "agent reported out-of-range metrics; clamped before persistence",
         );
-        if should_disconnect_for_metric_anomalies(&loop_state.metric_anomaly_window) {
+        if should_disconnect_for_metric_anomalies(
+            &loop_state.metric_anomaly_window,
+            shared.config().metric_anomaly_session_limit,
+        ) {
             warn!(
                 node_id = %session.node_id,
                 session_id = session.session_id,
-                limit = METRIC_ANOMALY_SESSION_LIMIT,
+                limit = shared.config().metric_anomaly_session_limit,
                 window_secs = METRIC_ANOMALY_WINDOW_SECS,
                 "disconnecting session after repeated metric anomalies",
             );

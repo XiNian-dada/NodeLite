@@ -8,6 +8,7 @@ mod concurrent_nodes;
 mod e2e;
 mod failure_recovery;
 mod metrics_collection;
+mod sanitization_config;
 mod server_agent_handshake;
 mod settings_routes;
 mod shutdown_signal;

@@ -88,6 +88,12 @@ pub struct TestServer {
 
 impl TestServer {
     pub async fn start() -> Result<Self> {
+        Self::start_with_config(|_| {}).await
+    }
+
+    pub async fn start_with_config(
+        configure: impl FnOnce(&mut nodelite_proto::ServerConfig),
+    ) -> Result<Self> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .context("system clock moved backwards")?
@@ -109,13 +115,15 @@ impl TestServer {
         let registry_path = temp_dir.join("server.json");
         let history_path = temp_dir.join("history.sqlite3");
         let snapshot_path = temp_dir.join("snapshot.json");
-        let config = Arc::new(test_server_config(
+        let mut config = test_server_config(
             addr,
             format!("http://{addr}"),
             registry_path.clone(),
             history_path,
             snapshot_path,
-        ));
+        );
+        configure(&mut config);
+        let config = Arc::new(config);
         let state =
             crate::AppState::test_fixture(config, Arc::new(temp_dir.join("server.toml"))).await?;
         let registry = state.registry.clone();

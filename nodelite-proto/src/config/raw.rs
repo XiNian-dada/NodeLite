@@ -326,6 +326,7 @@ impl RawServerConfigFile {
         let geoip = self.validate_geoip()?;
         let alerting = self.validate_alerting()?;
         self.validate_server_limits()?;
+        self.validate_sanitization_limits()?;
         self.validate_ws_limits()?;
         self.validate_ui_limits()?;
 
@@ -631,6 +632,29 @@ impl RawServerConfigFile {
             return Err(ConfigError::new(format!(
                 "server.history_writer_flush_interval_ms must be at least {MIN_WRITER_FLUSH_INTERVAL_MS} ms"
             )));
+        }
+        Ok(())
+    }
+
+    fn validate_sanitization_limits(&self) -> Result<(), ConfigError> {
+        for (name, value, maximum) in [
+            ("max_sanitized_disks", self.server.max_sanitized_disks, 1024),
+            (
+                "max_sanitized_string_bytes",
+                self.server.max_sanitized_string_bytes,
+                4096,
+            ),
+            (
+                "metric_anomaly_session_limit",
+                self.server.metric_anomaly_session_limit,
+                1000,
+            ),
+        ] {
+            if !(1..=maximum).contains(&value) {
+                return Err(ConfigError::new(format!(
+                    "server.{name} must be between 1 and {maximum}"
+                )));
+            }
         }
         Ok(())
     }

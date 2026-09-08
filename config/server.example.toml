@@ -39,11 +39,11 @@ hello_timeout_secs = 10
 max_outstanding_pings = 32
 # 不安全传输警告间隔(秒)。
 insecure_transport_warn_interval_secs = 900
-# 最大磁盘数量限制。
+# 最大磁盘数量限制，允许 1..=1024。
 max_sanitized_disks = 64
-# 最大字符串字节数限制。
+# 磁盘字段的 UTF-8 字节数限制，允许 1..=4096。
 max_sanitized_string_bytes = 256
-# 指标异常会话限制。
+# 五分钟内指标异常达到此次数时断连，允许 1..=1000。
 metric_anomaly_session_limit = 5
 # SQLite 忙等待超时(秒)。
 sqlite_busy_timeout_secs = 5
