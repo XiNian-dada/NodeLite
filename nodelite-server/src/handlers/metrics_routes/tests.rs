@@ -193,6 +193,12 @@ fn render_detailed_prometheus_metrics() -> String {
 #[test]
 fn exporter_exposes_writer_counters() {
     let body = render_writer_metrics(WriterMetrics {
+        history_write: crate::history::HistoryWriteMetrics {
+            failures: 2,
+            lost_samples: 4,
+            last_success_at: 1234,
+            degraded: true,
+        },
         history_dropped_writes: 3,
         history_queue_depth: 17,
         history_queue_capacity: 1024,
@@ -205,6 +211,10 @@ fn exporter_exposes_writer_counters() {
 
     assert!(body.contains("# TYPE nodelite_history_dropped_writes_total counter"));
     assert!(body.contains("nodelite_history_dropped_writes_total 3"));
+    assert!(body.contains("nodelite_history_write_failures_total 2"));
+    assert!(body.contains("nodelite_history_lost_samples_total 4"));
+    assert!(body.contains("nodelite_history_last_success_timestamp_seconds 1234"));
+    assert!(body.contains("nodelite_history_write_degraded 1"));
     assert!(body.contains("# TYPE nodelite_history_queue_depth gauge"));
     assert!(body.contains("nodelite_history_queue_depth 17"));
     assert!(body.contains("# TYPE nodelite_history_queue_capacity gauge"));

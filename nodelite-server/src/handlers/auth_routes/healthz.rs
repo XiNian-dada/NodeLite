@@ -28,6 +28,10 @@ struct ReadyzSignals {
     audit_enabled: bool,
     audit_available: bool,
     history_dropped_writes: u64,
+    history_write_failures: u64,
+    history_lost_samples: u64,
+    history_last_success_at: i64,
+    history_write_degraded: bool,
     audit_dropped_writes: u64,
     audit_write_failures: u64,
     history_queue_depth: u64,
@@ -58,6 +62,7 @@ pub(crate) async fn readyz(State(state): State<AppState>) -> Response {
     let audit_enabled = state.audit_log.enabled();
     let audit_available = state.audit_log.is_available().await;
     let history_dropped_writes = state.history.dropped_writes();
+    let history_write = state.history.write_metrics();
     let audit_dropped_writes = state.audit_log.dropped_writes();
     let audit_write_failures = state.audit_log.write_failures();
     let (history_queue_depth, history_queue_capacity) = state.history.writer_queue_metrics().await;
@@ -77,6 +82,9 @@ pub(crate) async fn readyz(State(state): State<AppState>) -> Response {
     }
     if history_dropped_writes > 0 {
         problems.push("history_dropped_writes");
+    }
+    if history_write.degraded {
+        problems.push("history_write_failed");
     }
     if audit_dropped_writes > 0 {
         problems.push("audit_dropped_writes");
@@ -101,6 +109,10 @@ pub(crate) async fn readyz(State(state): State<AppState>) -> Response {
             audit_enabled,
             audit_available,
             history_dropped_writes,
+            history_write_failures: history_write.failures,
+            history_lost_samples: history_write.lost_samples,
+            history_last_success_at: history_write.last_success_at,
+            history_write_degraded: history_write.degraded,
             audit_dropped_writes,
             audit_write_failures,
             history_queue_depth,
