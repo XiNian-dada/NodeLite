@@ -227,6 +227,8 @@ async fn replace_police_filter(
     direction: &str,
     rate_kbps: u64,
 ) -> Result<(), TrafficControlError> {
+    // Linux matchall rejects an in-place change with EEXIST even for the same handle.
+    delete_police_filter_if_present(interface, direction).await?;
     tc_success(
         "applying traffic police filter",
         police_filter_args(interface, direction, rate_kbps),
