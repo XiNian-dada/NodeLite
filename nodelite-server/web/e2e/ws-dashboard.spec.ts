@@ -1,45 +1,25 @@
-import { test, expect } from '@playwright/test';
-
-/**
- * Stage 3.5c E2E: WebSocket-driven Dashboard
- *
- * Validates:
- * 1. Dashboard loads via WS InitialState (no REST polling)
- * 2. Incremental node updates arrive via WS
- * 3. REST fallback when WS blocked
- * 4. Connection persists across route navigation
- * 5. Visibility handling (close on hide, reconnect on show)
- */
+import type { WebSocketRoute } from '@playwright/test';
+import { test, expect, nodeCard, setVisible } from './_live';
 
 test.describe('WebSocket Dashboard', () => {
-  test.skip(!process.env.NODELITE_E2E_BASE_URL, 'requires a live backend WebSocket');
-
-  test('loads dashboard via WS InitialState without REST polling', async ({ page }) => {
-    // Track network requests
+  test('loads dashboard via WS InitialState without REST polling', async ({ page, agent }) => {
     const restCalls: string[] = [];
-    page.on('request', (req) => {
-      const url = req.url();
-      if (url.includes('/api/overview') || url.includes('/api/nodes')) {
-        restCalls.push(url);
-      }
+    let initialStates = 0;
+    page.on('request', (request) => {
+      if (/\/api\/(overview|nodes)$/.test(request.url())) restCalls.push(request.url());
     });
-
-    await page.goto('/');
-
-    // Wait for WS connection marker
-    await expect(page.locator('body[data-ws-conn-id]')).toBeVisible({ timeout: 5000 });
-
-    // Wait for dashboard content to load
-    await expect(page.locator('[data-test="node-list"]')).toBeVisible({ timeout: 5000 });
-
-    // Give it a moment to ensure no REST calls happen
-    await page.waitForTimeout(1000);
-
-    // Assert: no REST polling calls (only /api/bootstrap for initial auth check is allowed)
-    const pollingCalls = restCalls.filter(
-      (url) => url.includes('/api/overview') || url.includes('/api/nodes'),
+    page.on('websocket', (socket) =>
+      socket.on('framereceived', ({ payload }) => {
+        if (JSON.parse(String(payload)).type === 'initial_state') initialStates++;
+      }),
     );
-    expect(pollingCalls).toHaveLength(0);
+    await page.goto('/');
+    await expect(nodeCard(page, agent.id).locator('[data-test="metric-cpu"]')).toHaveText('12%');
+    await expect.poll(() => initialStates).toBe(1);
+    await expect(page.locator('[data-test="connection-status"]')).toBeHidden();
+    // Cover the fallback deadline, not just the first render.
+    await page.waitForTimeout(1000);
+    expect(restCalls).toHaveLength(0);
   });
 
   test('incremental node updates arrive via WebSocket', async ({ page }) => {
@@ -63,124 +43,69 @@ test.describe('WebSocket Dashboard', () => {
     expect(initialCards).toBeGreaterThanOrEqual(0);
   });
 
-  test('falls back to REST when WebSocket is blocked', async ({ page, context }) => {
-    // Block WebSocket endpoint
-    await context.route('**/ws/browser', (route) => route.abort());
+  test('falls back to REST when WebSocket is blocked', async ({ page, agent }) => {
+    await page.routeWebSocket('**/ws/browser', (socket) => socket.close());
+    await page.goto('/');
+    const cpu = nodeCard(page, agent.id).locator('[data-test="metric-cpu"]');
+    await expect(cpu).toHaveText('12%');
+    await expect(page.locator('[data-test="connection-status"]')).toBeVisible();
+    await agent.update(23);
+    await expect(cpu).toHaveText('23%');
+    await agent.update(34);
+    await expect(cpu).toHaveText('34%');
+  });
 
-    const restCalls: string[] = [];
-    page.on('request', (req) => {
-      const url = req.url();
-      if (url.includes('/api/overview') || url.includes('/api/nodes')) {
-        restCalls.push(url);
+  test('WebSocket connection persists across route navigation', async ({ page, agent }) => {
+    let connections = 0;
+    page.on('websocket', () => connections++);
+    await page.goto('/');
+    await expect(nodeCard(page, agent.id)).toBeVisible();
+    const documentTime = await page.evaluate(() => performance.timeOrigin);
+    for (const [index, route] of ['settings', 'account', 'alerts', 'logs'].entries()) {
+      await page.locator(`[data-test="nav-${route}"]`).click();
+      await expect(page).toHaveURL(new RegExp(`/${route}$`));
+      await agent.update(40 + index);
+      await page.locator('[data-test="nav-overview"]').click();
+      await expect(nodeCard(page, agent.id).locator('[data-test="metric-cpu"]')).toHaveText(
+        `${40 + index}%`,
+      );
+    }
+    expect(connections).toBe(1);
+    expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentTime);
+  });
+
+  test('closes WebSocket when tab hidden, reconnects when visible', async ({ page, agent }) => {
+    let connections = 0;
+    let closed = 0;
+    page.on('websocket', (socket) => {
+      connections++;
+      socket.on('close', () => closed++);
+    });
+    await page.goto('/');
+    await expect(nodeCard(page, agent.id)).toBeVisible();
+    await setVisible(page, false);
+    await expect.poll(() => closed).toBe(1);
+    await setVisible(page, true);
+    await expect.poll(() => connections).toBe(2);
+    await expect(page.locator('[data-test="connection-status"]')).toBeHidden();
+    await expect(nodeCard(page, agent.id)).toBeVisible();
+  });
+
+  test('displays reconnecting state when connection drops', async ({ page, agent }) => {
+    let blocked = false;
+    let active: WebSocketRoute | undefined;
+    await page.routeWebSocket('**/ws/browser', (socket) => {
+      if (blocked) socket.close();
+      else {
+        active = socket;
+        socket.connectToServer();
       }
     });
-
     await page.goto('/');
-
-    // Wait for fallback timeout (3s) + buffer
-    await page.waitForTimeout(4000);
-
-    // Assert: REST fallback was triggered
-    expect(restCalls.length).toBeGreaterThan(0);
-    expect(restCalls.some((url) => url.includes('/api/overview'))).toBe(true);
-    expect(restCalls.some((url) => url.includes('/api/nodes'))).toBe(true);
-  });
-
-  test('WebSocket connection persists across route navigation', async ({ page }) => {
-    await page.goto('/');
-
-    // Wait for WS connection
-    await expect(page.locator('body[data-ws-conn-id]')).toBeVisible({ timeout: 5000 });
-    const connId1 = await page.locator('body').getAttribute('data-ws-conn-id');
-
-    // Navigate to a node detail page (if any nodes exist)
-    const firstNode = page.locator('[data-test="node-card"]').first();
-    if ((await firstNode.count()) > 0) {
-      await firstNode.click();
-      await page.waitForURL(/\/nodes\/.+/);
-
-      // Check connection ID unchanged
-      const connId2 = await page.locator('body').getAttribute('data-ws-conn-id');
-      expect(connId2).toBe(connId1);
-
-      // Navigate back to dashboard
-      await page.goto('/');
-      await page.waitForTimeout(500);
-
-      // Check connection ID still unchanged
-      const connId3 = await page.locator('body').getAttribute('data-ws-conn-id');
-      expect(connId3).toBe(connId1);
-    }
-  });
-
-  test('closes WebSocket when tab hidden, reconnects when visible', async ({ page }) => {
-    await page.goto('/');
-
-    // Wait for initial connection
-    await expect(page.locator('body[data-ws-conn-id]')).toBeVisible({ timeout: 5000 });
-    const connId1 = await page.locator('body').getAttribute('data-ws-conn-id');
-
-    // Simulate tab hidden
-    await page.evaluate(() => {
-      Object.defineProperty(document, 'hidden', {
-        configurable: true,
-        get: () => true,
-      });
-      document.dispatchEvent(new Event('visibilitychange'));
-    });
-
-    await page.waitForTimeout(500);
-
-    // Simulate tab visible again
-    await page.evaluate(() => {
-      Object.defineProperty(document, 'hidden', {
-        configurable: true,
-        get: () => false,
-      });
-      document.dispatchEvent(new Event('visibilitychange'));
-    });
-
-    // Wait for reconnection
-    await page.waitForTimeout(1000);
-
-    // Connection ID should increment (new connection)
-    const connId2 = await page.locator('body').getAttribute('data-ws-conn-id');
-    expect(parseInt(connId2 || '0')).toBeGreaterThan(parseInt(connId1 || '0'));
-  });
-
-  test('displays reconnecting state when connection drops', async ({ page, context }) => {
-    await page.goto('/');
-
-    // Wait for initial connection
-    await expect(page.locator('body[data-ws-conn-id]')).toBeVisible({ timeout: 5000 });
-
-    // Block WebSocket to simulate connection drop
-    await context.route('**/ws/browser', (route) => route.abort());
-
-    // Force a reconnect by simulating visibility change
-    await page.evaluate(() => {
-      Object.defineProperty(document, 'hidden', {
-        configurable: true,
-        get: () => true,
-      });
-      document.dispatchEvent(new Event('visibilitychange'));
-    });
-
-    await page.waitForTimeout(200);
-
-    await page.evaluate(() => {
-      Object.defineProperty(document, 'hidden', {
-        configurable: true,
-        get: () => false,
-      });
-      document.dispatchEvent(new Event('visibilitychange'));
-    });
-
-    // Wait for reconnect attempts
-    await page.waitForTimeout(2000);
-
-    // The connection should be in reconnecting or failed state
-    // (We can't easily assert internal state, but the app should remain functional)
-    await expect(page.locator('[data-test="dashboard-view"]')).toBeVisible();
+    await expect(nodeCard(page, agent.id)).toBeVisible();
+    blocked = true;
+    active!.close();
+    await expect(page.locator('[data-test="connection-status"]')).toBeVisible();
+    await expect(nodeCard(page, agent.id)).toBeVisible();
   });
 });
