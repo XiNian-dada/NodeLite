@@ -49,6 +49,8 @@ use crate::snapshot::{load_snapshot, persist_current_snapshot, spawn_snapshot_pe
 use crate::state::SharedState;
 use crate::ws::{ws_browser_handler, ws_handler};
 
+mod shutdown;
+
 pub(crate) const PROTECTED_CONTENT_SECURITY_POLICY: &str = "default-src 'self'; img-src 'self' data:; \
      connect-src 'self' https://raw.githubusercontent.com https://api.github.com; font-src 'self'; \
      object-src 'none'; media-src 'none'; worker-src 'none'; base-uri 'none'; frame-ancestors 'none'; \
@@ -309,22 +311,8 @@ async fn drain_server_shutdown(
     info!("propagating shutdown signal to background tasks and websocket sessions");
     shutdown.cancel();
 
-    // 给所有后台任务最多 5 秒收尾;超时则强制 abort 避免拖延 systemd 的 TimeoutStopSec。
-    let join_deadline = Duration::from_secs(5);
-    for handle in background_tasks {
-        match tokio::time::timeout(join_deadline, handle).await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
-                warn!(error = ?error, "background task ended with error during shutdown");
-            }
-            Err(_) => {
-                warn!(
-                    timeout_secs = join_deadline.as_secs(),
-                    "background task did not exit in time during shutdown"
-                );
-            }
-        }
-    }
+    // 所有后台任务共用 5 秒预算；取消并回收超时任务后才允许最终持久化。
+    shutdown::drain_background_tasks(background_tasks, Duration::from_secs(5)).await;
 
     // 周期持久化任务每 15 秒落盘一次,SIGTERM 期间最近一次 tick 之后的状态变更可能
     // 还没刷到磁盘。这里同步再落一次,确保 systemd restart 后看到的就是退出前最新视图。

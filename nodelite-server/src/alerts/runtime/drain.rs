@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{info, warn};
 
 const DELIVERY_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -22,9 +23,11 @@ pub(super) async fn drain_delivery_dispatcher(
 }
 
 pub(super) async fn drain_delivery_dispatcher_with_timeout(
-    mut delivery_dispatcher: JoinHandle<()>,
+    delivery_dispatcher: JoinHandle<()>,
     timeout_duration: Duration,
 ) -> DeliveryDrainOutcome {
+    // The server's shared deadline can cancel this drain before its own timeout.
+    let mut delivery_dispatcher = AbortOnDropHandle::new(delivery_dispatcher);
     match timeout(timeout_duration, &mut delivery_dispatcher).await {
         Ok(Ok(())) => {
             info!("alert delivery dispatcher drained during shutdown");
@@ -43,5 +46,38 @@ pub(super) async fn drain_delivery_dispatcher_with_timeout(
             );
             DeliveryDrainOutcome::TimedOut
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::pending;
+    use std::time::Duration;
+
+    use tokio::sync::oneshot;
+
+    use super::drain_delivery_dispatcher_with_timeout;
+
+    #[tokio::test(start_paused = true)]
+    async fn cancelling_drain_also_aborts_the_dispatcher() {
+        let (sender, receiver) = oneshot::channel::<()>();
+        let dispatcher = tokio::spawn(async move {
+            let _sender = sender;
+            pending::<()>().await;
+        });
+        let mut drain = Box::pin(drain_delivery_dispatcher_with_timeout(
+            dispatcher,
+            Duration::from_secs(60),
+        ));
+        assert!(futures::poll!(drain.as_mut()).is_pending());
+
+        drop(drain);
+
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), receiver)
+                .await
+                .expect("cancelled dispatcher should be dropped")
+                .is_err()
+        );
     }
 }

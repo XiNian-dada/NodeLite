@@ -36,7 +36,7 @@ time = "0.3"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
-tokio-util.workspace = true
+tokio-util = { workspace = true, features = ["rt"] }
 toml.workspace = true
 toml_edit.workspace = true
 totp-lite = "2.0"
