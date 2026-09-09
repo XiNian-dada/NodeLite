@@ -8,6 +8,7 @@
 //! 设计要点:用单调递增的 `session_id` 区分同一节点的多次连接,避免"旧会话"
 //! 的延迟数据覆盖"新会话"的最新数据。
 
+mod alerts;
 mod overview;
 mod registry;
 mod session_control;
@@ -22,8 +23,8 @@ use std::time::Duration;
 use axum::body::Bytes;
 use chrono::{DateTime, Utc};
 use nodelite_proto::{
-    AlertRuleConfig, BrowserMessage, GeoIpLocation, InspectionConfig, NodeIdentity, NodeListItem,
-    NodeListItemView, NodeSnapshot, NodeStatus, OverviewData, ServerConfig,
+    BrowserMessage, GeoIpLocation, NodeIdentity, NodeListItem, NodeListItemView, NodeSnapshot,
+    NodeStatus, OverviewData, ServerConfig,
 };
 use tokio::sync::{Mutex, broadcast, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -46,7 +47,7 @@ enum ApiBodyKind {
 /// 的 revision 影响范围收窄到 nodes,避免聚合数据无限期不刷新。
 const OVERVIEW_CACHE_MAX_STALE: Duration = Duration::from_secs(1);
 use crate::ServerReadiness;
-use crate::alerts::{EvaluatedRule, InspectionReport};
+use crate::alerts::AlertDeliveryMetrics;
 use crate::handlers::metrics_routes::{
     ApiCacheMetrics, SqliteWalCheckpointMetrics, WsMessageMetrics,
 };
@@ -111,6 +112,7 @@ pub struct SharedState {
     ws_messages_pong_total: Arc<AtomicU64>,
     ws_messages_refresh_token_request_total: Arc<AtomicU64>,
     session_control_queue_full_total: Arc<AtomicU64>,
+    pub(crate) alert_delivery: AlertDeliveryMetrics,
     /// 节点视图变化时向所有浏览器 WebSocket 会话广播脏信号。
     browser_view_dirty_tx: broadcast::Sender<BrowserViewDirty>,
     /// 集中 diff 任务计算出的增量消息,广播给所有浏览器会话直接转发(零锁、零 diff)。
@@ -150,6 +152,7 @@ impl SharedState {
             ws_messages_pong_total: Arc::new(AtomicU64::new(0)),
             ws_messages_refresh_token_request_total: Arc::new(AtomicU64::new(0)),
             session_control_queue_full_total: Arc::new(AtomicU64::new(0)),
+            alert_delivery: AlertDeliveryMetrics::default(),
             browser_view_dirty_tx: broadcast::channel(BROWSER_VIEW_DIRTY_CHANNEL_CAPACITY).0,
             browser_incremental_tx: broadcast::channel(BROWSER_INCREMENTAL_CHANNEL_CAPACITY).0,
             #[cfg(test)]
@@ -275,22 +278,6 @@ impl SharedState {
 
     pub async fn list_node_summaries_view(&self) -> Vec<NodeListItemView> {
         self.registry.list_node_summaries_view()
-    }
-
-    pub(crate) async fn evaluate_alert_rules(
-        &self,
-        rules: &[AlertRuleConfig],
-        now: DateTime<Utc>,
-    ) -> Vec<EvaluatedRule> {
-        self.registry.evaluate_alert_rules(rules, now)
-    }
-
-    pub(crate) async fn build_alert_inspection_report(
-        &self,
-        inspection: &InspectionConfig,
-        now: DateTime<Utc>,
-    ) -> InspectionReport {
-        self.registry.build_alert_inspection_report(inspection, now)
     }
 
     /// 返回浏览器全量视图和对应 revision。nodes/overview 来自同一组 registry 分片读视图,

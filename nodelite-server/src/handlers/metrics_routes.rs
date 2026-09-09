@@ -1,8 +1,11 @@
+//! Prometheus rendering keeps live writer diagnostics outside cached node metrics.
+
 use crate::ServerReadiness;
 #[cfg(test)]
 use nodelite_proto::NodeStatus;
 use nodelite_proto::{MetricsConfig, NodeIdentity, NodeSnapshot, OverviewData};
 
+mod alerts;
 mod emitter;
 mod node;
 mod token_verify;
@@ -67,6 +70,7 @@ impl<'a> PrometheusNode<'a> {
 
 #[derive(Clone, Copy)]
 pub(crate) struct WriterMetrics {
+    pub(crate) alert_delivery: crate::alerts::AlertDeliverySnapshot,
     pub(crate) history_write: HistoryWriteMetrics,
     pub(crate) history_dropped_writes: u64,
     pub(crate) history_queue_depth: u64,
@@ -80,6 +84,7 @@ pub(crate) struct WriterMetrics {
 
 pub(crate) fn render_writer_metrics(metrics: WriterMetrics) -> String {
     let mut emitter = MetricEmitter::default();
+    alerts::render_alert_delivery_metrics(&mut emitter, metrics.alert_delivery);
     render_history_write_metrics(&mut emitter, metrics.history_write);
     render_bounded_queue_metrics(
         &mut emitter,

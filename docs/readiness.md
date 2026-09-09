@@ -40,6 +40,12 @@ Prometheus 对应指标为 `nodelite_history_write_failures_total`、`nodelite_h
 
 ## 探针与告警配置
 
+告警投递的输入队列上限为 1024，工作任务上限为 8（包括等待结果入队的任务），结果缓冲上限为 8。
+`nodelite_alert_delivery_outstanding` 覆盖从接收入队到消费结果的全过程，上限由
+`nodelite_alert_delivery_capacity` 报告（1040）；`nodelite_alert_delivery_active` 报告工作任务数。
+`nodelite_alert_delivery_queue_full_total` / `queue_closed_total` 分别记录因队列满或已关闭而被拒绝的次数；
+拒绝后保留原有 tracker 退避重试策略。关停停止产生新任务，最多等待 5 秒，然后取消未完成的投递。
+
 - Kubernetes、systemd watchdog 或负载均衡器的就绪判断应使用 `/readyz` 的 HTTP 状态码；需要解析 JSON 时，应读取 `ready`，不要把 `status == "ok"` 当作接流量条件。
 - 告警系统应另外监控 `status`、`problems` 和 `signals`。`ready: true` 且 `status: "degraded"` 表示服务仍可接流量，但存在需要运维处理的诊断异常。队列和 WebSocket 容量字段仅提供原始数据，需要由外部监控按部署规模设置阈值。
 - 不要仅用 `/healthz` 判断是否应把实例加入流量池；它只验证进程仍能响应。

@@ -193,6 +193,12 @@ fn render_detailed_prometheus_metrics() -> String {
 #[test]
 fn exporter_exposes_writer_counters() {
     let body = render_writer_metrics(WriterMetrics {
+        alert_delivery: crate::alerts::AlertDeliverySnapshot {
+            outstanding: 1032,
+            active: 8,
+            queue_full: 2500,
+            queue_closed: 2,
+        },
         history_write: crate::history::HistoryWriteMetrics {
             failures: 2,
             lost_samples: 4,
@@ -229,6 +235,15 @@ fn exporter_exposes_writer_counters() {
     assert!(body.contains("nodelite_audit_write_failures_total 7"));
     assert!(body.contains("# TYPE nodelite_session_control_queue_full_total counter"));
     assert!(body.contains("nodelite_session_control_queue_full_total 11"));
+    assert!(body.contains("# TYPE nodelite_alert_delivery_outstanding gauge"));
+    assert!(body.contains("nodelite_alert_delivery_outstanding 1032"));
+    assert!(body.contains("nodelite_alert_delivery_active 8"));
+    assert!(body.contains("nodelite_alert_delivery_capacity 1040"));
+    assert!(body.contains("nodelite_alert_delivery_queue_capacity 1024"));
+    assert!(body.contains("nodelite_alert_delivery_result_capacity 8"));
+    assert!(body.contains("# TYPE nodelite_alert_delivery_queue_full_total counter"));
+    assert!(body.contains("nodelite_alert_delivery_queue_full_total 2500"));
+    assert!(body.contains("nodelite_alert_delivery_queue_closed_total 2"));
 }
 
 #[test]
