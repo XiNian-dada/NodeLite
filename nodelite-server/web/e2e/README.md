@@ -27,6 +27,13 @@ The separate live configuration requires its environment and has no conditional
 skips; the runner rejects an empty report or any skipped test. Live reports are
 in `playwright-report/live` and `test-results/live*`.
 
+The incremental test sends CPU 12% → 73% through the Agent socket, then revokes
+that node and requires its card to disappear. REST fallback and page reloads
+cannot satisfy the assertions. Run just this regression with
+`pnpm e2e:live --grep 'incremental node'`. A local mutation that discards
+`node_upsert` in `useRealtimeData.ts` must fail at the 73% assertion; restore the
+handler and rebuild before running the passing suite.
+
 ## Coverage targets (14 spec files)
 
 The first 12 flows come from the original plan, §3.7.2. Two supplementary suites

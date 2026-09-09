@@ -22,25 +22,42 @@ test.describe('WebSocket Dashboard', () => {
     expect(restCalls).toHaveLength(0);
   });
 
-  test('incremental node updates arrive via WebSocket', async ({ page }) => {
+  test('incremental node updates arrive via WebSocket and removal deletes the card', async ({
+    page,
+    agent,
+  }) => {
+    const restCalls: string[] = [];
+    const events: { type: string; node_id?: string; node?: { identity: { node_id: string } } }[] =
+      [];
+    page.on('request', (request) => {
+      if (/\/api\/(overview|nodes)$/.test(request.url())) restCalls.push(request.url());
+    });
+    page.on('websocket', (socket) =>
+      socket.on('framereceived', ({ payload }) => {
+        events.push(JSON.parse(String(payload)));
+      }),
+    );
     await page.goto('/');
+    const card = nodeCard(page, agent.id);
+    const cpu = card.locator('[data-test="metric-cpu"]');
+    await expect(cpu).toHaveText('12%');
+    const documentTime = await page.evaluate(() => performance.timeOrigin);
 
-    // Wait for initial load
-    await expect(page.locator('[data-test="node-list"]')).toBeVisible({ timeout: 5000 });
+    await agent.update(73);
+    await expect(cpu).toHaveText('73%');
+    expect(
+      events.some(
+        (event) => event.type === 'node_upsert' && event.node?.identity.node_id === agent.id,
+      ),
+    ).toBe(true);
 
-    // Get initial node count
-    const initialCards = await page.locator('[data-test="node-card"]').count();
-
-    // Wait for potential node updates (agents tick every 1-5s)
-    // In a real test environment with live agents, we'd see updates
-    // For now, just verify the list is reactive
-    await page.waitForTimeout(2000);
-
-    const afterCards = await page.locator('[data-test="node-card"]').count();
-
-    // Assert: node list is present (count may be same if no agents connected)
-    expect(afterCards).toBeGreaterThanOrEqual(0);
-    expect(initialCards).toBeGreaterThanOrEqual(0);
+    await agent.remove();
+    await expect(card).toHaveCount(0);
+    expect(
+      events.some((event) => event.type === 'node_removed' && event.node_id === agent.id),
+    ).toBe(true);
+    expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentTime);
+    expect(restCalls).toHaveLength(0);
   });
 
   test('falls back to REST when WebSocket is blocked', async ({ page, agent }) => {
