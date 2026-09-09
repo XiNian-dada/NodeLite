@@ -10,6 +10,7 @@ use crate::AppState;
 
 #[derive(Serialize)]
 struct ReadyzResponse {
+    version: &'static str,
     status: &'static str,
     ready: bool,
     problems: Vec<&'static str>,
@@ -94,6 +95,7 @@ pub(crate) async fn readyz(State(state): State<AppState>) -> Response {
     }
 
     let response = ReadyzResponse {
+        version: crate::server_build_version(),
         status: if problems.is_empty() {
             "ok"
         } else {
@@ -132,5 +134,13 @@ pub(crate) async fn readyz(State(state): State<AppState>) -> Response {
     } else {
         StatusCode::SERVICE_UNAVAILABLE
     };
-    (status, Json(response)).into_response()
+    (
+        status,
+        [
+            ("x-nodelite-version", crate::server_build_version()),
+            ("cache-control", "no-store"),
+        ],
+        Json(response),
+    )
+        .into_response()
 }

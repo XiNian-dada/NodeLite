@@ -5,6 +5,9 @@ NodeLite Server 提供两个无需认证的探针端点：
 - `/healthz`：进程存活检查。只要 HTTP 服务还能响应就返回 `200 OK`。
 - `/readyz`：流量就绪检查和结构化运行诊断。HTTP 状态码与 JSON 的 `ready` 字段表示能否承载流量，`status` 和 `problems` 表示更广泛的运行健康度。
 
+`/readyz` 在 JSON 的 `version` 及 `X-NodeLite-Version` 响应头中报告实际构建版本，并禁用缓存。
+升级器结合就绪状态与版本确认新服务已接管监听地址；仅 `systemctl restart` 成功不表示升级完成。
+
 ## `/readyz` 语义
 
 `/readyz` 将暴露内容分为三类：

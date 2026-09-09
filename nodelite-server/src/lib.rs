@@ -28,6 +28,7 @@ mod history;
 #[path = "../tests/integration/mod.rs"]
 mod integration_tests;
 mod traffic_control;
+mod upgrade;
 // 压测模块全部由 `#[tokio::test]` 组成,只在 `cfg(test)` 下编译;`load_test` 特性仅用于
 // 取消这些用例的 `#[ignore]`(见各用例上的 `cfg_attr`),因此模块本身无需随特性编译——
 // 否则 `--all-features` 的非测试(lib)构建会把依赖 dev-dependency 的压测代码也拉进来而编译失败。
@@ -64,6 +65,10 @@ pub(crate) use startup::set_protected_response_headers;
 
 use crate::cli::{Cli, Command, install_agent_command, issue_node_command, upgrade_agent_command};
 
+pub(crate) fn server_build_version() -> &'static str {
+    option_env!("NODELITE_BUILD_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
+}
+
 /// CLI 入口:根据子命令分发到具体动作。
 pub async fn cli_main() -> std::result::Result<(), CliError> {
     startup::init_tracing();
@@ -75,6 +80,9 @@ pub async fn cli_main() -> std::result::Result<(), CliError> {
             install_agent_command(cli.config.as_path(), args).await
         }
         Some(Command::UpgradeAgent) => upgrade_agent_command(cli.config.as_path()).await,
+        Some(Command::UpgradeManifest) => upgrade::print_upgrade_manifest(cli.config.as_path())
+            .await
+            .map_err(CliError::from),
         None => startup::run_server(cli.config.as_path())
             .await
             .map_err(|source| CliError::RunServer { source }),
