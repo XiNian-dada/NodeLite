@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, useId } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { ChartPoint } from '@/lib/chart/chartData';
 import type { ChartValueKind } from '@/lib/chart/format';
 import type { MultiSeriesInput } from '@/lib/chart/svgModel';
 import MetricChart from './MetricChart.vue';
+import NativeDialog from './NativeDialog.vue';
 
 // Visibility is owned by the parent via v-if (it already gates on having a
 // selected metric), so there's no `open` prop here — the modal renders its
@@ -19,6 +21,8 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{ close: [] }>();
+const { t } = useI18n();
+const titleId = useId();
 
 // Only include points OR series — exactOptionalPropertyTypes forbids passing
 // an explicit undefined to an optional prop, so omit the absent one.
@@ -36,23 +40,29 @@ const chartProps = computed(() => ({
 </script>
 
 <template>
-  <div
+  <NativeDialog
     class="chart-modal"
     data-test="chart-modal"
-    role="dialog"
-    aria-modal="true"
-    @click.self="emit('close')"
+    :labelled-by="titleId"
+    @close="emit('close')"
   >
     <div class="chart-modal__panel">
       <header class="chart-modal__head">
-        <h2 class="chart-modal__title">{{ title }}</h2>
-        <button type="button" class="chart-modal__close" data-test="chart-modal-close" @click="emit('close')">
+        <h2 :id="titleId" class="chart-modal__title">{{ title }}</h2>
+        <button
+          type="button"
+          class="chart-modal__close"
+          data-test="chart-modal-close"
+          :aria-label="t('common.close')"
+          autofocus
+          @click="emit('close')"
+        >
           ✕
         </button>
       </header>
       <MetricChart v-bind="chartProps" />
     </div>
-  </div>
+  </NativeDialog>
 </template>
 
 <style scoped>
