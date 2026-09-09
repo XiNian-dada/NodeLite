@@ -273,6 +273,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn embedded_assets_exclude_source_maps() {
+        let mut directories = vec![&WEB_ASSETS];
+        while let Some(directory) = directories.pop() {
+            for file in directory.files() {
+                assert_ne!(
+                    file.path().extension().and_then(|value| value.to_str()),
+                    Some("map"),
+                    "source map was embedded: {}",
+                    file.path().display(),
+                );
+            }
+            directories.extend(directory.dirs());
+        }
+    }
+
+    #[test]
     fn test_is_hashed_asset() {
         // Vite emits `<name>.<hash>.<ext>` with a base64url hash.
         assert!(is_hashed_asset("assets/index.B_MrJhzj.js"));

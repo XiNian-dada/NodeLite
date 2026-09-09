@@ -1,8 +1,6 @@
-// Build script for nodelite-server: triggers Vite build for the Vue SPA.
-//
-// This script runs before compiling the Rust code and ensures the frontend
-// assets are built and ready to be embedded into the binary.
+//! Builds the embedded SPA and rejects source maps even when reusing a prebuilt dist.
 
+use std::io;
 use std::path::Path;
 use std::process::Command;
 
@@ -10,6 +8,7 @@ fn main() {
     // Toggling skip mode must re-run this script; otherwise Cargo caches the
     // previous build-script decision and silently reuses (or skips) the build.
     println!("cargo:rerun-if-env-changed=NODELITE_SKIP_WEB_BUILD");
+    println!("cargo:rerun-if-changed=web/dist");
 
     // Allow skipping the web build for backend-only iteration / CI jobs that
     // reuse a prebuilt web/dist. `web_assets.rs` embeds web/dist at compile time
@@ -32,6 +31,7 @@ fn main() {
             eprintln!("===========================================================");
             std::process::exit(1);
         }
+        check_web_assets();
         return;
     }
 
@@ -97,4 +97,27 @@ fn main() {
         );
         panic!("pnpm build failed");
     }
+    check_web_assets();
+}
+
+fn check_web_assets() {
+    if let Err(error) = reject_source_maps(Path::new("web/dist")) {
+        eprintln!("cannot embed web assets: {error}");
+        std::process::exit(1);
+    }
+}
+
+fn reject_source_maps(directory: &Path) -> io::Result<()> {
+    for entry in std::fs::read_dir(directory)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            reject_source_maps(&path)?;
+        } else if path.extension().is_some_and(|extension| extension == "map") {
+            return Err(io::Error::other(format!(
+                "{} is a source map; rebuild web/dist with pnpm build",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
 }
