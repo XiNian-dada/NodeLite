@@ -61,10 +61,11 @@ pub(crate) enum TrafficControlError {
         source: std::io::Error,
     },
     #[cfg(target_os = "linux")]
-    #[error("tc failed while {operation} (exit code {status_code:?})")]
+    #[error("tc failed while {operation} (exit code {status_code:?}): {stderr}")]
     CommandFailed {
         operation: &'static str,
         status_code: Option<i32>,
+        stderr: String,
     },
     #[cfg(target_os = "linux")]
     #[error("tc timed out while {operation}")]
@@ -269,9 +270,12 @@ async fn tc_output(
     .map_err(|_| TrafficControlError::CommandTimeout { operation })?
     .map_err(|source| TrafficControlError::Command { operation, source })?;
     if !output.status.success() {
+        let mut stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        nodelite_proto::truncate_string_to_byte_boundary(&mut stderr, 512);
         return Err(TrafficControlError::CommandFailed {
             operation,
             status_code: output.status.code(),
+            stderr,
         });
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
