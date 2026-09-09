@@ -32,13 +32,21 @@ pub(crate) async fn verify_2fa_api(
     let client_ip = resolve_client_ip(&state.shared.config().trusted_proxies, peer_addr, &headers);
     ensure_verify_2fa_not_blocked(&state, &headers, client_ip).await?;
     let pending_token = require_pending_token(&state, &headers, client_ip).await?;
-    if !try_consume_current_totp(&state, &request.code).await {
+    let (auth_token, audit_user) = {
+        // Rotation clears sessions under the write lock, so validation and
+        // issuance must both finish before that revocation can commit.
+        let auth = state.readonly_auth.read().await;
+        let matching_steps = matching_totp_steps(auth.totp_secret.as_deref(), &request.code);
+        let token = exchange_pending_two_factor_session(&state, &pending_token, &matching_steps)?;
+        (
+            token,
+            auth.config.as_ref().map(|config| config.username.clone()),
+        )
+    };
+    let Some(auth_token) = auth_token else {
         return Ok(handle_invalid_totp(&state, &headers, client_ip, &pending_token).await);
-    }
+    };
 
-    let audit_user = readonly_auth_username(&state).await;
-    let auth_token = create_authenticated_two_factor_session(&state)?;
-    state.two_factor_sessions.consume_pending(&pending_token);
     state.verify_2fa_admission.clear_auth_failures(client_ip);
     let login_event_id = record_totp_success(&state, &headers, client_ip, audit_user).await;
     state
@@ -134,17 +142,6 @@ async fn require_pending_token(
     Ok(pending_token)
 }
 
-async fn try_consume_current_totp(state: &AppState, code: &str) -> bool {
-    let totp_secret = {
-        let auth = state.readonly_auth.read().await;
-        auth.totp_secret.clone()
-    };
-    let matching_steps = matching_totp_steps(totp_secret.as_deref(), code);
-    state
-        .two_factor_sessions
-        .try_mark_unused_totp_steps(&matching_steps)
-}
-
 async fn handle_invalid_totp(
     state: &AppState,
     headers: &HeaderMap,
@@ -198,15 +195,14 @@ async fn record_totp_failure(
     .await;
 }
 
-async fn readonly_auth_username(state: &AppState) -> Option<String> {
-    let auth = state.readonly_auth.read().await;
-    auth.config.as_ref().map(|config| config.username.clone())
-}
-
-fn create_authenticated_two_factor_session(state: &AppState) -> Verify2FAResult<String> {
+fn exchange_pending_two_factor_session(
+    state: &AppState,
+    pending_token: &str,
+    matching_steps: &[u64],
+) -> Verify2FAResult<Option<String>> {
     state
         .two_factor_sessions
-        .create_authenticated()
+        .exchange_pending(pending_token, matching_steps)
         .map_err(|_| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,

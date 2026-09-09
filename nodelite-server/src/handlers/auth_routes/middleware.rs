@@ -55,7 +55,7 @@ pub(crate) async fn require_readonly_auth(
             if is_websocket_upgrade(&headers) {
                 return websocket_two_factor_required_response();
             }
-            return issue_two_factor_redirect(&state).await;
+            return issue_two_factor_redirect(&state, request).await;
         }
         // Basic Auth only mode: record LoginSuccess on first access in this session
         let has_valid_session = cookie_value(&headers, BASIC_AUTH_SESSION_COOKIE)
@@ -188,7 +188,12 @@ fn websocket_two_factor_required_response() -> Response {
         .into_response()
 }
 
-async fn issue_two_factor_redirect(state: &AppState) -> Response {
+async fn issue_two_factor_redirect(state: &AppState, request: Request) -> Response {
+    let auth = state.readonly_auth.read().await;
+    // Credential rotation may have completed since the middleware's first check.
+    if !auth.enable_2fa || !auth.is_authorized(&request) {
+        return readonly_auth_unauthorized_response();
+    }
     let pending_token = match state.two_factor_sessions.create_pending() {
         Ok(token) => token,
         Err(error) => {
@@ -196,6 +201,7 @@ async fn issue_two_factor_redirect(state: &AppState) -> Response {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
+    drop(auth);
     let secure = secure_cookies(state.shared.config());
     (
         StatusCode::FOUND,
@@ -392,3 +398,7 @@ async fn issue_basic_auth_session_and_continue(
     );
     response
 }
+
+#[cfg(test)]
+#[path = "middleware_revocation_tests.rs"]
+mod revocation_tests;

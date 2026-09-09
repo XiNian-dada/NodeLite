@@ -282,11 +282,6 @@ impl TwoFactorSessions {
         store.pending.contains_key(token)
     }
 
-    pub fn consume_pending(&self, token: &str) {
-        let mut store = lock_mutex(&self.inner);
-        store.pending.remove(token);
-    }
-
     /// 记录一次 TOTP 错误尝试。返回值表示该 pending token 是否已经因连续
     /// 失败而被强制失效;调用方据此决定向客户端返回的状态码与是否同时
     /// 清掉 pending cookie。
@@ -314,32 +309,37 @@ impl TwoFactorSessions {
         let now = Instant::now();
         let mut store = lock_mutex(&self.inner);
         prune_expired_sessions(&mut store, now);
-        if steps
-            .iter()
-            .all(|step| store.used_totp_steps.contains_key(step))
-        {
-            return false;
-        }
-        let expires_at = now + Duration::from_secs(TWO_FACTOR_TOTP_REPLAY_RETENTION_SECS);
-        for step in steps {
-            store.used_totp_steps.insert(*step, expires_at);
-        }
-        true
+        mark_unused_totp_steps(&mut store, steps, now)
     }
 
     pub fn create_authenticated(&self) -> AuthSessionResult<String> {
         let token = generate_session_token()?;
-        let expires_at = Instant::now() + Duration::from_secs(TWO_FACTOR_AUTH_SECS);
+        let now = Instant::now();
         let mut store = lock_mutex(&self.inner);
-        prune_expired_sessions(&mut store, Instant::now());
-        store.authenticated.insert(
-            token.clone(),
-            AuthenticatedSession {
-                lifetime: BrowserSession::new(expires_at),
-                login_event_id: None,
-            },
-        );
+        prune_expired_sessions(&mut store, now);
+        insert_authenticated_session(&mut store, &token, now);
         Ok(token)
+    }
+
+    /// One pending login must not mint multiple sessions using different accepted drift steps.
+    pub(crate) fn exchange_pending(
+        &self,
+        pending_token: &str,
+        matching_steps: &[u64],
+    ) -> AuthSessionResult<Option<String>> {
+        let now = Instant::now();
+        let mut store = lock_mutex(&self.inner);
+        prune_expired_sessions(&mut store, now);
+        if !store.pending.contains_key(pending_token) {
+            return Ok(None);
+        }
+        let token = generate_session_token()?;
+        if !mark_unused_totp_steps(&mut store, matching_steps, now) {
+            return Ok(None);
+        }
+        store.pending.remove(pending_token);
+        insert_authenticated_session(&mut store, &token, now);
+        Ok(Some(token))
     }
 
     pub fn is_authenticated(&self, token: &str) -> bool {
@@ -451,6 +451,30 @@ impl TwoFactorSessions {
             .get(token)
             .and_then(|session| session.login_event_id)
     }
+}
+
+fn mark_unused_totp_steps(store: &mut TwoFactorSessionStore, steps: &[u64], now: Instant) -> bool {
+    if steps
+        .iter()
+        .all(|step| store.used_totp_steps.contains_key(step))
+    {
+        return false;
+    }
+    let expires_at = now + Duration::from_secs(TWO_FACTOR_TOTP_REPLAY_RETENTION_SECS);
+    for step in steps {
+        store.used_totp_steps.insert(*step, expires_at);
+    }
+    true
+}
+
+fn insert_authenticated_session(store: &mut TwoFactorSessionStore, token: &str, now: Instant) {
+    store.authenticated.insert(
+        token.to_string(),
+        AuthenticatedSession {
+            lifetime: BrowserSession::new(now + Duration::from_secs(TWO_FACTOR_AUTH_SECS)),
+            login_event_id: None,
+        },
+    );
 }
 
 fn prune_expired_sessions(store: &mut TwoFactorSessionStore, now: Instant) {
