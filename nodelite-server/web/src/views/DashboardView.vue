@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue';
+import { computed, onMounted } from 'vue';
 import AppLayout from '@/components/AppLayout.vue';
 import OverviewStats from '@/components/OverviewStats.vue';
 import NodeHealthMatrix from '@/components/NodeHealthMatrix.vue';
@@ -8,32 +8,17 @@ import NodeList from '@/components/NodeList.vue';
 import LoginNotification from '@/components/LoginNotification.vue';
 import { useBootstrapStore } from '@/stores/bootstrap';
 import { useOverviewStore } from '@/stores/overview';
-import { useNodesStore } from '@/stores/nodes';
 import { useSettingsStore } from '@/stores/settings';
 
 const bootstrapStore = useBootstrapStore();
 const overviewStore = useOverviewStore();
-const nodesStore = useNodesStore();
 const settingsStore = useSettingsStore();
-const DASHBOARD_REST_FALLBACK_MS = 500;
 
 const onlineCount = computed(() => overviewStore.data?.online_nodes ?? 0);
 
 onMounted(() => {
   void bootstrapStore.load();
   void settingsStore.load();
-
-  // Fallback quickly so the dashboard does not sit in an empty shell while
-  // the websocket reconnects; later WS messages still replace this baseline.
-  const fallbackTimer = window.setTimeout(() => {
-    if (!nodesStore.lastGeneratedAt) {
-      void Promise.all([overviewStore.refresh(), nodesStore.refresh()]);
-    }
-  }, DASHBOARD_REST_FALLBACK_MS);
-
-  onUnmounted(() => {
-    window.clearTimeout(fallbackTimer);
-  });
 });
 </script>
 

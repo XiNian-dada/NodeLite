@@ -108,8 +108,10 @@ function deleteJson<T>(path: string, body: unknown): Promise<T> {
 
 export const apiClient = {
   bootstrap: () => api<BootstrapResponse>('/api/bootstrap'),
-  overview: () => api<OverviewData>('/api/overview'),
-  listNodes: () => api<NodeListItem[]>('/api/nodes'),
+  overview: (signal?: AbortSignal) =>
+    api<OverviewData>('/api/overview', signal ? { signal } : undefined),
+  listNodes: (signal?: AbortSignal) =>
+    api<NodeListItem[]>('/api/nodes', signal ? { signal } : undefined),
   /** Full per-node status (NodeStatus), not the lightweight list shape. */
   nodeStatus: (id: string) => api<NodeStatus>(`/api/nodes/${encodeURIComponent(id)}`),
   nodeHistory: (id: string, query: HistoryQuery = {}) => {

@@ -15,6 +15,7 @@ const socket = vi.hoisted(() => {
   const handlers = new Map<string, Set<(message: never) => void>>();
   return {
     handlers,
+    onState: vi.fn(() => () => {}),
     connect: vi.fn(),
     destroy: vi.fn(),
     on: vi.fn((type: string, handler: (message: never) => void) => {
