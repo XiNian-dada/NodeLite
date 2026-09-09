@@ -26,11 +26,13 @@ def configuration():
 
 def manifest(path, config):
     server = config["server"]
-    paths = {path.resolve()}
-    for key in ("node_registry_path", "snapshot_path"):
-        paths.add(Path(server[key]).resolve())
-    paths.add(Path(config.get("geoip", {}).get("database_path", "data/geoip.mmdb")).resolve())
+    paths = set()
+    for filename in (path, server["node_registry_path"], server["snapshot_path"],
+                     config.get("geoip", {}).get("database_path", "data/geoip.mmdb")):
+        filename = Path(filename)
+        paths.update((filename.absolute(), filename.resolve()))
     for database in (server["history_db_path"], config.get("audit", {}).get("db_path", "data/audit.sqlite3")):
+        paths.add(Path(database).absolute())
         paths.update(Path(str(Path(database).resolve()) + suffix)
                      for suffix in ("", "-wal", "-shm", "-journal"))
     print("nodelite-upgrade-manifest-v1")
@@ -87,9 +89,15 @@ def run_server(config):
         event("new-started")
         if SCENARIO in {"success", "migrate_fail", "corrupt_backup", "restore_fail", "signal", "symlink"}:
             migrate(database)
-            Path(config["server"]["node_registry_path"]).write_text('{"nodes":["changed"]}')
-            Path(config["server"]["snapshot_path"]).write_text('{"after":true}')
-            Path(config["geoip"]["database_path"]).write_bytes(b"updated-geoip-database")
+            # Production persistence replaces directory entries, including existing symlinks.
+            for path, content in (
+                (config["server"]["node_registry_path"], b'{"nodes":["changed"]}'),
+                (config["server"]["snapshot_path"], b'{"after":true}'),
+                (config["geoip"]["database_path"], b"updated-geoip-database"),
+            ):
+                temporary = Path(str(path) + ".tmp")
+                temporary.write_bytes(content)
+                temporary.replace(path)
         if SCENARIO == "corrupt_backup":
             corrupt_backup()
         if SCENARIO in {"crash", "migrate_fail", "symlink"}:

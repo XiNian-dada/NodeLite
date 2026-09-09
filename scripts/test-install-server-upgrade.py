@@ -66,6 +66,7 @@ class Installation:
         self.old_binary = b""
         self.old_config = b""
         self.original_files = {}
+        self.symlink_paths = ()
 
     def command(self, *args, check=True):
         return subprocess.run(["systemctl", *args], env=self.environment, check=check,
@@ -190,7 +191,11 @@ WantedBy=multi-user.target
         if self.scenario == "symlink":
             assets = self.root / "old-assets"
             assets.mkdir(mode=0o700)
-            for path in (self.binary, self.unit):
+            self.symlink_paths = (
+                self.binary, self.unit, self.config.parent / "server.json",
+                self.data / "snapshot.json", self.data / "geoip.mmdb",
+            )
+            for path in self.symlink_paths:
                 destination = assets / path.name
                 path.rename(destination)
                 path.symlink_to(destination)
@@ -259,7 +264,7 @@ WantedBy=multi-user.target
             assert self.binary.read_bytes() == self.old_binary, output
             assert self.unit.read_bytes() == self.original_unit, output
             if self.scenario == "symlink":
-                assert self.binary.is_symlink() and self.unit.is_symlink()
+                assert all(path.is_symlink() for path in self.symlink_paths), "rollback lost a symlink"
             assert "old-started-compatible" in events, events
             assert not Path(str(self.data / "history.sqlite3") + "-journal").exists()
             for path in (self.config.parent / "server.json", self.data / "snapshot.json", self.data / "geoip.mmdb"):

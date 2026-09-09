@@ -40,10 +40,12 @@ fn render_manifest(
         config.snapshot_path.as_path(),
         config.geoip.database_path.as_path(),
     ] {
-        paths.insert(backup_path(path, working_dir)?);
+        // Atomic persistence can replace a configured symlink instead of modifying its target.
+        paths.extend(backup_paths(path, working_dir)?);
     }
     for database in [&config.history_db_path, &config.audit.db_path] {
-        let database = backup_path(database, working_dir)?;
+        let [configured, database] = backup_paths(database, working_dir)?;
+        paths.insert(configured);
         // Stopping the service does not guarantee a clean checkpoint after an earlier crash.
         for suffix in ["", "-wal", "-shm", "-journal"] {
             let mut path = database.as_os_str().to_os_string();
@@ -64,18 +66,20 @@ fn render_manifest(
     Ok(manifest)
 }
 
-fn backup_path(path: &Path, working_dir: &Path) -> Result<PathBuf, UpgradeError> {
+fn backup_paths(path: &Path, working_dir: &Path) -> Result<[PathBuf; 2], UpgradeError> {
     let absolute = working_dir.join(path);
     let resolved = match absolute.symlink_metadata() {
         Ok(_) => absolute.canonicalize()?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => absolute,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => absolute.clone(),
         Err(error) => return Err(error.into()),
     };
-    let text = resolved.to_str().ok_or(UpgradeError::UnsupportedPath)?;
-    if text.chars().any(|ch| matches!(ch, '\n' | '\r' | '\0')) {
-        return Err(UpgradeError::UnsupportedPath);
+    for path in [&absolute, &resolved] {
+        let text = path.to_str().ok_or(UpgradeError::UnsupportedPath)?;
+        if text.chars().any(|ch| matches!(ch, '\n' | '\r' | '\0')) {
+            return Err(UpgradeError::UnsupportedPath);
+        }
     }
-    Ok(resolved)
+    Ok([absolute, resolved])
 }
 
 fn readiness_url(mut listen: SocketAddr) -> String {
