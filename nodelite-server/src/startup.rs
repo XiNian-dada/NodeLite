@@ -149,6 +149,9 @@ async fn initialize_server_runtime(
     );
     let audit_log = AuditLog::new(config.audit.clone(), config.sqlite_busy_timeout_secs);
     history.initialize().await;
+    if let Err(error) = history.reconcile_traffic(&registry.node_ids().await).await {
+        warn!(error = ?error, "failed to reconcile active traffic ledgers");
+    }
     audit_log.initialize().await?;
     let geoip = GeoIpResolver::new(config.geoip.clone()).await;
     let readiness = ServerReadiness::new(history.is_available());

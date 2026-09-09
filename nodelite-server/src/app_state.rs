@@ -121,6 +121,9 @@ impl AppState {
             config.token_verify_max_parallelism,
         )
         .await?;
+        history
+            .reconcile_traffic(&registry.node_ids().await)
+            .await?;
 
         let shutdown = CancellationToken::new();
         let shared = SharedState::new(config.clone());

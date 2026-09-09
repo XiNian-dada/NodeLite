@@ -35,6 +35,17 @@ pub(crate) async fn delete_agent(
         return response;
     }
 
+    // Keep revocation and ledger cleanup alive if the requesting browser disconnects.
+    tokio::spawn(remove_agent(state, node_id))
+        .await
+        .unwrap_or_else(|error| {
+            error!(error = ?error, "agent removal task failed");
+            settings_json_error(StatusCode::INTERNAL_SERVER_ERROR, "agent removal failed")
+        })
+}
+
+async fn remove_agent(state: AppState, node_id: String) -> Response {
+    let _traffic_guard = state.history.traffic_lifecycle_lock.lock().await;
     let removed = match state.registry.remove_node(&node_id).await {
         Ok(node) => node,
         Err(RegistryError::NodeNotFound(_)) => {
@@ -53,6 +64,7 @@ pub(crate) async fn delete_agent(
     };
 
     state.shared.remove_node(&removed.node_id).await;
+    let traffic_result = state.history.forget_traffic(&removed.node_id).await;
     if let Err(error) =
         persist_current_snapshot(&state.shared, state.shared.config().snapshot_path.as_path()).await
     {
@@ -63,6 +75,13 @@ pub(crate) async fn delete_agent(
         );
     }
     info!(node_id = %removed.node_id, "agent removed from settings page");
+    if let Err(error) = traffic_result {
+        error!(error = ?error, node_id = %removed.node_id, "agent revoked but traffic ledger cleanup failed");
+        return settings_json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "agent revoked; traffic ledger cleanup failed",
+        );
+    }
 
     (
         StatusCode::OK,

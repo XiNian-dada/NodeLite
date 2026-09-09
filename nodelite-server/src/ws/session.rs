@@ -278,6 +278,13 @@ async fn handle_metrics_message(
         ),
         None => return Ok(LoopAction::Continue),
     };
+    let traffic_guard = state.history.traffic_lifecycle_lock.lock().await;
+    if !shared
+        .is_current_session(&session.node_id, session.session_id)
+        .await
+    {
+        return Ok(LoopAction::Break);
+    }
     let desired_throttle_kbps =
         if let Some(quota) = state.registry.traffic_quota(&session.node_id).await {
             state
@@ -312,6 +319,7 @@ async fn handle_metrics_message(
                 .await;
             None
         };
+    drop(traffic_guard);
     maybe_send_network_throttle(session, sender, loop_state, desired_throttle_kbps).await?;
     Ok(LoopAction::Continue)
 }

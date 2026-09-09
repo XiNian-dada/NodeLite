@@ -48,6 +48,7 @@ pub(crate) use self::query_limit::HistoryQueryRuntimeMetrics;
 use self::query_limit::{HistoryQueryLimiter, HistoryQueryPermit};
 #[cfg(test)]
 use self::test_probe::HistoryQueryProbe;
+pub(crate) use self::traffic::TrafficPersistenceError;
 use self::traffic::{TrafficTracker, TrafficUsage};
 use self::writer::{WriterContext, build_history_point, run_history_writer};
 #[cfg(test)]
@@ -139,6 +140,8 @@ pub struct HistoryStore {
     /// Writer task 的 join handle,用于在关停时显式 await。
     writer_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     traffic: TrafficTracker,
+    // Serialize quota lookup/enqueue with revocation so an in-flight sample cannot revive a ledger.
+    pub(crate) traffic_lifecycle_lock: Arc<Mutex<()>>,
     /// 历史写入被静默丢弃的总数(channel 满或已关闭)。监控该值可观察反压。
     dropped_writes: Arc<AtomicU64>,
     write_metrics: Arc<ParkingLotMutex<HistoryWriteMetrics>>,
@@ -224,6 +227,7 @@ impl HistoryStore {
             writer_tx: Arc::new(RwLock::new(None)),
             writer_handle: Arc::new(Mutex::new(None)),
             traffic: TrafficTracker::new(Arc::clone(&db_path), sqlite_busy_timeout_secs),
+            traffic_lifecycle_lock: Arc::new(Mutex::new(())),
             dropped_writes: Arc::new(AtomicU64::new(0)),
             write_metrics: Arc::new(ParkingLotMutex::new(HistoryWriteMetrics::default())),
             query_cache: Arc::new(ParkingLotMutex::new(HistoryQueryCache::new(
@@ -374,6 +378,21 @@ impl HistoryStore {
 
     pub(crate) async fn traffic_usages(&self) -> Vec<TrafficUsage> {
         self.traffic.usages().await
+    }
+
+    pub(crate) async fn forget_traffic(
+        &self,
+        node_id: &str,
+    ) -> Result<(), TrafficPersistenceError> {
+        self.last_written_at.lock().await.remove(node_id);
+        self.traffic.remove_nodes(vec![node_id.to_string()]).await
+    }
+
+    pub(crate) async fn reconcile_traffic(
+        &self,
+        live_node_ids: &[String],
+    ) -> Result<(), TrafficPersistenceError> {
+        self.traffic.retain_nodes(live_node_ids).await
     }
 
     async fn record_status_with_builder<F>(&self, status: &NodeStatus, build_point: F)
