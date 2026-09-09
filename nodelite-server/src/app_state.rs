@@ -48,6 +48,8 @@ pub(crate) struct AppState {
     pub(crate) two_factor_sessions: TwoFactorSessions,
     pub(crate) config_path: Arc<PathBuf>,
     pub(crate) settings_write_lock: Arc<tokio::sync::Mutex<()>>,
+    #[cfg(test)]
+    pub(crate) settings_write_queued: Arc<tokio::sync::Notify>,
     /// 进程级关停信号。axum graceful shutdown 之后由 `run_server` 触发,
     /// 所有后台任务与活跃 WS 会话都订阅此 token 以协同退出。
     pub(crate) shutdown: CancellationToken,
@@ -163,6 +165,7 @@ impl AppState {
             two_factor_sessions: TwoFactorSessions::new(),
             config_path,
             settings_write_lock: Arc::new(tokio::sync::Mutex::new(())),
+            settings_write_queued: Arc::new(tokio::sync::Notify::new()),
             shutdown,
         })
     }

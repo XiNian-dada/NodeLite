@@ -19,7 +19,23 @@ where
     // while spawn_blocking is committing the configuration file.
     match tokio::spawn(async move {
         let lock = std::sync::Arc::clone(&state.settings_write_lock);
+        #[cfg(not(test))]
         let _guard = lock.lock().await;
+        #[cfg(test)]
+        let _guard = {
+            use std::future::Future;
+            let mut acquire = Box::pin(lock.lock());
+            let mut notified = false;
+            std::future::poll_fn(|cx| {
+                let result = acquire.as_mut().poll(cx);
+                if result.is_pending() && !notified {
+                    notified = true;
+                    state.settings_write_queued.notify_one();
+                }
+                result
+            })
+            .await
+        };
         operation(state).await
     })
     .await

@@ -40,17 +40,12 @@ async fn concurrent_settings_preserve_every_successful_change_on_disk_and_in_run
             None,
             body,
         )));
-        // Poll each HTTP request through authentication while commits are blocked.
-        assert!(
-            timeout(Duration::from_millis(20), &mut response)
-                .await
-                .is_err()
-        );
+        wait_until_queued(&harness.state, response.as_mut()).await?;
         pending.push(response);
     }
     drop(guard);
     for response in pending {
-        let response = timeout(Duration::from_secs(5), response).await??;
+        let response = timeout(crate::test_support::TEST_TIMEOUT, response).await??;
         assert_status(response.status(), StatusCode::OK, response).await?;
     }
     assert_concurrent_changes(&harness).await?;
@@ -110,11 +105,7 @@ async fn disable_two_factor_uses_the_same_commit_boundary() -> Result<()> {
         "/api/settings/2fa/disable", &basic_auth_header("secret"), Some(&auth_cookie(&token)),
         json!({"current_password": "secret", "code": current_totp_code_with_margin(TEST_TOTP_SECRET).await}),
     )));
-    assert!(
-        timeout(Duration::from_millis(20), &mut response)
-            .await
-            .is_err()
-    );
+    wait_until_queued(&harness.state, response.as_mut()).await?;
     assert!(
         parse_current_config(&harness.config_path)
             .await?
@@ -204,16 +195,12 @@ async fn disconnected_http_caller_cannot_leave_disk_and_runtime_divergent() -> R
         None,
         json!({"current_password": "secret", "new_password": "VeryStrong123!"}),
     )));
-    assert!(
-        timeout(Duration::from_millis(20), &mut response)
-            .await
-            .is_err()
-    );
+    wait_until_queued(&harness.state, response.as_mut()).await?;
     drop(response);
     drop(guard);
     // The cancelled request's transaction was queued first on the FIFO mutex.
     let committed = timeout(
-        Duration::from_secs(5),
+        crate::test_support::TEST_TIMEOUT,
         harness.state.settings_write_lock.lock(),
     )
     .await?;
@@ -239,5 +226,19 @@ async fn disconnected_http_caller_cannot_leave_disk_and_runtime_divergent() -> R
     );
     drop(committed);
     harness.cleanup().await;
+    Ok(())
+}
+
+async fn wait_until_queued<F: std::future::Future>(
+    state: &crate::AppState,
+    response: std::pin::Pin<&mut F>,
+) -> Result<()> {
+    timeout(crate::test_support::TEST_TIMEOUT, async {
+        tokio::select! {
+            _ = response => panic!("settings request completed before acquiring the commit lock"),
+            _ = state.settings_write_queued.notified() => {},
+        }
+    })
+    .await?;
     Ok(())
 }
