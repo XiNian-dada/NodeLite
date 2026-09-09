@@ -1,4 +1,5 @@
 //! Proxy resolution and admission-control tests.
+use nodelite_proto::config::DEFAULT_METRIC_ANOMALY_SESSION_LIMIT as METRIC_ANOMALY_SESSION_LIMIT;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 
@@ -11,8 +12,7 @@ use crate::admission::{
 };
 use crate::handlers::is_well_formed_install_token;
 use crate::sanitize::{
-    METRIC_ANOMALY_SESSION_LIMIT, SanitizationReport, should_disconnect_for_metric_anomalies,
-    update_metric_anomaly_window,
+    SanitizationReport, should_disconnect_for_metric_anomalies, update_metric_anomaly_window,
 };
 use nodelite_proto::WsConfig;
 
@@ -162,7 +162,7 @@ fn metric_anomaly_window_decays_so_long_sessions_avoid_false_positive_kicks() {
         let now = started_at + Duration::from_secs(hour * 3600);
         update_metric_anomaly_window(&mut window, &report, now);
         assert!(
-            !should_disconnect_for_metric_anomalies(&window),
+            !should_disconnect_for_metric_anomalies(&window, METRIC_ANOMALY_SESSION_LIMIT),
             "long session with sparse anomalies should never be kicked",
         );
     }
@@ -176,7 +176,7 @@ fn metric_anomaly_window_decays_so_long_sessions_avoid_false_positive_kicks() {
         );
     }
     assert!(
-        should_disconnect_for_metric_anomalies(&window),
+        should_disconnect_for_metric_anomalies(&window, METRIC_ANOMALY_SESSION_LIMIT),
         "burst within the window must still trigger the kick",
     );
 }

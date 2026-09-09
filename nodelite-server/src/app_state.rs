@@ -22,6 +22,7 @@ use crate::admission::{auth_failure_admission_config, sensitive_auth_failure_adm
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) agent_logs: AgentLogStore,
+    pub(crate) traffic_control: crate::traffic_control::TrafficControlStatuses,
     pub(crate) history: HistoryStore,
     pub(crate) audit_log: AuditLog,
     pub(crate) geoip: GeoIpResolver,
@@ -46,6 +47,9 @@ pub(crate) struct AppState {
     pub(crate) alerting: Arc<RwLock<Arc<AlertingConfig>>>,
     pub(crate) two_factor_sessions: TwoFactorSessions,
     pub(crate) config_path: Arc<PathBuf>,
+    pub(crate) settings_write_lock: Arc<tokio::sync::Mutex<()>>,
+    #[cfg(test)]
+    pub(crate) settings_write_queued: Arc<tokio::sync::Notify>,
     /// 进程级关停信号。axum graceful shutdown 之后由 `run_server` 触发,
     /// 所有后台任务与活跃 WS 会话都订阅此 token 以协同退出。
     pub(crate) shutdown: CancellationToken,
@@ -119,6 +123,9 @@ impl AppState {
             config.token_verify_max_parallelism,
         )
         .await?;
+        history
+            .reconcile_traffic(&registry.node_ids().await)
+            .await?;
 
         let shutdown = CancellationToken::new();
         let shared = SharedState::new(config.clone());
@@ -130,6 +137,7 @@ impl AppState {
 
         Ok(Self {
             agent_logs: AgentLogStore::new(),
+            traffic_control: crate::traffic_control::TrafficControlStatuses::default(),
             history,
             audit_log,
             geoip,
@@ -156,6 +164,8 @@ impl AppState {
             alerting: Arc::new(RwLock::new(Arc::new(config.alerting.clone()))),
             two_factor_sessions: TwoFactorSessions::new(),
             config_path,
+            settings_write_lock: Arc::new(tokio::sync::Mutex::new(())),
+            settings_write_queued: Arc::new(tokio::sync::Notify::new()),
             shutdown,
         })
     }

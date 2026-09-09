@@ -156,11 +156,17 @@ async fn readyz_test_state(test_name: &str) -> (AppState, PathBuf) {
 
 async fn readyz_payload(state: AppState) -> (StatusCode, Value) {
     let response = readyz(State(state)).await.into_response();
+    assert_eq!(
+        response.headers()["x-nodelite-version"],
+        crate::server_build_version()
+    );
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
     let status = response.status();
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("readyz body should collect");
-    let payload = serde_json::from_slice(&body).expect("readyz body should be json");
+    let payload: Value = serde_json::from_slice(&body).expect("readyz body should be json");
+    assert_eq!(payload["version"], crate::server_build_version());
     (status, payload)
 }
 

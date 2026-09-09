@@ -23,18 +23,21 @@ export const useNodesStore = defineStore('nodes', () => {
   const lastGeneratedAt = ref<string | null>(null);
   const loading = ref(false);
   const error = ref<Error | null>(null);
+  let revision = 0;
 
-  async function refresh(): Promise<void> {
+  async function refresh(signal?: AbortSignal): Promise<void> {
     if (loading.value) return;
     loading.value = true;
     error.value = null;
+    const startedAtRevision = revision;
     try {
-      const result = await apiClient.listNodes();
+      const result = await apiClient.listNodes(signal);
+      if (signal?.aborted || revision !== startedAtRevision) return;
       // Use current server-side baseline if available, else fall back to client clock
       const timestamp = lastGeneratedAt.value || new Date().toISOString();
       applyServerState(result, timestamp);
     } catch (e) {
-      if (e instanceof ApiAbortError) return;
+      if (signal?.aborted || e instanceof ApiAbortError) return;
       error.value = e instanceof Error ? e : new Error(String(e));
     } finally {
       loading.value = false;
@@ -43,6 +46,7 @@ export const useNodesStore = defineStore('nodes', () => {
 
   // From WS InitialState (full replacement) — always accept, no guard
   function applyServerState(items: NodeListItem[], generatedAt: string): void {
+    revision++;
     const next = new Map<string, NodeListItem>();
     for (const item of items) next.set(item.identity.node_id, item);
     const nextItems = Array.from(next.values());
@@ -60,6 +64,7 @@ export const useNodesStore = defineStore('nodes', () => {
     if (lastGeneratedAt.value && Date.parse(generatedAt) < Date.parse(lastGeneratedAt.value))
       return;
     const nodeId = node.identity.node_id;
+    revision++;
     const index = nodeIndexById.get(nodeId);
     if (index === undefined) {
       nodeIndexById.set(nodeId, nodes.value.length);
@@ -78,6 +83,7 @@ export const useNodesStore = defineStore('nodes', () => {
     if (lastGeneratedAt.value && Date.parse(generatedAt) < Date.parse(lastGeneratedAt.value)) {
       return false;
     }
+    revision++;
     const index = nodeIndexById.get(nodeId);
     if (index !== undefined) {
       nodes.value.splice(index, 1);

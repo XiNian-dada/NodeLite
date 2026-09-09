@@ -10,14 +10,15 @@ use chrono::{DateTime, Utc};
 use nodelite_proto::{
     DEFAULT_HISTORY_RETENTION_HOURS, HistoryPoint, MAX_WRITER_BATCH_SIZE, NodeStatus, percentage,
 };
+use parking_lot::Mutex as ParkingLotMutex;
 use rusqlite::{Connection, Error as SqliteError, ErrorCode, params};
 use tokio::sync::{Mutex, mpsc};
 use tokio::time::MissedTickBehavior;
 use tracing::{debug, warn};
 
 use super::{
-    HISTORY_PRUNE_MIN_INTERVAL, SQLITE_BUSY_MAX_RETRIES, SQLITE_BUSY_RETRY_BASE_MS,
-    SQLITE_BUSY_RETRY_MAX_MS,
+    HISTORY_PRUNE_MIN_INTERVAL, HistoryWriteMetrics, SQLITE_BUSY_MAX_RETRIES,
+    SQLITE_BUSY_RETRY_BASE_MS, SQLITE_BUSY_RETRY_MAX_MS,
 };
 use crate::history::init::harden_database_artifacts;
 
@@ -29,6 +30,15 @@ pub(super) struct WriterContext {
     pub(super) artifacts_hardened_after_write: Arc<AtomicBool>,
     pub(super) batch_max: usize,
     pub(super) flush_interval: Duration,
+    pub(super) metrics: Arc<ParkingLotMutex<HistoryWriteMetrics>>,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum BatchWriteError {
+    #[error("history transaction failed: {0}")]
+    Database(#[from] anyhow::Error),
+    #[error("history committed but artifact permissions failed: {0}")]
+    Permissions(anyhow::Error),
 }
 
 /// 单一 writer 任务:对外的所有 record_status 都经过 mpsc 灌入此处。
@@ -87,6 +97,7 @@ async fn flush_history_batch(batch: &mut Vec<HistoryPoint>, context: &WriterCont
         return;
     }
     let points = std::mem::take(batch);
+    let point_count = points.len();
     let db_path = Arc::clone(&context.db_path);
     let connection_arc = Arc::clone(&context.write_connection);
     let artifacts_hardened = Arc::clone(&context.artifacts_hardened_after_write);
@@ -95,7 +106,9 @@ async fn flush_history_batch(batch: &mut Vec<HistoryPoint>, context: &WriterCont
     let result = tokio::task::spawn_blocking(move || {
         let mut guard = connection_arc.blocking_lock();
         let Some(ref mut connection) = *guard else {
-            anyhow::bail!("history connection not initialized");
+            return Err(BatchWriteError::Database(anyhow::anyhow!(
+                "history connection not initialized"
+            )));
         };
         write_history_batch(
             db_path.as_ref(),
@@ -108,11 +121,19 @@ async fn flush_history_batch(batch: &mut Vec<HistoryPoint>, context: &WriterCont
     .await;
 
     match result {
-        Ok(Ok(())) => {}
+        Ok(Ok(())) => context.metrics.lock().record_success(),
         Ok(Err(error)) => {
+            let mut metrics = context.metrics.lock();
+            if matches!(error, BatchWriteError::Permissions(_)) {
+                metrics.record_success();
+                metrics.record_failure(0);
+            } else {
+                metrics.record_failure(point_count);
+            }
             warn!(error = ?error, "failed to persist history batch");
         }
         Err(error) => {
+            context.metrics.lock().record_failure(point_count);
             warn!(error = ?error, "history writer batch task join failed");
         }
     }
@@ -143,7 +164,7 @@ fn write_history_batch(
     points: &[HistoryPoint],
     prune_before: Option<DateTime<Utc>>,
     artifacts_hardened_after_write: &AtomicBool,
-) -> Result<()> {
+) -> Result<(), BatchWriteError> {
     if points.is_empty() {
         return Ok(());
     }
@@ -195,7 +216,7 @@ fn write_history_batch(
         Ok(())
     })?;
     if !artifacts_hardened_after_write.load(Ordering::Relaxed) {
-        harden_database_artifacts(db_path)?;
+        harden_database_artifacts(db_path).map_err(BatchWriteError::Permissions)?;
         artifacts_hardened_after_write.store(true, Ordering::Relaxed);
     }
 
@@ -219,6 +240,7 @@ pub(super) fn write_history_point(
         prune_before,
         artifacts_hardened_after_write,
     )
+    .map_err(Into::into)
 }
 
 /// 由实时 `NodeStatus` 构造一条历史采样点;若节点尚无快照则返回 `None`。

@@ -1,4 +1,9 @@
 //! Snapshot sanitization tests.
+use nodelite_proto::config::DEFAULT_METRIC_ANOMALY_SESSION_LIMIT as METRIC_ANOMALY_SESSION_LIMIT;
+use nodelite_proto::config::{
+    DEFAULT_MAX_SANITIZED_DISKS as MAX_SANITIZED_DISKS,
+    DEFAULT_MAX_SANITIZED_STRING_BYTES as MAX_SANITIZED_STRING_BYTES,
+};
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::PathBuf;
@@ -6,9 +11,8 @@ use std::path::PathBuf;
 use chrono::Utc;
 
 use crate::sanitize::{
-    MAX_SANITIZED_DISKS, MAX_SANITIZED_LOAD, MAX_SANITIZED_RATE_BYTES_PER_SEC,
-    MAX_SANITIZED_STRING_BYTES, METRIC_ANOMALY_SESSION_LIMIT, SanitizationReport,
-    sanitize_snapshot, should_disconnect_for_metric_anomalies, update_metric_anomaly_window,
+    MAX_SANITIZED_LOAD, MAX_SANITIZED_RATE_BYTES_PER_SEC, SanitizationReport, sanitize_snapshot,
+    should_disconnect_for_metric_anomalies, update_metric_anomaly_window,
 };
 use crate::test_support::test_server_config;
 use nodelite_proto::{NodeSnapshot, ServerConfig, WsConfig};
@@ -415,7 +419,10 @@ fn sanitize_snapshot_caps_disk_count_and_tracks_clean_reports() {
             now + std::time::Duration::from_secs(tick as u64),
         );
     }
-    assert!(should_disconnect_for_metric_anomalies(&window));
+    assert!(should_disconnect_for_metric_anomalies(
+        &window,
+        METRIC_ANOMALY_SESSION_LIMIT
+    ));
 }
 
 #[test]

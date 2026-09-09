@@ -18,7 +18,9 @@ use super::{
 };
 
 mod init_tests;
+mod migration_tests;
 mod reader_tests;
+mod write_diagnostics;
 mod writer_tests;
 
 fn test_history_store(db_path: PathBuf) -> HistoryStore {

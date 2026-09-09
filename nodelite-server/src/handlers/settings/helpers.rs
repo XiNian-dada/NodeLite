@@ -150,10 +150,6 @@ pub(super) fn otpauth_uri(username: &str, secret: &str) -> String {
     )
 }
 
-pub(super) fn server_build_version() -> &'static str {
-    option_env!("NODELITE_BUILD_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
-}
-
 fn percent_encode_component(value: &str) -> String {
     let mut output = String::new();
     for byte in value.bytes() {

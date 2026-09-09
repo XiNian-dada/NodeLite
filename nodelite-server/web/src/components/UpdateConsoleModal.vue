@@ -1,16 +1,18 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { nextTick, onBeforeUnmount, ref, useId, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { apiClient } from '@/api';
 import { ApiAbortError } from '@/api/client';
 import { messageFromError } from '@/lib/apiError';
 import { fmtBytes } from '@/lib/format';
+import NativeDialog from './NativeDialog.vue';
 
 type ConsoleStatus = 'idle' | 'waiting' | 'running' | 'error';
 
 const props = defineProps<{ open: boolean }>();
 const emit = defineEmits<{ close: [] }>();
 const { t } = useI18n();
+const titleId = useId();
 
 const statusKind = ref<ConsoleStatus>('idle');
 const statusText = ref(t('settings.version.console_status_idle'));
@@ -163,19 +165,17 @@ defineExpose({
 </script>
 
 <template>
-  <div
+  <NativeDialog
     v-if="open"
     class="update-console"
     data-test="update-console-modal"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="update-console-title"
-    @click.self="close"
+    :labelled-by="titleId"
+    @close="close"
   >
     <section class="update-console__panel">
       <header class="update-console__head">
         <div class="update-console__title">
-          <h2 id="update-console-title">{{ t('settings.version.console_title') }}</h2>
+          <h2 :id="titleId">{{ t('settings.version.console_title') }}</h2>
           <p>{{ t('settings.version.console_subtitle') }}</p>
         </div>
         <div class="update-console__actions">
@@ -194,6 +194,7 @@ defineExpose({
             type="button"
             class="update-console__button"
             data-test="update-console-close"
+            autofocus
             @click="close"
           >
             {{ t('settings.version.console_close') }}
@@ -210,7 +211,7 @@ defineExpose({
         }}</pre>
       </div>
     </section>
-  </div>
+  </NativeDialog>
 </template>
 
 <style scoped>

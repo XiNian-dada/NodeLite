@@ -1,11 +1,59 @@
-// 文件系统权限辅助:
-// - 统一把 server 运行期创建的目录收紧到 0700;
-// - 在启动时记录权限过宽的目录,帮助运维发现潜在泄露面。
+//! Private filesystem operations shared by configuration and runtime persistence.
 
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use tracing::error;
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum PrivateWriteError {
+    #[error("failed to generate a private temporary filename: {0}")]
+    Random(getrandom::Error),
+    #[error("private file write failed: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+/// The temporary file is private from creation; only a fully synced payload replaces the target.
+pub(crate) fn atomic_write_private(
+    path: &Path,
+    payload: &[u8],
+) -> std::result::Result<(), PrivateWriteError> {
+    use std::io::Write;
+
+    let mut random = [0_u8; 16];
+    getrandom::fill(&mut random).map_err(PrivateWriteError::Random)?;
+    let mut temporary = path.as_os_str().to_os_string();
+    temporary.push(format!(".tmp.{}", crate::encoding::hex_encode(&random)));
+    let temporary = std::path::PathBuf::from(temporary);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&temporary)?;
+    let result = (|| -> std::io::Result<()> {
+        file.write_all(payload)?;
+        file.sync_all()?;
+        std::fs::rename(&temporary, path)?;
+        Ok(())
+    })();
+    if let Err(error) = result {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error.into());
+    }
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    // Rename has already committed the visible contents. A durability warning
+    // must not prevent callers from applying that same content to runtime state.
+    if let Err(error) = std::fs::File::open(parent).and_then(|directory| directory.sync_all()) {
+        tracing::warn!(?error, path = %path.display(), "private file committed but directory fsync failed");
+    }
+    Ok(())
+}
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -148,5 +196,36 @@ mod tests {
     fn log_if_directory_is_not_private_tolerates_missing_paths() {
         let path = unique_temp_dir("nodelite-fs-missing-dir");
         log_if_directory_is_not_private(&path, "missing_test_path");
+    }
+
+    #[test]
+    fn atomic_write_is_private_and_does_not_use_a_shared_temporary_file() {
+        let dir = unique_temp_dir("nodelite-private-write");
+        std::fs::create_dir_all(&dir).expect("create directory");
+        let path = dir.join("server.toml");
+        let old_temporary = dir.join("server.toml.tmp");
+        std::fs::write(&old_temporary, "untouched").expect("create old temporary file");
+        super::atomic_write_private(&path, b"first").expect("first commit");
+        super::atomic_write_private(&path, b"second").expect("second commit");
+        assert_eq!(std::fs::read(&path).expect("read commit"), b"second");
+        assert_eq!(
+            std::fs::read(&old_temporary).expect("read sentinel"),
+            b"untouched"
+        );
+        #[cfg(unix)]
+        assert_mode(&path, 0o600);
+        assert_eq!(std::fs::read_dir(&dir).expect("list directory").count(), 2);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn atomic_write_cleans_up_after_a_failed_rename() {
+        let dir = unique_temp_dir("nodelite-private-rename-failure");
+        let path = dir.join("destination-directory");
+        std::fs::create_dir_all(&path).expect("create conflicting destination");
+        assert!(super::atomic_write_private(&path, b"private payload").is_err());
+        assert!(path.is_dir());
+        assert_eq!(std::fs::read_dir(&dir).expect("list directory").count(), 1);
+        std::fs::remove_dir_all(dir).expect("cleanup");
     }
 }

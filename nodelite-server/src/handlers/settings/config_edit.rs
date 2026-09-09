@@ -1,10 +1,52 @@
+//! Configuration writes keep disk and runtime changes in one serialized operation.
+
 use anyhow::{Context, Result, anyhow, bail};
+use axum::http::StatusCode;
+use axum::response::Response;
 use nodelite_proto::{
     AlertingConfig, ReadonlyAuthConfig, parse_server_config, upsert_toml_item_preserving_decor,
 };
 use serde::Serialize;
 use tokio::fs;
 use toml_edit::{DocumentMut, Item, Table, Value, value};
+
+pub(super) async fn with_settings_write<F, Fut>(state: crate::AppState, operation: F) -> Response
+where
+    F: FnOnce(crate::AppState) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Response> + Send + 'static,
+{
+    // Keep the lock and runtime update alive if the HTTP caller disconnects
+    // while spawn_blocking is committing the configuration file.
+    match tokio::spawn(async move {
+        let lock = std::sync::Arc::clone(&state.settings_write_lock);
+        #[cfg(not(test))]
+        let _guard = lock.lock().await;
+        #[cfg(test)]
+        let _guard = {
+            use std::future::Future;
+            let mut acquire = Box::pin(lock.lock());
+            let mut notified = false;
+            std::future::poll_fn(|cx| {
+                let result = acquire.as_mut().poll(cx);
+                if result.is_pending() && !notified {
+                    notified = true;
+                    state.settings_write_queued.notify_one();
+                }
+                result
+            })
+            .await
+        };
+        operation(state).await
+    })
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            tracing::error!(?error, "settings transaction task failed");
+            super::settings_json_error(StatusCode::INTERNAL_SERVER_ERROR, "settings update failed")
+        }
+    }
+}
 
 pub(super) async fn persist_auth_password_change(
     path: &std::path::Path,
@@ -119,32 +161,13 @@ fn build_alerts_item(alerting: &AlertingConfig) -> Result<Item> {
 }
 
 async fn persist_updated_content(path: &std::path::Path, updated: String) -> Result<()> {
-    let metadata = fs::metadata(path).await.ok();
-    let temp_path = path.with_extension("toml.tmp");
-    fs::write(&temp_path, updated).await.with_context(|| {
-        format!(
-            "failed to write temporary server config to {}",
-            temp_path.display()
-        )
-    })?;
-    if let Some(metadata) = metadata {
-        fs::set_permissions(&temp_path, metadata.permissions())
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to copy server config permissions onto {}",
-                    temp_path.display()
-                )
-            })?;
-    }
-    fs::rename(&temp_path, path).await.with_context(|| {
-        format!(
-            "failed to replace server config {} with {}",
-            path.display(),
-            temp_path.display()
-        )
-    })?;
-    Ok(())
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        crate::fs_security::atomic_write_private(&path, updated.as_bytes())
+    })
+    .await
+    .context("configuration write task failed")?
+    .context("failed to commit server configuration")
 }
 
 #[derive(Serialize)]

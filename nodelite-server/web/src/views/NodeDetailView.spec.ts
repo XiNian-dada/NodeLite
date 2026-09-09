@@ -1,3 +1,4 @@
+/* eslint-disable vue/one-component-per-file -- the harness supplies the App data owner around the route */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
@@ -5,6 +6,7 @@ import { createMemoryHistory, createRouter, type Router } from 'vue-router';
 import { createApp, defineComponent, h } from 'vue';
 
 import NodeDetailView from './NodeDetailView.vue';
+import { useRealtimeData } from '@/composables/useRealtimeData';
 import { setupI18n, getI18n, __resetI18nForTest } from '@/i18n';
 import { apiClient } from '@/api';
 import { makeNode, makeNodeStatus } from '@/api/__fixtures__/nodes';
@@ -13,6 +15,9 @@ const wsMock = vi.hoisted(() => {
   const handlers = new Map<string, Set<(message: never) => void>>();
 
   return {
+    onState: vi.fn(() => () => {}),
+    connect: vi.fn(),
+    destroy: vi.fn(),
     on: vi.fn((type: string, handler: (message: never) => void) => {
       const existing = handlers.get(type) ?? new Set<(message: never) => void>();
       existing.add(handler);
@@ -178,7 +183,13 @@ async function mountDetail(id = 'srv-1') {
   const router = makeRouter();
   await router.push(`/nodes/${id}`);
   await router.isReady();
-  const wrapper = mount(NodeDetailView, {
+  const RealtimeRoot = defineComponent({
+    setup() {
+      useRealtimeData();
+      return () => h(NodeDetailView);
+    },
+  });
+  const wrapper = mount(RealtimeRoot, {
     global: { plugins: [pinia, router, getI18n()] },
   });
   mountedWrappers.add(wrapper);

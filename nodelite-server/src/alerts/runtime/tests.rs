@@ -14,18 +14,18 @@ use super::drain::{DeliveryDrainOutcome, drain_delivery_dispatcher_with_timeout}
 use super::window::{average_history_metric, evaluate_rule_with_history};
 use super::{
     DeliveryJob, DeliveryResult, HistoryHighlightBuilder, InspectionDispatchState,
-    enqueue_alert_delivery, enqueue_inspection_delivery, handle_alert_delivery_result,
-    merge_inspection_highlights, parse_inspection_local_time, process_delivery_results,
-    should_check_inspection, spawn_delivery_dispatcher,
+    delivery_channel, enqueue_alert_delivery, enqueue_inspection_delivery,
+    handle_alert_delivery_result, merge_inspection_highlights, parse_inspection_local_time,
+    process_delivery_result, should_check_inspection, spawn_delivery_dispatcher,
 };
 use crate::alerts::delivery::AlertDeliveryError;
 use crate::alerts::{
-    AlertEventKind, AlertMetricReading, AlertStateTracker, EvaluatedRule, InspectionHighlight,
-    InspectionHighlightEvent, InspectionReport,
+    AlertDeliveryMetrics, AlertEventKind, AlertMetricReading, AlertStateTracker, EvaluatedRule,
+    InspectionHighlight, InspectionHighlightEvent, InspectionReport,
 };
 use crate::test_support::{fake_snapshot, synthetic_identity};
 
-fn rule() -> AlertRuleConfig {
+pub(super) fn rule() -> AlertRuleConfig {
     AlertRuleConfig {
         id: "cpu-hot".to_string(),
         name: "CPU".to_string(),
@@ -44,7 +44,7 @@ fn rule() -> AlertRuleConfig {
     }
 }
 
-fn matched(value: u64) -> EvaluatedRule {
+pub(super) fn matched(value: u64) -> EvaluatedRule {
     EvaluatedRule {
         rule_id: "cpu-hot".to_string(),
         node_id: "hk-01".to_string(),
@@ -166,7 +166,7 @@ fn alert_window_average_filters_to_rule_window() {
     );
 }
 
-fn alerting_config() -> Arc<AlertingConfig> {
+pub(super) fn alerting_config() -> Arc<AlertingConfig> {
     Arc::new(AlertingConfig {
         enabled: true,
         webhook: nodelite_proto::AlertWebhookConfig {
@@ -333,7 +333,8 @@ fn enqueue_alert_delivery_records_failure_when_queue_is_full() {
     let mut tracker = AlertStateTracker::new();
     let first = tracker.update(&rules, &[matched(91)], now);
     let event = first[0].clone();
-    let (delivery_tx, _delivery_rx) = mpsc::channel(1);
+    let metrics = AlertDeliveryMetrics::default();
+    let (delivery_tx, _delivery_rx) = delivery_channel(1, metrics.clone());
     delivery_tx
         .try_send(DeliveryJob::Alert {
             config: Arc::clone(&config),
@@ -342,6 +343,8 @@ fn enqueue_alert_delivery_records_failure_when_queue_is_full() {
         .expect("prefill should fit in queue");
 
     enqueue_alert_delivery(&delivery_tx, &mut tracker, &config, &event, now);
+    assert_eq!(metrics.snapshot().queue_full, 1);
+    assert_eq!(metrics.snapshot().outstanding, 1);
     let retry = tracker.update(&rules, &[matched(92)], now + Duration::minutes(5));
 
     assert_eq!(retry.len(), 1);
@@ -359,13 +362,14 @@ fn alert_delivery_failure_result_allows_retry() {
     let config = alerting_config();
     let mut tracker = AlertStateTracker::new();
     let first = tracker.update(&rules, &[matched(91)], now);
-    let (delivery_tx, mut delivery_rx) = mpsc::channel(4);
+    let metrics = AlertDeliveryMetrics::default();
+    let (delivery_tx, mut delivery_rx) = delivery_channel(4, metrics.clone());
 
     enqueue_alert_delivery(&delivery_tx, &mut tracker, &config, &first[0], now);
     let queued = delivery_rx
         .try_recv()
         .expect("triggered event should be queued before failure");
-    match queued {
+    match queued.0 {
         DeliveryJob::Alert { event, .. } => {
             assert_eq!(event.kind, AlertEventKind::Triggered);
         }
@@ -413,13 +417,13 @@ async fn delivery_dispatcher_drains_in_flight_jobs_after_queue_closes() {
         .update(&[rule()], &[matched(91)], Utc::now())
         .pop()
         .expect("matched rule should trigger alert");
-    let (delivery_tx, delivery_rx) = mpsc::channel(1);
-    let (result_tx, mut result_rx) = mpsc::unbounded_channel();
-    let mut dispatcher = spawn_delivery_dispatcher(delivery_rx, result_tx);
+    let metrics = AlertDeliveryMetrics::default();
+    let (delivery_tx, delivery_rx) = delivery_channel(1, metrics.clone());
+    let (result_tx, mut result_rx) = mpsc::channel(8);
+    let mut dispatcher = spawn_delivery_dispatcher(delivery_rx, result_tx, metrics.clone());
 
     delivery_tx
-        .send(DeliveryJob::Alert { config, event })
-        .await
+        .try_send(DeliveryJob::Alert { config, event })
         .expect("delivery queue should accept job");
     drop(delivery_tx);
     timeout(std::time::Duration::from_secs(1), request_seen_rx)
@@ -442,7 +446,7 @@ async fn delivery_dispatcher_drains_in_flight_jobs_after_queue_closes() {
         .expect("dispatcher task should join");
     let result = result_rx.recv().await.expect("delivery result should send");
 
-    match result {
+    match result.0 {
         DeliveryResult::Alert { result, .. } => assert!(result.is_ok()),
         DeliveryResult::Inspection { .. } => panic!("expected alert delivery result"),
     }
@@ -463,7 +467,7 @@ async fn delivery_dispatcher_shutdown_times_out() {
 }
 
 #[test]
-fn process_delivery_results_enqueues_resolved_after_trigger_success() {
+fn process_delivery_result_enqueues_resolved_after_trigger_success() {
     let now = Utc::now();
     let rules = vec![rule()];
     let config = alerting_config();
@@ -471,18 +475,24 @@ fn process_delivery_results_enqueues_resolved_after_trigger_success() {
     let mut inspection_dispatch = InspectionDispatchState::new();
     let first = tracker.update(&rules, &[matched(91)], now);
     let skipped = tracker.update(&rules, &[], now + Duration::minutes(1));
-    let (delivery_tx, mut delivery_rx) = mpsc::channel(4);
-    let (result_tx, mut result_rx) = mpsc::unbounded_channel();
+    let metrics = AlertDeliveryMetrics::default();
+    let (delivery_tx, mut delivery_rx) = delivery_channel(4, metrics.clone());
+    let (result_tx, mut result_rx) = mpsc::channel(8);
     result_tx
-        .send(DeliveryResult::Alert {
-            config,
-            event: first[0].clone(),
-            result: Ok(()),
-        })
+        .try_send((
+            DeliveryResult::Alert {
+                config,
+                event: first[0].clone(),
+                result: Ok(()),
+            },
+            metrics.track_outstanding(),
+        ))
         .expect("result receiver should be open");
 
-    process_delivery_results(
-        &mut result_rx,
+    process_delivery_result(
+        result_rx
+            .try_recv()
+            .expect("completed result should be queued"),
         &mut tracker,
         &mut inspection_dispatch,
         &delivery_tx,
@@ -492,7 +502,7 @@ fn process_delivery_results_enqueues_resolved_after_trigger_success() {
         .expect("resolved event should be queued");
 
     assert!(skipped.is_empty());
-    match queued {
+    match queued.0 {
         DeliveryJob::Alert { event, .. } => {
             assert_eq!(event.kind, AlertEventKind::Resolved);
             assert_eq!(event.occurred_at, now + Duration::minutes(1));
@@ -508,7 +518,8 @@ fn enqueue_inspection_delivery_marks_pending_and_queues_job() {
     let time = NaiveTime::from_hms_opt(9, 0, 0).expect("time should be valid");
     let config = alerting_config();
     let mut inspection_dispatch = InspectionDispatchState::new();
-    let (delivery_tx, mut delivery_rx) = mpsc::channel(1);
+    let metrics = AlertDeliveryMetrics::default();
+    let (delivery_tx, mut delivery_rx) = delivery_channel(1, metrics.clone());
 
     enqueue_inspection_delivery(
         &delivery_tx,
@@ -528,7 +539,7 @@ fn enqueue_inspection_delivery_marks_pending_and_queues_job() {
             .due_date_for(date, time, time, now)
             .is_none()
     );
-    match queued {
+    match queued.0 {
         DeliveryJob::Inspection {
             local_date,
             lookback_hours,
@@ -548,7 +559,8 @@ fn enqueue_inspection_delivery_marks_retry_when_queue_is_full() {
     let time = NaiveTime::from_hms_opt(9, 0, 0).expect("time should be valid");
     let config = alerting_config();
     let mut inspection_dispatch = InspectionDispatchState::new();
-    let (delivery_tx, _delivery_rx) = mpsc::channel(1);
+    let metrics = AlertDeliveryMetrics::default();
+    let (delivery_tx, _delivery_rx) = delivery_channel(1, metrics.clone());
     delivery_tx
         .try_send(DeliveryJob::Inspection {
             config: Arc::clone(&config),

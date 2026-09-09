@@ -12,6 +12,7 @@
 //!   "任务调度失败" / "连接未初始化" / "查询本身失败",而不是匹配错误字符串。
 
 mod cache;
+mod diagnostics;
 mod init;
 mod query;
 mod query_limit;
@@ -47,6 +48,7 @@ pub(crate) use self::query_limit::HistoryQueryRuntimeMetrics;
 use self::query_limit::{HistoryQueryLimiter, HistoryQueryPermit};
 #[cfg(test)]
 use self::test_probe::HistoryQueryProbe;
+pub(crate) use self::traffic::TrafficPersistenceError;
 use self::traffic::{TrafficTracker, TrafficUsage};
 use self::writer::{WriterContext, build_history_point, run_history_writer};
 #[cfg(test)]
@@ -56,6 +58,7 @@ use crate::registry::TrafficAccounting;
 
 pub(crate) use self::cache::HistoryCacheMetrics;
 use self::cache::{CacheKey, HistoryQueryCache};
+pub(crate) use self::diagnostics::HistoryWriteMetrics;
 
 /// SQLite 在并发写入冲突时的等待时长。
 const SQLITE_BUSY_MAX_RETRIES: u32 = 10;
@@ -137,8 +140,11 @@ pub struct HistoryStore {
     /// Writer task 的 join handle,用于在关停时显式 await。
     writer_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     traffic: TrafficTracker,
+    // Serialize quota lookup/enqueue with revocation so an in-flight sample cannot revive a ledger.
+    pub(crate) traffic_lifecycle_lock: Arc<Mutex<()>>,
     /// 历史写入被静默丢弃的总数(channel 满或已关闭)。监控该值可观察反压。
     dropped_writes: Arc<AtomicU64>,
+    write_metrics: Arc<ParkingLotMutex<HistoryWriteMetrics>>,
     /// 查询结果 LRU 缓存,减少重复聚合的开销。使用 parking_lot::Mutex 降低锁竞争。
     query_cache: Arc<ParkingLotMutex<HistoryQueryCache>>,
     query_limiter: HistoryQueryLimiter,
@@ -221,7 +227,9 @@ impl HistoryStore {
             writer_tx: Arc::new(RwLock::new(None)),
             writer_handle: Arc::new(Mutex::new(None)),
             traffic: TrafficTracker::new(Arc::clone(&db_path), sqlite_busy_timeout_secs),
+            traffic_lifecycle_lock: Arc::new(Mutex::new(())),
             dropped_writes: Arc::new(AtomicU64::new(0)),
+            write_metrics: Arc::new(ParkingLotMutex::new(HistoryWriteMetrics::default())),
             query_cache: Arc::new(ParkingLotMutex::new(HistoryQueryCache::new(
                 std::num::NonZeroUsize::new(HISTORY_CACHE_CAPACITY)
                     .unwrap_or(std::num::NonZeroUsize::MIN),
@@ -289,6 +297,7 @@ impl HistoryStore {
             artifacts_hardened_after_write: Arc::clone(&self.artifacts_hardened_after_write),
             batch_max: self.writer_batch_max,
             flush_interval: self.writer_flush_interval,
+            metrics: Arc::clone(&self.write_metrics),
         };
         let handle = tokio::spawn(run_history_writer(rx, context));
         let mut guard = self.writer_handle.lock().await;
@@ -297,6 +306,10 @@ impl HistoryStore {
 
     pub fn is_available(&self) -> bool {
         self.available.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn write_metrics(&self) -> HistoryWriteMetrics {
+        *self.write_metrics.lock()
     }
 
     /// 统计有多少次 record_status 因为 channel 满而被静默丢弃。
@@ -365,6 +378,21 @@ impl HistoryStore {
 
     pub(crate) async fn traffic_usages(&self) -> Vec<TrafficUsage> {
         self.traffic.usages().await
+    }
+
+    pub(crate) async fn forget_traffic(
+        &self,
+        node_id: &str,
+    ) -> Result<(), TrafficPersistenceError> {
+        self.last_written_at.lock().await.remove(node_id);
+        self.traffic.remove_nodes(vec![node_id.to_string()]).await
+    }
+
+    pub(crate) async fn reconcile_traffic(
+        &self,
+        live_node_ids: &[String],
+    ) -> Result<(), TrafficPersistenceError> {
+        self.traffic.retain_nodes(live_node_ids).await
     }
 
     async fn record_status_with_builder<F>(&self, status: &NodeStatus, build_point: F)

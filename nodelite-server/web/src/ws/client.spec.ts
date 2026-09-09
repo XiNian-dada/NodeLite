@@ -412,8 +412,8 @@ describe('WsClient', () => {
     });
   });
 
-  describe('reconnect stop condition', () => {
-    it('stops reconnecting after 3 consecutive handshake failures', async () => {
+  describe('reconnect after repeated failures', () => {
+    it('keeps reconnecting after 3 consecutive handshake failures', async () => {
       client = new WsClient(wsUrl, logger);
 
       // Attempt 1: connect but server never opens
@@ -460,11 +460,10 @@ describe('WsClient', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      // After 3 failures, should be in failed state
-      expect(client.getState()).toEqual({
-        kind: 'failed',
-        reason: 'auth_or_unreachable',
-      });
+      const retry = client.getState();
+      expect(retry.kind).toBe('reconnecting');
+      if (retry.kind === 'reconnecting')
+        expect(retry.nextAttemptAt - Date.now()).toBeLessThanOrEqual(30000);
     }, 15000);
   });
 
@@ -524,47 +523,6 @@ describe('WsClient', () => {
 
       expect(client.getState().kind).toBe('open');
     });
-
-    it('resets handshake failure counter on visibility-triggered reconnect', async () => {
-      client = new WsClient(wsUrl, logger);
-
-      // Simulate 3 failures to reach failed state
-      for (let i = 0; i < 3; i++) {
-        client.connect();
-        await new Promise((resolve) => setTimeout(resolve, 100));
-
-        if (client['ws']) {
-          client['ws'].dispatchEvent(new Event('error'));
-          client['ws'].close();
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, 100));
-
-        if (i < 2) {
-          const state = client.getState();
-          if (state.kind === 'reconnecting') {
-            const delay = state.nextAttemptAt - Date.now();
-            await new Promise((resolve) => setTimeout(resolve, delay + 100));
-          }
-        }
-      }
-
-      expect(client.getState().kind).toBe('failed');
-
-      // Visibility change should reset counter and reconnect
-      server = new WS(wsUrl);
-
-      Object.defineProperty(document, 'hidden', {
-        configurable: true,
-        value: false,
-      });
-      document.dispatchEvent(new Event('visibilitychange'));
-
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      await server.connected;
-
-      expect(client.getState().kind).toBe('open');
-    }, 15000);
   });
 
   describe('auth probe on handshake failure', () => {

@@ -154,6 +154,12 @@ pub fn render_agent_config(
     content.push_str(&format!("server = \"{}\"\n", toml_escape(&server_url)));
     content.push_str(&format!("token = \"{}\"\n", toml_escape(plaintext_token)));
     content.push_str("report_interval_secs = 5\n");
+    content.push_str(&format!(
+        "auth_timeout_secs = {}\nsend_timeout_secs = {}\ninbound_timeout_secs = {}\n",
+        nodelite_proto::config::DEFAULT_AGENT_AUTH_TIMEOUT_SECS,
+        nodelite_proto::config::DEFAULT_AGENT_SEND_TIMEOUT_SECS,
+        nodelite_proto::config::DEFAULT_AGENT_INBOUND_TIMEOUT_SECS,
+    ));
     if !node.tags.is_empty() {
         let tags = node
             .tags

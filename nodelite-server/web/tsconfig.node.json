@@ -16,5 +16,5 @@
     "noFallthroughCasesInSwitch": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["vite.config.ts", "vitest.config.ts", "playwright.config.ts", "eslint.config.js"]
+  "include": ["vite.config.ts", "vitest.config.ts", "playwright*.config.ts", "eslint.config.js"]
 }

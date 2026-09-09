@@ -5,8 +5,11 @@
 
 #![allow(dead_code)]
 
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use nodelite_proto::{AgentConfig, NodeIdentity};
 
 /// RAII 临时目录:构造时创建唯一目录,析构时递归删除。
 ///
@@ -34,5 +37,40 @@ impl TempDir {
 impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+/// 指向给定地址的 Agent 配置。`connect_timeout_secs` 取 2s,`report_interval_secs`
+/// 取 5s,确保测试窗口内不会因为指标上报而产生额外流量。
+pub fn test_config(local_addr: SocketAddr) -> AgentConfig {
+    AgentConfig {
+        node_id: "reconnect-node-01".to_string(),
+        node_label: "Reconnect Node 01".to_string(),
+        server: format!("ws://{local_addr}/ws"),
+        token: "reconnect-token".to_string(),
+        connect_timeout_secs: 2,
+        auth_timeout_secs: 20,
+        send_timeout_secs: 20,
+        inbound_timeout_secs: 90,
+        report_interval_secs: 5,
+        max_incoming_message_bytes: 65536,
+        insecure_transport_warn_interval_secs: 900,
+        tags: vec![],
+        hostname_override: None,
+    }
+}
+
+pub fn test_identity(config: &AgentConfig) -> NodeIdentity {
+    NodeIdentity {
+        node_id: config.node_id.clone(),
+        node_label: config.node_label.clone(),
+        hostname: "localhost".to_string(),
+        os: "test".to_string(),
+        kernel_version: None,
+        cpu_model: None,
+        cpu_cores: 1,
+        agent_version: "0.1.0-test".to_string(),
+        boot_time: None,
+        tags: vec![],
     }
 }

@@ -45,7 +45,7 @@ use crate::handlers::{
 };
 use crate::history::HistoryStore;
 use crate::registry::NodeRegistry;
-use crate::snapshot::{load_snapshot, persist_snapshot, spawn_snapshot_persistor};
+use crate::snapshot::{load_snapshot, persist_current_snapshot, spawn_snapshot_persistor};
 use crate::state::SharedState;
 use crate::ws::{ws_browser_handler, ws_handler};
 
@@ -149,11 +149,14 @@ async fn initialize_server_runtime(
     );
     let audit_log = AuditLog::new(config.audit.clone(), config.sqlite_busy_timeout_secs);
     history.initialize().await;
+    if let Err(error) = history.reconcile_traffic(&registry.node_ids().await).await {
+        warn!(error = ?error, "failed to reconcile active traffic ledgers");
+    }
     audit_log.initialize().await?;
     let geoip = GeoIpResolver::new(config.geoip.clone()).await;
     let readiness = ServerReadiness::new(history.is_available());
     readiness.mark_history_available(history.is_available());
-    restore_snapshot_if_available(&shared, config.snapshot_path.as_path()).await;
+    restore_snapshot_if_available(&shared, &registry, config.snapshot_path.as_path()).await;
     shared
         .apply_location_overrides(registry.list_location_overrides().await)
         .await;
@@ -161,6 +164,7 @@ async fn initialize_server_runtime(
     let shutdown = CancellationToken::new();
     let state = AppState {
         agent_logs: AgentLogStore::new(),
+        traffic_control: crate::traffic_control::TrafficControlStatuses::default(),
         history,
         audit_log,
         geoip,
@@ -185,6 +189,9 @@ async fn initialize_server_runtime(
         alerting: Arc::new(RwLock::new(Arc::new(config.alerting.clone()))),
         two_factor_sessions: TwoFactorSessions::new(),
         config_path: Arc::new(config_path.to_path_buf()),
+        settings_write_lock: Arc::new(tokio::sync::Mutex::new(())),
+        #[cfg(test)]
+        settings_write_queued: Arc::new(tokio::sync::Notify::new()),
         shutdown: shutdown.clone(),
     };
     let mut background_tasks = spawn_server_background_tasks(&config, &state);
@@ -322,9 +329,11 @@ async fn drain_server_shutdown(
     // 周期持久化任务每 15 秒落盘一次,SIGTERM 期间最近一次 tick 之后的状态变更可能
     // 还没刷到磁盘。这里同步再落一次,确保 systemd restart 后看到的就是退出前最新视图。
     info!("flushing final snapshot before shutdown");
-    let final_statuses = shutdown_artifacts.shared.list_statuses().await;
-    if let Err(error) =
-        persist_snapshot(shutdown_artifacts.snapshot_path.as_path(), &final_statuses).await
+    if let Err(error) = persist_current_snapshot(
+        &shutdown_artifacts.shared,
+        shutdown_artifacts.snapshot_path.as_path(),
+    )
+    .await
     {
         warn!(error = ?error, path = %shutdown_artifacts.snapshot_path.display(), "failed to flush final snapshot");
     }
@@ -546,13 +555,24 @@ fn validate_password_strength(password: &str) -> Result<()> {
 }
 
 /// 启动期尝试从磁盘恢复一份 NodeStatus 列表,失败时记录日志并继续以空状态启动。
-async fn restore_snapshot_if_available(shared: &SharedState, path: &Path) {
+pub(crate) async fn restore_snapshot_if_available(
+    shared: &SharedState,
+    registry: &NodeRegistry,
+    path: &Path,
+) {
     if !path.exists() {
         return;
     }
 
     match load_snapshot(path).await {
-        Ok(statuses) => {
+        Ok(mut statuses) => {
+            let authorized: std::collections::HashSet<_> = registry
+                .list_registered_nodes()
+                .await
+                .into_iter()
+                .map(|node| node.node_id)
+                .collect();
+            statuses.retain(|status| authorized.contains(&status.identity.node_id));
             shared.restore_statuses(statuses).await;
         }
         Err(error) => {

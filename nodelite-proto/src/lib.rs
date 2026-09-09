@@ -38,7 +38,8 @@ pub use message::{
     AgentLogEntry, AgentLogsMessage, BrowserMessage, HelloMessage,
     MIN_SUPPORTED_WIRE_PROTOCOL_VERSION, MetricsMessage, NetworkThrottleMessage, NoticeLevel,
     PingMessage, PongMessage, RefreshTokenRequestMessage, RefreshTokenResponseMessage,
-    ServerNoticeCode, ServerNoticeMessage, WIRE_PROTOCOL_VERSION, WireMessage,
+    ServerNoticeCode, ServerNoticeMessage, TrafficControlState, TrafficControlStatus,
+    TrafficControlUnavailableReason, WIRE_PROTOCOL_VERSION, WireMessage,
 };
 pub use model::{
     DiskUsage, GeoIpLocation, HistoryPoint, LoadAverage, MemoryUsage, NetworkCounters,

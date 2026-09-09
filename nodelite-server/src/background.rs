@@ -55,10 +55,14 @@ pub(crate) fn spawn_registry_reloader(
                     history.prune_query_cache();
                     match registry.reload_if_file_changed().await {
                         Ok(true) => {
+                            let _traffic_guard = history.traffic_lifecycle_lock.lock().await;
                             readiness.mark_registry_reload_healthy(true);
                             let enrolled_nodes = registry.count().await;
                             let node_ids = registry.node_ids().await;
                             let cleaned_history_nodes = history.forget_missing(&node_ids).await;
+                            if let Err(error) = history.reconcile_traffic(&node_ids).await {
+                                warn!(error = ?error, "failed to reconcile active traffic ledgers");
+                            }
                             info!(
                                 registry_path = %registry.path().display(),
                                 enrolled_nodes,

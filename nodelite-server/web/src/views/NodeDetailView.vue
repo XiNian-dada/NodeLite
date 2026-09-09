@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import AppLayout from '@/components/AppLayout.vue';
 import NodeHardwarePanel from '@/components/NodeHardwarePanel.vue';
@@ -23,7 +23,6 @@ import { useDetailHistoryStore } from '@/stores/detailHistory';
 import { useMonitorHistoryStore } from '@/stores/monitorHistory';
 import { useNodeLogsStore } from '@/stores/nodeLogs';
 import { useNodesStore } from '@/stores/nodes';
-import { useWebSocket } from '@/ws';
 import { ApiError } from '@/api/client';
 
 const NODE_DETAIL_AUX_REFRESH_MS = 5000;
@@ -44,7 +43,6 @@ const monitorStore = useMonitorHistoryStore();
 const logsStore = useNodeLogsStore();
 const nodesStore = useNodesStore();
 const selection = useChartSelection();
-const ws = useWebSocket();
 
 const nodeId = computed(() => String(route.params.id ?? ''));
 const node = computed(() => store.data);
@@ -115,35 +113,15 @@ async function loadNode(id: string): Promise<void> {
 
 const currentSummary = computed(() => nodesStore.nodesById.get(nodeId.value) ?? null);
 
-watch(currentSummary, (summary) => {
-  const generatedAt = nodesStore.lastGeneratedAt;
-  if (summary && generatedAt) store.applyRealtimeSummary(summary, generatedAt);
+watch([currentSummary, () => nodesStore.lastGeneratedAt], ([summary, generatedAt]) => {
+  if (!generatedAt) return;
+  if (summary) store.applyRealtimeSummary(summary, generatedAt);
+  else store.markRemoved(nodeId.value);
 });
-
-const wsUnsubscribers: Array<() => void> = [];
 
 onMounted(() => {
-  wsUnsubscribers.push(
-    ws.on('initial_state', (msg) => {
-      nodesStore.applyServerState(msg.nodes, msg.generated_at);
-      if (!nodesStore.nodesById.has(nodeId.value)) store.markRemoved(nodeId.value);
-    }),
-    ws.on('node_upsert', (msg) => {
-      nodesStore.upsertNode(msg.node, msg.generated_at);
-    }),
-    ws.on('node_removed', (msg) => {
-      if (nodesStore.removeNode(msg.node_id, msg.generated_at)) {
-        store.markRemoved(msg.node_id);
-      }
-    }),
-  );
-
   void loadNode(nodeId.value);
   ensureTabData();
-});
-
-onUnmounted(() => {
-  for (const unsubscribe of wsUnsubscribers) unsubscribe();
 });
 
 // Navigating between nodes (same component, new :id) reloads.

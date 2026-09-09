@@ -1,8 +1,8 @@
 //! 节点状态磁盘快照:为了在 Server 重启后能立即展示"上一秒"的视图,
 //! 这里周期性地把 `SharedState` 的所有 `NodeStatus` 写入磁盘文件。
 //!
-//! 写入采用"原子替换":先写入 `*.tmp`,再 `rename` 覆盖目标文件,避免读者
-//! 看到半截内容。同时把权限收敛到 `0600`,使非 root 用户无法读取敏感字段。
+//! Shared-state writers take the same lock before reading the latest view, so an
+//! older periodic write cannot overwrite a completed node deletion.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -16,11 +16,8 @@ use tokio::time::{MissedTickBehavior, interval};
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
-use crate::fs_security::{create_private_dir_all_async, ensure_directory_mode};
+use crate::fs_security::{PrivateWriteError, atomic_write_private, create_private_dir_all_async};
 use crate::state::SharedState;
-
-#[cfg(unix)]
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 #[derive(Debug, Default)]
 pub(crate) struct SnapshotPersistCheckpoint {
@@ -121,101 +118,53 @@ pub(crate) async fn persist_snapshot_if_changed(
         return Ok(false);
     }
 
-    let statuses = shared.list_statuses().await;
-    persist_snapshot(path, &statuses).await?;
-    checkpoint.last_revision = Some(revision);
+    checkpoint.last_revision = Some(persist_current_snapshot(shared, path).await?);
     Ok(true)
 }
 
-/// 实际执行"写临时文件 → rename → 设权限"的步骤。
-pub(crate) async fn persist_snapshot(path: &Path, statuses: &[NodeStatus]) -> Result<()> {
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum SnapshotPersistError {
+    #[error("failed to prepare private snapshot directory: {0}")]
+    Directory(#[source] anyhow::Error),
+    #[error("failed to serialize snapshot: {0}")]
+    Serialize(#[from] serde_json::Error),
+    #[error("failed to commit snapshot: {0}")]
+    Write(#[from] PrivateWriteError),
+    #[error("snapshot persistence task failed: {0}")]
+    Task(#[from] tokio::task::JoinError),
+}
+
+/// The lock covers reading the current view and committing it, including caller cancellation.
+pub(crate) async fn persist_current_snapshot(
+    shared: &SharedState,
+    path: &Path,
+) -> std::result::Result<u64, SnapshotPersistError> {
+    let shared = shared.clone();
+    let path = path.to_path_buf();
+    tokio::spawn(async move {
+        let _guard = shared.snapshot_write_lock.lock().await;
+        let revision = shared.nodes_revision();
+        let statuses = shared.list_statuses().await;
+        persist_snapshot(&path, &statuses).await?;
+        Ok(revision)
+    })
+    .await?
+}
+
+pub(crate) async fn persist_snapshot(
+    path: &Path,
+    statuses: &[NodeStatus],
+) -> std::result::Result<(), SnapshotPersistError> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
-        create_private_dir_all_async(parent).await?;
+        create_private_dir_all_async(parent)
+            .await
+            .map_err(SnapshotPersistError::Directory)?;
     }
-
-    let payload = serde_json::to_vec(statuses).context("failed to serialize node snapshot")?;
-    let temporary_path = temporary_snapshot_path(path);
-    let temporary_path_for_write = temporary_path.clone();
-    // 实际写盘的同步操作放到 spawn_blocking 里执行,避免阻塞异步线程池。
-    tokio::task::spawn_blocking(move || {
-        write_snapshot_payload(&temporary_path_for_write, &payload)
-    })
-    .await
-    .context("snapshot write task failed")??;
-    fs::rename(&temporary_path, path)
-        .await
-        .with_context(|| format!("failed to move snapshot into place at {}", path.display()))?;
-    // 把 rename 这一步也持久化到父目录,否则主机宕机后可能看到旧目录项指向新 inode 的空文件。
-    sync_parent_dir(path).await;
-    harden_snapshot_permissions(path)?;
-    Ok(())
-}
-
-/// 把目标路径加上 `.tmp` 后缀作为中转文件。
-fn temporary_snapshot_path(path: &Path) -> PathBuf {
-    let mut temporary = path.as_os_str().to_os_string();
-    temporary.push(".tmp");
-    temporary.into()
-}
-
-/// 以 0600 权限创建临时文件并写入完整 payload。
-fn write_snapshot_payload(path: &Path, payload: &[u8]) -> Result<()> {
-    let mut options = std::fs::OpenOptions::new();
-    options.create(true).truncate(true).write(true);
-    #[cfg(unix)]
-    options.mode(0o600);
-
-    let mut file = options
-        .open(path)
-        .with_context(|| format!("failed to open {}", path.display()))?;
-    use std::io::Write;
-    file.write_all(payload)
-        .with_context(|| format!("failed to write {}", path.display()))?;
-    // 在 rename 之前显式 fsync,使写入真正落到磁盘;否则主机宕机后 rename
-    // 完成但临时文件内容仍在页缓存,目标路径会出现零字节或半截文件。
-    file.sync_all()
-        .with_context(|| format!("failed to fsync {}", path.display()))?;
-    harden_snapshot_permissions(path)?;
-    Ok(())
-}
-
-/// 在 rename 之后异步 fsync 父目录,确保新目录项也被持久化。
-/// 父目录无法打开(例如权限受限)时静默忽略 —— 数据本身已经 fsync,目录项的丢失只会回退到上一次快照。
-async fn sync_parent_dir(path: &Path) {
-    let Some(parent) = path.parent() else {
-        return;
-    };
-    if parent.as_os_str().is_empty() {
-        return;
-    }
-    let parent = parent.to_path_buf();
-    let _ = tokio::task::spawn_blocking(move || {
-        let dir = std::fs::File::open(&parent)?;
-        dir.sync_all()
-    })
-    .await;
-}
-
-/// 强制把目标文件的权限调整为 0600(仅文件属主可读写)。
-fn harden_snapshot_permissions(path: &Path) -> Result<()> {
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        ensure_directory_mode(parent, 0o700)?;
-    }
-    #[cfg(unix)]
-    {
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .with_context(|| format!("failed to chmod {}", path.display()))?;
-    }
-
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-    }
-
+    let payload = serde_json::to_vec(statuses)?;
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || atomic_write_private(&path, &payload)).await??;
     Ok(())
 }
 

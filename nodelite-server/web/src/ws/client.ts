@@ -83,6 +83,7 @@ export class WsClient {
   private pongTimer: ReturnType<typeof setTimeout> | null = null;
 
   private readonly handlers = new Map<string, Set<MessageHandler<BrowserMessage['type']>>>();
+  private readonly stateHandlers = new Set<(state: ConnectionState) => void>();
 
   constructor(
     private readonly url: string,
@@ -96,16 +97,27 @@ export class WsClient {
 
   connect(): void {
     if (this.state.kind === 'connecting' || this.state.kind === 'open') return;
+    this.clearReconnectTimer();
+    document.addEventListener('visibilitychange', this.handleVisibilityChange);
 
     this.reconnectAttempt++;
     this.setState({ kind: 'connecting', attempt: this.reconnectAttempt });
 
     try {
-      this.ws = new WebSocket(this.url);
-      this.ws.onopen = this.onOpen.bind(this);
-      this.ws.onmessage = this.onMessage.bind(this);
-      this.ws.onerror = this.onError.bind(this);
-      this.ws.onclose = this.onClose.bind(this);
+      const socket = new WebSocket(this.url);
+      this.ws = socket;
+      socket.onopen = () => {
+        if (this.ws === socket) this.onOpen();
+      };
+      socket.onmessage = (event) => {
+        if (this.ws === socket) this.onMessage(event);
+      };
+      socket.onerror = (event) => {
+        if (this.ws === socket) this.onError(event);
+      };
+      socket.onclose = (event) => {
+        if (this.ws === socket) this.onClose(event);
+      };
     } catch (e) {
       this.logger.error('WebSocket construction failed', e);
       this.scheduleReconnect();
@@ -117,8 +129,9 @@ export class WsClient {
     this.clearHeartbeat();
     this.setState({ kind: 'failed', reason: 'auth_or_unreachable' });
     if (this.ws) {
-      this.ws.close();
+      const socket = this.ws;
       this.ws = null;
+      socket.close();
     }
   }
 
@@ -141,6 +154,12 @@ export class WsClient {
 
   getState(): ConnectionState {
     return this.state;
+  }
+
+  onState(handler: (state: ConnectionState) => void): UnsubscribeFn {
+    this.stateHandlers.add(handler);
+    handler(this.state);
+    return () => this.stateHandlers.delete(handler);
   }
 
   private onOpen(): void {
@@ -195,11 +214,6 @@ export class WsClient {
 
     if (this.state.kind === 'failed') return;
 
-    if (this.handshakeFailures >= 3) {
-      this.setState({ kind: 'failed', reason: 'auth_or_unreachable' });
-      return;
-    }
-
     // Don't reconnect if tab is hidden — visibility handler will resume on show
     if (typeof document !== 'undefined' && document.hidden) {
       this.setState({ kind: 'idle' });
@@ -234,9 +248,10 @@ export class WsClient {
   private scheduleReconnect(): void {
     this.clearReconnectTimer();
 
-    const baseDelay = Math.min(1000 * 2 ** this.reconnectAttempt, 30000);
+    const baseDelay =
+      this.handshakeFailures >= 3 ? 30000 : Math.min(1000 * 2 ** this.reconnectAttempt, 30000);
     const jitter = baseDelay * 0.2 * (Math.random() * 2 - 1);
-    const delay = Math.max(1000, baseDelay + jitter);
+    const delay = Math.min(30000, Math.max(1000, baseDelay + jitter));
     const nextAttemptAt = Date.now() + delay;
 
     this.setState({
@@ -259,6 +274,7 @@ export class WsClient {
 
   private setState(state: ConnectionState): void {
     this.state = state;
+    for (const handler of this.stateHandlers) handler(state);
   }
 
   private startHeartbeat(): void {

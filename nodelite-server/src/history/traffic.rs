@@ -11,7 +11,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Datelike, TimeZone, Utc};
 use rusqlite::{Connection, params};
-use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::{MissedTickBehavior, interval};
 use tracing::warn;
@@ -43,6 +43,22 @@ enum TrafficWrite {
     Delete(String),
 }
 
+enum TrafficCommand {
+    Write(TrafficWrite),
+    Remove {
+        node_ids: Vec<String>,
+        completed: oneshot::Sender<Result<(), TrafficPersistenceError>>,
+    },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum TrafficPersistenceError {
+    #[error("traffic writer is unavailable")]
+    Unavailable,
+    #[error("traffic persistence failed: {0}")]
+    Write(#[from] anyhow::Error),
+}
+
 /// 独立于历史趋势 writer 的套餐账本。两者共享 SQLite/WAL，但不会让流量计数
 /// 被历史写入节流，从而确保告警和限速使用每个 metrics 帧的最新总量。
 #[derive(Clone)]
@@ -50,7 +66,7 @@ pub(super) struct TrafficTracker {
     db_path: Arc<PathBuf>,
     sqlite_busy_timeout_secs: u64,
     state: Arc<Mutex<HashMap<String, TrafficUsageState>>>,
-    writer_tx: Arc<RwLock<Option<mpsc::Sender<TrafficWrite>>>>,
+    writer_tx: Arc<RwLock<Option<mpsc::Sender<TrafficCommand>>>>,
     writer_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
@@ -173,6 +189,56 @@ impl TrafficTracker {
         usages
     }
 
+    pub(super) async fn retain_nodes(
+        &self,
+        live_node_ids: &[String],
+    ) -> Result<(), TrafficPersistenceError> {
+        let live: std::collections::HashSet<&str> =
+            live_node_ids.iter().map(String::as_str).collect();
+        let removed = self
+            .state
+            .lock()
+            .await
+            .keys()
+            .filter(|id| !live.contains(id.as_str()))
+            .cloned()
+            .collect();
+        self.remove_nodes(removed).await
+    }
+
+    pub(super) async fn remove_nodes(
+        &self,
+        node_ids: Vec<String>,
+    ) -> Result<(), TrafficPersistenceError> {
+        if node_ids.is_empty() {
+            return Ok(());
+        }
+        let tx = self
+            .writer_tx
+            .read()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or(TrafficPersistenceError::Unavailable)?;
+        let (completed, receiver) = oneshot::channel();
+        {
+            let mut state = self.state.lock().await;
+            for id in &node_ids {
+                state.remove(id);
+            }
+            // Delete is a durable barrier after earlier upserts; it must never use try_send.
+            tx.send(TrafficCommand::Remove {
+                node_ids,
+                completed,
+            })
+            .await
+            .map_err(|_| TrafficPersistenceError::Unavailable)?;
+        }
+        receiver
+            .await
+            .map_err(|_| TrafficPersistenceError::Unavailable)?
+    }
+
     pub(super) async fn shutdown(&self) {
         let sender = self.writer_tx.write().await.take();
         drop(sender);
@@ -186,7 +252,7 @@ impl TrafficTracker {
     async fn try_enqueue(&self, write: TrafficWrite) {
         let tx = self.writer_tx.read().await.as_ref().cloned();
         if let Some(tx) = tx {
-            let _ = try_enqueue(&tx, write);
+            let _ = try_enqueue(&tx, TrafficCommand::Write(write));
         }
     }
 }
@@ -261,7 +327,7 @@ fn load_traffic_state(
 }
 
 async fn run_traffic_writer(
-    mut rx: mpsc::Receiver<TrafficWrite>,
+    mut rx: mpsc::Receiver<TrafficCommand>,
     db_path: Arc<PathBuf>,
     sqlite_busy_timeout_secs: u64,
 ) {
@@ -274,22 +340,32 @@ async fn run_traffic_writer(
     loop {
         tokio::select! {
             received = rx.recv() => match received {
-                Some(write) => record_pending(&mut pending, write),
+                Some(TrafficCommand::Write(write)) => record_pending(&mut pending, write),
+                Some(TrafficCommand::Remove { node_ids, completed }) => {
+                    for id in node_ids {
+                        record_pending(&mut pending, TrafficWrite::Delete(id));
+                    }
+                    let result = flush_traffic_writes(&mut pending, db_path.as_ref(), sqlite_busy_timeout_secs).await;
+                    let _ = completed.send(result.map_err(TrafficPersistenceError::Write));
+                }
                 None => break,
             },
-            _ = ticker.tick(), if !pending.is_empty() => flush_traffic_writes(&mut pending, db_path.as_ref().as_path(), sqlite_busy_timeout_secs).await,
+            _ = ticker.tick(), if !pending.is_empty() => {
+                if let Err(error) = flush_traffic_writes(&mut pending, db_path.as_ref(), sqlite_busy_timeout_secs).await {
+                    warn!(error = ?error, "failed to persist traffic usage state");
+                }
+            },
         }
     }
-    while let Ok(write) = rx.try_recv() {
-        record_pending(&mut pending, write);
-    }
-    if !pending.is_empty() {
-        flush_traffic_writes(
+    if !pending.is_empty()
+        && let Err(error) = flush_traffic_writes(
             &mut pending,
             db_path.as_ref().as_path(),
             sqlite_busy_timeout_secs,
         )
-        .await;
+        .await
+    {
+        warn!(error = ?error, "failed to persist traffic usage state on shutdown");
     }
 }
 
@@ -305,16 +381,14 @@ async fn flush_traffic_writes(
     pending: &mut HashMap<String, TrafficWrite>,
     db_path: &Path,
     sqlite_busy_timeout_secs: u64,
-) {
+) -> Result<()> {
     let writes = std::mem::take(pending);
     let db_path = db_path.to_path_buf();
-    let result = tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         write_traffic_states(&db_path, sqlite_busy_timeout_secs, writes)
     })
-    .await;
-    if let Ok(Err(error)) = result {
-        warn!(error = ?error, "failed to persist traffic usage state");
-    }
+    .await
+    .context("traffic writer task failed")?
 }
 
 fn write_traffic_states(

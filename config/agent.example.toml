@@ -15,8 +15,15 @@ report_interval_secs = 5
 hostname_override = "hk-01.internal"
 # 可选:节点标签,前端可据此分组过滤。
 tags = ["apac", "edge"]
-# Agent 连接超时(秒)。
+# 会话期限单位均为秒，允许 1..=3600；超时后关闭连接并退避重试。
+# Agent 连接超时。
 connect_timeout_secs = 20
+# Upgrade 成功后等待认证响应的期限；Ping 不会延长此期限。
+auth_timeout_secs = 20
+# 单次 WebSocket 发送及 flush 的期限。
+send_timeout_secs = 20
+# 认证后最长入站静默。建议至少为 Server ping_interval_secs 的三倍。
+inbound_timeout_secs = 90
 # Agent 最大接收消息字节数。
 max_incoming_message_bytes = 65536
 # 不安全传输警告间隔(秒)。

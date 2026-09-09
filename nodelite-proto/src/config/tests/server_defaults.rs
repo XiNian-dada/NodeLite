@@ -20,6 +20,39 @@ use super::super::{
 };
 
 #[test]
+fn sanitization_configuration_defaults_and_bounds_are_consistent() {
+    use super::super::{
+        DEFAULT_MAX_SANITIZED_DISKS, DEFAULT_MAX_SANITIZED_STRING_BYTES,
+        DEFAULT_METRIC_ANOMALY_SESSION_LIMIT,
+    };
+    let base = "[server]\nlisten = '127.0.0.1:8080'\npublic_base_url = 'http://127.0.0.1:8080'\n";
+    let defaults = parse_server_config(base).expect("default config");
+    assert_eq!(defaults.max_sanitized_disks, DEFAULT_MAX_SANITIZED_DISKS);
+    assert_eq!(
+        defaults.max_sanitized_string_bytes,
+        DEFAULT_MAX_SANITIZED_STRING_BYTES
+    );
+    assert_eq!(
+        defaults.metric_anomaly_session_limit,
+        DEFAULT_METRIC_ANOMALY_SESSION_LIMIT
+    );
+    for (name, upper) in [
+        ("max_sanitized_disks", 1024),
+        ("max_sanitized_string_bytes", 4096),
+        ("metric_anomaly_session_limit", 1000),
+    ] {
+        for value in [1, upper] {
+            assert!(parse_server_config(&format!("{base}{name} = {value}\n")).is_ok());
+        }
+        for value in [0, upper + 1] {
+            let error = parse_server_config(&format!("{base}{name} = {value}\n"))
+                .expect_err("out of bounds");
+            assert!(error.to_string().contains(name));
+        }
+    }
+}
+
+#[test]
 fn server_example_documents_install_section() {
     let example = include_str!("../../../../config/server.example.toml");
 

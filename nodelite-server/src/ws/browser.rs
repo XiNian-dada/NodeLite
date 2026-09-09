@@ -17,9 +17,10 @@
 use std::net::SocketAddr;
 
 use anyhow::anyhow;
+use axum::Extension;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, State};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use futures::StreamExt;
 use futures::stream::SplitSink;
@@ -29,6 +30,7 @@ use tracing::warn;
 
 use crate::AppState;
 use crate::admission::{resolve_client_ip, ws_admission_error_response};
+use crate::auth::{BrowserAuthorization, BrowserSession};
 use crate::state::SharedState;
 
 use super::transport::{WebSocketPeer, configure_upgrade, send_message};
@@ -40,9 +42,20 @@ type BrowserSink = SplitSink<WebSocket, Message>;
 pub async fn ws_browser_handler(
     State(state): State<AppState>,
     ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
+    created_session: Option<Extension<BrowserSession>>,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
+    let auth = state.readonly_auth.read().await;
+    let Some(authorization) = BrowserAuthorization::capture(
+        &auth,
+        &state.two_factor_sessions,
+        &headers,
+        created_session.map(|session| session.0),
+    ) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    drop(auth);
     let config = state.shared.config();
     let client_ip = resolve_client_ip(&config.trusted_proxies, peer_addr, &headers);
     let permit = match state.browser_ws_admission.try_acquire(client_ip) {
@@ -54,8 +67,17 @@ pub async fn ws_browser_handler(
         .on_upgrade(move |socket| async move {
             // permit 持有到会话结束;drop 时自动把连接配额归还给该 IP。
             let _permit = permit;
-            if let Err(error) = run_browser_session(state.shared.clone(), socket).await {
-                warn!(error = %error, "browser websocket session ended with error");
+            // Cancellation surrounds sends as well as receives, so a slow peer
+            // cannot keep a revoked connection alive by blocking the sink.
+            tokio::select! {
+                biased;
+                _ = authorization.ended() => {}
+                _ = state.shutdown.cancelled() => {}
+                result = run_browser_session(state.shared.clone(), socket) => {
+                    if let Err(error) = result {
+                        warn!(error = %error, "browser websocket session ended with error");
+                    }
+                }
             }
         })
         .into_response()

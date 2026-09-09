@@ -8,6 +8,7 @@ const DEFAULT_BASE_URL = process.env.NODELITE_E2E_BASE_URL ?? 'http://127.0.0.1:
 
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: ['ws-dashboard.spec.ts', 'ws-reconnect.spec.ts'],
   webServer: process.env.NODELITE_E2E_BASE_URL
     ? undefined
     : {
@@ -20,7 +21,9 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
-  reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : [['list'], ['html', { open: 'never' }]],
+  reporter: process.env.CI
+    ? [['github'], ['html', { open: 'never' }]]
+    : [['list'], ['html', { open: 'never' }]],
   use: {
     baseURL: DEFAULT_BASE_URL,
     trace: 'on-first-retry',

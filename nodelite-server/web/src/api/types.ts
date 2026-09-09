@@ -219,6 +219,7 @@ export interface ServerUpdateLogResponse {
 }
 
 export interface SettingsAgentToken {
+  traffic_control?: TrafficControlStatus | null;
   node_id: string;
   node_label: string;
   online: boolean;
@@ -242,6 +243,13 @@ export interface SettingsAgentToken {
   location_override_city: string | null;
   location_override_latitude: number | null;
   location_override_longitude: number | null;
+}
+
+export interface TrafficControlStatus {
+  state: 'ready' | 'applied' | 'unavailable' | 'failed' | 'retrying';
+  reason: 'disabled' | 'unsupported_platform' | 'missing_tc' | 'missing_capability' | null;
+  desired_rate_kbps: number | null;
+  applied_rate_kbps: number | null;
 }
 
 /** GET /api/settings — SettingsResponse (flat + nested) */

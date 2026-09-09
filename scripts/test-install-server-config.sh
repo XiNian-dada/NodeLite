@@ -1,27 +1,20 @@
 #!/bin/sh
-# Variables below are consumed by functions loaded through eval, which shellcheck cannot trace.
+# Shared installer functions consume these defaults at runtime.
 # shellcheck disable=SC2034
 set -eu
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-INSTALLER="$SCRIPT_DIR/install-server.sh"
+INSTALLER="$SCRIPT_DIR/install-server-config.sh"
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEMP_DIR"' EXIT HUP INT TERM
-
-extract_config_functions() {
-  awk '
-    /^toml_get_raw\(\) \{/ { printing = 1 }
-    printing && /^mark_step "checking privileges"/ { exit }
-    printing { print }
-  ' "$INSTALLER"
-}
 
 fail() {
   printf '%s\n' "$*" >&2
   exit 1
 }
 
-eval "$(extract_config_functions)"
+# shellcheck source=scripts/install-server-config.sh
+. "$INSTALLER"
 
 LISTEN_HOST="127.0.0.1"
 LISTEN_PORT="20000"

@@ -1,46 +1,46 @@
+//! Server TOML decoding and cross-field validation.
+
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use serde::Deserialize;
 
+mod agent;
 mod alerts;
+
+pub(super) use agent::RawAgentConfigFile;
 
 use super::defaults::{
     default_audit_db_path, default_audit_enabled, default_audit_log_failed_auth,
     default_audit_log_rate_limit, default_audit_log_successful_auth,
     default_audit_log_token_events, default_audit_retention_days, default_audit_writer_batch_max,
-    default_audit_writer_flush_interval_ms, default_connect_timeout_secs,
-    default_geoip_auto_update, default_geoip_database_path, default_geoip_edition,
-    default_geoip_enabled, default_geoip_provider, default_geoip_update_interval_days,
-    default_hello_timeout_secs, default_history_db_path, default_history_query_concurrency,
-    default_history_read_cache_kib, default_history_writer_batch_max,
-    default_history_writer_flush_interval_ms, default_ignored_filesystems,
-    default_insecure_transport_warn_interval_secs, default_max_incoming_message_bytes,
+    default_audit_writer_flush_interval_ms, default_geoip_auto_update, default_geoip_database_path,
+    default_geoip_edition, default_geoip_enabled, default_geoip_provider,
+    default_geoip_update_interval_days, default_hello_timeout_secs, default_history_db_path,
+    default_history_query_concurrency, default_history_read_cache_kib,
+    default_history_writer_batch_max, default_history_writer_flush_interval_ms,
+    default_ignored_filesystems, default_insecure_transport_warn_interval_secs,
     default_max_message_bytes, default_max_outstanding_pings, default_max_sanitized_disks,
     default_max_sanitized_string_bytes, default_metric_anomaly_session_limit,
     default_metrics_export_node_disk_metrics, default_metrics_export_node_resource_metrics,
     default_node_registry_path, default_ping_interval_secs, default_refresh_interval_secs,
-    default_report_interval_secs, default_snapshot_path, default_sqlite_busy_timeout_secs,
-    default_stale_after_secs, default_token_verify_max_parallelism, default_trusted_proxies,
-    default_ws_auth_block_secs, default_ws_auth_fail_max_attempts,
-    default_ws_auth_fail_window_secs, default_ws_max_connections_per_ip,
-    default_ws_max_total_connections,
+    default_snapshot_path, default_sqlite_busy_timeout_secs, default_stale_after_secs,
+    default_token_verify_max_parallelism, default_trusted_proxies, default_ws_auth_block_secs,
+    default_ws_auth_fail_max_attempts, default_ws_auth_fail_window_secs,
+    default_ws_max_connections_per_ip, default_ws_max_total_connections,
 };
 use super::helpers::{
-    normalize_tags, normalize_totp_secret, parse_trusted_proxies,
-    uses_insecure_remote_public_base_url, validate_sha256, validate_totp_secret, validate_url,
+    normalize_totp_secret, parse_trusted_proxies, uses_insecure_remote_public_base_url,
+    validate_sha256, validate_totp_secret, validate_url,
 };
 use super::{
-    AgentConfig, AlertingConfig, AuditConfig, ConfigError, GeoIpConfig, GeoIpEdition,
-    GeoIpProvider, MAX_HISTORY_QUERY_CONCURRENCY, MAX_HISTORY_READ_CACHE_KIB,
-    MAX_NODE_IDENTITY_TEXT_BYTES, MAX_TOKEN_VERIFY_MAX_PARALLELISM, MAX_WRITER_BATCH_SIZE,
-    MIN_HISTORY_QUERY_CONCURRENCY, MIN_HISTORY_READ_CACHE_KIB, MIN_TOKEN_VERIFY_MAX_PARALLELISM,
-    MIN_WRITER_FLUSH_INTERVAL_MS, MetricsConfig, ReadonlyAuthConfig, ServerConfig, WsConfig,
+    AlertingConfig, AuditConfig, ConfigError, GeoIpConfig, GeoIpEdition, GeoIpProvider,
+    MAX_HISTORY_QUERY_CONCURRENCY, MAX_HISTORY_READ_CACHE_KIB, MAX_TOKEN_VERIFY_MAX_PARALLELISM,
+    MAX_WRITER_BATCH_SIZE, MIN_HISTORY_QUERY_CONCURRENCY, MIN_HISTORY_READ_CACHE_KIB,
+    MIN_TOKEN_VERIFY_MAX_PARALLELISM, MIN_WRITER_FLUSH_INTERVAL_MS, MetricsConfig,
+    ReadonlyAuthConfig, ServerConfig, WsConfig,
 };
-use crate::validation::{
-    ValidationError, normalize_string_list, validate_bounded_text, validate_identifier,
-    validate_non_empty,
-};
+use crate::validation::{ValidationError, normalize_string_list, validate_non_empty};
 use alerts::RawAlertsSection;
 
 impl From<ValidationError> for ConfigError {
@@ -282,32 +282,6 @@ struct RawInstallSection {
     agent_release_sha256_aarch64: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct RawAgentConfigFile {
-    agent: RawAgentSection,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawAgentSection {
-    node_id: String,
-    node_label: String,
-    server: String,
-    token: String,
-    #[serde(default = "default_report_interval_secs")]
-    report_interval_secs: u64,
-    hostname_override: Option<String>,
-    #[serde(default)]
-    tags: Vec<String>,
-    #[serde(default = "default_connect_timeout_secs")]
-    connect_timeout_secs: u64,
-    #[serde(default = "default_max_incoming_message_bytes")]
-    max_incoming_message_bytes: usize,
-    #[serde(default = "default_insecure_transport_warn_interval_secs")]
-    insecure_transport_warn_interval_secs: u64,
-}
-
 struct ValidatedInstall {
     agent_release_base_url: Option<String>,
     agent_release_sha256_x86_64: Option<String>,
@@ -326,6 +300,7 @@ impl RawServerConfigFile {
         let geoip = self.validate_geoip()?;
         let alerting = self.validate_alerting()?;
         self.validate_server_limits()?;
+        self.validate_sanitization_limits()?;
         self.validate_ws_limits()?;
         self.validate_ui_limits()?;
 
@@ -635,6 +610,29 @@ impl RawServerConfigFile {
         Ok(())
     }
 
+    fn validate_sanitization_limits(&self) -> Result<(), ConfigError> {
+        for (name, value, maximum) in [
+            ("max_sanitized_disks", self.server.max_sanitized_disks, 1024),
+            (
+                "max_sanitized_string_bytes",
+                self.server.max_sanitized_string_bytes,
+                4096,
+            ),
+            (
+                "metric_anomaly_session_limit",
+                self.server.metric_anomaly_session_limit,
+                1000,
+            ),
+        ] {
+            if !(1..=maximum).contains(&value) {
+                return Err(ConfigError::new(format!(
+                    "server.{name} must be between 1 and {maximum}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     fn validate_ws_limits(&self) -> Result<(), ConfigError> {
         if self.ws.max_total_connections < 1 {
             return Err(ConfigError::new(
@@ -676,49 +674,5 @@ impl RawServerConfigFile {
             ));
         }
         Ok(())
-    }
-}
-
-impl RawAgentConfigFile {
-    /// 校验 Agent 配置,并把 `agent.tags` 等字段规范化(去空白、去重、排序)。
-    pub(super) fn validate(self) -> Result<AgentConfig, ConfigError> {
-        validate_identifier("agent.node_id", &self.agent.node_id)?;
-        validate_bounded_text(
-            "agent.node_label",
-            &self.agent.node_label,
-            MAX_NODE_IDENTITY_TEXT_BYTES,
-        )?;
-        validate_url("agent.server", &self.agent.server, &["ws", "wss"])?;
-        validate_non_empty("agent.token", &self.agent.token)?;
-
-        if self.agent.report_interval_secs < 1 {
-            return Err(ConfigError::new(
-                "agent.report_interval_secs must be at least 1 second",
-            ));
-        }
-
-        if let Some(hostname) = &self.agent.hostname_override {
-            validate_bounded_text(
-                "agent.hostname_override",
-                hostname,
-                MAX_NODE_IDENTITY_TEXT_BYTES,
-            )?;
-        }
-
-        Ok(AgentConfig {
-            node_id: self.agent.node_id.trim().to_string(),
-            node_label: self.agent.node_label.trim().to_string(),
-            server: self.agent.server,
-            token: self.agent.token,
-            report_interval_secs: self.agent.report_interval_secs,
-            hostname_override: self
-                .agent
-                .hostname_override
-                .map(|value| value.trim().to_string()),
-            tags: normalize_tags("agent.tags", self.agent.tags)?,
-            connect_timeout_secs: self.agent.connect_timeout_secs,
-            max_incoming_message_bytes: self.agent.max_incoming_message_bytes,
-            insecure_transport_warn_interval_secs: self.agent.insecure_transport_warn_interval_secs,
-        })
     }
 }
