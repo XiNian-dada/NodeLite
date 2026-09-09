@@ -1,49 +1,16 @@
-use std::net::SocketAddr;
 use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use futures::{SinkExt, StreamExt};
 use nodelite_agent::collector::new_collector;
 use nodelite_agent::session::{AgentLogBuffer, run_forever};
-use nodelite_proto::{AgentConfig, NodeIdentity, NoticeLevel, ServerNoticeMessage, WireMessage};
+use nodelite_proto::{NoticeLevel, ServerNoticeMessage, WireMessage};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::accept_async;
 use tokio_tungstenite::tungstenite::Message;
 
 mod common;
-use common::TempDir;
-
-/// 指向给定地址的 Agent 配置。`connect_timeout_secs` 取 2s,`report_interval_secs`
-/// 取 5s,确保测试窗口内不会因为指标上报而产生额外流量。
-fn test_config(local_addr: SocketAddr) -> AgentConfig {
-    AgentConfig {
-        node_id: "reconnect-node-01".to_string(),
-        node_label: "Reconnect Node 01".to_string(),
-        server: format!("ws://{local_addr}/ws"),
-        token: "reconnect-token".to_string(),
-        connect_timeout_secs: 2,
-        report_interval_secs: 5,
-        max_incoming_message_bytes: 65536,
-        insecure_transport_warn_interval_secs: 900,
-        tags: vec![],
-        hostname_override: None,
-    }
-}
-
-fn test_identity(config: &AgentConfig) -> NodeIdentity {
-    NodeIdentity {
-        node_id: config.node_id.clone(),
-        node_label: config.node_label.clone(),
-        hostname: "localhost".to_string(),
-        os: "test".to_string(),
-        kernel_version: None,
-        cpu_model: None,
-        cpu_cores: 1,
-        agent_version: "0.1.0-test".to_string(),
-        boot_time: None,
-        tags: vec![],
-    }
-}
+use common::{TempDir, test_config, test_identity};
 
 /// 验证认证前断连后的首次退避确实落在 `reconnect_delay(0)` 的 [1s, 5s] 窗口内:
 /// 推进不足 1s 不得重连;推进越过 5s 必须重连。
