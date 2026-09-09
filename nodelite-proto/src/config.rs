@@ -20,14 +20,16 @@ use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 
 use self::defaults::{
-    default_audit_writer_batch_max, default_audit_writer_flush_interval_ms,
-    default_connect_timeout_secs, default_hello_timeout_secs, default_history_query_concurrency,
-    default_history_read_cache_kib, default_history_writer_batch_max,
-    default_history_writer_flush_interval_ms, default_insecure_transport_warn_interval_secs,
-    default_max_incoming_message_bytes, default_max_outstanding_pings, default_max_sanitized_disks,
-    default_max_sanitized_string_bytes, default_metric_anomaly_session_limit,
-    default_metrics_export_node_disk_metrics, default_metrics_export_node_resource_metrics,
-    default_sqlite_busy_timeout_secs, default_token_verify_max_parallelism,
+    default_agent_auth_timeout_secs, default_agent_inbound_timeout_secs,
+    default_agent_send_timeout_secs, default_audit_writer_batch_max,
+    default_audit_writer_flush_interval_ms, default_connect_timeout_secs,
+    default_hello_timeout_secs, default_history_query_concurrency, default_history_read_cache_kib,
+    default_history_writer_batch_max, default_history_writer_flush_interval_ms,
+    default_insecure_transport_warn_interval_secs, default_max_incoming_message_bytes,
+    default_max_outstanding_pings, default_max_sanitized_disks, default_max_sanitized_string_bytes,
+    default_metric_anomaly_session_limit, default_metrics_export_node_disk_metrics,
+    default_metrics_export_node_resource_metrics, default_sqlite_busy_timeout_secs,
+    default_token_verify_max_parallelism,
 };
 use self::raw::{RawAgentConfigFile, RawServerConfigFile};
 
@@ -124,6 +126,12 @@ pub const MIN_WRITER_FLUSH_INTERVAL_MS: u64 = 10;
 pub const DEFAULT_GEOIP_UPDATE_INTERVAL_DAYS: u64 = 30;
 /// Agent 连接超时(秒)。
 pub const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 20;
+/// Upgrade 成功后等待认证响应的默认期限。
+pub const DEFAULT_AGENT_AUTH_TIMEOUT_SECS: u64 = 20;
+/// 单次 WebSocket 写入与 flush 的默认期限。
+pub const DEFAULT_AGENT_SEND_TIMEOUT_SECS: u64 = 20;
+/// 默认容忍九个服务端心跳间隔的入站静默。
+pub const DEFAULT_AGENT_INBOUND_TIMEOUT_SECS: u64 = 90;
 /// Agent 最大接收消息字节数。
 pub const DEFAULT_MAX_INCOMING_MESSAGE_BYTES: usize = 64 * 1024;
 
@@ -376,6 +384,15 @@ pub struct AgentConfig {
     #[serde(default = "default_connect_timeout_secs")]
     /// Agent 建立连接的超时秒数。
     pub connect_timeout_secs: u64,
+    #[serde(default = "default_agent_auth_timeout_secs")]
+    /// Upgrade 后等待认证成功的期限，Ping 不会延长期限。
+    pub auth_timeout_secs: u64,
+    #[serde(default = "default_agent_send_timeout_secs")]
+    /// 单次发送（包括 flush）的超时秒数。
+    pub send_timeout_secs: u64,
+    #[serde(default = "default_agent_inbound_timeout_secs")]
+    /// 认证后允许的最长入站静默，需大于服务端的心跳间隔。
+    pub inbound_timeout_secs: u64,
     #[serde(default = "default_max_incoming_message_bytes")]
     /// Agent 接受的单条 server 消息最大字节数。
     pub max_incoming_message_bytes: usize,

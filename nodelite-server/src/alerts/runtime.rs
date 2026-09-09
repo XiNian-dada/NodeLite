@@ -1,36 +1,38 @@
+//! Evaluate alert state while bounded workers deliver notifications independently.
+
 use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Local, NaiveDate, NaiveTime, Utc};
-use nodelite_proto::{AlertChannel, AlertingConfig, HistoryPoint, InspectionConfig};
-use tokio::sync::{RwLock, Semaphore, mpsc};
-use tokio::task::{JoinHandle, JoinSet};
+use tokio::sync::{RwLock, mpsc};
+use tokio::task::JoinHandle;
 use tokio::time::{MissedTickBehavior, interval};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use nodelite_proto::{AlertChannel, AlertingConfig, HistoryPoint, InspectionConfig};
+
 use crate::history::HistoryStore;
-use crate::queue::{bounded_mpsc_channel, try_enqueue};
 use crate::registry::NodeRegistry;
 use crate::state::SharedState;
 
 use super::delivery::AlertDeliveryError;
+use super::delivery_metrics::{DELIVERY_QUEUE_CAPACITY, DELIVERY_RESULT_CAPACITY};
+use dispatcher::{CompletedDelivery, DeliverySender, delivery_channel, spawn_delivery_dispatcher};
 use drain::drain_delivery_dispatcher;
 use window::evaluate_alert_rules_with_history;
 
+mod dispatcher;
 mod drain;
 mod window;
 
 use super::{
     AlertEvent, AlertEventKind, AlertStateTracker, InspectionHighlight, InspectionHighlightEvent,
-    InspectionReport, InspectionSummary, InspectionTrendPoint, deliver_alert_event,
-    deliver_inspection_summary, smtp_endpoint_label, webhook_endpoint_label,
+    InspectionReport, InspectionTrendPoint, smtp_endpoint_label, webhook_endpoint_label,
 };
 
 const ALERT_EVALUATION_INTERVAL_SECS: u64 = 30;
 const INSPECTION_RETRY_INTERVAL_SECS: i64 = 300;
-const DELIVERY_QUEUE_CAPACITY: usize = 1024;
-const MAX_CONCURRENT_DELIVERIES: usize = 8;
 const INSPECTION_TREND_BUCKETS: usize = 24;
 
 #[derive(Debug)]
@@ -85,22 +87,25 @@ async fn run_alert_runtime(
 ) {
     let mut tracker = AlertStateTracker::new();
     let mut inspection_dispatch = InspectionDispatchState::new();
-    let (delivery_tx, delivery_rx) = bounded_mpsc_channel(DELIVERY_QUEUE_CAPACITY);
-    let (result_tx, mut result_rx) = mpsc::unbounded_channel();
-    let delivery_dispatcher = spawn_delivery_dispatcher(delivery_rx, result_tx);
+    let metrics = shared.alert_delivery.clone();
+    let (delivery_tx, delivery_rx) = delivery_channel(DELIVERY_QUEUE_CAPACITY, metrics.clone());
+    let (result_tx, mut result_rx) = mpsc::channel(DELIVERY_RESULT_CAPACITY);
+    let delivery_dispatcher = spawn_delivery_dispatcher(delivery_rx, result_tx, metrics);
     let mut ticker = interval(Duration::from_secs(ALERT_EVALUATION_INTERVAL_SECS));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => break,
-            _ = ticker.tick() => {
-                process_delivery_results(
-                    &mut result_rx,
+            Some(result) = result_rx.recv() => {
+                process_delivery_result(
+                    result,
                     &mut tracker,
                     &mut inspection_dispatch,
                     &delivery_tx,
                 );
+            }
+            _ = ticker.tick() => {
                 let config = {
                     let alerting = alerting.read().await;
                     Arc::clone(&alerting)
@@ -130,158 +135,90 @@ async fn run_alert_runtime(
                     }
                 }
 
-                if should_check_inspection(&config)
-                    && let Some(local_date) =
-                        inspection_dispatch.due_date(&config.inspection.local_time, Local::now(), now)
-                {
-                    let mut report = shared
-                        .build_alert_inspection_report(&config.inspection, now)
-                        .await;
-                    let history_analysis = build_inspection_history_analysis(
-                        &shared,
-                        &history,
-                        &config.inspection,
-                        now,
-                    )
-                    .await;
-                    report.highlights =
-                        merge_inspection_highlights(report.highlights, history_analysis.highlights);
-                    enqueue_inspection_delivery(
-                        &delivery_tx,
-                        &mut inspection_dispatch,
-                        &config,
-                        report,
-                        history_analysis.trends,
-                        local_date,
-                        now,
-                    );
-                }
+                enqueue_due_inspection(
+                    &shared, &history, &config, &mut inspection_dispatch, &delivery_tx, now,
+                ).await;
             }
         }
     }
     drop(delivery_tx);
+    // Results are no longer applied after shutdown; releasing the receiver lets workers finish.
+    drop(result_rx);
     drain_delivery_dispatcher(delivery_dispatcher).await;
 }
 
-fn spawn_delivery_dispatcher(
-    mut delivery_rx: mpsc::Receiver<DeliveryJob>,
-    result_tx: mpsc::UnboundedSender<DeliveryResult>,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        let limiter = Arc::new(Semaphore::new(MAX_CONCURRENT_DELIVERIES));
-        let mut deliveries = JoinSet::new();
-        loop {
-            tokio::select! {
-                Some(job) = delivery_rx.recv() => {
-                    let limiter = Arc::clone(&limiter);
-                    let result_tx = result_tx.clone();
-                    deliveries.spawn(async move {
-                        let Ok(_permit) = limiter.acquire_owned().await else {
-                            return;
-                        };
-                        let result = deliver_job(job).await;
-                        let _ = result_tx.send(result);
-                    });
-                }
-                Some(result) = deliveries.join_next(), if !deliveries.is_empty() => {
-                    log_delivery_task_join(result);
-                }
-                else => break,
-            }
-        }
-
-        while let Some(result) = deliveries.join_next().await {
-            log_delivery_task_join(result);
-        }
-    })
-}
-
-fn log_delivery_task_join(result: Result<(), tokio::task::JoinError>) {
-    if let Err(error) = result {
-        warn!(error = ?error, "alert delivery task join failed");
-    }
-}
-
-async fn deliver_job(job: DeliveryJob) -> DeliveryResult {
-    match job {
-        DeliveryJob::Alert { config, event } => {
-            let result = deliver_alert_event(&config, &event).await;
-            DeliveryResult::Alert {
-                config,
-                event,
-                result,
-            }
-        }
-        DeliveryJob::Inspection {
+async fn enqueue_due_inspection(
+    shared: &SharedState,
+    history: &HistoryStore,
+    config: &Arc<AlertingConfig>,
+    inspection_dispatch: &mut InspectionDispatchState,
+    delivery_tx: &DeliverySender,
+    now: DateTime<Utc>,
+) {
+    if should_check_inspection(config)
+        && let Some(local_date) =
+            inspection_dispatch.due_date(&config.inspection.local_time, Local::now(), now)
+    {
+        let mut report = shared
+            .build_alert_inspection_report(&config.inspection, now)
+            .await;
+        let history_analysis =
+            build_inspection_history_analysis(shared, history, &config.inspection, now).await;
+        report.highlights =
+            merge_inspection_highlights(report.highlights, history_analysis.highlights);
+        enqueue_inspection_delivery(
+            delivery_tx,
+            inspection_dispatch,
             config,
-            occurred_at,
-            local_date,
-            lookback_hours,
             report,
-            trends,
-        } => {
-            let summary = InspectionSummary {
-                occurred_at,
-                local_date,
-                lookback_hours,
-                report: &report,
-                trends: &trends,
-            };
-            let result = deliver_inspection_summary(&config, &summary).await;
-            DeliveryResult::Inspection {
-                config,
-                local_date,
-                report,
-                result,
-            }
-        }
+            history_analysis.trends,
+            local_date,
+            now,
+        );
     }
 }
 
-fn process_delivery_results(
-    result_rx: &mut mpsc::UnboundedReceiver<DeliveryResult>,
+fn process_delivery_result(
+    (result, outstanding): CompletedDelivery,
     tracker: &mut AlertStateTracker,
     inspection_dispatch: &mut InspectionDispatchState,
-    delivery_tx: &mpsc::Sender<DeliveryJob>,
+    delivery_tx: &DeliverySender,
 ) {
-    while let Ok(result) = result_rx.try_recv() {
-        match result {
-            DeliveryResult::Alert {
-                config,
-                event,
-                result,
-            } => handle_alert_delivery_result(tracker, delivery_tx, &config, &event, result),
-            DeliveryResult::Inspection {
-                config,
-                local_date,
-                report,
-                result,
-            } => handle_inspection_delivery_result(
-                inspection_dispatch,
-                &config,
-                local_date,
-                &report,
-                result,
-            ),
-        }
+    drop(outstanding);
+    match result {
+        DeliveryResult::Alert {
+            config,
+            event,
+            result,
+        } => handle_alert_delivery_result(tracker, delivery_tx, &config, &event, result),
+        DeliveryResult::Inspection {
+            config,
+            local_date,
+            report,
+            result,
+        } => handle_inspection_delivery_result(
+            inspection_dispatch,
+            &config,
+            local_date,
+            &report,
+            result,
+        ),
     }
 }
 
 fn enqueue_alert_delivery(
-    delivery_tx: &mpsc::Sender<DeliveryJob>,
+    delivery_tx: &DeliverySender,
     tracker: &mut AlertStateTracker,
     config: &Arc<AlertingConfig>,
     event: &AlertEvent,
     now: DateTime<Utc>,
 ) {
-    if try_enqueue(
-        delivery_tx,
-        DeliveryJob::Alert {
+    if delivery_tx
+        .try_send(DeliveryJob::Alert {
             config: Arc::clone(config),
             event: event.clone(),
-        },
-    )
-    .is_err()
+        })
+        .is_err()
     {
         tracker.record_delivery_failure(event, now);
         warn!(
@@ -295,7 +232,7 @@ fn enqueue_alert_delivery(
 }
 
 fn enqueue_inspection_delivery(
-    delivery_tx: &mpsc::Sender<DeliveryJob>,
+    delivery_tx: &DeliverySender,
     inspection_dispatch: &mut InspectionDispatchState,
     config: &Arc<AlertingConfig>,
     report: InspectionReport,
@@ -303,18 +240,16 @@ fn enqueue_inspection_delivery(
     local_date: NaiveDate,
     now: DateTime<Utc>,
 ) {
-    if try_enqueue(
-        delivery_tx,
-        DeliveryJob::Inspection {
+    if delivery_tx
+        .try_send(DeliveryJob::Inspection {
             config: Arc::clone(config),
             occurred_at: now,
             local_date,
             lookback_hours: config.inspection.lookback_hours,
             report,
             trends,
-        },
-    )
-    .is_ok()
+        })
+        .is_ok()
     {
         inspection_dispatch.mark_pending(local_date);
         return;
@@ -624,7 +559,7 @@ fn update_peak(peak: &mut Option<MetricPeak>, occurred_at: DateTime<Utc>, value:
 
 fn handle_alert_delivery_result(
     tracker: &mut AlertStateTracker,
-    delivery_tx: &mpsc::Sender<DeliveryJob>,
+    delivery_tx: &DeliverySender,
     config: &Arc<AlertingConfig>,
     event: &AlertEvent,
     result: Result<(), AlertDeliveryError>,

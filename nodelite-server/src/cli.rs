@@ -1,3 +1,5 @@
+//! Operator commands share the same configuration and release identity as the service.
+
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
@@ -13,6 +15,8 @@ use crate::registry::{
 /// 顶层 server CLI 对外暴露的稳定错误边界。
 #[derive(Debug, Error)]
 pub enum CliError {
+    #[error("upgrade preparation failed: {0}")]
+    Upgrade(#[from] crate::upgrade::UpgradeError),
     #[error("failed to load server config")]
     LoadConfig {
         #[source]
@@ -33,6 +37,7 @@ pub enum CliError {
 /// 顶层命令行参数。
 #[derive(Debug, Parser)]
 #[command(name = "nodelite-server")]
+#[command(version = crate::server_build_version())]
 #[command(about = "NodeLite central server")]
 pub(crate) struct Cli {
     /// 配置文件路径,默认 `config/server.toml`。
@@ -51,6 +56,8 @@ pub(crate) enum Command {
     InstallAgent(NodeCommandArgs),
     /// 打印就地升级 Agent 所需的命令。
     UpgradeAgent,
+    /// 列出升级备份文件与就绪探针,不启动服务或迁移数据库。
+    UpgradeManifest,
 }
 
 /// 节点相关命令的共享参数。
@@ -215,6 +222,19 @@ password = "StrongPassword!123"
         let cli = Cli::parse_from(["nodelite-server"]);
         assert_eq!(cli.config, std::path::PathBuf::from("config/server.toml"));
         assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn cli_exposes_release_version_and_side_effect_free_upgrade_manifest() {
+        let version = Cli::try_parse_from(["nodelite-server", "--version"])
+            .expect_err("clap prints the version and exits");
+        assert_eq!(version.kind(), clap::error::ErrorKind::DisplayVersion);
+        assert_eq!(
+            version.to_string(),
+            format!("nodelite-server {}\n", crate::server_build_version())
+        );
+        let manifest = Cli::parse_from(["nodelite-server", "upgrade-manifest"]);
+        assert!(matches!(manifest.command, Some(Command::UpgradeManifest)));
     }
 
     #[test]

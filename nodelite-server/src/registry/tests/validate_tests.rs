@@ -177,3 +177,17 @@ proptest! {
         }
     }
 }
+#[test]
+fn generated_agent_config_includes_valid_transport_deadlines() {
+    let node = super::legacy_node("deadline-node", "Deadline Node", "", None);
+    let rendered = crate::registry::render_agent_config(
+        "https://monitor.example.com",
+        &node,
+        "local-test-only",
+    )
+    .expect("render agent config");
+    let config = nodelite_proto::parse_agent_config(&rendered).expect("parse generated config");
+    assert_eq!(config.auth_timeout_secs, 20);
+    assert_eq!(config.send_timeout_secs, 20);
+    assert_eq!(config.inbound_timeout_secs, 90);
+}

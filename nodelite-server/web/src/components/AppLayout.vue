@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue';
 import SidebarNav from '@/components/SidebarNav.vue';
+import ConnectionStatus from '@/components/ConnectionStatus.vue';
 import { useTheme } from '@/composables/useTheme';
 import { useLanguage } from '@/i18n/language';
 import { SUPPORTED_LOCALES, type SupportedLocale } from '@/i18n';
@@ -103,6 +104,8 @@ const localeLabels: Record<SupportedLocale, string> = {
           </button>
         </div>
       </header>
+
+      <ConnectionStatus />
 
       <slot />
 

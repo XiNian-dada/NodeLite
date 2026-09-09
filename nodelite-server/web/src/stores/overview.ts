@@ -15,18 +15,19 @@ export const useOverviewStore = defineStore('overview', () => {
   const lastGeneratedAt = ref<string | null>(null);
   const loading = ref(false);
   const error = ref<Error | null>(null);
+  let revision = 0;
 
-  async function refresh(): Promise<void> {
+  async function refresh(signal?: AbortSignal): Promise<void> {
     if (loading.value) return;
     loading.value = true;
     error.value = null;
+    const startedAtRevision = revision;
     try {
-      const result = await apiClient.overview();
-      // Use current server-side baseline if available, else fall back to client clock
-      const timestamp = lastGeneratedAt.value || new Date().toISOString();
-      apply(result, timestamp);
+      const result = await apiClient.overview(signal);
+      if (signal?.aborted || revision !== startedAtRevision) return;
+      apply(result, result.generated_at);
     } catch (e) {
-      if (e instanceof ApiAbortError) return;
+      if (signal?.aborted || e instanceof ApiAbortError) return;
       error.value = e instanceof Error ? e : new Error(String(e));
     } finally {
       loading.value = false;
@@ -35,7 +36,9 @@ export const useOverviewStore = defineStore('overview', () => {
 
   // From WS InitialState or OverviewUpdate
   function apply(overview: OverviewData, generatedAt: string): void {
-    if (lastGeneratedAt.value && Date.parse(generatedAt) < Date.parse(lastGeneratedAt.value)) return;
+    if (lastGeneratedAt.value && Date.parse(generatedAt) < Date.parse(lastGeneratedAt.value))
+      return;
+    revision++;
     data.value = overview;
     lastGeneratedAt.value = generatedAt;
   }

@@ -64,7 +64,13 @@ pub(super) async fn handle_socket(
         "node authenticated"
     );
 
+    state
+        .traffic_control
+        .begin(&session.node_id, session.session_id);
     let session_result = run_authenticated_session(&state, socket, &mut session).await;
+    state
+        .traffic_control
+        .end(&session.node_id, session.session_id);
     shared
         .mark_disconnected(&session.node_id, session.session_id)
         .await;

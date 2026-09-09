@@ -11,7 +11,10 @@
 //! 这一层不直接持有 `AppState`,避免 main.rs 的总状态结构反过来产生循环依赖。
 //! 调用方在 handler 里把 `AppState` 拆成所需字段后再调用本模块。
 
+mod browser;
 mod common_passwords;
+
+pub(crate) use browser::{BrowserAuthorization, BrowserSession};
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -116,6 +119,7 @@ pub const BASIC_AUTH_SESSION_COOKIE: &str = "nodelite_basic_session";
 /// 包装 HTTP 基本认证,用于保护 `/api/*` 与 HTML 视图。
 #[derive(Debug, Clone)]
 pub struct ReadonlyRouteAuth {
+    pub(crate) revoked: tokio_util::sync::CancellationToken,
     pub expected_authorization: Option<String>,
     pub enable_2fa: bool,
     pub totp_secret: Option<Vec<u8>>,
@@ -143,6 +147,7 @@ impl ReadonlyRouteAuth {
         };
 
         Self {
+            revoked: tokio_util::sync::CancellationToken::new(),
             expected_authorization,
             enable_2fa,
             totp_secret,
@@ -189,15 +194,15 @@ struct TwoFactorSessionStore {
     used_totp_steps: HashMap<u64, Instant>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct BasicAuthSession {
-    expires_at: Instant,
+    lifetime: BrowserSession,
     login_event_id: Option<i64>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct AuthenticatedSession {
-    expires_at: Instant,
+    lifetime: BrowserSession,
     login_event_id: Option<i64>,
 }
 
@@ -277,11 +282,6 @@ impl TwoFactorSessions {
         store.pending.contains_key(token)
     }
 
-    pub fn consume_pending(&self, token: &str) {
-        let mut store = lock_mutex(&self.inner);
-        store.pending.remove(token);
-    }
-
     /// 记录一次 TOTP 错误尝试。返回值表示该 pending token 是否已经因连续
     /// 失败而被强制失效;调用方据此决定向客户端返回的状态码与是否同时
     /// 清掉 pending cookie。
@@ -309,32 +309,37 @@ impl TwoFactorSessions {
         let now = Instant::now();
         let mut store = lock_mutex(&self.inner);
         prune_expired_sessions(&mut store, now);
-        if steps
-            .iter()
-            .all(|step| store.used_totp_steps.contains_key(step))
-        {
-            return false;
-        }
-        let expires_at = now + Duration::from_secs(TWO_FACTOR_TOTP_REPLAY_RETENTION_SECS);
-        for step in steps {
-            store.used_totp_steps.insert(*step, expires_at);
-        }
-        true
+        mark_unused_totp_steps(&mut store, steps, now)
     }
 
     pub fn create_authenticated(&self) -> AuthSessionResult<String> {
         let token = generate_session_token()?;
-        let expires_at = Instant::now() + Duration::from_secs(TWO_FACTOR_AUTH_SECS);
+        let now = Instant::now();
         let mut store = lock_mutex(&self.inner);
-        prune_expired_sessions(&mut store, Instant::now());
-        store.authenticated.insert(
-            token.clone(),
-            AuthenticatedSession {
-                expires_at,
-                login_event_id: None,
-            },
-        );
+        prune_expired_sessions(&mut store, now);
+        insert_authenticated_session(&mut store, &token, now);
         Ok(token)
+    }
+
+    /// One pending login must not mint multiple sessions using different accepted drift steps.
+    pub(crate) fn exchange_pending(
+        &self,
+        pending_token: &str,
+        matching_steps: &[u64],
+    ) -> AuthSessionResult<Option<String>> {
+        let now = Instant::now();
+        let mut store = lock_mutex(&self.inner);
+        prune_expired_sessions(&mut store, now);
+        if !store.pending.contains_key(pending_token) {
+            return Ok(None);
+        }
+        let token = generate_session_token()?;
+        if !mark_unused_totp_steps(&mut store, matching_steps, now) {
+            return Ok(None);
+        }
+        store.pending.remove(pending_token);
+        insert_authenticated_session(&mut store, &token, now);
+        Ok(Some(token))
     }
 
     pub fn is_authenticated(&self, token: &str) -> bool {
@@ -345,7 +350,34 @@ impl TwoFactorSessions {
 
     pub fn remove_authenticated(&self, token: &str) {
         let mut store = lock_mutex(&self.inner);
-        store.authenticated.remove(token);
+        if let Some(session) = store.authenticated.remove(token) {
+            session.lifetime.revoke();
+        }
+    }
+
+    pub(crate) fn authenticated_lifetime(&self, token: &str) -> Option<BrowserSession> {
+        let mut store = lock_mutex(&self.inner);
+        prune_expired_sessions(&mut store, Instant::now());
+        store
+            .authenticated
+            .get(token)
+            .map(|session| session.lifetime.clone())
+    }
+
+    pub(crate) fn basic_auth_lifetime(&self, token: &str) -> Option<BrowserSession> {
+        let mut store = lock_mutex(&self.inner);
+        prune_expired_sessions(&mut store, Instant::now());
+        store
+            .basic_auth_sessions
+            .get(token)
+            .map(|session| session.lifetime.clone())
+    }
+
+    pub(crate) fn remove_basic_auth_session(&self, token: &str) {
+        let mut store = lock_mutex(&self.inner);
+        if let Some(session) = store.basic_auth_sessions.remove(token) {
+            session.lifetime.revoke();
+        }
     }
 
     /// 绑定已完成 2FA 的会话与其 LoginSuccess 审计事件。
@@ -370,10 +402,16 @@ impl TwoFactorSessions {
             .and_then(|session| session.login_event_id)
     }
 
-    /// 密码轮换后清空已完成 2FA 的浏览器会话,避免旧凭据换出的会话继续可用。
+    /// Auth changes invalidate pending, authenticated, and Basic browser sessions together.
     pub fn clear_authenticated(&self) {
         let mut store = lock_mutex(&self.inner);
-        store.authenticated.clear();
+        store.pending.clear();
+        for (_, session) in store.authenticated.drain() {
+            session.lifetime.revoke();
+        }
+        for (_, session) in store.basic_auth_sessions.drain() {
+            session.lifetime.revoke();
+        }
     }
 
     /// 创建 Basic Auth 会话 token。用于 Basic-only 模式下跟踪已登录会话,
@@ -390,7 +428,7 @@ impl TwoFactorSessions {
         store.basic_auth_sessions.insert(
             token.clone(),
             BasicAuthSession {
-                expires_at,
+                lifetime: BrowserSession::new(expires_at),
                 login_event_id,
             },
         );
@@ -415,14 +453,38 @@ impl TwoFactorSessions {
     }
 }
 
+fn mark_unused_totp_steps(store: &mut TwoFactorSessionStore, steps: &[u64], now: Instant) -> bool {
+    if steps
+        .iter()
+        .all(|step| store.used_totp_steps.contains_key(step))
+    {
+        return false;
+    }
+    let expires_at = now + Duration::from_secs(TWO_FACTOR_TOTP_REPLAY_RETENTION_SECS);
+    for step in steps {
+        store.used_totp_steps.insert(*step, expires_at);
+    }
+    true
+}
+
+fn insert_authenticated_session(store: &mut TwoFactorSessionStore, token: &str, now: Instant) {
+    store.authenticated.insert(
+        token.to_string(),
+        AuthenticatedSession {
+            lifetime: BrowserSession::new(now + Duration::from_secs(TWO_FACTOR_AUTH_SECS)),
+            login_event_id: None,
+        },
+    );
+}
+
 fn prune_expired_sessions(store: &mut TwoFactorSessionStore, now: Instant) {
     store.pending.retain(|_, session| session.expires_at > now);
     store
         .authenticated
-        .retain(|_, session| session.expires_at > now);
+        .retain(|_, session| session.lifetime.expires_at > now);
     store
         .basic_auth_sessions
-        .retain(|_, session| session.expires_at > now);
+        .retain(|_, session| session.lifetime.expires_at > now);
     store
         .used_totp_steps
         .retain(|_, expires_at| *expires_at > now);

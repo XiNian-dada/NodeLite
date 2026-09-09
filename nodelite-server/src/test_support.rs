@@ -88,6 +88,12 @@ pub struct TestServer {
 
 impl TestServer {
     pub async fn start() -> Result<Self> {
+        Self::start_with_config(|_| {}).await
+    }
+
+    pub async fn start_with_config(
+        configure: impl FnOnce(&mut nodelite_proto::ServerConfig),
+    ) -> Result<Self> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .context("system clock moved backwards")?
@@ -109,13 +115,15 @@ impl TestServer {
         let registry_path = temp_dir.join("server.json");
         let history_path = temp_dir.join("history.sqlite3");
         let snapshot_path = temp_dir.join("snapshot.json");
-        let config = Arc::new(test_server_config(
+        let mut config = test_server_config(
             addr,
             format!("http://{addr}"),
             registry_path.clone(),
             history_path,
             snapshot_path,
-        ));
+        );
+        configure(&mut config);
+        let config = Arc::new(config);
         let state =
             crate::AppState::test_fixture(config, Arc::new(temp_dir.join("server.toml"))).await?;
         let registry = state.registry.clone();
@@ -123,6 +131,7 @@ impl TestServer {
         let shutdown = state.shutdown.clone();
         let protected_routes = Router::new()
             .route("/api/overview", get(overview))
+            .route("/api/settings", get(crate::handlers::settings))
             .route("/metrics", get(metrics))
             .route("/api/nodes", get(nodes))
             .route("/api/nodes/{node_id}", get(node_status))
@@ -327,7 +336,7 @@ impl TestServer {
         self.shutdown.cancel();
     }
 
-    async fn fetch_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+    pub(crate) async fn fetch_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         let body = fetch_http_body(self.addr, path).await?;
         serde_json::from_str(&body).with_context(|| format!("decode json body for {path}"))
     }
@@ -379,6 +388,20 @@ impl TestAgent {
 
     pub async fn send_fake_metrics(&mut self, uptime_secs: u64) -> Result<()> {
         self.send_snapshot(fake_snapshot(uptime_secs)).await
+    }
+
+    pub async fn send_traffic_control_status(
+        &mut self,
+        status: nodelite_proto::TrafficControlStatus,
+    ) -> Result<()> {
+        send_wire_message(
+            &mut self.socket,
+            &WireMessage::AgentLogs(nodelite_proto::AgentLogsMessage {
+                entries: Vec::new(),
+                traffic_control: Some(status),
+            }),
+        )
+        .await
     }
 
     pub async fn send_snapshot(&mut self, snapshot: NodeSnapshot) -> Result<()> {

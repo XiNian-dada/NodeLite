@@ -111,6 +111,9 @@ report_interval_secs = 5
         server: format!("ws://{local_addr}/ws"),
         token: "initial-token".to_string(),
         connect_timeout_secs: 5,
+        auth_timeout_secs: 20,
+        send_timeout_secs: 20,
+        inbound_timeout_secs: 90,
         report_interval_secs: 5,
         max_incoming_message_bytes: 65536,
         insecure_transport_warn_interval_secs: 900,
@@ -166,6 +169,17 @@ report_interval_secs = 5
 
     // Verify token was updated in memory config
     assert_eq!(config.token, "refreshed-rotated-token-12345");
+
+    let restarted = nodelite_agent::config_io::load_agent_config(&config_path).await?;
+    assert_eq!(restarted.token, expected_new_token);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&config_path)?.permissions().mode() & 0o777,
+            0o600
+        );
+    }
 
     // 清理由 `TempDir` 的 Drop 负责。
     server_task

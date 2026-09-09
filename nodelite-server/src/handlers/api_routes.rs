@@ -120,6 +120,8 @@ pub(crate) async fn metrics(State(state): State<AppState>) -> Response {
     let (history_queue_depth, history_queue_capacity) = state.history.writer_queue_metrics().await;
     let (audit_queue_depth, audit_queue_capacity) = state.audit_log.writer_queue_metrics().await;
     let writer_metrics = render_writer_metrics(WriterMetrics {
+        alert_delivery: state.shared.alert_delivery.snapshot(),
+        history_write: state.history.write_metrics(),
         history_dropped_writes: state.history.dropped_writes(),
         history_queue_depth,
         history_queue_capacity,
