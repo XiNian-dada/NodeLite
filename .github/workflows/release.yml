@@ -95,10 +95,13 @@ jobs:
         run: cargo test --workspace --locked
 
       - name: Shellcheck installers
-        run: shellcheck scripts/install-server.sh scripts/install-agent.sh scripts/server-web-update.sh scripts/merge-release-checksums.sh scripts/test-install-server-summary.sh scripts/test-install-server-config.sh scripts/test-server-web-update.sh scripts/test-release-checksums.sh scripts/check-demo-credentials.sh scripts/check-actions-pinned.sh
+        run: shellcheck scripts/install-server.sh scripts/install-server-config.sh scripts/install-agent.sh scripts/server-web-update.sh scripts/merge-release-checksums.sh scripts/test-install-server-summary.sh scripts/test-install-server-modules.sh scripts/test-install-server-config.sh scripts/test-server-web-update.sh scripts/test-release-checksums.sh scripts/check-demo-credentials.sh scripts/check-actions-pinned.sh
 
       - name: Test server config templates
         run: sh scripts/test-install-server-config.sh
+
+      - name: Test version-bound installer helpers
+        run: sh scripts/test-install-server-modules.sh
 
       - name: Test verified web update bootstrap
         run: sh scripts/test-server-web-update.sh
@@ -234,6 +237,7 @@ jobs:
           name: release-scripts
           path: |
             scripts/install-server.sh
+            scripts/install-server-config.sh
             scripts/install-agent.sh
             scripts/merge-release-checksums.sh
 
@@ -396,6 +400,7 @@ jobs:
             release-assets/release-agent-x86_64-apple-darwin/nodelite-agent-x86_64-apple-darwin \
             release-assets/release-agent-aarch64-apple-darwin/nodelite-agent-aarch64-apple-darwin \
             release-assets/release-scripts/install-server.sh \
+            release-assets/release-scripts/install-server-config.sh \
             release-assets/release-scripts/install-agent.sh \
             release-assets/release-sbom/nodelite-proto.cdx.json \
             release-assets/release-sbom/nodelite-agent.cdx.json \
