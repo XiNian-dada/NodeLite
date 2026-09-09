@@ -81,7 +81,7 @@ jobs:
         run: cargo test --workspace --locked
 
       - name: Shellcheck installers
-        run: shellcheck scripts/install-server.sh scripts/install-server-config.sh scripts/install-agent.sh scripts/server-web-update.sh scripts/merge-release-checksums.sh scripts/test-install-server-summary.sh scripts/test-install-server-modules.sh scripts/test-install-server-config.sh scripts/test-server-web-update.sh scripts/test-release-checksums.sh scripts/check-demo-credentials.sh scripts/check-actions-pinned.sh
+        run: shellcheck scripts/install-server.sh scripts/install-server-config.sh scripts/install-server-upgrade.sh scripts/install-agent.sh scripts/server-web-update.sh scripts/merge-release-checksums.sh scripts/test-install-server-summary.sh scripts/test-install-server-modules.sh scripts/test-install-server-config.sh scripts/test-server-web-update.sh scripts/test-release-checksums.sh scripts/check-demo-credentials.sh scripts/check-actions-pinned.sh
 
       - name: Test installer summaries
         run: sh scripts/test-install-server-summary.sh
@@ -91,6 +91,12 @@ jobs:
 
       - name: Test version-bound installer helpers
         run: sh scripts/test-install-server-modules.sh
+
+      - name: Test transactional server upgrades
+        run: python3 scripts/test-install-server-upgrade.py
+
+      - name: Test server upgrade recovery with real systemd units
+        run: sudo python3 scripts/test-install-server-upgrade.py --systemd crash not_ready wrong_version success migrate_fail corrupt_backup restore_fail signal
 
       - name: Test Agent configuration migration and permissions
         run: sudo sh scripts/test-install-agent.sh

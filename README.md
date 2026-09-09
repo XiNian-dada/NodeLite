@@ -67,6 +67,9 @@ curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/inst
   sudo NODELITE_SERVER_MODE=upgrade sh
 ```
 
+安装器会保留兼容的程序、配置和数据库备份，验证新服务就绪及版本后才报告成功。
+超时设置、备份位置与失败恢复规则见[Server 升级与失败恢复](docs/server-upgrades.md)。
+
 Agent 升级命令可在服务端生成：
 
 ```bash

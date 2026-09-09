@@ -14,6 +14,7 @@ trap cleanup EXIT HUP INT TERM
 mkdir -p "$ASSETS_DIR/release-scripts" "$ASSETS_DIR/release-test"
 cp "$SCRIPT_DIR/install-server.sh" "$ASSETS_DIR/release-scripts/install-server.sh"
 cp "$SCRIPT_DIR/install-server-config.sh" "$ASSETS_DIR/release-scripts/install-server-config.sh"
+cp "$SCRIPT_DIR/install-server-upgrade.sh" "$ASSETS_DIR/release-scripts/install-server-upgrade.sh"
 cp "$SCRIPT_DIR/install-agent.sh" "$ASSETS_DIR/release-scripts/install-agent.sh"
 printf '%064d  release-assets/release-test/nodelite-server-test\n' 0 \
   >"$ASSETS_DIR/release-test/SHA256SUMS-test.txt"
@@ -32,7 +33,7 @@ grep -Fx "$agent_sha256  release-assets/release-scripts/install-agent.sh" \
 grep -Fx "$(printf '%064d' 0)  release-assets/release-test/nodelite-server-test" \
   "$ASSETS_DIR/SHA256SUMS.txt" >/dev/null
 
-if [ "$(grep -Ec '^[0-9a-f]{64}  release-assets/release-scripts/install-(server|agent|server-config)\.sh$' "$ASSETS_DIR/SHA256SUMS.txt")" -ne 3 ]; then
+if [ "$(grep -Ec '^[0-9a-f]{64}  release-assets/release-scripts/install-(server|agent|server-config|server-upgrade)\.sh$' "$ASSETS_DIR/SHA256SUMS.txt")" -ne 4 ]; then
   printf '%s\n' "release installer checksum entries used an unexpected path or format" >&2
   exit 1
 fi

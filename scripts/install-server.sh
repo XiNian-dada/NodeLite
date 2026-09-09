@@ -40,6 +40,7 @@ TMP_SHA256=""
 TMP_HEADERS=""
 TMP_CONFIG=""
 TMP_CONFIG_HELPER=""
+TMP_UPGRADE_HELPER=""
 FAILURE_REPORTED=0
 LAST_STEP="startup"
 CONFIG_DEFAULTS_ADDED=0
@@ -74,6 +75,12 @@ cleanup() {
   [ -n "$TMP_HEADERS" ] && rm -f "$TMP_HEADERS"
   [ -n "$TMP_CONFIG" ] && rm -f "$TMP_CONFIG"
   [ -n "$TMP_CONFIG_HELPER" ] && rm -f "$TMP_CONFIG_HELPER"
+  [ -n "$TMP_UPGRADE_HELPER" ] && rm -f "$TMP_UPGRADE_HELPER"
+  [ -n "${TMP_NEXT_CONFIG:-}" ] && rm -f "$TMP_NEXT_CONFIG"
+  [ -n "${TMP_MANIFEST:-}" ] && rm -f "$TMP_MANIFEST"
+  [ -n "${TMP_OLD_MANIFEST:-}" ] && rm -f "$TMP_OLD_MANIFEST"
+  [ -n "${TMP_REPLACE:-}" ] && rm -f "$TMP_REPLACE"
+  [ -n "${TMP_READY_HEADERS:-}" ] && rm -f "$TMP_READY_HEADERS"
   return 0
 }
 
@@ -83,6 +90,13 @@ mark_step() {
 
 on_exit() {
   exit_status="$?"
+  trap - EXIT
+  trap '' HUP INT TERM
+  if [ "$exit_status" -ne 0 ] && [ "${UPGRADE_STARTED:-0}" -eq 1 ]; then
+    if ! recover_upgrade; then
+      printf '%s\n' "install-server: automatic recovery incomplete; restore compatible data before starting the old executable. Backup: ${UPGRADE_BACKUP_DIR:-not created}" >&2
+    fi
+  fi
   cleanup
   if [ "$exit_status" -ne 0 ] && [ "$FAILURE_REPORTED" -ne 1 ]; then
     if has_tty && printf '%s\n' "install-server: aborted during $LAST_STEP (exit status $exit_status)" >/dev/tty 2>/dev/null; then
@@ -433,6 +447,8 @@ need_cmd chmod
 need_cmd chown
 need_cmd cp
 need_cmd curl
+need_cmd date
+need_cmd flock
 need_cmd id
 need_cmd install
 need_cmd find
@@ -440,9 +456,14 @@ need_cmd mkdir
 need_cmd mktemp
 need_cmd mv
 need_cmd od
+need_cmd realpath
 need_cmd rm
 need_cmd sed
+need_cmd sleep
+need_cmd sort
 need_cmd systemctl
+need_cmd tar
+need_cmd timeout
 need_cmd tr
 need_cmd uname
 need_cmd wc
@@ -464,6 +485,11 @@ TMP_CONFIG_HELPER="$(mktemp "${TMPDIR:-/tmp}/nodelite-config-helper.XXXXXX")"
 fetch_verified_script install-server-config.sh "$TMP_CONFIG_HELPER"
 # shellcheck source=scripts/install-server-config.sh
 . "$TMP_CONFIG_HELPER"
+TMP_UPGRADE_HELPER="$(mktemp "${TMPDIR:-/tmp}/nodelite-upgrade-helper.XXXXXX")"
+fetch_verified_script install-server-upgrade.sh "$TMP_UPGRADE_HELPER"
+# shellcheck source=scripts/install-server-upgrade.sh
+. "$TMP_UPGRADE_HELPER"
+validate_upgrade_settings
 
 mark_step "detecting existing installation"
 existing_install_root="$(detect_existing_install_root)"
@@ -568,15 +594,8 @@ else
   validate_no_whitespace "public host" "$PUBLIC_HOST"
 fi
 
-if [ "$MODE" = "upgrade" ]; then
-  mark_step "supplementing server config defaults"
-  complete_server_config_defaults "$CONFIG_PATH"
-  if [ "$CONFIG_DEFAULTS_ADDED" -gt 0 ]; then
-    tty_println "Supplemented server config defaults: $CONFIG_DEFAULTS_ADDED missing setting(s)"
-  else
-    tty_println "Server config already contains current default fields"
-  fi
-fi
+validate_no_whitespace "install root directory" "$INSTALL_ROOT"
+case "$INSTALL_ROOT" in /*) ;; *) fail "install root directory must be absolute" ;; esac
 
 mark_step "checking target architecture"
 ARCH="$(uname -m)"
@@ -595,38 +614,38 @@ esac
 ARTIFACT_NAME="nodelite-server-$TARGET"
 DOWNLOAD_URL="$BASE_URL/$ARTIFACT_NAME"
 
-mark_step "preparing install directories"
-mkdir -p "$INSTALL_ROOT" "$CONFIG_DIR" "$DATA_DIR"
-chown root:root "$INSTALL_ROOT" "$CONFIG_DIR" "$DATA_DIR"
-chmod 0755 "$INSTALL_ROOT"
-chmod 0700 "$CONFIG_DIR" "$DATA_DIR"
-
-if [ "$MODE" != "upgrade" ]; then
-  mark_step "writing server config"
-  render_server_config >"$CONFIG_PATH"
-  chmod 0600 "$CONFIG_PATH"
-  mark_step "supplementing server config defaults"
-  complete_server_config_defaults "$CONFIG_PATH"
-  if [ "$CONFIG_DEFAULTS_ADDED" -gt 0 ]; then
-    tty_println "Supplemented server config defaults: $CONFIG_DEFAULTS_ADDED missing setting(s)"
-  fi
-fi
-
 mark_step "creating temporary files"
-TMP_BIN="$(mktemp "$INSTALL_ROOT/nodelite-server.XXXXXX")"
+# /tmp may be mounted noexec, so candidate CLI probes use the executable's filesystem.
+TMP_BIN="$(mktemp "${BIN_PATH}.candidate.XXXXXX")"
 
 mark_step "fetching release checksums"
 EXPECTED_SHA256="$(fetch_expected_sha256 "$ARTIFACT_NAME")"
 
 printf '%s\n' "Downloading $DOWNLOAD_URL"
 mark_step "downloading server binary"
-curl -fsSL "$DOWNLOAD_URL" -o "$TMP_BIN" || fail "failed to download server binary"
+curl -fsSL --connect-timeout 10 --max-time 300 "$DOWNLOAD_URL" -o "$TMP_BIN" \
+  || fail "failed to download server binary"
 mark_step "verifying server binary checksum"
 ACTUAL_SHA256="$(calculate_sha256 "$TMP_BIN")"
 [ "$ACTUAL_SHA256" = "$EXPECTED_SHA256" ] || fail "downloaded server checksum mismatch"
+chmod 0700 "$TMP_BIN"
+verify_candidate_version
+
+mark_step "preparing compatible upgrade backup"
+begin_upgrade
+
+mark_step "preparing install directories"
+UPGRADE_MUTATED=1
+mkdir -p "$INSTALL_ROOT" "$CONFIG_DIR" "$DATA_DIR"
+chown root:root "$INSTALL_ROOT" "$CONFIG_DIR" "$DATA_DIR"
+chmod 0755 "$INSTALL_ROOT"
+chmod 0700 "$CONFIG_DIR" "$DATA_DIR"
+
+mark_step "writing server config"
+replace_install_file "$TMP_NEXT_CONFIG" "$CONFIG_PATH" 0600
 
 mark_step "installing server binary"
-install -o root -g root -m 0755 "$TMP_BIN" "$BIN_PATH"
+replace_install_file "$TMP_BIN" "$BIN_PATH" 0755
 
 if [ "$MODE" = "migrate" ] && [ "$CURRENT_INSTALL_ROOT" != "$INSTALL_ROOT" ]; then
   mark_step "migrating server data"
@@ -644,7 +663,8 @@ if [ "$MODE" != "upgrade" ]; then
 fi
 
 mark_step "writing systemd unit"
-cat >"$UNIT_PATH" <<EOF
+TMP_REPLACE="$(mktemp "$UNIT_PATH.new.XXXXXX")"
+cat >"$TMP_REPLACE" <<EOF
 [Unit]
 Description=NodeLite Server
 After=network-online.target
@@ -682,11 +702,22 @@ ReadWritePaths=$INSTALL_ROOT
 [Install]
 WantedBy=multi-user.target
 EOF
+chmod 0644 "$TMP_REPLACE"
+mv -f "$TMP_REPLACE" "$UNIT_PATH"
+TMP_REPLACE=""
 
 mark_step "restarting systemd service"
-systemctl daemon-reload
-systemctl enable "$SERVICE_NAME.service"
-systemctl restart "$SERVICE_NAME.service"
+timeout --kill-after=5 20 systemctl daemon-reload
+timeout --kill-after=5 25 systemctl start "$SERVICE_NAME.service"
+
+mark_step "verifying service readiness and release version"
+wait_for_server_ready "$EXPECTED_VERSION" "$UPGRADE_READY_URL" \
+  || fail "new service failed readiness verification"
+if [ "$existing_install" -ne 1 ]; then
+  timeout --kill-after=5 20 systemctl enable "$SERVICE_NAME.service"
+fi
+printf '%s\n' "Committed: version $EXPECTED_VERSION is ready." >"$UPGRADE_BACKUP_DIR/status"
+UPGRADE_COMMITTED=1
 
 mark_step "printing completion summary"
 clear_screen
@@ -700,6 +731,8 @@ fi
 tty_println "Binary: $BIN_PATH"
 tty_println "Config: $CONFIG_PATH"
 tty_println "Registry: $REGISTRY_PATH"
+tty_println "Version: $EXPECTED_VERSION"
+tty_println "Rollback backup: $UPGRADE_BACKUP_DIR"
 if [ "$MODE" = "upgrade" ]; then
   tty_println "Config preserved: existing server.toml and readonly credentials were kept."
   if [ "$CONFIG_DEFAULTS_ADDED" -gt 0 ]; then
