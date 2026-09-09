@@ -6,7 +6,6 @@ import NodeHealthMatrix from '@/components/NodeHealthMatrix.vue';
 import NodeMap from '@/components/NodeMap.vue';
 import NodeList from '@/components/NodeList.vue';
 import LoginNotification from '@/components/LoginNotification.vue';
-import { useWebSocket } from '@/ws';
 import { useBootstrapStore } from '@/stores/bootstrap';
 import { useOverviewStore } from '@/stores/overview';
 import { useNodesStore } from '@/stores/nodes';
@@ -16,7 +15,6 @@ const bootstrapStore = useBootstrapStore();
 const overviewStore = useOverviewStore();
 const nodesStore = useNodesStore();
 const settingsStore = useSettingsStore();
-const ws = useWebSocket();
 const DASHBOARD_REST_FALLBACK_MS = 500;
 
 const onlineCount = computed(() => overviewStore.data?.online_nodes ?? 0);
@@ -24,24 +22,6 @@ const onlineCount = computed(() => overviewStore.data?.online_nodes ?? 0);
 onMounted(() => {
   void bootstrapStore.load();
   void settingsStore.load();
-
-  // WS-first: subscribe to WebSocket messages
-  const offInitial = ws.on('initial_state', (msg) => {
-    overviewStore.apply(msg.overview, msg.generated_at);
-    nodesStore.applyServerState(msg.nodes, msg.generated_at);
-  });
-
-  const offOverview = ws.on('overview_update', (msg) => {
-    overviewStore.apply(msg.overview, msg.generated_at);
-  });
-
-  const offUpsert = ws.on('node_upsert', (msg) => {
-    nodesStore.upsertNode(msg.node, msg.generated_at);
-  });
-
-  const offRemoved = ws.on('node_removed', (msg) => {
-    nodesStore.removeNode(msg.node_id, msg.generated_at);
-  });
 
   // Fallback quickly so the dashboard does not sit in an empty shell while
   // the websocket reconnects; later WS messages still replace this baseline.
@@ -52,10 +32,6 @@ onMounted(() => {
   }, DASHBOARD_REST_FALLBACK_MS);
 
   onUnmounted(() => {
-    offInitial();
-    offOverview();
-    offUpsert();
-    offRemoved();
     window.clearTimeout(fallbackTimer);
   });
 });
