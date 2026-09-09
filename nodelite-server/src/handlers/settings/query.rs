@@ -8,11 +8,10 @@ use chrono::{Datelike, Utc};
 use crate::AppState;
 use crate::auth::{TWO_FACTOR_AUTH_SECS, TWO_FACTOR_PENDING_SECS};
 use crate::encoding::shell_quote;
+use crate::server_build_version;
 use nodelite_proto::DEFAULT_HISTORY_RETENTION_HOURS;
 
-use super::{
-    SettingsAgentToken, SettingsAuth, SettingsResponse, SettingsUpdates, server_build_version,
-};
+use super::{SettingsAgentToken, SettingsAuth, SettingsResponse, SettingsUpdates};
 
 /// 设置页数据接口:只返回运行状态与安全元信息,不泄露任何凭证本体。
 pub(crate) async fn settings(State(state): State<AppState>) -> impl IntoResponse {
@@ -50,6 +49,7 @@ pub(crate) async fn settings(State(state): State<AppState>) -> impl IntoResponse
                 .filter(|usage| usage.accounting == node.traffic_accounting)
                 .map(|usage| usage.used_bytes);
             SettingsAgentToken {
+                traffic_control: state.traffic_control.get(&node.node_id),
                 node_id: node.node_id,
                 node_label: node.node_label,
                 online: status.is_some_and(|status| status.online),

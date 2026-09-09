@@ -24,6 +24,16 @@ pub(crate) async fn change_readonly_password(
     State(state): State<AppState>,
     Json(request): Json<ChangePasswordRequest>,
 ) -> Response {
+    super::config_edit::with_settings_write(state, move |state| {
+        change_readonly_password_inner(state, request)
+    })
+    .await
+}
+
+async fn change_readonly_password_inner(
+    state: AppState,
+    request: ChangePasswordRequest,
+) -> Response {
     let current_auth = {
         let auth = state.readonly_auth.read().await;
         auth.config.clone()
@@ -55,9 +65,10 @@ pub(crate) async fn change_readonly_password(
     }
     {
         let mut auth = state.readonly_auth.write().await;
+        auth.revoked.cancel();
         *auth = ReadonlyRouteAuth::from_config(Some(next_auth));
+        state.two_factor_sessions.clear_authenticated();
     }
-    state.two_factor_sessions.clear_authenticated();
     let secure = secure_cookies(state.shared.config());
     (
         StatusCode::OK,
@@ -204,6 +215,13 @@ pub(crate) async fn enable_two_factor(
     State(state): State<AppState>,
     Json(request): Json<EnableTwoFactorRequest>,
 ) -> Response {
+    super::config_edit::with_settings_write(state, move |state| {
+        enable_two_factor_inner(state, request)
+    })
+    .await
+}
+
+async fn enable_two_factor_inner(state: AppState, request: EnableTwoFactorRequest) -> Response {
     let current_auth = {
         let auth = state.readonly_auth.read().await;
         auth.config.clone()
@@ -248,9 +266,10 @@ pub(crate) async fn enable_two_factor(
     }
     {
         let mut auth = state.readonly_auth.write().await;
+        auth.revoked.cancel();
         *auth = ReadonlyRouteAuth::from_config(Some(next_auth));
+        state.two_factor_sessions.clear_authenticated();
     }
-    state.two_factor_sessions.clear_authenticated();
     let auth_token = match state.two_factor_sessions.create_authenticated() {
         Ok(token) => token,
         Err(error) => {
@@ -286,6 +305,13 @@ pub(crate) async fn disable_two_factor(
     State(state): State<AppState>,
     Json(request): Json<DisableTwoFactorRequest>,
 ) -> Response {
+    super::config_edit::with_settings_write(state, move |state| {
+        disable_two_factor_inner(state, request)
+    })
+    .await
+}
+
+async fn disable_two_factor_inner(state: AppState, request: DisableTwoFactorRequest) -> Response {
     let current_auth = {
         let auth = state.readonly_auth.read().await;
         auth.config.clone()
@@ -333,9 +359,10 @@ pub(crate) async fn disable_two_factor(
     }
     {
         let mut auth = state.readonly_auth.write().await;
+        auth.revoked.cancel();
         *auth = ReadonlyRouteAuth::from_config(Some(next_auth));
+        state.two_factor_sessions.clear_authenticated();
     }
-    state.two_factor_sessions.clear_authenticated();
     let secure = secure_cookies(state.shared.config());
     (
         StatusCode::OK,

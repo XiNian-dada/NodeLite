@@ -37,6 +37,50 @@ fn parses_agent_config() {
     assert_eq!(config.node_id, "hk-01");
     assert_eq!(config.report_interval_secs, 7);
     assert_eq!(config.tags, vec!["apac", "edge"]);
+    assert_eq!(config.auth_timeout_secs, 20);
+    assert_eq!(config.send_timeout_secs, 20);
+    assert_eq!(config.inbound_timeout_secs, 90);
+}
+
+#[test]
+fn agent_transport_deadlines_are_configurable_and_bounded() {
+    let sample = include_str!("../../../../config/agent.example.toml");
+    let with_deadline = |name, seconds| {
+        sample
+            .lines()
+            .map(|line| {
+                if line.starts_with(&format!("{name} =")) {
+                    format!("{name} = {seconds}")
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    for name in [
+        "connect_timeout_secs",
+        "auth_timeout_secs",
+        "send_timeout_secs",
+        "inbound_timeout_secs",
+    ] {
+        for seconds in [0, 3601, u64::MAX] {
+            assert!(
+                parse_agent_config(&with_deadline(name, seconds)).is_err(),
+                "accepted {name}={seconds}"
+            );
+        }
+        for seconds in [1, 3600] {
+            let config = parse_agent_config(&with_deadline(name, seconds)).expect("valid deadline");
+            let actual = match name {
+                "connect_timeout_secs" => config.connect_timeout_secs,
+                "auth_timeout_secs" => config.auth_timeout_secs,
+                "send_timeout_secs" => config.send_timeout_secs,
+                _ => config.inbound_timeout_secs,
+            };
+            assert_eq!(actual, seconds);
+        }
+    }
 }
 
 #[test]

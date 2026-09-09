@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue';
+import { reactive, ref, useId } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { apiClient, type SettingsAgentToken } from '@/api';
 import { ApiAbortError } from '@/api/client';
 import { messageFromError } from '@/lib/apiError';
 import ReauthFields from './ReauthFields.vue';
 import SettingsMessage from './SettingsMessage.vue';
+import NativeDialog from './NativeDialog.vue';
 
 const props = defineProps<{
   agent: SettingsAgentToken;
@@ -13,6 +14,7 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ close: []; deleted: [] }>();
 const { t } = useI18n();
+const titleId = useId();
 
 const deleting = ref(false);
 const reauth = reactive({ currentPassword: '', code: '' });
@@ -51,18 +53,17 @@ async function deleteAgent(): Promise<void> {
 </script>
 
 <template>
-  <div
+  <NativeDialog
     class="delete-modal"
     data-test="delete-agent-modal"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="delete-agent-title"
-    @click.self="close"
+    :labelled-by="titleId"
+    :dismissible="!deleting"
+    @close="close"
   >
     <form class="delete-modal__panel" data-test="delete-agent-form" @submit.prevent="deleteAgent">
       <header class="delete-modal__head">
         <div>
-          <h3 id="delete-agent-title">
+          <h3 :id="titleId">
             {{ t('settings.tokens.delete_title', { node: agent.node_label || agent.node_id }) }}
           </h3>
           <p>{{ agent.node_id }}</p>
@@ -72,6 +73,8 @@ async function deleteAgent(): Promise<void> {
           type="button"
           :disabled="deleting"
           data-test="delete-agent-cancel"
+          :aria-label="t('common.close')"
+          autofocus
           @click="close"
         >
           ×
@@ -101,7 +104,7 @@ async function deleteAgent(): Promise<void> {
         </button>
       </footer>
     </form>
-  </div>
+  </NativeDialog>
 </template>
 
 <style scoped>

@@ -2,31 +2,43 @@
 
 This directory holds Playwright tests for the Vue + Vite UI. Most specs stub the
 small API surface they need so they can run against Vite without a Rust backend.
-Backend-only flows can still target a live server with `NODELITE_E2E_BASE_URL`.
+Live WebSocket flows run against an isolated Rust server through `e2e:live`.
 
 ## Running
 
 ```bash
-# Vite is started automatically by Playwright when NODELITE_E2E_BASE_URL is unset.
+# Fixture UI tests start Vite automatically.
 pnpm --dir nodelite-server/web e2e
 
-# To run against a live backend instead:
-cargo run -p nodelite-server
-NODELITE_E2E_BASE_URL=http://localhost:8080 \
-NODELITE_E2E_USER=admin \
-NODELITE_E2E_PASS=changeme \
-pnpm --dir nodelite-server/web e2e
+# Live integration: builds the UI and Rust server, then starts an isolated backend.
+# Requires Node.js 22+ and a Rust toolchain.
+pnpm --dir nodelite-server/web e2e:live
 ```
 
-`NODELITE_E2E_BASE_URL` defaults to Vite at `http://127.0.0.1:5173`.
-`NODELITE_E2E_USER`/`NODELITE_E2E_PASS` map to Playwright's `httpCredentials` so Basic Auth is sent automatically.
+The live runner creates random credentials and private temporary config/SQLite
+files. Every test enrolls a deterministic Agent through the real installation
+API, sends the real WebSocket protocol, and revokes it after the test. Processes
+and data are cleaned on success, failure, SIGINT and SIGTERM. It never points at
+an existing deployment. To reuse a current build, set `NODELITE_E2E_SERVER_BIN`
+to the absolute path of that binary.
+
+CI runs both suites and uploads reports, traces and the server log on failure.
+The separate live configuration requires its environment and has no conditional
+skips; the runner rejects an empty report or any skipped test. Live reports are
+in `playwright-report/live` and `test-results/live*`.
+
+The incremental test sends CPU 12% → 73% through the Agent socket, then revokes
+that node and requires its card to disappear. REST fallback and page reloads
+cannot satisfy the assertions. Run just this regression with
+`pnpm e2e:live --grep 'incremental node'`. A local mutation that discards
+`node_upsert` in `useRealtimeData.ts` must fail at the 73% assertion; restore the
+handler and rebuild before running the passing suite.
 
 ## Coverage targets (14 spec files)
 
 The first 12 flows come from the original plan, §3.7.2. Two supplementary suites
 cover the application shell and the WebSocket-first dashboard. UI-only flows run
-with local fixtures. Live WebSocket flows require a running backend and are
-skipped unless `NODELITE_E2E_BASE_URL` is set.
+with local fixtures. Live WebSocket flows run in the separate `e2e:live` command and are required in CI.
 
 | # | File | Flow |
 |---|---|---|

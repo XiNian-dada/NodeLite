@@ -26,6 +26,16 @@ pub(crate) async fn update_alert_settings(
     State(state): State<AppState>,
     Json(request): Json<UpdateAlertSettingsRequest>,
 ) -> Response {
+    super::config_edit::with_settings_write(state, move |state| {
+        update_alert_settings_inner(state, request)
+    })
+    .await
+}
+
+async fn update_alert_settings_inner(
+    state: AppState,
+    request: UpdateAlertSettingsRequest,
+) -> Response {
     let current_auth = {
         let auth = state.readonly_auth.read().await;
         auth.config.clone()

@@ -13,11 +13,6 @@ use nodelite_proto::{
     ServerConfig, percentage, truncate_string_to_byte_boundary,
 };
 
-/// 历史采样中允许的最大磁盘条目数,防止恶意 Agent 制造海量条目。
-pub const MAX_SANITIZED_DISKS: usize = 64;
-/// 单个磁盘字段(device/mount_point/fs_type)允许的最大字节数,防止 Agent
-/// 上报巨型字符串撑爆 UI 与历史库。
-pub const MAX_SANITIZED_STRING_BYTES: usize = 256;
 /// 网络速率字段的合法上限(字节/秒)。
 pub const MAX_SANITIZED_RATE_BYTES_PER_SEC: f64 = 1_000_000_000_000.0;
 /// 负载平均数的合法上限。
@@ -26,13 +21,21 @@ pub const MAX_SANITIZED_LOAD: f64 = 1_000_000.0;
 pub const MAX_RENEWAL_PRICE_BYTES: usize = 64;
 /// 手动位置覆盖只用于 UI 展示和地图落点,限制长度避免污染设置页或注册表。
 pub const MAX_LOCATION_OVERRIDE_TEXT_BYTES: usize = 64;
-/// 一个 WebSocket 会话在 `METRIC_ANOMALY_WINDOW_SECS` 窗口内允许出现的异常
-/// metrics 报告次数,超过即主动断开。
-/// 滑动窗口的设计避免了"长会话偶发异常累积"造成的误判:任何 anomaly 在窗口
-/// 过去之后都会被忽略,只有真正持续上报异常的 Agent 才会触发断连。
-pub const METRIC_ANOMALY_SESSION_LIMIT: usize = 5;
 /// 计算 anomaly 触发阈值时使用的滑动窗口(秒),默认 5 分钟。
 pub const METRIC_ANOMALY_WINDOW_SECS: u64 = 300;
+
+pub(crate) fn validate_traffic_control_status(
+    status: &nodelite_proto::TrafficControlStatus,
+) -> Result<(), &'static str> {
+    if [status.desired_rate_kbps, status.applied_rate_kbps]
+        .into_iter()
+        .flatten()
+        .any(|rate| !(1..=100_000_000).contains(&rate))
+    {
+        return Err("invalid traffic control rate");
+    }
+    Ok(())
+}
 
 /// 对来自 Agent 的快照进行二次校验。
 /// 把所有疑似越界的字段统一约束到合法范围,避免它们污染 UI 汇总、聚合或历史表。
@@ -60,7 +63,8 @@ pub fn sanitize_snapshot(
             continue;
         }
 
-        let Some(disk) = sanitize_disk_usage(disk, &mut report) else {
+        let Some(disk) = sanitize_disk_usage(disk, config.max_sanitized_string_bytes, &mut report)
+        else {
             continue;
         };
         let disk_identity = disk_device_identity(&disk);
@@ -68,7 +72,7 @@ pub fn sanitize_snapshot(
             report.dropped_disks = report.dropped_disks.saturating_add(1);
             continue;
         }
-        if sanitized_disks.len() >= MAX_SANITIZED_DISKS {
+        if sanitized_disks.len() >= config.max_sanitized_disks {
             report.dropped_disks = report.dropped_disks.saturating_add(1);
             continue;
         }
@@ -131,8 +135,8 @@ pub fn update_metric_anomaly_window(
     }
 }
 
-pub fn should_disconnect_for_metric_anomalies(window: &VecDeque<Instant>) -> bool {
-    window.len() >= METRIC_ANOMALY_SESSION_LIMIT
+pub fn should_disconnect_for_metric_anomalies(window: &VecDeque<Instant>, limit: usize) -> bool {
+    window.len() >= limit
 }
 
 pub fn sanitize_renewal_price(value: Option<String>) -> Result<Option<String>, &'static str> {
@@ -310,7 +314,11 @@ fn sanitize_memory_usage(mut memory: MemoryUsage, report: &mut SanitizationRepor
     memory
 }
 
-fn sanitize_disk_usage(mut disk: DiskUsage, report: &mut SanitizationReport) -> Option<DiskUsage> {
+fn sanitize_disk_usage(
+    mut disk: DiskUsage,
+    max_string_bytes: usize,
+    report: &mut SanitizationReport,
+) -> Option<DiskUsage> {
     disk.device = disk.device.trim().to_string();
     disk.mount_point = disk.mount_point.trim().to_string();
     disk.fs_type = disk.fs_type.trim().to_string();
@@ -322,14 +330,19 @@ fn sanitize_disk_usage(mut disk: DiskUsage, report: &mut SanitizationReport) -> 
     let original_device_len = disk.device.len();
     let original_mount_len = disk.mount_point.len();
     let original_fs_len = disk.fs_type.len();
-    truncate_string_to_byte_boundary(&mut disk.device, MAX_SANITIZED_STRING_BYTES);
-    truncate_string_to_byte_boundary(&mut disk.mount_point, MAX_SANITIZED_STRING_BYTES);
-    truncate_string_to_byte_boundary(&mut disk.fs_type, MAX_SANITIZED_STRING_BYTES);
+    truncate_string_to_byte_boundary(&mut disk.device, max_string_bytes);
+    truncate_string_to_byte_boundary(&mut disk.mount_point, max_string_bytes);
+    truncate_string_to_byte_boundary(&mut disk.fs_type, max_string_bytes);
     if disk.device.len() != original_device_len
         || disk.mount_point.len() != original_mount_len
         || disk.fs_type.len() != original_fs_len
     {
         report.truncated_strings = report.truncated_strings.saturating_add(1);
+    }
+
+    if disk.device.is_empty() || disk.mount_point.is_empty() || disk.fs_type.is_empty() {
+        report.dropped_disks = report.dropped_disks.saturating_add(1);
+        return None;
     }
 
     let original_used = disk.used_bytes;
@@ -387,14 +400,15 @@ fn sanitize_optional_rate(value: Option<f64>, max: f64, counter: &mut u32) -> Op
 
 #[cfg(test)]
 mod tests {
+    use nodelite_proto::config::DEFAULT_MAX_SANITIZED_STRING_BYTES as MAX_SANITIZED_STRING_BYTES;
     use nodelite_proto::{DiskUsage, MemoryUsage};
     use proptest::prelude::*;
 
     use super::{
-        MAX_SANITIZED_RATE_BYTES_PER_SEC, MAX_SANITIZED_STRING_BYTES, SanitizationReport,
-        sanitize_disk_usage, sanitize_location_override, sanitize_memory_usage,
-        sanitize_non_negative_f64, sanitize_optional_rate, sanitize_renewal_price,
-        validate_location_override, validate_renewal_price,
+        MAX_SANITIZED_RATE_BYTES_PER_SEC, SanitizationReport, sanitize_disk_usage,
+        sanitize_location_override, sanitize_memory_usage, sanitize_non_negative_f64,
+        sanitize_optional_rate, sanitize_renewal_price, validate_location_override,
+        validate_renewal_price,
     };
 
     #[test]
@@ -529,6 +543,7 @@ mod tests {
                     used_bytes,
                     used_percent,
                 },
+                MAX_SANITIZED_STRING_BYTES,
                 &mut report,
             )
             .expect("non-empty trimmed fields should survive sanitization");

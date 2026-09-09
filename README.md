@@ -67,6 +67,9 @@ curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/inst
   sudo NODELITE_SERVER_MODE=upgrade sh
 ```
 
+安装器会保留兼容的程序、配置和数据库备份，验证新服务就绪及版本后才报告成功。
+超时设置、备份位置与失败恢复规则见[Server 升级与失败恢复](docs/server-upgrades.md)。
+
 Agent 升级命令可在服务端生成：
 
 ```bash
@@ -74,6 +77,8 @@ Agent 升级命令可在服务端生成：
   --config /opt/nodelite/config/server.toml \
   upgrade-agent
 ```
+
+Linux Agent 的活动配置保存在 `/var/lib/nodelite-agent/agent.toml`，目录和文件分别为服务账户独占的 `0700` / `0600`，以便续期凭证安全落盘。升级时会从旧配置目录导入一次，后续修改请使用安装器输出的活动配置路径；可用 `--state-dir` 指定其他状态目录。
 
 常用状态检查：
 
@@ -86,6 +91,8 @@ sudo journalctl -u nodelite-agent.service -f
 ```
 
 反向代理、负载均衡器和告警系统接入前，请确认 [`/healthz` 与 `/readyz` 的探针语义](docs/readiness.md)，避免把诊断降级误判为实例不可接流量。
+
+注销节点后的计费基线与数据保留规则见[套餐账本与节点注销](docs/traffic-accounting.md)。
 
 升级建议由管理员手动触发：先确认 release notes 和协议兼容，再升级 Server 或 Agent。
 
@@ -222,3 +229,15 @@ node scripts/benchmark-index-dom.mjs --nodes 1000
 Workspace `Cargo.toml` 中的 `0.1.0` 是未注入时的 fallback，不随每次发布修改。本地直接使用 `cargo build` / `cargo run` 时，如未设置 `NODELITE_BUILD_VERSION`，上述运行时字段会显示这个 Cargo fallback；这不代表官方 Release 产物的版本。
 
 `nodelite-proto.cdx.json`、`nodelite-agent.cdx.json` 和 `nodelite-server.cdx.json` 是 CycloneDX JSON 格式的软件物料清单，覆盖 workspace crate 的依赖和版本信息。它们会随发布产物一起上传，并纳入 `SHA256SUMS.txt` 统一校验。
+
+### 可选 Linux Agent 限速能力
+
+安装或升级时传入 `--enable-traffic-control`（或 `NODELITE_AGENT_TRAFFIC_CONTROL=1`）启用套餐限速。
+必须安装发行版的 `iproute2` / `tc`。服务仍以 `nodelite-agent` 用户运行，仅增加
+`CAP_NET_ADMIN` 和 `AF_NETLINK`，其余 systemd 沙箱保留。普通安装默认关闭该能力，
+后续升级保留已有选择；`--disable-traffic-control` 可撤销权限，撤销前应先取消面板中的限速策略。
+手动运行 Agent 时也需要显式设置该环境变量，并由服务管理器授予必要权限。
+
+设置页显示 Agent 上报的能力和实际执行结果，区分未启用、缺少 tc、缺少权限、平台不支持和执行失败。
+旧 Agent 显示“尚未上报”。状态通过现有日志消息的可选字段传输，旧服务端仍可读取其原有日志。
+Linux CI 在独立网络命名空间内运行官方生成的 systemd 单元，验证限速设置、变更、撤销及保留其他规则。

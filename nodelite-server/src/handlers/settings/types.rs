@@ -44,6 +44,7 @@ pub(crate) struct SettingsUpdates {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct SettingsAgentToken {
+    pub(crate) traffic_control: Option<nodelite_proto::TrafficControlStatus>,
     pub(crate) node_id: String,
     pub(crate) node_label: String,
     pub(crate) online: bool,

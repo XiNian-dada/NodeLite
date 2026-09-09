@@ -229,7 +229,7 @@ export async function setupApiFixtures(page: Page): Promise<void> {
   await page.route('**/assets/ui-i18n.json', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: dictionary }),
   );
-  await page.route('**/ws/browser', (route) => route.abort());
+  await page.routeWebSocket('**/ws/browser', (socket) => socket.close());
   await page.route('**/api/bootstrap', (route) =>
     json(route, {
       service: 'nodelite-server',

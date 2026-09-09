@@ -1,25 +1,31 @@
+//! Agent session lifecycle, reconnect policy and bounded runtime log forwarding.
+
 use std::collections::VecDeque;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use chrono::Utc;
-use futures::{SinkExt, StreamExt};
 use getrandom::fill as fill_random;
-use nodelite_proto::{
-    AgentConfig, AgentLogEntry, AgentLogsMessage, HelloMessage, MetricsMessage,
-    NetworkThrottleMessage, NoticeLevel, PingMessage, PongMessage, ServerNoticeCode,
-    ServerNoticeMessage, WIRE_PROTOCOL_VERSION, WireMessage, truncate_to_byte_boundary,
-};
-use tokio::time::{MissedTickBehavior, interval, sleep, timeout};
-use tokio_tungstenite::connect_async_with_config;
+use thiserror::Error;
+use tokio::time::sleep;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tracing::{info, warn};
 
+use nodelite_proto::{
+    AgentConfig, AgentLogEntry, AgentLogsMessage, MetricsMessage, NoticeLevel, ServerNoticeCode,
+    WireMessage, truncate_to_byte_boundary,
+};
+
 use crate::collector::{HostCollector, collect_snapshot_blocking};
-use crate::config_io::update_token_in_config;
 use crate::traffic_control::{TrafficControlOutcome, TrafficController};
+
+mod connection;
+mod transport;
+
+pub use connection::run_session;
+use transport::TimedSender;
 
 /// Agent 本地最多暂存的待上报日志条数。超出后丢弃最旧项,避免断线期间内存无限增长。
 const MAX_PENDING_AGENT_LOGS: usize = 256;
@@ -35,7 +41,8 @@ const TOKEN_EXPIRED_SHORT_RETRY_DELAYS: [Duration; 3] = [
 /// Token 连续确认过期后,退回长间隔以避免长期热重试。
 const TOKEN_EXPIRED_LONG_RECONNECT_DELAY: Duration = Duration::from_secs(3600);
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
+#[error("{source}")]
 pub struct SessionError {
     /// 是否曾经成功完成认证。外部测试据此区分"连接前失败"与"连接后断开"。
     pub established_session: bool,
@@ -43,9 +50,13 @@ pub struct SessionError {
     pub(crate) source: anyhow::Error,
 }
 
-type AgentWsSender = futures::stream::SplitSink<
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
-    Message,
+type AgentWsSender = TimedSender<
+    futures::stream::SplitSink<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        Message,
+    >,
 >;
 
 #[derive(Default)]
@@ -179,181 +190,6 @@ where
     }
 }
 
-/// 与 Server 进行一次完整的 WebSocket 会话。
-pub async fn run_session(
-    config: &mut AgentConfig,
-    collector: &mut HostCollector,
-    identity: &nodelite_proto::NodeIdentity,
-    config_path: &Path,
-    log_buffer: &mut AgentLogBuffer,
-) -> std::result::Result<(), SessionError> {
-    log_buffer.push(
-        NoticeLevel::Info,
-        format!("connecting to {}", config.server),
-    );
-    let (socket, _) = timeout(
-        Duration::from_secs(config.connect_timeout_secs),
-        connect_async_with_config(
-            config.server.as_str(),
-            Some(incoming_ws_config(config.max_incoming_message_bytes)),
-            false,
-        ),
-    )
-    .await
-    .map_err(|_| session_error(false, anyhow!("timed out connecting to {}", config.server)))?
-    .map_err(|error| anyhow!("failed to connect to {}: {error}", config.server))
-    .map_err(|error| session_error(false, error))?;
-    let (mut sender, mut receiver) = socket.split();
-
-    send_wire_message(
-        &mut sender,
-        &WireMessage::Hello(HelloMessage {
-            protocol_version: WIRE_PROTOCOL_VERSION,
-            token: config.token.clone(),
-            identity: identity.clone(),
-        }),
-    )
-    .await
-    .map_err(|error| session_error(false, error))?;
-
-    let mut report_ticker = interval(Duration::from_secs(config.report_interval_secs));
-    report_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
-    let mut authenticated = false;
-    let mut traffic_controller = TrafficController::default();
-
-    loop {
-        tokio::select! {
-            _ = report_ticker.tick(), if authenticated => {
-                send_metrics(&mut sender, collector)
-                    .await
-                    .map_err(|error| session_error(true, error))?;
-            }
-            incoming = receiver.next() => {
-                let Some(frame) = incoming else {
-                    return Err(session_error(
-                        authenticated,
-                        anyhow!("server closed websocket connection"),
-                    ));
-                };
-                let frame = frame.map_err(|error| session_error(authenticated, anyhow!(error)))?;
-                match frame {
-                    Message::Text(text) => {
-                        match serde_json::from_str::<WireMessage>(&text).context("invalid websocket json").map_err(|error| session_error(authenticated, error))? {
-                            WireMessage::Ping(PingMessage { nonce }) => {
-                                send_wire_message(&mut sender, &WireMessage::Pong(PongMessage { nonce }))
-                                    .await
-                                    .map_err(|error| session_error(authenticated, error))?;
-                            }
-                            WireMessage::ServerNotice(ServerNoticeMessage { level, code, message }) => {
-                                if !authenticated
-                                    && matches!(level, NoticeLevel::Info)
-                                    && message == "authenticated"
-                                {
-                                    authenticated = true;
-                                    log_buffer.push(
-                                        NoticeLevel::Info,
-                                        format!("authenticated with {}", config.server),
-                                    );
-                                    flush_agent_logs(&mut sender, log_buffer)
-                                        .await
-                                        .map_err(|error| session_error(authenticated, error))?;
-                                }
-
-                                if server_notice_reports_token_expired(level, code, &message) {
-                                    log_buffer.push(
-                                        NoticeLevel::Error,
-                                        "agent token expired; waiting for operator to rotate token",
-                                    );
-                                    tracing::error!(
-                                        message = %message,
-                                        "agent token expired; sleeping until operator rotates token",
-                                    );
-                                    return Err(token_expired_error(anyhow!(
-                                        "agent token expired"
-                                    )));
-                                }
-
-                                log_notice(level, &message);
-                                if message != "authenticated" {
-                                    log_buffer.push(level, format!("server notice: {message}"));
-                                    if authenticated {
-                                        flush_agent_logs(&mut sender, log_buffer)
-                                            .await
-                                            .map_err(|error| session_error(authenticated, error))?;
-                                    }
-                                }
-                            }
-                            WireMessage::RefreshTokenResponse(response) => {
-                                info!("received new token, expires at {}", response.expires_at);
-                                log_buffer.push(
-                                    NoticeLevel::Info,
-                                    format!("received refreshed token expiring at {}", response.expires_at),
-                                );
-                                config.token = response.new_token.clone();
-
-                                if let Err(error) = update_token_in_config(config_path, &response.new_token).await {
-                                    warn!("failed to persist new token: {}", error);
-                                    log_buffer.push(
-                                        NoticeLevel::Warn,
-                                        format!("failed to persist refreshed token: {error}"),
-                                    );
-                                } else {
-                                    info!("successfully persisted new token to config file");
-                                    log_buffer.push(
-                                        NoticeLevel::Info,
-                                        "persisted refreshed token to local config",
-                                    );
-                                }
-                                flush_agent_logs(&mut sender, log_buffer)
-                                    .await
-                                    .map_err(|error| session_error(authenticated, error))?;
-                            }
-                            WireMessage::NetworkThrottle(NetworkThrottleMessage { rate_kbps }) => {
-                                apply_network_throttle(
-                                    &mut traffic_controller,
-                                    &mut sender,
-                                    log_buffer,
-                                    authenticated,
-                                    rate_kbps,
-                                )
-                                .await
-                                .map_err(|error| session_error(authenticated, error))?;
-                            }
-                            WireMessage::Hello(_)
-                            | WireMessage::Metrics(_)
-                            | WireMessage::Pong(_)
-                            | WireMessage::RefreshTokenRequest(_)
-                            | WireMessage::AgentLogs(_) => {
-                                return Err(session_error(
-                                    authenticated,
-                                    anyhow!("received unexpected websocket message from server"),
-                                ));
-                            }
-                        }
-                    }
-                    Message::Ping(payload) => {
-                        sender.send(Message::Pong(payload)).await.context("failed to reply to ping frame")
-                            .map_err(|error| session_error(authenticated, error))?;
-                    }
-                    Message::Pong(_) => {}
-                    Message::Close(frame) => {
-                        return Err(session_error(
-                            authenticated,
-                            anyhow!("server closed websocket connection: {:?}", frame),
-                        ));
-                    }
-                    Message::Binary(_) | Message::Frame(_) => {
-                        return Err(session_error(
-                            authenticated,
-                            anyhow!("binary websocket frames are not supported"),
-                        ));
-                    }
-                }
-            }
-        }
-    }
-}
-
 async fn apply_network_throttle(
     controller: &mut TrafficController,
     sender: &mut AgentWsSender,
@@ -373,12 +209,11 @@ async fn apply_network_throttle(
                 info!("cleared server-requested network traffic limit");
             }
         }
-        #[cfg(not(target_os = "linux"))]
-        Ok(TrafficControlOutcome::Unsupported) => {
-            warn!("server requested a network limit, but this platform is unsupported");
+        Ok(TrafficControlOutcome::Unavailable) => {
+            warn!("network traffic control is unavailable; check Agent capability status");
             log_buffer.push(
                 NoticeLevel::Warn,
-                "server requested a network limit, but this platform is unsupported",
+                "network traffic control is unavailable; check Agent capability status",
             );
         }
         Err(error) => {
@@ -389,10 +224,27 @@ async fn apply_network_throttle(
             );
         }
     }
+    if authenticated {
+        send_traffic_control_status(sender, controller).await?;
+    }
     if authenticated && !log_buffer.is_empty() {
         flush_agent_logs(sender, log_buffer).await?;
     }
     Ok(())
+}
+
+async fn send_traffic_control_status(
+    sender: &mut AgentWsSender,
+    controller: &TrafficController,
+) -> Result<()> {
+    send_wire_message(
+        sender,
+        &WireMessage::AgentLogs(AgentLogsMessage {
+            entries: Vec::new(),
+            traffic_control: controller.status(),
+        }),
+    )
+    .await
 }
 
 fn session_error(established_session: bool, source: anyhow::Error) -> SessionError {
@@ -444,6 +296,7 @@ async fn flush_agent_logs(
         send_wire_message(
             sender,
             &WireMessage::AgentLogs(AgentLogsMessage {
+                traffic_control: None,
                 entries: batch.clone(),
             }),
         )
@@ -537,159 +390,4 @@ fn sample_random_u64() -> Option<u64> {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::collections::HashSet;
-    use std::time::Duration;
-
-    use nodelite_proto::{NoticeLevel, ServerNoticeCode};
-
-    use super::{
-        AgentLogBuffer, MAX_PENDING_AGENT_LOGS, SessionError, reconnect_delay, retry_log_message,
-        server_notice_reports_token_expired, token_expired_reconnect_delay,
-    };
-
-    #[test]
-    fn reconnect_delay_is_within_jitter_window_and_disperses() {
-        let cases: &[(u32, u64, u64)] = &[
-            (0, 1, 5),
-            (1, 2, 10),
-            (2, 5, 20),
-            (3, 10, 40),
-            (4, 15, 60),
-            (5, 30, 120),
-            (1024, 30, 120),
-        ];
-        for &(attempt, floor_secs, ceiling_secs) in cases {
-            let lower = Duration::from_secs(floor_secs);
-            let upper = Duration::from_secs(ceiling_secs);
-            let mut samples: HashSet<u128> = HashSet::new();
-            for _ in 0..32 {
-                let delay = reconnect_delay(attempt);
-                assert!(
-                    delay >= lower && delay <= upper,
-                    "attempt {attempt}: {delay:?} not in [{lower:?}, {upper:?}]",
-                );
-                samples.insert(delay.as_millis());
-            }
-            assert!(
-                samples.len() > 1,
-                "attempt {attempt}: 32 samples all identical, jitter not active",
-            );
-        }
-    }
-
-    #[test]
-    fn token_expired_reconnect_delay_uses_short_probes_before_long_sleep() {
-        let cases = [
-            (0, Duration::from_secs(30)),
-            (1, Duration::from_secs(120)),
-            (2, Duration::from_secs(300)),
-            (3, Duration::from_secs(3600)),
-            (1024, Duration::from_secs(3600)),
-        ];
-        for (attempt, expected) in cases {
-            assert_eq!(token_expired_reconnect_delay(attempt), expected);
-        }
-    }
-
-    #[test]
-    fn retry_log_message_distinguishes_confirmed_token_expiry() {
-        let token_error = SessionError {
-            established_session: false,
-            token_expired: true,
-            source: anyhow::anyhow!("agent token expired"),
-        };
-        let short_message = retry_log_message(
-            &token_error,
-            "agent token expired",
-            Duration::from_secs(30),
-            0,
-        );
-        assert!(short_message.contains("confirmed token expiry"));
-        assert!(short_message.contains("probing for a rotated token"));
-
-        let long_message = retry_log_message(
-            &token_error,
-            "agent token expired",
-            Duration::from_secs(3600),
-            3,
-        );
-        assert!(long_message.contains("operator token rotation likely required"));
-
-        let refresh_error = SessionError {
-            established_session: true,
-            token_expired: false,
-            source: anyhow::anyhow!("failed to send token refresh response"),
-        };
-        let refresh_message = retry_log_message(
-            &refresh_error,
-            "failed to send token refresh response",
-            Duration::from_secs(5),
-            0,
-        );
-        assert!(refresh_message.contains("session ended after authentication"));
-        assert!(!refresh_message.contains("confirmed token expiry"));
-    }
-
-    #[test]
-    fn token_expiry_notice_prefers_structured_code() {
-        assert!(server_notice_reports_token_expired(
-            NoticeLevel::Error,
-            Some(ServerNoticeCode::TokenExpired),
-            "localized operator-facing message",
-        ));
-        assert!(!server_notice_reports_token_expired(
-            NoticeLevel::Error,
-            Some(ServerNoticeCode::Unauthorized),
-            "token expired",
-        ));
-        assert!(server_notice_reports_token_expired(
-            NoticeLevel::Error,
-            None,
-            "token expired; rotate it",
-        ));
-        assert!(!server_notice_reports_token_expired(
-            NoticeLevel::Warn,
-            Some(ServerNoticeCode::TokenExpired),
-            "token expired",
-        ));
-    }
-
-    #[test]
-    fn agent_log_buffer_keeps_recent_entries() {
-        let mut buffer = AgentLogBuffer::default();
-        for index in 0..(MAX_PENDING_AGENT_LOGS + 4) {
-            buffer.push(NoticeLevel::Info, format!("entry-{index}"));
-        }
-        let batch = buffer.peek_batch();
-        assert_eq!(batch.len(), 32);
-        assert_eq!(
-            buffer.entries.front().map(|entry| entry.message.as_str()),
-            Some("entry-4")
-        );
-    }
-
-    #[test]
-    fn agent_log_buffer_trims_existing_overflow_in_one_pass() {
-        let mut buffer = AgentLogBuffer::default();
-        for index in 0..(MAX_PENDING_AGENT_LOGS * 4) {
-            buffer.entries.push_back(nodelite_proto::AgentLogEntry {
-                occurred_at: "2026-05-23T00:00:00Z".to_string(),
-                level: NoticeLevel::Info,
-                message: format!("entry-{index}"),
-            });
-        }
-
-        buffer.push(NoticeLevel::Warn, "after-overflow");
-
-        assert_eq!(buffer.entries.len(), MAX_PENDING_AGENT_LOGS);
-        assert_eq!(
-            buffer.entries.front().map(|entry| entry.message.as_str()),
-            Some("entry-769")
-        );
-        assert_eq!(
-            buffer.entries.back().map(|entry| entry.message.as_str()),
-            Some("after-overflow")
-        );
-    }
-}
+mod tests;

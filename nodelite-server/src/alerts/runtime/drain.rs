@@ -1,3 +1,5 @@
+//! Shutdown has a finite drain window even when external notification endpoints stop responding.
+
 use std::time::Duration;
 
 use tokio::task::JoinHandle;
@@ -34,6 +36,7 @@ pub(super) async fn drain_delivery_dispatcher_with_timeout(
         }
         Err(_) => {
             delivery_dispatcher.abort();
+            let _ = delivery_dispatcher.await;
             warn!(
                 timeout_secs = timeout_duration.as_secs(),
                 "alert delivery dispatcher did not drain before shutdown timeout"
