@@ -82,6 +82,7 @@ pub(crate) async fn generate_agent_install(
             );
         }
     };
+    let logs_guard = state.agent_logs.lifecycle_lock.lock().await;
     if let Err(error) = state.registry.reload().await {
         error!(error = ?error, "failed to reload registry after issuing agent install command");
         return settings_json_error(
@@ -89,6 +90,12 @@ pub(crate) async fn generate_agent_install(
             "failed to refresh the node registry",
         );
     }
+
+    state
+        .agent_logs
+        .forget_missing(&state.registry.node_ids().await)
+        .await;
+    drop(logs_guard);
 
     let message = if issued.created {
         "agent install command generated"

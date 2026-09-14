@@ -46,6 +46,7 @@ pub(crate) async fn delete_agent(
 
 async fn remove_agent(state: AppState, node_id: String) -> Response {
     let _traffic_guard = state.history.traffic_lifecycle_lock.lock().await;
+    let logs_guard = state.agent_logs.lifecycle_lock.lock().await;
     let removed = match state.registry.remove_node(&node_id).await {
         Ok(node) => node,
         Err(RegistryError::NodeNotFound(_)) => {
@@ -64,6 +65,11 @@ async fn remove_agent(state: AppState, node_id: String) -> Response {
     };
 
     state.shared.remove_node(&removed.node_id).await;
+    state
+        .agent_logs
+        .forget_missing(&state.registry.node_ids().await)
+        .await;
+    drop(logs_guard);
     let traffic_result = state.history.forget_traffic(&removed.node_id).await;
     if let Err(error) =
         persist_current_snapshot(&state.shared, state.shared.config().snapshot_path.as_path()).await

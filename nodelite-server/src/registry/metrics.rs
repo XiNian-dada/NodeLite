@@ -5,14 +5,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct TokenVerifyMetrics {
-    pub(crate) limit: u64,
-    pub(crate) active: u64,
-    pub(crate) waiting: u64,
-    pub(crate) wait_seconds_total: f64,
-    pub(crate) token_cache_hits_total: u64,
-    pub(crate) token_cache_misses_total: u64,
-    pub(crate) token_cache_evictions_total: u64,
+pub struct TokenVerifyMetrics {
+    pub limit: u64,
+    pub active: u64,
+    pub waiting: u64,
+    pub wait_seconds_total: f64,
+    pub token_cache_hits_total: u64,
+    pub token_cache_misses_total: u64,
+    pub token_cache_evictions_total: u64,
 }
 
 #[derive(Debug, Default)]

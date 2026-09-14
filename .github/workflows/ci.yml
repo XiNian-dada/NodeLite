@@ -75,6 +75,16 @@ jobs:
           NODELITE_SKIP_WEB_BUILD: 1
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
+      - name: Check standalone Agent configuration and dependencies
+        run: |
+          cargo test -p nodelite-proto --no-default-features --locked
+          cargo test -p nodelite-agent --locked
+          cargo tree -p nodelite-agent --edges normal --prefix none --format '{p}' > agent-dependencies.txt
+          if grep -E '^(ipnet|base32) ' agent-dependencies.txt; then
+            echo "Agent dependency graph includes server-only configuration dependencies" >&2
+            exit 1
+          fi
+
       - name: Run tests
         env:
           NODELITE_SKIP_WEB_BUILD: 1

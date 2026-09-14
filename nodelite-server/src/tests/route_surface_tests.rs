@@ -26,35 +26,10 @@ use crate::registry::{IssueNodeRequest, issue_node};
 use crate::test_support::{test_server_config, test_ws_config};
 use crate::ws::ws_handler;
 
-#[test]
-fn router_builds_with_v08_path_syntax() {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock should be monotonic enough")
-        .as_nanos();
-    let registry_path = std::env::temp_dir().join(format!("nodelite-router-test-{unique}.json"));
-    let mut config = test_server_config(
-        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8080)),
-        "http://127.0.0.1:8080".to_string(),
-        registry_path,
-        PathBuf::from("./data/history.sqlite3"),
-        PathBuf::from("./data/snapshot.json"),
-    );
-    config.readonly_auth = None;
-    config.ws = test_ws_config(32, 8);
-    config.stale_after_secs = 20;
-    config.ping_interval_secs = 10;
-    config.ignored_filesystems = vec!["tmpfs".to_string()];
-    let config = Arc::new(config);
-    let runtime = Runtime::new().expect("runtime should build");
-    let state = runtime
-        .block_on(AppState::test_fixture(
-            config,
-            Arc::new(PathBuf::from("config/server.toml")),
-        ))
-        .expect("state fixture should build");
-
-    let _app: Router = Router::new()
+#[tokio::test]
+async fn router_builds_with_v08_path_syntax() {
+    let (state, temp_dir) = readyz_test_state("router-build").await;
+    let app: Router = Router::new()
         .route("/", get(index))
         .route("/nodes/{node_id}", get(node_detail))
         .route("/assets/{*path}", get(static_asset))
@@ -70,8 +45,17 @@ fn router_builds_with_v08_path_syntax() {
         .route("/api/nodes/{node_id}/history", get(node_history))
         .route("/api/nodes/{node_id}/logs", get(node_logs))
         .route("/ws", get(ws_handler))
-        .with_state(state)
+        .with_state(state.clone())
         .layer(TraceLayer::new_for_http());
+
+    drop(app);
+    state.shutdown.cancel();
+    state.history.shutdown().await;
+    state.audit_log.shutdown().await;
+    drop(state);
+    tokio::fs::remove_dir_all(temp_dir)
+        .await
+        .expect("router temp dir should be removable");
 }
 
 #[test]

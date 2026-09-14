@@ -43,6 +43,7 @@ pub(super) async fn handle_socket(
         node_id: identity.node_id.clone(),
         node_label: identity.node_label.clone(),
         agent_protocol_version: hello.protocol_version,
+        metrics_zlib: hello.supports_metrics_zlib,
         session_id: shared
             .register_node(
                 identity,

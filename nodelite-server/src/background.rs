@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use url::Url;
 
+use crate::agent_logs::AgentLogStore;
 use crate::app_state::ServerReadiness;
 use crate::history::HistoryStore;
 use crate::registry::NodeRegistry;
@@ -41,6 +42,7 @@ pub(crate) fn spawn_stale_reaper(
 pub(crate) fn spawn_registry_reloader(
     registry: NodeRegistry,
     history: HistoryStore,
+    agent_logs: AgentLogStore,
     readiness: ServerReadiness,
     shutdown: CancellationToken,
 ) -> JoinHandle<()> {
@@ -53,13 +55,15 @@ pub(crate) fn spawn_registry_reloader(
                 _ = shutdown.cancelled() => break,
                 _ = ticker.tick() => {
                     history.prune_query_cache();
+                    let _traffic_guard = history.traffic_lifecycle_lock.lock().await;
+                    let _logs_guard = agent_logs.lifecycle_lock.lock().await;
                     match registry.reload_if_file_changed().await {
                         Ok(true) => {
-                            let _traffic_guard = history.traffic_lifecycle_lock.lock().await;
                             readiness.mark_registry_reload_healthy(true);
                             let enrolled_nodes = registry.count().await;
                             let node_ids = registry.node_ids().await;
                             let cleaned_history_nodes = history.forget_missing(&node_ids).await;
+                            let cleaned_log_nodes = agent_logs.forget_missing(&node_ids).await;
                             if let Err(error) = history.reconcile_traffic(&node_ids).await {
                                 warn!(error = ?error, "failed to reconcile active traffic ledgers");
                             }
@@ -67,6 +71,7 @@ pub(crate) fn spawn_registry_reloader(
                                 registry_path = %registry.path().display(),
                                 enrolled_nodes,
                                 cleaned_history_nodes,
+                                cleaned_log_nodes,
                                 "reloaded node registry",
                             );
                         }
@@ -239,6 +244,7 @@ mod tests {
         let handle = spawn_registry_reloader(
             state.registry.clone(),
             state.history.clone(),
+            state.agent_logs.clone(),
             state.readiness.clone(),
             shutdown.clone(),
         );
@@ -273,6 +279,7 @@ mod tests {
         let handle = spawn_registry_reloader(
             state.registry.clone(),
             state.history.clone(),
+            state.agent_logs.clone(),
             state.readiness.clone(),
             shutdown.clone(),
         );
@@ -294,5 +301,110 @@ mod tests {
             .expect("registry reloader should stop promptly")
             .expect("registry reloader should stop cleanly");
         let _ = tokio::fs::remove_dir_all(temp_dir).await;
+    }
+    #[tokio::test]
+    async fn registry_reloader_cleans_removed_agent_logs() {
+        use crate::registry::{IssueNodeRequest, NodeRegistry, issue_node};
+        use nodelite_proto::{AgentLogEntry, NoticeLevel};
+        let (state, temp_dir) = background_state_fixture("log-cleanup").await;
+        for id in ["retired", "live"] {
+            issue_node(
+                state.registry.path(),
+                IssueNodeRequest {
+                    node_id: id.into(),
+                    node_label: Some(id.into()),
+                    tags: vec![],
+                },
+            )
+            .await
+            .expect("enroll node");
+            state
+                .agent_logs
+                .record_entries(
+                    id,
+                    vec![AgentLogEntry {
+                        occurred_at: chrono::Utc::now().to_rfc3339(),
+                        level: NoticeLevel::Info,
+                        message: "fixture".into(),
+                    }],
+                )
+                .await;
+        }
+        state.registry.reload().await.expect("load registry");
+        let external = NodeRegistry::load(state.registry.path())
+            .await
+            .expect("external registry");
+        external
+            .remove_node("retired")
+            .await
+            .expect("external deletion");
+        let shutdown = CancellationToken::new();
+        let handle = spawn_registry_reloader(
+            state.registry.clone(),
+            state.history.clone(),
+            state.agent_logs.clone(),
+            state.readiness.clone(),
+            shutdown.clone(),
+        );
+        timeout(Duration::from_secs(5), async {
+            while !state.agent_logs.list("retired", 1).await.is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("reload prunes retired logs");
+        assert_eq!(state.agent_logs.list("live", 1).await.len(), 1);
+        shutdown.cancel();
+        handle.await.expect("reloader stopped");
+        state.history.shutdown().await;
+        state.audit_log.shutdown().await;
+        state.shutdown.cancel();
+        tokio::fs::remove_dir_all(temp_dir).await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn agent_log_metrics_report_live_budgets_and_evictions() {
+        use axum::body::to_bytes;
+        use axum::extract::State;
+        use nodelite_proto::{AgentLogEntry, AgentLogsConfig, NoticeLevel};
+        let (mut state, temp_dir) = background_state_fixture("log-metrics").await;
+        state.agent_logs = crate::agent_logs::AgentLogStore::with_limits(AgentLogsConfig {
+            max_entries: 128,
+            max_estimated_bytes: 65536,
+        });
+        let _ = crate::handlers::metrics(State(state.clone())).await;
+        for _ in 0..4 {
+            state
+                .agent_logs
+                .record_entries(
+                    "node",
+                    (0..64)
+                        .map(|_| AgentLogEntry {
+                            occurred_at: chrono::Utc::now().to_rfc3339(),
+                            level: NoticeLevel::Info,
+                            message: "x".repeat(512),
+                        })
+                        .collect(),
+                )
+                .await;
+        }
+        let stats = state.agent_logs.stats().await;
+        assert!(stats.evicted_global_budget_total > 0);
+        let response = crate::handlers::metrics(State(state.clone())).await;
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("metrics body");
+        let body = String::from_utf8(bytes.to_vec()).expect("metrics UTF-8");
+        assert!(body.contains("nodelite_agent_logs_max_entries 128\n"));
+        assert!(body.contains("nodelite_agent_logs_max_estimated_bytes 65536\n"));
+        assert!(body.contains(&format!("nodelite_agent_logs_entries {}\n", stats.entries)));
+        assert!(body.contains(&format!(
+            "nodelite_agent_logs_evictions_total{{reason=\"global_budget\"}} {}\n",
+            stats.evicted_global_budget_total
+        )));
+        state.history.shutdown().await;
+        state.audit_log.shutdown().await;
+        state.shutdown.cancel();
+        tokio::fs::remove_dir_all(temp_dir).await.expect("cleanup");
     }
 }

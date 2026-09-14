@@ -28,7 +28,7 @@ export default defineConfig({
     target: 'es2022',
     modulePreload: { polyfill: false },
     cssCodeSplit: true,
-    sourcemap: true,
+    sourcemap: false,
     rollupOptions: {
       output: {
         assetFileNames: 'assets/[name].[hash][extname]',

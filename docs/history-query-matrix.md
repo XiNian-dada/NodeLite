@@ -11,10 +11,10 @@ nodes with 480 points each, then runs these cases in separate child processes:
 Run it with an optimized build:
 
 ```bash
-cargo test -p nodelite-server --release load_test_history_query_matrix_scores -- --ignored --nocapture
+cargo bench -p nodelite-server --features bench-internals --bench load -- history-matrix
 ```
 
-The parent process seeds one shared database and launches each case in a fresh copy of the test
+The parent process seeds one shared database and launches each case in a fresh copy of the benchmark
 executable. Each child captures idle memory, samples memory every 10 ms while queries run, and
 returns the observed peak. `HISTORY_QUERY_MATRIX_RESULT` reports p50, p95, max latency, peak delta
 from that child's idle value, and delta from the legacy baseline. Linux reports RSS, PSS and

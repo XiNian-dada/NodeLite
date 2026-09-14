@@ -12,8 +12,9 @@ use tracing::error;
 use crate::AppState;
 use crate::audit::{AuditEventType, AuditLogError, AuditQuery};
 use crate::handlers::metrics_routes::{
-    RuntimeMetrics, WriterMetrics, render_api_cache_metrics, render_metrics_response_body_bytes,
-    render_runtime_metrics, render_token_verify_metrics, render_writer_metrics,
+    RuntimeMetrics, WriterMetrics, render_agent_log_metrics, render_api_cache_metrics,
+    render_metrics_response_body_bytes, render_runtime_metrics, render_token_verify_metrics,
+    render_writer_metrics,
 };
 use crate::history::HistoryError;
 use nodelite_proto::{AgentLogEntry, GeoIpProvider};
@@ -132,6 +133,7 @@ pub(crate) async fn metrics(State(state): State<AppState>) -> Response {
         session_control_queue_full_total: state.shared.session_control_queue_full_total(),
     });
     let api_cache_metrics = render_api_cache_metrics(state.shared.api_cache_metrics());
+    let agent_log_metrics = render_agent_log_metrics(state.agent_logs.stats().await);
     let token_verify_metrics = render_token_verify_metrics(state.registry.token_verify_metrics());
     let config = state.shared.config();
     let (history_db_bytes, history_wal_bytes, history_shm_bytes) =
@@ -158,7 +160,9 @@ pub(crate) async fn metrics(State(state): State<AppState>) -> Response {
     });
     let body = metrics_response_body(
         cached_body,
-        format!("{writer_metrics}{api_cache_metrics}{token_verify_metrics}{runtime_metrics}"),
+        format!(
+            "{writer_metrics}{api_cache_metrics}{token_verify_metrics}{agent_log_metrics}{runtime_metrics}"
+        ),
     );
     let content_length = body.len().to_string();
     (

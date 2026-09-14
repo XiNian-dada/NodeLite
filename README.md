@@ -138,6 +138,12 @@ curl -u "$NODELITE_READONLY_USERNAME:$NODELITE_READONLY_PASSWORD" https://monito
 
 Prometheus 抓取示例和 Grafana Dashboard 见 `ops/prometheus/prometheus.yml` 与 `ops/grafana/nodelite-dashboard.json`。
 
+### Prometheus series cardinality
+
+`/metrics` 的磁盘指标按节点、挂载点和容量状态展开，series 数量随「节点数 × 保留的挂载点数」增长。容器宿主上的 `overlay`、`tmpfs`、`squashfs` 等挂载会增加存储和抓取成本；Agent 默认在采集阶段排除这些伪文件系统，减少上报量和历史数据。
+
+Agent 的 `[agent].ignored_filesystems` 可以替换默认排除列表，设为 `[]` 可上报全部文件系统类型。Server 的 `[filters].ignored_filesystems` 独立生效，如需完整展示，也应将它设为 `[]`。零容量文件系统、重复挂载点及平台保留的系统卷仍按原有规则处理。只有需要逐盘指标时才启用 `[metrics].export_node_disk_metrics = true`；保留默认过滤时，单节点磁盘 series 对应其物理盘和数据盘，而不会随容器临时挂载不断膨胀。
+
 ## 当前能力
 
 - 一键安装 Server / Agent
@@ -196,21 +202,23 @@ filesystem page cache，不能直接当作 Rust heap 或泄漏。完整采集命
 和报告模板见 [内存测量规范](docs/memory-measurement.md)。没有平台与口径的
 `Server <15MB` / `Agent <2MB` 不再作为发布门槛。
 
+压测场景位于 `nodelite-server/benches/`，默认 `cargo test` 不再编译它们。独立 harness 按场景运行并输出延迟、吞吐与资源数据；不引入额外 benchmark 框架。使用 `cargo bench -p nodelite-server --features bench-internals --bench load -- --list` 查看全部场景，每次调用使用独立进程。
+
 常用 loopback 压测：
 
 ```bash
-cargo test -p nodelite-server --release load_test_scaling_scores -- --ignored --nocapture
-cargo test -p nodelite-server --release load_test_api_surface_scores -- --ignored --nocapture
-cargo test -p nodelite-server --release load_test_reconnect_storm_scores -- --ignored --nocapture
+cargo bench -p nodelite-server --features bench-internals --bench load -- scaling
+cargo bench -p nodelite-server --features bench-internals --bench load -- api-surface
+cargo bench -p nodelite-server --features bench-internals --bench load -- reconnect
 ```
 
 更大规模回归压测：
 
 ```bash
-cargo test -p nodelite-server --release load_test_large_fleet_scores -- --ignored --nocapture
-cargo test -p nodelite-server --release load_test_dashboard_fanout_scores -- --ignored --nocapture
-cargo test -p nodelite-server --release load_test_history_pressure_scores -- --ignored --nocapture
-cargo test -p nodelite-server --release load_test_payload_size_scores -- --ignored --nocapture
+cargo bench -p nodelite-server --features bench-internals --bench load -- large-fleet
+cargo bench -p nodelite-server --features bench-internals --bench load -- dashboard
+cargo bench -p nodelite-server --features bench-internals --bench load -- history-pressure
+cargo bench -p nodelite-server --features bench-internals --bench load -- payload
 ```
 
 首页 DOM 渲染压力：
