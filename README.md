@@ -138,6 +138,12 @@ curl -u "$NODELITE_READONLY_USERNAME:$NODELITE_READONLY_PASSWORD" https://monito
 
 Prometheus 抓取示例和 Grafana Dashboard 见 `ops/prometheus/prometheus.yml` 与 `ops/grafana/nodelite-dashboard.json`。
 
+### Prometheus series cardinality
+
+`/metrics` 的磁盘指标按节点、挂载点和容量状态展开，series 数量随「节点数 × 保留的挂载点数」增长。容器宿主上的 `overlay`、`tmpfs`、`squashfs` 等挂载会增加存储和抓取成本；Agent 默认在采集阶段排除这些伪文件系统，减少上报量和历史数据。
+
+Agent 的 `[agent].ignored_filesystems` 可以替换默认排除列表，设为 `[]` 可上报全部文件系统类型。Server 的 `[filters].ignored_filesystems` 独立生效，如需完整展示，也应将它设为 `[]`。零容量文件系统、重复挂载点及平台保留的系统卷仍按原有规则处理。只有需要逐盘指标时才启用 `[metrics].export_node_disk_metrics = true`；保留默认过滤时，单节点磁盘 series 对应其物理盘和数据盘，而不会随容器临时挂载不断膨胀。
+
 ## 当前能力
 
 - 一键安装 Server / Agent

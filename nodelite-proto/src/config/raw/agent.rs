@@ -3,14 +3,16 @@
 use serde::Deserialize;
 
 use super::super::defaults::{
-    default_agent_auth_timeout_secs, default_agent_inbound_timeout_secs,
-    default_agent_send_timeout_secs, default_connect_timeout_secs,
-    default_insecure_transport_warn_interval_secs, default_max_incoming_message_bytes,
-    default_report_interval_secs,
+    default_agent_auth_timeout_secs, default_agent_ignored_filesystems,
+    default_agent_inbound_timeout_secs, default_agent_send_timeout_secs,
+    default_connect_timeout_secs, default_insecure_transport_warn_interval_secs,
+    default_max_incoming_message_bytes, default_report_interval_secs,
 };
 use super::super::helpers::{normalize_tags, validate_url};
 use super::super::{AgentConfig, ConfigError, MAX_NODE_IDENTITY_TEXT_BYTES};
-use crate::validation::{validate_bounded_text, validate_identifier, validate_non_empty};
+use crate::validation::{
+    normalize_string_list, validate_bounded_text, validate_identifier, validate_non_empty,
+};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -27,6 +29,8 @@ struct RawAgentSection {
     token: String,
     #[serde(default = "default_report_interval_secs")]
     report_interval_secs: u64,
+    #[serde(default = "default_agent_ignored_filesystems")]
+    ignored_filesystems: Vec<String>,
     hostname_override: Option<String>,
     #[serde(default)]
     tags: Vec<String>,
@@ -89,6 +93,7 @@ impl RawAgentConfigFile {
             server: self.agent.server,
             token: self.agent.token,
             report_interval_secs: self.agent.report_interval_secs,
+            ignored_filesystems: normalize_ignored_filesystems(self.agent.ignored_filesystems)?,
             hostname_override: self
                 .agent
                 .hostname_override
@@ -102,4 +107,17 @@ impl RawAgentConfigFile {
             insecure_transport_warn_interval_secs: self.agent.insecure_transport_warn_interval_secs,
         })
     }
+}
+
+fn normalize_ignored_filesystems(values: Vec<String>) -> Result<Vec<String>, ConfigError> {
+    let values = normalize_string_list(values);
+    if values.len() > 64 {
+        return Err(ConfigError::new(
+            "agent.ignored_filesystems must contain at most 64 types",
+        ));
+    }
+    for fs_type in &values {
+        validate_bounded_text("agent.ignored_filesystems", fs_type, 64)?;
+    }
+    Ok(values)
 }

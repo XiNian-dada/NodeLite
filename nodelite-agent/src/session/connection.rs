@@ -164,7 +164,7 @@ impl Session<'_> {
                     .map_err(|error| session_error(self.authenticated, error.into()))?;
                 self.handle_frame(frame).await
             }
-            SessionEvent::Report => send_metrics(&mut self.sender, collector)
+            SessionEvent::Report => send_metrics(&mut self.sender, collector, self.config)
                 .await
                 .map_err(|error| session_error(true, error)),
             SessionEvent::RetryThrottle(rate) => self.throttle(rate).await,

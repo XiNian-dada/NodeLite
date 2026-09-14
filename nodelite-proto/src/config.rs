@@ -22,9 +22,10 @@ mod tests;
 use serde::{Deserialize, Serialize};
 
 use self::defaults::{
-    default_agent_auth_timeout_secs, default_agent_inbound_timeout_secs,
-    default_agent_send_timeout_secs, default_connect_timeout_secs,
-    default_insecure_transport_warn_interval_secs, default_max_incoming_message_bytes,
+    default_agent_auth_timeout_secs, default_agent_ignored_filesystems,
+    default_agent_inbound_timeout_secs, default_agent_send_timeout_secs,
+    default_connect_timeout_secs, default_insecure_transport_warn_interval_secs,
+    default_max_incoming_message_bytes,
 };
 use self::raw::RawAgentConfigFile;
 
@@ -138,6 +139,33 @@ pub const DEFAULT_AGENT_INBOUND_TIMEOUT_SECS: u64 = 90;
 /// Agent 最大接收消息字节数。
 pub const DEFAULT_MAX_INCOMING_MESSAGE_BYTES: usize = 64 * 1024;
 
+/// Pseudo filesystems are excluded at collection time to bound wire and Prometheus cardinality.
+pub const DEFAULT_AGENT_IGNORED_FILESYSTEMS: &[&str] = &[
+    "autofs",
+    "bpf",
+    "cgroup",
+    "cgroup2",
+    "configfs",
+    "debugfs",
+    "devfs",
+    "devpts",
+    "devtmpfs",
+    "fdesc",
+    "fusectl",
+    "mqueue",
+    "overlay",
+    "proc",
+    "procfs",
+    "pstore",
+    "ramfs",
+    "securityfs",
+    "squashfs",
+    "sysfs",
+    "tmpfs",
+    "tracefs",
+    "volfs",
+];
+
 /// 配置加载或校验过程中产生的错误。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigError {
@@ -180,6 +208,9 @@ pub struct AgentConfig {
     pub token: String,
     /// Agent 上报指标的间隔秒数。
     pub report_interval_secs: u64,
+    /// Replaces the default pseudo-filesystem filter; an empty list opts into all filesystem types.
+    #[serde(default = "default_agent_ignored_filesystems")]
+    pub ignored_filesystems: Vec<String>,
     /// 可选 hostname 覆盖值,为空时使用本机 hostname。
     pub hostname_override: Option<String>,
     /// 部署方自定义标签,用于筛选和告警作用域。

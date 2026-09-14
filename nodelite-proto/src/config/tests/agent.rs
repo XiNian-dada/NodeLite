@@ -146,3 +146,38 @@ fn rejects_agent_config_with_oversized_identity_text() {
         assert!(error.to_string().contains(field));
     }
 }
+
+#[test]
+fn disk_filters_default_to_pseudo_filesystems_and_allow_explicit_overrides() {
+    let base = "[agent]\nnode_id = 'test'\nnode_label = 'Test'\nserver = 'ws://127.0.0.1/ws'\ntoken = 'fixture'\n";
+    let defaults = parse_agent_config(base).expect("default filters");
+    for fs in ["tmpfs", "overlay", "squashfs", "proc", "cgroup2", "devfs"] {
+        assert!(defaults.ignored_filesystems.iter().any(|value| value == fs));
+    }
+    assert!(
+        parse_agent_config(&format!("{base}ignored_filesystems = []"))
+            .expect("all filesystem types")
+            .ignored_filesystems
+            .is_empty()
+    );
+    assert_eq!(
+        parse_agent_config(&format!("{base}ignored_filesystems = [' ext4 ', 'ext4']"))
+            .expect("custom filters")
+            .ignored_filesystems,
+        vec!["ext4"]
+    );
+    assert!(
+        parse_agent_config(&format!(
+            "{base}ignored_filesystems = ['{}']",
+            "x".repeat(65)
+        ))
+        .is_err()
+    );
+    let too_many = (0..65)
+        .map(|i| format!("'fs-{i}'"))
+        .collect::<Vec<_>>()
+        .join(",");
+    assert!(parse_agent_config(&format!("{base}ignored_filesystems = [{too_many}]")).is_err());
+    parse_agent_config(include_str!("../../../../config/agent.example.toml"))
+        .expect("checked-in Agent example");
+}

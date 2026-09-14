@@ -191,6 +191,10 @@ fn test_host_collector_with_mock_files() {
         send_timeout_secs: 20,
         inbound_timeout_secs: 90,
         report_interval_secs: 5,
+        ignored_filesystems: nodelite_proto::config::DEFAULT_AGENT_IGNORED_FILESYSTEMS
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect(),
         max_incoming_message_bytes: 65536,
         insecure_transport_warn_interval_secs: 900,
         tags: vec!["mock-tag".to_string()],
@@ -212,7 +216,7 @@ fn test_host_collector_with_mock_files() {
 
     // Check snapshot collection (first collection has None rates)
     let snapshot1 = collector
-        .collect_snapshot()
+        .collect_snapshot(&config.ignored_filesystems)
         .expect("collect snapshot from mock root");
     assert_eq!(snapshot1.uptime_secs, 3600);
     assert_eq!(snapshot1.load.one, 0.15);
@@ -243,4 +247,33 @@ fn test_host_collector_with_mock_files() {
     assert_eq!(root_disk.used_bytes, 60 * 1024 * 1024 * 1024);
 
     // 清理由 `TempDir` 的 Drop 负责,无需手动 remove_dir_all。
+}
+
+#[test]
+fn disk_filter_override_controls_reported_filesystem_cardinality() {
+    let temp = TempDir::new("nodelite-disk-filters");
+    let mounts = temp.path().join("mounts");
+    std::fs::write(&mounts,
+        "/dev/vda1 / ext4 rw 0 0\ntmpfs /dev/shm tmpfs rw 0 0\noverlay /docker overlay rw 0 0\n/dev/loop0 /snap squashfs ro 0 0\n")
+        .expect("mount fixture");
+    let defaults = nodelite_proto::config::DEFAULT_AGENT_IGNORED_FILESYSTEMS
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect::<Vec<_>>();
+    let disks =
+        super::disks::collect_disks(&mounts, mock_statvfs, &defaults).expect("default filtering");
+    assert_eq!(
+        disks
+            .iter()
+            .map(|disk| disk.mount_point.as_str())
+            .collect::<Vec<_>>(),
+        vec!["/"]
+    );
+    let disks = super::disks::collect_disks(&mounts, mock_statvfs, &[])
+        .expect("opt into all filesystem types");
+    assert_eq!(disks.len(), 4);
+    let disks = super::disks::collect_disks(&mounts, mock_statvfs, &["ext4".to_string()])
+        .expect("replace defaults with custom filter");
+    assert_eq!(disks.len(), 3);
+    assert!(disks.iter().all(|disk| disk.fs_type != "ext4"));
 }

@@ -78,7 +78,7 @@ async fn run_sample_once(
     collector: &mut crate::collector::HostCollector,
     config: &nodelite_proto::AgentConfig,
 ) -> Result<()> {
-    let snapshot = collect_snapshot_blocking(collector).await?;
+    let snapshot = collect_snapshot_blocking(collector, &config.ignored_filesystems).await?;
     let identity =
         collect_identity_blocking(collector, config.clone(), agent_build_version().to_string())
             .await?;

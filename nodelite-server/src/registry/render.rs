@@ -154,6 +154,12 @@ pub fn render_agent_config(
     content.push_str(&format!("server = \"{}\"\n", toml_escape(&server_url)));
     content.push_str(&format!("token = \"{}\"\n", toml_escape(plaintext_token)));
     content.push_str("report_interval_secs = 5\n");
+    let filesystems = nodelite_proto::config::DEFAULT_AGENT_IGNORED_FILESYSTEMS
+        .iter()
+        .map(|value| format!("\"{value}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    content.push_str(&format!("ignored_filesystems = [{filesystems}]\n"));
     content.push_str(&format!(
         "auth_timeout_secs = {}\nsend_timeout_secs = {}\ninbound_timeout_secs = {}\n",
         nodelite_proto::config::DEFAULT_AGENT_AUTH_TIMEOUT_SECS,

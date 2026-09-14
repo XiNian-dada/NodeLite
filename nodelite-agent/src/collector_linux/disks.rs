@@ -21,6 +21,7 @@ pub(super) type StatvfsFn = fn(&str) -> Result<FilesystemStats>;
 pub(super) fn collect_disks(
     mounts_path: &std::path::Path,
     statvfs_fn: StatvfsFn,
+    ignored_filesystems: &[String],
 ) -> Result<Vec<DiskUsage>> {
     let content = fs::read_to_string(mounts_path)
         .with_context(|| format!("read {}", mounts_path.display()))?;
@@ -43,9 +44,7 @@ pub(super) fn collect_disks(
         let mount_point = unescape_mount_field(raw_mount_point);
         let fs_type = raw_fs_type.to_string();
 
-        if ignored_filesystems().contains(&fs_type.as_str())
-            || !seen_mounts.insert(mount_point.clone())
-        {
+        if ignored_filesystems.contains(&fs_type) || !seen_mounts.insert(mount_point.clone()) {
             continue;
         }
 
@@ -82,31 +81,6 @@ pub(super) fn collect_disks(
 
     disks.sort_by(|left, right| left.mount_point.cmp(&right.mount_point));
     Ok(disks)
-}
-
-/// 默认忽略的"非物理"文件系统,这些通常代表内核虚拟视图或临时挂载。
-fn ignored_filesystems() -> &'static [&'static str] {
-    &[
-        "autofs",
-        "bpf",
-        "cgroup",
-        "cgroup2",
-        "configfs",
-        "debugfs",
-        "devpts",
-        "devtmpfs",
-        "fusectl",
-        "mqueue",
-        "overlay",
-        "proc",
-        "pstore",
-        "ramfs",
-        "securityfs",
-        "squashfs",
-        "sysfs",
-        "tmpfs",
-        "tracefs",
-    ]
 }
 
 /// `/proc/mounts` 中的空格会被转义为 `\040`,这里还原回真实字符。

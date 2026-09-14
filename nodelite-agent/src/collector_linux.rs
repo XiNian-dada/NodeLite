@@ -101,7 +101,7 @@ impl HostCollector {
     ///
     /// 首次调用时由于没有"上一次"的数据,`cpu_usage_percent` 与网络速率
     /// 都会返回 `None`,这是符合预期的初始状态。
-    pub fn collect_snapshot(&mut self) -> Result<NodeSnapshot> {
+    pub fn collect_snapshot(&mut self, ignored_filesystems: &[String]) -> Result<NodeSnapshot> {
         let stat_path = self.sys_root.join("proc/stat");
         let cpu_sample =
             parse_cpu_sample(&fs::read_to_string(&stat_path).context("read /proc/stat")?)?;
@@ -142,7 +142,7 @@ impl HostCollector {
         let uptime_path = self.sys_root.join("proc/uptime");
         let uptime_secs = read_uptime(&uptime_path)?;
         let mounts_path = self.sys_root.join("proc/mounts");
-        let disks = collect_disks(&mounts_path, self.statvfs)?;
+        let disks = collect_disks(&mounts_path, self.statvfs, ignored_filesystems)?;
 
         Ok(NodeSnapshot {
             collected_at: Utc::now(),
