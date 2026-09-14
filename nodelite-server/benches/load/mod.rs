@@ -4,6 +4,7 @@ mod diagnostics;
 mod fake_agent;
 mod history_matrix;
 mod large_scale;
+mod log_memory;
 mod probes;
 mod scenarios;
 mod server;
@@ -90,6 +91,8 @@ type TestSocket = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTls
 
 pub async fn run(scenario: &str) -> anyhow::Result<()> {
     match scenario {
+        "log-memory" => log_memory::run(false).await,
+        "log-memory-sparse" => log_memory::run(true).await,
         "scaling" => scenarios::run_scaling_load_test().await,
         "api-surface" => scenarios::run_api_surface_load_test().await,
         "reconnect" => scenarios::run_reconnect_storm_load_test().await,

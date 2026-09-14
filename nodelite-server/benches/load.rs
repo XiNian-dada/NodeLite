@@ -14,6 +14,8 @@ const SCENARIOS: &[&str] = &[
     "history-matrix",
     "payload",
     "read-write",
+    "log-memory",
+    "log-memory-sparse",
 ];
 
 fn main() -> anyhow::Result<()> {
