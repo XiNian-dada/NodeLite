@@ -165,7 +165,7 @@ async fn initialize_server_runtime(
 
     let shutdown = CancellationToken::new();
     let state = AppState {
-        agent_logs: AgentLogStore::new(),
+        agent_logs: AgentLogStore::with_limits(config.agent_logs),
         traffic_control: crate::traffic_control::TrafficControlStatuses::default(),
         history,
         audit_log,
@@ -221,6 +221,7 @@ fn spawn_server_background_tasks(config: &ServerConfig, state: &AppState) -> Vec
         spawn_registry_reloader(
             state.registry.clone(),
             state.history.clone(),
+            state.agent_logs.clone(),
             state.readiness.clone(),
             state.shutdown.clone(),
         ),

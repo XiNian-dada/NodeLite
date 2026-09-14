@@ -192,3 +192,9 @@ and throughput are useful, but their RSS is not a Server-only memory baseline.
 Release decisions should compare like-for-like scenarios and define budgets
 per scenario. Historical `<15MB Server` and `<2MB Agent` statements did not
 specify a platform or metric and are therefore not release gates.
+
+## Agent 日志预算
+
+`[agent_logs]` 默认保留最多 10000 条日志和 8 MiB 估算分配，每节点最多 200 条。低内存实例可使用 `max_estimated_bytes = 2097152`（2 MiB）；允许范围为 64 KiB–64 MiB，条数范围为 128–100000。写入和驱逐在同一次锁操作中完成，估算包含字符串容量、队列预留空间与结构开销；稀疏队列和节点表会释放多余容量。该预算只约束 Agent 日志，不代表整个 Server 的 RSS 上限。
+
+用 `nodelite_agent_logs_entries`、`nodelite_agent_logs_estimated_bytes` 和对应 `max_*` 指标观察预算；`nodelite_agent_logs_evictions_total{reason="global_budget"|"node_limit"}` 与 `nodelite_agent_logs_dropped_total` 表示已丢失的日志。节点注销和注册表重载会清理不再登记的节点日志，不计为预算驱逐。

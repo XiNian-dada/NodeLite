@@ -29,11 +29,11 @@ use super::super::helpers::{
     validate_sha256, validate_totp_secret, validate_url,
 };
 use super::super::{
-    AlertingConfig, AuditConfig, ConfigError, GeoIpConfig, GeoIpEdition, GeoIpProvider,
-    MAX_HISTORY_QUERY_CONCURRENCY, MAX_HISTORY_READ_CACHE_KIB, MAX_TOKEN_VERIFY_MAX_PARALLELISM,
-    MAX_WRITER_BATCH_SIZE, MIN_HISTORY_QUERY_CONCURRENCY, MIN_HISTORY_READ_CACHE_KIB,
-    MIN_TOKEN_VERIFY_MAX_PARALLELISM, MIN_WRITER_FLUSH_INTERVAL_MS, MetricsConfig,
-    ReadonlyAuthConfig, ServerConfig, WsConfig,
+    AgentLogsConfig, AlertingConfig, AuditConfig, ConfigError, GeoIpConfig, GeoIpEdition,
+    GeoIpProvider, MAX_HISTORY_QUERY_CONCURRENCY, MAX_HISTORY_READ_CACHE_KIB,
+    MAX_TOKEN_VERIFY_MAX_PARALLELISM, MAX_WRITER_BATCH_SIZE, MIN_HISTORY_QUERY_CONCURRENCY,
+    MIN_HISTORY_READ_CACHE_KIB, MIN_TOKEN_VERIFY_MAX_PARALLELISM, MIN_WRITER_FLUSH_INTERVAL_MS,
+    MetricsConfig, ReadonlyAuthConfig, ServerConfig, WsConfig,
 };
 use super::alerts::RawAlertsSection;
 use crate::validation::{normalize_string_list, validate_non_empty};
@@ -50,6 +50,8 @@ pub(in crate::config) struct RawServerConfigFile {
     metrics: RawMetricsSection,
     #[serde(default)]
     audit: RawAuditSection,
+    #[serde(default)]
+    agent_logs: AgentLogsConfig,
     #[serde(default)]
     geoip: RawGeoIpSection,
     #[serde(default)]
@@ -196,6 +198,7 @@ impl RawServerConfigFile {
         let install = self.validate_install()?;
         let readonly_auth = self.validate_auth(&listen)?;
         let audit = self.validate_audit()?;
+        self.agent_logs.validate()?;
         let geoip = self.validate_geoip()?;
         let alerting = self.validate_alerting()?;
         self.validate_server_limits()?;
@@ -221,6 +224,7 @@ impl RawServerConfigFile {
                 export_node_disk_metrics: self.metrics.export_node_disk_metrics,
             },
             audit,
+            agent_logs: self.agent_logs,
             geoip,
             alerting,
             node_registry_path: self.server.node_registry_path,

@@ -367,6 +367,7 @@ async fn handle_agent_logs_message(
     session: &mut ActiveSession,
     message: AgentLogsMessage,
 ) -> Result<LoopAction, super::ProtocolError> {
+    let _logs_guard = state.agent_logs.lifecycle_lock.lock().await;
     if !ensure_current_token(
         state,
         session,
@@ -397,6 +398,7 @@ async fn handle_agent_logs_message(
             dropped_batch_cap = result.dropped_batch_cap,
             dropped_sanitize = result.dropped_sanitize,
             evicted_global_budget = result.evicted_global_budget,
+            evicted_per_node = result.evicted_per_node,
             "some agent runtime log entries dropped"
         );
     }

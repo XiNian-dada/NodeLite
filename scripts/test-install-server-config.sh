@@ -60,6 +60,9 @@ printf '%s\n' "$fresh_config" |
 printf '%s\n' "$fresh_config" |
   grep -Fx 'history_writer_flush_interval_ms = 100' >/dev/null
 
+printf '%s\n' "$fresh_config" | grep -Fx 'max_entries = 10000' >/dev/null
+printf '%s\n' "$fresh_config" | grep -Fx 'max_estimated_bytes = 8388608' >/dev/null
+
 existing_config="$TEMP_DIR/existing.toml"
 printf '%s\n' \
   '[server]' \
@@ -68,6 +71,9 @@ printf '%s\n' \
   'history_read_cache_kib = 768' \
   'history_writer_batch_max = 64' \
   'history_writer_flush_interval_ms = 40' \
+  '[agent_logs]' \
+  'max_entries = 2048' \
+  'max_estimated_bytes = 2097152' \
   '[audit]' \
   'writer_batch_max = 32' \
   'writer_flush_interval_ms = 25' >"$existing_config"
@@ -79,6 +85,8 @@ SERVER_HISTORY_WRITER_FLUSH_INTERVAL_MS="100"
 AUDIT_WRITER_BATCH_MAX="128"
 AUDIT_WRITER_FLUSH_INTERVAL_MS="100"
 load_existing_server_defaults "$existing_config"
+[ "$AGENT_LOGS_MAX_ENTRIES" = "2048" ] || fail "upgrade lost Agent log count budget"
+[ "$AGENT_LOGS_MAX_ESTIMATED_BYTES" = "2097152" ] || fail "upgrade lost Agent log byte budget"
 [ "$SERVER_TOKEN_VERIFY_MAX_PARALLELISM" = "7" ] || {
   printf '%s\n' "upgrade defaults did not preserve token verify parallelism" >&2
   exit 1

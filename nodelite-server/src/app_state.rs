@@ -136,7 +136,7 @@ impl AppState {
         ));
 
         Ok(Self {
-            agent_logs: AgentLogStore::new(),
+            agent_logs: AgentLogStore::with_limits(config.agent_logs),
             traffic_control: crate::traffic_control::TrafficControlStatuses::default(),
             history,
             audit_log,

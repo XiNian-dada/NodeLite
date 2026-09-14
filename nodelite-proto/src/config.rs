@@ -31,8 +31,8 @@ use self::raw::RawAgentConfigFile;
 
 #[cfg(feature = "server-config")]
 pub use self::server::{
-    AuditConfig, GeoIpConfig, GeoIpEdition, GeoIpProvider, MetricsConfig, ReadonlyAuthConfig,
-    ServerConfig, WsConfig, parse_server_config,
+    AgentLogsConfig, AuditConfig, GeoIpConfig, GeoIpEdition, GeoIpProvider, MetricsConfig,
+    ReadonlyAuthConfig, ServerConfig, WsConfig, parse_server_config,
 };
 
 #[cfg(feature = "server-config")]

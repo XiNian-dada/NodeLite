@@ -40,6 +40,8 @@ default_fns! {
 
 #[cfg(feature = "server-config")]
 default_fns! {
+    default_agent_logs_max_entries -> usize = 10_000;
+    default_agent_logs_max_estimated_bytes -> usize = 8 * 1024 * 1024;
     default_history_db_path -> PathBuf = PathBuf::from("./data/history.sqlite3");
     default_history_query_concurrency -> usize = DEFAULT_HISTORY_QUERY_CONCURRENCY;
     default_history_read_cache_kib -> u64 = DEFAULT_HISTORY_READ_CACHE_KIB;

@@ -7,6 +7,7 @@ use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 
 use super::defaults::{
+    default_agent_logs_max_entries, default_agent_logs_max_estimated_bytes,
     default_audit_writer_batch_max, default_audit_writer_flush_interval_ms,
     default_hello_timeout_secs, default_history_query_concurrency, default_history_read_cache_kib,
     default_history_writer_batch_max, default_history_writer_flush_interval_ms,
@@ -49,6 +50,8 @@ pub struct ServerConfig {
     pub metrics: MetricsConfig,
     /// 审计日志配置。
     pub audit: AuditConfig,
+    #[serde(default)]
+    pub agent_logs: AgentLogsConfig,
     /// GeoIP 数据源与更新配置。
     pub geoip: GeoIpConfig,
     /// 告警规则、巡检和通知渠道配置。
@@ -230,4 +233,29 @@ pub fn parse_server_config(input: &str) -> Result<ServerConfig, ConfigError> {
     let raw: RawServerConfigFile =
         toml::from_str(input).map_err(|error| ConfigError::new(error.to_string()))?;
     raw.validate()
+}
+
+config_section! {
+    /// In-memory Agent diagnostic logs have separate entry and estimated allocation budgets.
+    #[derive(Copy, Serialize, PartialEq, Eq)]
+    pub struct AgentLogsConfig {
+        pub max_entries: usize = default_agent_logs_max_entries(),
+        pub max_estimated_bytes: usize = default_agent_logs_max_estimated_bytes(),
+    }
+}
+
+impl AgentLogsConfig {
+    pub(super) fn validate(&self) -> Result<(), ConfigError> {
+        if !(128..=100_000).contains(&self.max_entries) {
+            return Err(ConfigError::new(
+                "agent_logs.max_entries must be between 128 and 100000",
+            ));
+        }
+        if !(64 * 1024..=64 * 1024 * 1024).contains(&self.max_estimated_bytes) {
+            return Err(ConfigError::new(
+                "agent_logs.max_estimated_bytes must be between 65536 and 67108864",
+            ));
+        }
+        Ok(())
+    }
 }

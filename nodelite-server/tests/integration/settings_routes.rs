@@ -493,6 +493,18 @@ async fn settings_agent_delete_revokes_enrollment_and_removes_runtime_node() -> 
     harness.state.registry.reload().await?;
     harness
         .state
+        .agent_logs
+        .record_entries(
+            "edge-sin-01",
+            vec![nodelite_proto::AgentLogEntry {
+                occurred_at: chrono::Utc::now().to_rfc3339(),
+                level: nodelite_proto::NoticeLevel::Info,
+                message: "before deletion".to_string(),
+            }],
+        )
+        .await;
+    harness
+        .state
         .shared
         .register_node(
             synthetic_identity("edge-sin-01", "Edge SIN 01", "test", None, "itest"),
@@ -528,6 +540,10 @@ async fn settings_agent_delete_revokes_enrollment_and_removes_runtime_node() -> 
         .await?;
     assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(harness.state.registry.count().await, 1);
+    assert_eq!(
+        harness.state.agent_logs.list("edge-sin-01", 1).await.len(),
+        1
+    );
 
     let deleted = harness
         .app
@@ -540,6 +556,15 @@ async fn settings_agent_delete_revokes_enrollment_and_removes_runtime_node() -> 
         ))
         .await?;
     assert_status(deleted.status(), StatusCode::OK, deleted).await?;
+    assert!(
+        harness
+            .state
+            .agent_logs
+            .list("edge-sin-01", 1)
+            .await
+            .is_empty()
+    );
+    assert_eq!(harness.state.agent_logs.stats().await.estimated_bytes, 0);
 
     assert!(
         harness

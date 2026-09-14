@@ -5,11 +5,13 @@ use crate::ServerReadiness;
 use nodelite_proto::NodeStatus;
 use nodelite_proto::{MetricsConfig, NodeIdentity, NodeSnapshot, OverviewData};
 
+mod agent_logs;
 mod alerts;
 mod emitter;
 mod node;
 mod token_verify;
 
+pub(crate) use agent_logs::render_agent_log_metrics;
 use emitter::MetricEmitter;
 pub(crate) use token_verify::render_token_verify_metrics;
 
