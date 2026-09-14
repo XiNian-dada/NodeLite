@@ -6,6 +6,7 @@ mod history_matrix;
 mod large_scale;
 mod log_memory;
 mod probes;
+mod reconnect;
 mod scenarios;
 mod server;
 

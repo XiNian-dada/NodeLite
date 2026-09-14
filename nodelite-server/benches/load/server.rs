@@ -115,6 +115,10 @@ impl TestServer {
         ))
     }
 
+    pub(super) fn registry(&self) -> nodelite_server::bench_support::NodeRegistry {
+        self.runtime.registry()
+    }
+
     pub(super) async fn history_artifact_bytes(&self) -> Result<HistoryArtifactBytes> {
         Ok(HistoryArtifactBytes {
             db: file_len_or_zero(&self.history_path).await?,
