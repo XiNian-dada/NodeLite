@@ -6,6 +6,7 @@ macro_rules! default_fns {
     };
 }
 
+#[cfg(feature = "server-config")]
 macro_rules! config_section {
     ($vis:vis struct $name:ident { $($field:ident: $ty:ty = $value:expr,)* }) => {
         #[derive(Debug, Clone, serde::Deserialize)]

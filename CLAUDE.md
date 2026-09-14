@@ -270,9 +270,11 @@ docs(server): refresh architecture guide
 
 ### 修改配置项
 
+`nodelite-proto` 默认启用 `server-config` 以保持兼容；Agent 使用 `default-features = false`，Server 显式启用该 feature。服务端配置、TOTP 和可信代理依赖只在该 feature 下编译。检查 Agent 依赖时单独执行 `cargo tree -p nodelite-agent`，避免 workspace feature 合并掩盖依赖边界。
+
 可选的 raw 配置节用 `config_section!` 同时生成 `Deserialize` 和 `Default`；字段与默认表达式只声明一次。`defaults.rs` 的简单转发函数用 `default_fns!` 生成。包含必填字段的节仍显式声明，语义校验保留在 `validate` 中。
 
-1. 更新 `nodelite-proto/src/config/raw.rs` 的 raw section，字段使用 `#[serde(default)]`。
+1. 更新 `nodelite-proto/src/config/raw/` 的对应 raw section，字段使用 `#[serde(default)]`。
 2. 更新 `nodelite-proto/src/config/defaults.rs`。
 3. 更新公开 `ServerConfig` / `AgentConfig` 类型和校验。
 4. 更新示例 TOML 或默认模板。
