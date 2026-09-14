@@ -120,75 +120,52 @@ struct RawServerSection {
     token_verify_max_parallelism: usize,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawUiSection {
-    #[serde(default = "default_refresh_interval_secs")]
-    refresh_interval_secs: u64,
+config_section! {
+    struct RawUiSection {
+        refresh_interval_secs: u64 = default_refresh_interval_secs(),
+    }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawWsSection {
-    #[serde(default = "default_ws_max_total_connections")]
-    max_total_connections: usize,
-    #[serde(default = "default_ws_max_connections_per_ip")]
-    max_connections_per_ip: usize,
-    #[serde(default = "default_ws_auth_fail_window_secs")]
-    auth_fail_window_secs: u64,
-    #[serde(default = "default_ws_auth_fail_max_attempts")]
-    auth_fail_max_attempts: usize,
-    #[serde(default = "default_ws_auth_block_secs")]
-    auth_block_secs: u64,
+config_section! {
+    struct RawWsSection {
+        max_total_connections: usize = default_ws_max_total_connections(),
+        max_connections_per_ip: usize = default_ws_max_connections_per_ip(),
+        auth_fail_window_secs: u64 = default_ws_auth_fail_window_secs(),
+        auth_fail_max_attempts: usize = default_ws_auth_fail_max_attempts(),
+        auth_block_secs: u64 = default_ws_auth_block_secs(),
+    }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawMetricsSection {
-    #[serde(default = "default_metrics_export_node_resource_metrics")]
-    export_node_resource_metrics: bool,
-    #[serde(default = "default_metrics_export_node_disk_metrics")]
-    export_node_disk_metrics: bool,
+config_section! {
+    struct RawMetricsSection {
+        export_node_resource_metrics: bool = default_metrics_export_node_resource_metrics(),
+        export_node_disk_metrics: bool = default_metrics_export_node_disk_metrics(),
+    }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawAuditSection {
-    #[serde(default = "default_audit_enabled")]
-    enabled: bool,
-    #[serde(default = "default_audit_db_path")]
-    db_path: PathBuf,
-    #[serde(default = "default_audit_retention_days")]
-    retention_days: u64,
-    #[serde(default = "default_audit_writer_batch_max")]
-    writer_batch_max: usize,
-    #[serde(default = "default_audit_writer_flush_interval_ms")]
-    writer_flush_interval_ms: u64,
-    #[serde(default = "default_audit_log_successful_auth")]
-    log_successful_auth: bool,
-    #[serde(default = "default_audit_log_failed_auth")]
-    log_failed_auth: bool,
-    #[serde(default = "default_audit_log_token_events")]
-    log_token_events: bool,
-    #[serde(default = "default_audit_log_rate_limit")]
-    log_rate_limit: bool,
+config_section! {
+    struct RawAuditSection {
+        enabled: bool = default_audit_enabled(),
+        db_path: PathBuf = default_audit_db_path(),
+        retention_days: u64 = default_audit_retention_days(),
+        writer_batch_max: usize = default_audit_writer_batch_max(),
+        writer_flush_interval_ms: u64 = default_audit_writer_flush_interval_ms(),
+        log_successful_auth: bool = default_audit_log_successful_auth(),
+        log_failed_auth: bool = default_audit_log_failed_auth(),
+        log_token_events: bool = default_audit_log_token_events(),
+        log_rate_limit: bool = default_audit_log_rate_limit(),
+    }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawGeoIpSection {
-    #[serde(default = "default_geoip_enabled")]
-    enabled: bool,
-    #[serde(default = "default_geoip_provider")]
-    provider: GeoIpProvider,
-    #[serde(default = "default_geoip_edition")]
-    edition: GeoIpEdition,
-    #[serde(default = "default_geoip_database_path")]
-    database_path: PathBuf,
-    #[serde(default = "default_geoip_auto_update")]
-    auto_update: bool,
-    #[serde(default = "default_geoip_update_interval_days")]
-    update_interval_days: u64,
+config_section! {
+    struct RawGeoIpSection {
+        enabled: bool = default_geoip_enabled(),
+        provider: GeoIpProvider = default_geoip_provider(),
+        edition: GeoIpEdition = default_geoip_edition(),
+        database_path: PathBuf = default_geoip_database_path(),
+        auto_update: bool = default_geoip_auto_update(),
+        update_interval_days: u64 = default_geoip_update_interval_days(),
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -201,76 +178,9 @@ struct RawAuthSection {
     totp_secret: Option<String>,
 }
 
-impl Default for RawUiSection {
-    fn default() -> Self {
-        Self {
-            refresh_interval_secs: default_refresh_interval_secs(),
-        }
-    }
-}
-
-impl Default for RawWsSection {
-    fn default() -> Self {
-        Self {
-            max_total_connections: default_ws_max_total_connections(),
-            max_connections_per_ip: default_ws_max_connections_per_ip(),
-            auth_fail_window_secs: default_ws_auth_fail_window_secs(),
-            auth_fail_max_attempts: default_ws_auth_fail_max_attempts(),
-            auth_block_secs: default_ws_auth_block_secs(),
-        }
-    }
-}
-
-impl Default for RawMetricsSection {
-    fn default() -> Self {
-        Self {
-            export_node_resource_metrics: default_metrics_export_node_resource_metrics(),
-            export_node_disk_metrics: default_metrics_export_node_disk_metrics(),
-        }
-    }
-}
-
-impl Default for RawAuditSection {
-    fn default() -> Self {
-        Self {
-            enabled: default_audit_enabled(),
-            db_path: default_audit_db_path(),
-            retention_days: default_audit_retention_days(),
-            writer_batch_max: default_audit_writer_batch_max(),
-            writer_flush_interval_ms: default_audit_writer_flush_interval_ms(),
-            log_successful_auth: default_audit_log_successful_auth(),
-            log_failed_auth: default_audit_log_failed_auth(),
-            log_token_events: default_audit_log_token_events(),
-            log_rate_limit: default_audit_log_rate_limit(),
-        }
-    }
-}
-
-impl Default for RawGeoIpSection {
-    fn default() -> Self {
-        Self {
-            enabled: default_geoip_enabled(),
-            provider: default_geoip_provider(),
-            edition: default_geoip_edition(),
-            database_path: default_geoip_database_path(),
-            auto_update: default_geoip_auto_update(),
-            update_interval_days: default_geoip_update_interval_days(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawFiltersSection {
-    #[serde(default = "default_ignored_filesystems")]
-    ignored_filesystems: Vec<String>,
-}
-
-impl Default for RawFiltersSection {
-    fn default() -> Self {
-        Self {
-            ignored_filesystems: default_ignored_filesystems(),
-        }
+config_section! {
+    struct RawFiltersSection {
+        ignored_filesystems: Vec<String> = default_ignored_filesystems(),
     }
 }
 

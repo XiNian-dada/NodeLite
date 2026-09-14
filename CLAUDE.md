@@ -270,6 +270,8 @@ docs(server): refresh architecture guide
 
 ### 修改配置项
 
+可选的 raw 配置节用 `config_section!` 同时生成 `Deserialize` 和 `Default`；字段与默认表达式只声明一次。`defaults.rs` 的简单转发函数用 `default_fns!` 生成。包含必填字段的节仍显式声明，语义校验保留在 `validate` 中。
+
 1. 更新 `nodelite-proto/src/config/raw.rs` 的 raw section，字段使用 `#[serde(default)]`。
 2. 更新 `nodelite-proto/src/config/defaults.rs`。
 3. 更新公开 `ServerConfig` / `AgentConfig` 类型和校验。

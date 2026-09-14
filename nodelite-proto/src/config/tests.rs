@@ -1,6 +1,7 @@
 //! Agent 与各 Server 配置分区的解析和校验测试。
 
 mod agent;
+mod section_defaults;
 mod server_defaults;
 
 use std::path::PathBuf;

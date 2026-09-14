@@ -5,6 +5,9 @@
 //! 2. 原始 TOML 反序列化、默认值与内部校验 helper 分拆到子模块中,保持公开 API 稳定。
 //! 3. 所有默认值通过常量 `DEFAULT_*` 暴露,供本模块与外部组件共享。
 
+#[macro_use]
+mod macros;
+
 mod alerts;
 mod defaults;
 mod edit;
