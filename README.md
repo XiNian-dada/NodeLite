@@ -202,21 +202,23 @@ filesystem page cache，不能直接当作 Rust heap 或泄漏。完整采集命
 和报告模板见 [内存测量规范](docs/memory-measurement.md)。没有平台与口径的
 `Server <15MB` / `Agent <2MB` 不再作为发布门槛。
 
+压测场景位于 `nodelite-server/benches/`，默认 `cargo test` 不再编译它们。独立 harness 按场景运行并输出延迟、吞吐与资源数据；不引入额外 benchmark 框架。使用 `cargo bench -p nodelite-server --features bench-internals --bench load -- --list` 查看全部场景，每次调用使用独立进程。
+
 常用 loopback 压测：
 
 ```bash
-cargo test -p nodelite-server --release load_test_scaling_scores -- --ignored --nocapture
-cargo test -p nodelite-server --release load_test_api_surface_scores -- --ignored --nocapture
-cargo test -p nodelite-server --release load_test_reconnect_storm_scores -- --ignored --nocapture
+cargo bench -p nodelite-server --features bench-internals --bench load -- scaling
+cargo bench -p nodelite-server --features bench-internals --bench load -- api-surface
+cargo bench -p nodelite-server --features bench-internals --bench load -- reconnect
 ```
 
 更大规模回归压测：
 
 ```bash
-cargo test -p nodelite-server --release load_test_large_fleet_scores -- --ignored --nocapture
-cargo test -p nodelite-server --release load_test_dashboard_fanout_scores -- --ignored --nocapture
-cargo test -p nodelite-server --release load_test_history_pressure_scores -- --ignored --nocapture
-cargo test -p nodelite-server --release load_test_payload_size_scores -- --ignored --nocapture
+cargo bench -p nodelite-server --features bench-internals --bench load -- large-fleet
+cargo bench -p nodelite-server --features bench-internals --bench load -- dashboard
+cargo bench -p nodelite-server --features bench-internals --bench load -- history-pressure
+cargo bench -p nodelite-server --features bench-internals --bench load -- payload
 ```
 
 首页 DOM 渲染压力：

@@ -188,7 +188,7 @@ impl HistoryStore {
         store
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "bench-internals")]
     pub(crate) fn new_with_default_read_cache(
         db_path: PathBuf,
         sqlite_busy_timeout_secs: u64,

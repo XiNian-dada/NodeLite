@@ -26,14 +26,14 @@ use crate::set_protected_response_headers;
 use crate::state::{SessionRefreshReply, SharedState};
 use crate::ws::{ws_browser_handler, ws_handler};
 use nodelite_proto::{
-    BrowserMessage, DiskUsage, HelloMessage, HistoryPoint, LoadAverage, MemoryUsage,
-    NetworkCounters, NodeIdentity, NodeSnapshot, NodeStatus, NoticeLevel, OverviewData,
-    RefreshTokenResponseMessage, WireMessage,
+    BrowserMessage, HelloMessage, HistoryPoint, NodeIdentity, NodeSnapshot, NodeStatus,
+    OverviewData, RefreshTokenResponseMessage, WireMessage,
 };
 
-mod config;
-
-pub(crate) use config::{test_server_config, test_ws_config};
+pub(crate) use crate::test_fixtures::{
+    fake_snapshot_at, send_wire_message, synthetic_identity, test_server_config, test_ws_config,
+    wait_for_authenticated_notice,
+};
 
 pub const TEST_BASIC_AUTH_HEADER: &str = "Basic dmlld2VyOnNlY3JldA==";
 #[cfg(tarpaulin)]
@@ -45,27 +45,6 @@ pub const LIVE_REFRESH_TIMEOUT: Duration = Duration::from_secs(20);
 
 pub(crate) type TestSocket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>;
-
-pub(crate) fn synthetic_identity(
-    node_id: &str,
-    node_label: &str,
-    agent_version: &str,
-    kernel_version: Option<&str>,
-    tag: &str,
-) -> NodeIdentity {
-    NodeIdentity {
-        node_id: node_id.to_string(),
-        node_label: node_label.to_string(),
-        hostname: format!("{node_id}.example.internal"),
-        os: "Linux".to_string(),
-        kernel_version: kernel_version.map(str::to_string),
-        cpu_model: Some("Rust Hypervisor".to_string()),
-        cpu_cores: 4,
-        agent_version: agent_version.to_string(),
-        boot_time: Some(Utc::now()),
-        tags: vec![tag.to_string()],
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct TestNode {
@@ -651,98 +630,4 @@ fn fake_identity(node: &TestNode) -> NodeIdentity {
 
 pub fn fake_snapshot(uptime_secs: u64) -> NodeSnapshot {
     fake_snapshot_at(uptime_secs, Utc::now())
-}
-
-pub(crate) fn fake_snapshot_at(uptime_secs: u64, collected_at: DateTime<Utc>) -> NodeSnapshot {
-    NodeSnapshot {
-        collected_at,
-        cpu_usage_percent: Some(12.5 + (uptime_secs % 7) as f64),
-        load: LoadAverage {
-            one: 0.3,
-            five: 0.4,
-            fifteen: 0.5,
-        },
-        memory: MemoryUsage {
-            total_bytes: 4 * 1024 * 1024 * 1024,
-            used_bytes: 1536 * 1024 * 1024,
-            available_bytes: 2560 * 1024 * 1024,
-            swap_total_bytes: 1024 * 1024 * 1024,
-            swap_used_bytes: 64 * 1024 * 1024,
-        },
-        uptime_secs,
-        disks: vec![DiskUsage {
-            device: "/dev/vda".to_string(),
-            mount_point: "/".to_string(),
-            fs_type: "ext4".to_string(),
-            total_bytes: 80 * 1024 * 1024 * 1024,
-            available_bytes: 40 * 1024 * 1024 * 1024,
-            used_bytes: 40 * 1024 * 1024 * 1024,
-            used_percent: 50.0,
-        }],
-        network: NetworkCounters {
-            total_rx_bytes: 512 * 1024 * uptime_secs,
-            total_tx_bytes: 256 * 1024 * uptime_secs,
-            rx_bytes_per_sec: Some(32_768.0 + uptime_secs as f64),
-            tx_bytes_per_sec: Some(16_384.0 + uptime_secs as f64),
-            packet_loss_percent: Some((uptime_secs % 3) as f64 * 0.1),
-        },
-    }
-}
-
-async fn send_wire_message(socket: &mut TestSocket, message: &WireMessage) -> Result<()> {
-    let payload = serde_json::to_string(message).context("serialize wire message")?;
-    socket
-        .send(Message::Text(payload.into()))
-        .await
-        .context("send websocket message")
-}
-
-pub(crate) async fn wait_for_authenticated_notice(
-    socket: &mut TestSocket,
-    node_id: &str,
-    timeout_duration: Duration,
-) -> Result<()> {
-    timeout(timeout_duration, async {
-        loop {
-            let Some(frame) = socket.next().await else {
-                bail!("socket closed before authenticated notice");
-            };
-            match frame.context("receive websocket frame")? {
-                Message::Text(text) => {
-                    let message: WireMessage =
-                        serde_json::from_str(&text).context("decode wire message")?;
-                    match message {
-                        WireMessage::ServerNotice(notice) if notice.message == "authenticated" => {
-                            return Ok(());
-                        }
-                        WireMessage::Ping(ping) => {
-                            send_wire_message(
-                                socket,
-                                &WireMessage::Pong(nodelite_proto::PongMessage {
-                                    nonce: ping.nonce,
-                                }),
-                            )
-                            .await?;
-                        }
-                        WireMessage::ServerNotice(notice) if notice.level == NoticeLevel::Error => {
-                            bail!("server rejected {node_id}: {}", notice.message);
-                        }
-                        _ => {}
-                    }
-                }
-                Message::Ping(payload) => {
-                    socket
-                        .send(Message::Pong(payload))
-                        .await
-                        .context("reply websocket ping")?;
-                }
-                Message::Close(frame) => {
-                    bail!("socket closed before auth: {frame:?}");
-                }
-                _ => {}
-            }
-        }
-    })
-    .await
-    .context("timed out waiting for authenticated notice")?
 }

@@ -44,8 +44,7 @@ eviction 保持为 0，应优先检查并发冷启动、注册表 revision 变�
 ```bash
 for parallelism in 2 4 8; do
   NODELITE_TOKEN_VERIFY_PARALLELISM="$parallelism" \
-    cargo test -p nodelite-server load_test_token_verify_storm_budget \
-      -- --ignored --nocapture
+    cargo bench -p nodelite-server --features bench-internals --bench load -- token-budget
 done
 ```
 

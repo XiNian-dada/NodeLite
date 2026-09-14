@@ -30,8 +30,9 @@ pub(super) struct ProcessMemorySnapshot {
 
 impl ResourceSnapshot {
     pub(super) async fn capture(server: &TestServer) -> Result<Self> {
-        let (history_queue_depth, _) = server.history.writer_queue_metrics().await;
-        let api_metrics = server.shared.api_cache_metrics();
+        let (history_queue_depth, _) =
+            nodelite_server::bench_support::writer_queue_metrics(&server.history).await;
+        let api_metrics = nodelite_server::bench_support::api_cache_metrics(&server.shared);
         Ok(Self {
             rss_bytes: current_process_memory()?.rss_bytes,
             history_queue_depth: history_queue_depth as usize,
@@ -81,7 +82,7 @@ pub(super) fn current_rss_bytes() -> Result<u64> {
 
 #[cfg(not(target_os = "linux"))]
 pub(super) fn current_rss_bytes() -> Result<u64> {
-    crate::handlers::process_resident_memory_bytes()
+    nodelite_server::bench_support::process_resident_memory_bytes()
         .context("current platform does not expose process RSS")
 }
 

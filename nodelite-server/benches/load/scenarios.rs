@@ -23,7 +23,7 @@ use super::{
     LOAD_TEST_STORM_METRIC_DELAY_MS, LOAD_TEST_STORM_METRICS_PER_CYCLE,
     LOAD_TEST_STORM_READ_PROBES, LOAD_TEST_TIMEOUT_SECS, ScenarioResult, StormScenarioResult,
 };
-use crate::registry::{IssueNodeRequest, NodeRegistry, issue_node};
+use nodelite_server::bench_support::{IssueNodeRequest, NodeRegistry, issue_node};
 
 const TOKEN_VERIFY_STORM_NODES: usize = 200;
 const ARGON2_VERIFY_WORKING_BYTES: u64 = 19 * 1024 * 1024;
@@ -236,7 +236,7 @@ async fn execute_token_verify_storm(
     let peak = sampler_handle
         .await
         .context("join token verify sampler")??;
-    let final_metrics = registry.token_verify_metrics();
+    let final_metrics = nodelite_server::bench_support::token_verify_metrics(&registry);
     let rss_delta_bytes = peak.rss_bytes.saturating_sub(baseline_rss_bytes);
     Ok(TokenVerifyStormResult {
         elapsed,
@@ -326,7 +326,7 @@ async fn sample_token_verify_peak(
     mut stop_rx: watch::Receiver<bool>,
     ready_tx: oneshot::Sender<()>,
 ) -> Result<TokenVerifyPeak> {
-    let metrics = registry.token_verify_metrics();
+    let metrics = nodelite_server::bench_support::token_verify_metrics(&registry);
     let mut peak = TokenVerifyPeak {
         rss_bytes: current_rss_bytes()?,
         active: metrics.active,
@@ -343,7 +343,7 @@ async fn sample_token_verify_peak(
                 break;
             }
             _ = interval.tick() => {
-                let metrics = registry.token_verify_metrics();
+                let metrics = nodelite_server::bench_support::token_verify_metrics(&registry);
                 peak.rss_bytes = peak.rss_bytes.max(current_rss_bytes()?);
                 peak.active = peak.active.max(metrics.active);
                 peak.waiting = peak.waiting.max(metrics.waiting);

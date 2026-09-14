@@ -4,22 +4,15 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
-use axum::Router;
-use axum::middleware::from_fn_with_state;
-use axum::routing::get;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
-use tower_http::trace::TraceLayer;
 
 use super::AgentCredential;
-use crate::handlers::{
-    metrics, node_history, node_logs, node_status, nodes, overview, require_readonly_auth,
-};
-use crate::history::HistoryStore;
-use crate::registry::{IssueNodeRequest, issue_node};
-use crate::state::SharedState;
-use crate::test_support::{test_server_config, test_ws_config};
-use crate::ws::ws_handler;
+use nodelite_server::bench_support::BenchmarkRuntime;
+use nodelite_server::bench_support::HistoryStore;
+use nodelite_server::bench_support::SharedState;
+use nodelite_server::bench_support::{IssueNodeRequest, issue_node};
+use nodelite_server::bench_support::{test_server_config, test_ws_config};
 
 pub(super) struct TestServer {
     pub(super) addr: SocketAddr,
@@ -27,6 +20,7 @@ pub(super) struct TestServer {
     pub(super) history: HistoryStore,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
     server_handle: JoinHandle<Result<(), std::io::Error>>,
+    runtime: BenchmarkRuntime,
     temp_dir: PathBuf,
     history_path: PathBuf,
 }
@@ -87,27 +81,12 @@ impl TestServer {
         config.ws = test_ws_config(node_count.saturating_add(32), node_count.saturating_add(32));
         config.stale_after_secs = 20;
         let config = std::sync::Arc::new(config);
-        let state = crate::AppState::test_fixture(
-            config,
-            std::sync::Arc::new(temp_dir.join("server.toml")),
-        )
-        .await?;
-        let history = state.history.clone();
-
-        let shared = state.shared.clone();
-        let protected_routes = Router::new()
-            .route("/api/overview", get(overview))
-            .route("/metrics", get(metrics))
-            .route("/api/nodes", get(nodes))
-            .route("/api/nodes/{node_id}", get(node_status))
-            .route("/api/nodes/{node_id}/history", get(node_history))
-            .route("/api/nodes/{node_id}/logs", get(node_logs))
-            .route_layer(from_fn_with_state(state.clone(), require_readonly_auth));
-        let app = Router::new()
-            .route("/ws", get(ws_handler))
-            .merge(protected_routes)
-            .with_state(state)
-            .layer(TraceLayer::new_for_http());
+        let runtime =
+            BenchmarkRuntime::new(config, std::sync::Arc::new(temp_dir.join("server.toml")))
+                .await?;
+        let history = runtime.history();
+        let shared = runtime.shared();
+        let app = runtime.router();
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
         let server_handle = tokio::spawn(async move {
@@ -128,6 +107,7 @@ impl TestServer {
                 history,
                 shutdown_tx: Some(shutdown_tx),
                 server_handle,
+                runtime,
                 temp_dir,
                 history_path,
             },
@@ -160,6 +140,7 @@ impl TestServer {
             .await
             .map_err(|error| anyhow!("join server task: {error}"))?;
         result.map_err(|error| anyhow!("server task: {error}"))?;
+        self.runtime.shutdown().await;
         let _ = tokio::fs::remove_dir_all(&self.temp_dir).await;
         Ok(())
     }

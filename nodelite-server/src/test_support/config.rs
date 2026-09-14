@@ -5,10 +5,7 @@ use std::path::PathBuf;
 
 use nodelite_proto::{AuditConfig, ReadonlyAuthConfig, ServerConfig, WsConfig};
 
-pub(crate) fn test_ws_config(
-    max_total_connections: usize,
-    max_connections_per_ip: usize,
-) -> WsConfig {
+pub fn test_ws_config(max_total_connections: usize, max_connections_per_ip: usize) -> WsConfig {
     WsConfig {
         max_total_connections,
         max_connections_per_ip,
@@ -18,7 +15,7 @@ pub(crate) fn test_ws_config(
     }
 }
 
-pub(crate) fn test_server_config(
+pub fn test_server_config(
     listen: SocketAddr,
     public_base_url: String,
     registry_path: PathBuf,
