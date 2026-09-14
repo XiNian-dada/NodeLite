@@ -356,6 +356,7 @@ impl TestAgent {
             .with_context(|| format!("connect fake agent {}", node.node_id))?;
 
         let hello = WireMessage::Hello(HelloMessage {
+            supports_metrics_zlib: false,
             protocol_version: nodelite_proto::WIRE_PROTOCOL_VERSION,
             token: node.token.clone(),
             identity: fake_identity(node),

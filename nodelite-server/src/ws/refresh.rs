@@ -215,6 +215,7 @@ mod tests {
 
     fn session() -> ActiveSession {
         ActiveSession {
+            metrics_zlib: false,
             node_id: "hk-01".to_string(),
             node_label: "Hong Kong 01".to_string(),
             agent_protocol_version: nodelite_proto::WIRE_PROTOCOL_VERSION,

@@ -16,6 +16,7 @@ const SCENARIOS: &[&str] = &[
     "read-write",
     "log-memory",
     "log-memory-sparse",
+    "wire-bandwidth",
 ];
 
 fn main() -> anyhow::Result<()> {

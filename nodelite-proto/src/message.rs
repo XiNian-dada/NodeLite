@@ -1,5 +1,5 @@
 //! Agent 与 Server 之间通过 WebSocket 交换的消息定义。
-//! 所有消息均为 JSON 文本帧,顶层使用 `type` 字段进行内部标记式枚举区分。
+//! 默认使用 JSON 文本帧；双方协商后，只有 Metrics 可以使用独立压缩的二进制帧。
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -52,6 +52,8 @@ pub enum WireMessage {
 /// `token` 由 Server 的节点注册表分发,`identity` 由 Agent 在本地采集后填充。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HelloMessage {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub supports_metrics_zlib: bool,
     #[serde(default = "current_protocol_version")]
     /// Agent 支持的 wire protocol 版本。
     pub protocol_version: u16,
@@ -102,6 +104,8 @@ pub struct ServerNoticeMessage {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ServerNoticeCode {
+    /// Authenticated peers may send independently zlib-compressed Metrics frames.
+    MetricsZlibV1,
     /// Agent token 已过期,需要运维侧轮换并重装/更新节点配置。
     TokenExpired,
     /// 认证失败,但服务端不向客户端暴露更细节原因。
@@ -125,6 +129,7 @@ where
 impl ServerNoticeCode {
     fn from_wire_code(code: &str) -> Option<Self> {
         match code {
+            "metrics_zlib_v1" => Some(Self::MetricsZlibV1),
             "token_expired" => Some(Self::TokenExpired),
             "unauthorized" => Some(Self::Unauthorized),
             "unsupported_protocol_version" => Some(Self::UnsupportedProtocolVersion),
@@ -318,6 +323,7 @@ mod tests {
         }"#;
 
         let hello: HelloMessage = serde_json::from_str(payload).expect("valid legacy hello");
+        assert!(!hello.supports_metrics_zlib);
         assert_eq!(hello.protocol_version, WIRE_PROTOCOL_VERSION);
     }
 
@@ -381,6 +387,7 @@ mod tests {
             tags: vec!["apac".to_string()],
         };
         let hello = WireMessage::Hello(HelloMessage {
+            supports_metrics_zlib: false,
             protocol_version: WIRE_PROTOCOL_VERSION,
             token: "token".to_string(),
             identity: identity.clone(),

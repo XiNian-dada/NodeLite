@@ -42,6 +42,7 @@ struct Session<'a> {
     logs: &'a mut AgentLogBuffer,
     sender: AgentWsSender,
     authenticated: bool,
+    metrics_zlib: bool,
     traffic: TrafficController,
 }
 
@@ -80,10 +81,12 @@ pub async fn run_session(
         config_path,
         logs: log_buffer,
         authenticated: false,
+        metrics_zlib: false,
         traffic: TrafficController::default(),
     };
     let deadline = Instant::now() + Duration::from_secs(session.config.auth_timeout_secs);
     let hello = WireMessage::Hello(HelloMessage {
+        supports_metrics_zlib: true,
         protocol_version: WIRE_PROTOCOL_VERSION,
         token: session.config.token.clone(),
         identity: identity.clone(),
@@ -164,9 +167,11 @@ impl Session<'_> {
                     .map_err(|error| session_error(self.authenticated, error.into()))?;
                 self.handle_frame(frame).await
             }
-            SessionEvent::Report => send_metrics(&mut self.sender, collector, self.config)
-                .await
-                .map_err(|error| session_error(true, error)),
+            SessionEvent::Report => {
+                send_metrics(&mut self.sender, collector, self.config, self.metrics_zlib)
+                    .await
+                    .map_err(|error| session_error(true, error))
+            }
             SessionEvent::RetryThrottle(rate) => self.throttle(rate).await,
         }
     }
@@ -226,6 +231,7 @@ impl Session<'_> {
             message,
         } = notice;
         if !self.authenticated && matches!(level, NoticeLevel::Info) && message == "authenticated" {
+            self.metrics_zlib = code == Some(nodelite_proto::ServerNoticeCode::MetricsZlibV1);
             self.authenticated = true;
             self.traffic.probe();
             self.logs.push(

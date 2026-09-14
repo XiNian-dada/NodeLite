@@ -9,6 +9,7 @@ mod probes;
 mod reconnect;
 mod scenarios;
 mod server;
+mod wire_bandwidth;
 
 use std::time::Duration;
 
@@ -92,6 +93,7 @@ type TestSocket = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTls
 
 pub async fn run(scenario: &str) -> anyhow::Result<()> {
     match scenario {
+        "wire-bandwidth" => wire_bandwidth::run(),
         "log-memory" => log_memory::run(false).await,
         "log-memory-sparse" => log_memory::run(true).await,
         "scaling" => scenarios::run_scaling_load_test().await,

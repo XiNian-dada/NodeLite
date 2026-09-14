@@ -274,8 +274,14 @@ async fn send_metrics(
     sender: &mut AgentWsSender,
     collector: &mut HostCollector,
     config: &AgentConfig,
+    compressed: bool,
 ) -> Result<()> {
     let snapshot = collect_snapshot_blocking(collector, &config.ignored_filesystems).await?;
+    if compressed {
+        let frame = nodelite_proto::compression::encode_metrics(&MetricsMessage { snapshot })?;
+        sender.send(Message::Binary(frame.into())).await?;
+        return Ok(());
+    }
     send_wire_message(sender, &WireMessage::Metrics(MetricsMessage { snapshot })).await
 }
 
