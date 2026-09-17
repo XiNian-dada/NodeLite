@@ -5,19 +5,19 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Utc};
-use futures::SinkExt;
 use tokio::sync::{Barrier, mpsc, watch};
 use tokio::time::sleep;
 use tokio_tungstenite::connect_async;
-use tokio_tungstenite::tungstenite::Message;
 
 use super::{AgentCredential, AgentWorkload, LOAD_TEST_TIMEOUT_SECS, TestSocket};
-use crate::history::HistoryStore;
-use crate::state::SharedState;
-use crate::test_support::{fake_snapshot_at, synthetic_identity, wait_for_authenticated_notice};
 use nodelite_proto::{
     DEFAULT_HISTORY_WRITE_INTERVAL_SECS, HelloMessage, MetricsMessage, NodeIdentity, NodeSnapshot,
     NodeStatus, WireMessage,
+};
+use nodelite_server::bench_support::HistoryStore;
+use nodelite_server::bench_support::SharedState;
+use nodelite_server::bench_support::{
+    fake_snapshot_at, send_wire_message, synthetic_identity, wait_for_authenticated_notice,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -268,6 +268,7 @@ async fn connect_authenticated_fake_agent(
     let t1 = Instant::now();
 
     let hello = WireMessage::Hello(HelloMessage {
+        supports_metrics_zlib: false,
         protocol_version: nodelite_proto::WIRE_PROTOCOL_VERSION,
         token: credential.token.clone(),
         identity: fake_identity(credential),
@@ -314,12 +315,4 @@ async fn send_metrics_workload(
         }
     }
     Ok(())
-}
-
-async fn send_wire_message(socket: &mut TestSocket, message: &WireMessage) -> Result<()> {
-    let payload = serde_json::to_string(message).context("serialize wire message")?;
-    socket
-        .send(Message::Text(payload.into()))
-        .await
-        .context("send websocket message")
 }

@@ -36,7 +36,8 @@ time = "0.3"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
-tokio-util.workspace = true
+tokio-util = { workspace = true, features = ["rt"] }
+tokio-tungstenite = { workspace = true, optional = true }
 toml.workspace = true
 toml_edit.workspace = true
 totp-lite = "2.0"
@@ -45,7 +46,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true
 webpki-roots = "1.0"
-nodelite-proto = { path = "../nodelite-proto" }
+nodelite-proto = { path = "../nodelite-proto", default-features = false, features = ["server-config", "wire-compression"] }
 include_dir = "0.7"
 
 [build-dependencies]
@@ -58,7 +59,15 @@ tokio-tungstenite.workspace = true
 tower = "0.5"
 
 [features]
-load_test = []
+bench-internals = ["dep:tokio-tungstenite"]
+load_test = ["bench-internals"]
+
+[[bench]]
+name = "load"
+path = "benches/load.rs"
+harness = false
+test = false
+required-features = ["bench-internals"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }

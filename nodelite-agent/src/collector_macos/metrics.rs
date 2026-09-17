@@ -105,7 +105,7 @@ pub(super) fn compute_available_memory_bytes(
         .min(total_bytes)
 }
 
-pub(super) fn collect_disks() -> Result<Vec<DiskUsage>> {
+pub(super) fn collect_disks(ignored_filesystems: &[String]) -> Result<Vec<DiskUsage>> {
     let mounts = syscall::mounted_filesystems()?;
     let mut seen_mounts = HashSet::new();
     let mut disks = Vec::new();
@@ -114,7 +114,7 @@ pub(super) fn collect_disks() -> Result<Vec<DiskUsage>> {
         let device = syscall::c_chars_to_string(&mount.f_mntfromname)?;
         let mount_point = syscall::c_chars_to_string(&mount.f_mntonname)?;
         let fs_type = syscall::c_chars_to_string(&mount.f_fstypename)?;
-        if ignored_filesystems().contains(&fs_type.as_str())
+        if ignored_filesystems.contains(&fs_type)
             || ignored_mount_point(&mount_point)
             || !seen_mounts.insert(mount_point.clone())
         {
@@ -142,10 +142,6 @@ pub(super) fn collect_disks() -> Result<Vec<DiskUsage>> {
 
     disks.sort_by(|left, right| left.mount_point.cmp(&right.mount_point));
     Ok(disks)
-}
-
-fn ignored_filesystems() -> &'static [&'static str] {
-    &["autofs", "devfs", "fdesc", "procfs", "volfs"]
 }
 
 fn ignored_mount_point(mount_point: &str) -> bool {

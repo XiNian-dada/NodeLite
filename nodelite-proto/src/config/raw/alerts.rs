@@ -31,40 +31,27 @@ pub(super) struct RawAlertsSection {
     inspection: RawInspectionSection,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawAlertSmtpSection {
-    #[serde(default)]
-    enabled: bool,
-    #[serde(default)]
-    host: String,
-    #[serde(default = "default_alert_smtp_port")]
-    port: u16,
-    #[serde(default)]
-    username: String,
-    #[serde(default)]
-    password: Option<String>,
-    #[serde(default)]
-    sender: String,
-    #[serde(default)]
-    recipients: Vec<String>,
-    #[serde(default = "default_alert_smtp_transport")]
-    transport: AlertSmtpTransport,
-    #[serde(default = "default_alert_send_resolved")]
-    send_resolved: bool,
+config_section! {
+    struct RawAlertSmtpSection {
+        enabled: bool = false,
+        host: String = String::new(),
+        port: u16 = default_alert_smtp_port(),
+        username: String = String::new(),
+        password: Option<String> = None,
+        sender: String = String::new(),
+        recipients: Vec<String> = Vec::new(),
+        transport: AlertSmtpTransport = default_alert_smtp_transport(),
+        send_resolved: bool = default_alert_send_resolved(),
+    }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawAlertWebhookSection {
-    #[serde(default)]
-    enabled: bool,
-    #[serde(default)]
-    url: String,
-    #[serde(default)]
-    secret: Option<String>,
-    #[serde(default = "default_alert_send_resolved")]
-    send_resolved: bool,
+config_section! {
+    struct RawAlertWebhookSection {
+        enabled: bool = false,
+        url: String = String::new(),
+        secret: Option<String> = None,
+        send_resolved: bool = default_alert_send_resolved(),
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -94,66 +81,16 @@ struct RawAlertRuleSection {
     send_resolved: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawInspectionSection {
-    #[serde(default)]
-    enabled: bool,
-    #[serde(default = "default_alert_inspection_local_time")]
-    local_time: String,
-    #[serde(default = "default_alert_inspection_lookback_hours")]
-    lookback_hours: u64,
-    #[serde(default = "default_inspection_delivery")]
-    delivery: Vec<AlertChannel>,
-    #[serde(default = "default_alert_inspection_offline_grace_minutes")]
-    offline_grace_minutes: u64,
-    #[serde(default = "default_alert_inspection_latency_warn_ms")]
-    latency_warn_ms: u64,
-    #[serde(default = "default_alert_inspection_cpu_warn_percent")]
-    cpu_warn_percent: u64,
-    #[serde(default = "default_alert_inspection_memory_warn_percent")]
-    memory_warn_percent: u64,
-}
-
-impl Default for RawAlertSmtpSection {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            host: String::new(),
-            port: default_alert_smtp_port(),
-            username: String::new(),
-            password: None,
-            sender: String::new(),
-            recipients: Vec::new(),
-            transport: default_alert_smtp_transport(),
-            send_resolved: default_alert_send_resolved(),
-        }
-    }
-}
-
-impl Default for RawAlertWebhookSection {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            url: String::new(),
-            secret: None,
-            send_resolved: default_alert_send_resolved(),
-        }
-    }
-}
-
-impl Default for RawInspectionSection {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            local_time: default_alert_inspection_local_time(),
-            lookback_hours: default_alert_inspection_lookback_hours(),
-            delivery: default_inspection_delivery(),
-            offline_grace_minutes: default_alert_inspection_offline_grace_minutes(),
-            latency_warn_ms: default_alert_inspection_latency_warn_ms(),
-            cpu_warn_percent: default_alert_inspection_cpu_warn_percent(),
-            memory_warn_percent: default_alert_inspection_memory_warn_percent(),
-        }
+config_section! {
+    struct RawInspectionSection {
+        enabled: bool = false,
+        local_time: String = default_alert_inspection_local_time(),
+        lookback_hours: u64 = default_alert_inspection_lookback_hours(),
+        delivery: Vec<AlertChannel> = default_inspection_delivery(),
+        offline_grace_minutes: u64 = default_alert_inspection_offline_grace_minutes(),
+        latency_warn_ms: u64 = default_alert_inspection_latency_warn_ms(),
+        cpu_warn_percent: u64 = default_alert_inspection_cpu_warn_percent(),
+        memory_warn_percent: u64 = default_alert_inspection_memory_warn_percent(),
     }
 }
 

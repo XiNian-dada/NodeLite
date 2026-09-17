@@ -270,8 +270,18 @@ fn incoming_ws_config(max_incoming_message_bytes: usize) -> WebSocketConfig {
         .max_message_size(Some(max_incoming_message_bytes))
 }
 
-async fn send_metrics(sender: &mut AgentWsSender, collector: &mut HostCollector) -> Result<()> {
-    let snapshot = collect_snapshot_blocking(collector).await?;
+async fn send_metrics(
+    sender: &mut AgentWsSender,
+    collector: &mut HostCollector,
+    config: &AgentConfig,
+    compressed: bool,
+) -> Result<()> {
+    let snapshot = collect_snapshot_blocking(collector, &config.ignored_filesystems).await?;
+    if compressed {
+        let frame = nodelite_proto::compression::encode_metrics(&MetricsMessage { snapshot })?;
+        sender.send(Message::Binary(frame.into())).await?;
+        return Ok(());
+    }
     send_wire_message(sender, &WireMessage::Metrics(MetricsMessage { snapshot })).await
 }
 

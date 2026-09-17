@@ -21,7 +21,7 @@ impl HostCollector {
         ))
     }
 
-    pub fn collect_snapshot(&mut self) -> Result<NodeSnapshot> {
+    pub fn collect_snapshot(&mut self, _ignored_filesystems: &[String]) -> Result<NodeSnapshot> {
         Err(anyhow!(
             "nodelite-agent only supports Linux and macOS targets"
         ))

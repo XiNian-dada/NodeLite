@@ -44,6 +44,7 @@ struct ActiveSession {
     node_id: String,
     node_label: String,
     agent_protocol_version: u16,
+    metrics_zlib: bool,
     session_id: u64,
     session_token: String,
     session_generation: u64,
@@ -149,6 +150,7 @@ mod tests {
 
     fn hello_text_frame() -> Message {
         let hello = WireMessage::Hello(HelloMessage {
+            supports_metrics_zlib: false,
             protocol_version: WIRE_PROTOCOL_VERSION,
             identity: NodeIdentity {
                 node_id: "hk-01".to_string(),
@@ -283,6 +285,7 @@ mod tests {
             node_id: authorized.identity.node_id.clone(),
             node_label: authorized.identity.node_label.clone(),
             agent_protocol_version: WIRE_PROTOCOL_VERSION,
+            metrics_zlib: false,
             session_id: state
                 .shared
                 .register_node(

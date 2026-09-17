@@ -15,7 +15,7 @@ use crate::registry::NodeRegistry;
 use crate::state::SharedState;
 use nodelite_proto::AlertingConfig;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "bench-internals"))]
 use crate::admission::{auth_failure_admission_config, sensitive_auth_failure_admission_config};
 
 /// 在各处理器之间共享的运行时上下文。
@@ -99,7 +99,7 @@ impl ServerReadiness {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "bench-internals"))]
 impl AppState {
     pub(crate) async fn test_fixture(
         config: Arc<nodelite_proto::ServerConfig>,
@@ -136,7 +136,7 @@ impl AppState {
         ));
 
         Ok(Self {
-            agent_logs: AgentLogStore::new(),
+            agent_logs: AgentLogStore::with_limits(config.agent_logs),
             traffic_control: crate::traffic_control::TrafficControlStatuses::default(),
             history,
             audit_log,
@@ -165,6 +165,7 @@ impl AppState {
             two_factor_sessions: TwoFactorSessions::new(),
             config_path,
             settings_write_lock: Arc::new(tokio::sync::Mutex::new(())),
+            #[cfg(test)]
             settings_write_queued: Arc::new(tokio::sync::Notify::new()),
             shutdown,
         })

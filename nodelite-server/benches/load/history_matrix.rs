@@ -13,7 +13,7 @@ use tokio::task::JoinSet;
 
 use super::diagnostics::{ProcessMemorySnapshot, current_process_memory};
 use super::probes::summarize_latencies;
-use crate::history::HistoryStore;
+use nodelite_server::bench_support::HistoryStore;
 
 mod process;
 
@@ -245,9 +245,11 @@ async fn run_matrix_case(
         Some(read_cache_kib) => {
             HistoryStore::new(db_path.to_path_buf(), 5, query_concurrency, read_cache_kib)
         }
-        None => {
-            HistoryStore::new_with_default_read_cache(db_path.to_path_buf(), 5, query_concurrency)
-        }
+        None => nodelite_server::bench_support::history_with_default_read_cache(
+            db_path.to_path_buf(),
+            5,
+            query_concurrency,
+        ),
     };
     store.initialize().await;
     if !store.is_available() {

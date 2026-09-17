@@ -190,4 +190,12 @@ fn generated_agent_config_includes_valid_transport_deadlines() {
     assert_eq!(config.auth_timeout_secs, 20);
     assert_eq!(config.send_timeout_secs, 20);
     assert_eq!(config.inbound_timeout_secs, 90);
+    assert!(rendered.contains("ignored_filesystems = ["));
+    assert_eq!(
+        config.ignored_filesystems,
+        nodelite_proto::config::DEFAULT_AGENT_IGNORED_FILESYSTEMS
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect::<Vec<_>>()
+    );
 }

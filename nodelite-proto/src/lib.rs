@@ -4,6 +4,8 @@
 //! - `message` — WebSocket 上传输的线协议(WireMessage)。
 //! - `model` — 节点身份、监控快照、历史采样等数据模型。
 
+#[cfg(feature = "wire-compression")]
+pub mod compression;
 pub mod config;
 pub mod message;
 pub mod model;
@@ -13,9 +15,14 @@ pub mod text;
 pub mod validation;
 
 pub use config::{
-    AgentConfig, AlertChannel, AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode,
+    AgentConfig, ConfigError, DEFAULT_REPORT_INTERVAL_SECS, MAX_NODE_IDENTITY_TEXT_BYTES,
+    MAX_NODE_TAG_BYTES, MAX_NODE_TAGS, parse_agent_config, upsert_toml_item_preserving_decor,
+};
+#[cfg(feature = "server-config")]
+pub use config::{
+    AgentLogsConfig, AlertChannel, AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode,
     AlertSeverity, AlertSmtpConfig, AlertSmtpTransport, AlertWebhookConfig, AlertingConfig,
-    AuditConfig, ConfigError, DEFAULT_ALERT_INSPECTION_CPU_WARN_PERCENT,
+    AuditConfig, DEFAULT_ALERT_INSPECTION_CPU_WARN_PERCENT,
     DEFAULT_ALERT_INSPECTION_LATENCY_WARN_MS, DEFAULT_ALERT_INSPECTION_LOCAL_TIME,
     DEFAULT_ALERT_INSPECTION_LOOKBACK_HOURS, DEFAULT_ALERT_INSPECTION_MEMORY_WARN_PERCENT,
     DEFAULT_ALERT_INSPECTION_OFFLINE_GRACE_MINUTES, DEFAULT_ALERT_RULE_COOLDOWN_MINUTES,
@@ -25,14 +32,13 @@ pub use config::{
     DEFAULT_HISTORY_READ_CACHE_KIB, DEFAULT_HISTORY_RETENTION_HOURS,
     DEFAULT_HISTORY_WRITE_INTERVAL_SECS, DEFAULT_HISTORY_WRITER_BATCH_MAX,
     DEFAULT_HISTORY_WRITER_FLUSH_INTERVAL_MS, DEFAULT_MAX_MESSAGE_BYTES,
-    DEFAULT_PING_INTERVAL_SECS, DEFAULT_REFRESH_INTERVAL_SECS, DEFAULT_REPORT_INTERVAL_SECS,
-    DEFAULT_STALE_AFTER_SECS, DEFAULT_TOKEN_VERIFY_MAX_PARALLELISM, GeoIpConfig, GeoIpEdition,
-    GeoIpProvider, InspectionConfig, MAX_HISTORY_QUERY_CONCURRENCY, MAX_HISTORY_READ_CACHE_KIB,
-    MAX_NODE_IDENTITY_TEXT_BYTES, MAX_NODE_TAG_BYTES, MAX_NODE_TAGS,
+    DEFAULT_PING_INTERVAL_SECS, DEFAULT_REFRESH_INTERVAL_SECS, DEFAULT_STALE_AFTER_SECS,
+    DEFAULT_TOKEN_VERIFY_MAX_PARALLELISM, GeoIpConfig, GeoIpEdition, GeoIpProvider,
+    InspectionConfig, MAX_HISTORY_QUERY_CONCURRENCY, MAX_HISTORY_READ_CACHE_KIB,
     MAX_TOKEN_VERIFY_MAX_PARALLELISM, MAX_WRITER_BATCH_SIZE, MIN_HISTORY_QUERY_CONCURRENCY,
     MIN_HISTORY_READ_CACHE_KIB, MIN_TOKEN_VERIFY_MAX_PARALLELISM, MIN_WRITER_FLUSH_INTERVAL_MS,
     MetricsConfig, ReadonlyAuthConfig, ServerConfig, WsConfig, normalize_totp_secret,
-    parse_agent_config, parse_server_config, upsert_toml_item_preserving_decor,
+    parse_server_config,
 };
 pub use message::{
     AgentLogEntry, AgentLogsMessage, BrowserMessage, HelloMessage,

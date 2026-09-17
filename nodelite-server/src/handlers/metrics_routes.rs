@@ -5,11 +5,13 @@ use crate::ServerReadiness;
 use nodelite_proto::NodeStatus;
 use nodelite_proto::{MetricsConfig, NodeIdentity, NodeSnapshot, OverviewData};
 
+mod agent_logs;
 mod alerts;
 mod emitter;
 mod node;
 mod token_verify;
 
+pub(crate) use agent_logs::render_agent_log_metrics;
 use emitter::MetricEmitter;
 pub(crate) use token_verify::render_token_verify_metrics;
 
@@ -157,16 +159,16 @@ fn render_history_write_metrics(emitter: &mut MetricEmitter, metrics: HistoryWri
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct ApiCacheMetrics {
-    pub(crate) nodes_hits: u64,
-    pub(crate) nodes_misses: u64,
-    pub(crate) nodes_body_bytes: u64,
-    pub(crate) overview_hits: u64,
-    pub(crate) overview_misses: u64,
-    pub(crate) overview_body_bytes: u64,
-    pub(crate) metrics_hits: u64,
-    pub(crate) metrics_misses: u64,
-    pub(crate) metrics_body_bytes: u64,
+pub struct ApiCacheMetrics {
+    pub nodes_hits: u64,
+    pub nodes_misses: u64,
+    pub nodes_body_bytes: u64,
+    pub overview_hits: u64,
+    pub overview_misses: u64,
+    pub overview_body_bytes: u64,
+    pub metrics_hits: u64,
+    pub metrics_misses: u64,
+    pub metrics_body_bytes: u64,
 }
 
 pub(crate) fn render_api_cache_metrics(metrics: ApiCacheMetrics) -> String {

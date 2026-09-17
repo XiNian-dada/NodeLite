@@ -25,6 +25,8 @@ WS_AUTH_FAIL_MAX_ATTEMPTS="12"
 WS_AUTH_BLOCK_SECS="900"
 METRICS_EXPORT_NODE_RESOURCE_METRICS="false"
 METRICS_EXPORT_NODE_DISK_METRICS="false"
+AGENT_LOGS_MAX_ENTRIES="10000"
+AGENT_LOGS_MAX_ESTIMATED_BYTES="8388608"
 AUDIT_ENABLED="true"
 AUDIT_RETENTION_DAYS="90"
 AUDIT_WRITER_BATCH_MAX="128"
@@ -227,6 +229,11 @@ load_existing_server_defaults() {
   [ -n "$value" ] && UI_REFRESH_INTERVAL_SECS="$value"
   value="$(trim_whitespace "$(toml_get_raw "$config_path" filters ignored_filesystems)")"
   [ -n "$value" ] && IGNORED_FILESYSTEMS_RAW="$value"
+  value="$(trim_whitespace "$(toml_get_raw "$config_path" agent_logs max_entries)")"
+  [ -n "$value" ] && AGENT_LOGS_MAX_ENTRIES="$value"
+  value="$(trim_whitespace "$(toml_get_raw "$config_path" agent_logs max_estimated_bytes)")"
+  [ -n "$value" ] && AGENT_LOGS_MAX_ESTIMATED_BYTES="$value"
+
   value="$(trim_whitespace "$(toml_get_raw "$config_path" geoip enabled)")"
   [ -n "$value" ] && GEOIP_ENABLED="$value"
   value="$(strip_toml_string_quotes "$(toml_get_raw "$config_path" geoip provider)")"
@@ -273,6 +280,9 @@ complete_server_config_defaults() {
 
   ensure_toml_default "$config_path" metrics export_node_resource_metrics "export_node_resource_metrics = $METRICS_EXPORT_NODE_RESOURCE_METRICS"
   ensure_toml_default "$config_path" metrics export_node_disk_metrics "export_node_disk_metrics = $METRICS_EXPORT_NODE_DISK_METRICS"
+
+  ensure_toml_default "$config_path" agent_logs max_entries "max_entries = $AGENT_LOGS_MAX_ENTRIES"
+  ensure_toml_default "$config_path" agent_logs max_estimated_bytes "max_estimated_bytes = $AGENT_LOGS_MAX_ESTIMATED_BYTES"
 
   ensure_toml_default "$config_path" audit enabled "enabled = $AUDIT_ENABLED"
   ensure_toml_default "$config_path" audit db_path "db_path = \"$audit_db_path\""
@@ -370,6 +380,10 @@ edition = "${GEOIP_EDITION}"
 database_path = "${geoip_database_path}"
 auto_update = ${GEOIP_AUTO_UPDATE}
 update_interval_days = ${GEOIP_UPDATE_INTERVAL_DAYS}
+
+[agent_logs]
+max_entries = ${AGENT_LOGS_MAX_ENTRIES}
+max_estimated_bytes = ${AGENT_LOGS_MAX_ESTIMATED_BYTES}
 
 [filters]
 ignored_filesystems = ${IGNORED_FILESYSTEMS_RAW}

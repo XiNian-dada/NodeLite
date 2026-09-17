@@ -55,7 +55,7 @@ impl HostCollector {
     ///
     /// 首次调用时由于没有"上一次"的数据,`cpu_usage_percent` 与网络速率
     /// 都会返回 `None`,这是符合预期的初始状态。
-    pub fn collect_snapshot(&mut self) -> Result<NodeSnapshot> {
+    pub fn collect_snapshot(&mut self, ignored_filesystems: &[String]) -> Result<NodeSnapshot> {
         let cpu_sample = metrics::collect_cpu_sample()?;
         let cpu_usage_percent = self
             .previous_cpu
@@ -129,7 +129,7 @@ impl HostCollector {
         };
         let memory = metrics::collect_memory_usage()?;
         let uptime_secs = syscall::read_uptime_secs()?;
-        let disks = match metrics::collect_disks() {
+        let disks = match metrics::collect_disks(ignored_filesystems) {
             Ok(disks) => disks,
             Err(error) => {
                 warn!(error = ?error, "failed to collect macOS disks; using empty list");

@@ -370,6 +370,7 @@ mod tests {
             ping_interval_secs: 60,
             max_message_bytes: 64 * 1024,
             refresh_interval_secs: 5,
+            agent_logs: Default::default(),
             ignored_filesystems: Vec::new(),
             agent_release_base_url: None,
             agent_release_sha256_x86_64: None,

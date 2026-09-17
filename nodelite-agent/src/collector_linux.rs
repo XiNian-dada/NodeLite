@@ -1,28 +1,27 @@
 //! Linux 主机指标采集器:读取 `/proc`、`statvfs` 等内核接口,
 //! 把原始数据归并成 `nodelite-proto` 中定义的快照与身份结构。
 
-use std::collections::HashSet;
-use std::ffi::CString;
 use std::fs;
-use std::path::Path;
 use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow};
 use chrono::{Duration, Utc};
 use nodelite_proto::{
-    AgentConfig, DiskUsage, LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot,
-    percentage,
+    AgentConfig, LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot,
 };
-use tracing::warn;
 
+#[path = "collector_linux/disks.rs"]
+mod disks;
+
+#[cfg(test)]
+#[path = "collector_linux/tests.rs"]
+mod tests;
+
+use self::disks::{StatvfsFn, collect_disks, real_statvfs};
 use super::shared::{
     CpuSample, NetworkRateBaselines, NetworkSample, NetworkTotals, compute_cpu_usage,
     compute_network_metrics,
 };
-
-/// `statvfs` 探测函数的签名。生产环境指向真正的 libc 系统调用,
-/// 测试时可注入桩实现,从而避免对宿主机真实根文件系统的依赖。
-type StatvfsFn = fn(&str) -> Result<FilesystemStats>;
 
 /// 采集器状态:为了计算 CPU/网络的"差分速率",需要保留上一次的采样值。
 pub struct HostCollector {
@@ -102,7 +101,7 @@ impl HostCollector {
     ///
     /// 首次调用时由于没有"上一次"的数据,`cpu_usage_percent` 与网络速率
     /// 都会返回 `None`,这是符合预期的初始状态。
-    pub fn collect_snapshot(&mut self) -> Result<NodeSnapshot> {
+    pub fn collect_snapshot(&mut self, ignored_filesystems: &[String]) -> Result<NodeSnapshot> {
         let stat_path = self.sys_root.join("proc/stat");
         let cpu_sample =
             parse_cpu_sample(&fs::read_to_string(&stat_path).context("read /proc/stat")?)?;
@@ -143,7 +142,7 @@ impl HostCollector {
         let uptime_path = self.sys_root.join("proc/uptime");
         let uptime_secs = read_uptime(&uptime_path)?;
         let mounts_path = self.sys_root.join("proc/mounts");
-        let disks = collect_disks(&mounts_path, self.statvfs)?;
+        let disks = collect_disks(&mounts_path, self.statvfs, ignored_filesystems)?;
 
         Ok(NodeSnapshot {
             collected_at: Utc::now(),
@@ -411,388 +410,4 @@ fn parse_network_line_counters(counters: &str, iface: &str) -> Result<NetworkTot
         rx_dropped_packets: values[3],
         tx_dropped_packets: values[11],
     })
-}
-
-/// 遍历 `/proc/mounts` 并通过 `statvfs` 获取各挂载点的容量信息。
-/// 同一挂载点重复出现时只保留第一条;特殊虚拟文件系统会被忽略。
-///
-/// `statvfs_fn` 由调用方注入,生产环境是真实系统调用,测试时为桩实现。
-fn collect_disks(mounts_path: &std::path::Path, statvfs_fn: StatvfsFn) -> Result<Vec<DiskUsage>> {
-    let content = fs::read_to_string(mounts_path)
-        .with_context(|| format!("read {}", mounts_path.display()))?;
-    let mut seen_mounts = HashSet::new();
-    let mut seen_devices = HashSet::new();
-    let mut disks = Vec::new();
-
-    for line in content.lines() {
-        let mut fields = line.split_whitespace();
-        let Some(raw_device) = fields.next() else {
-            continue;
-        };
-        let Some(raw_mount_point) = fields.next() else {
-            continue;
-        };
-        let Some(raw_fs_type) = fields.next() else {
-            continue;
-        };
-        let device = unescape_mount_field(raw_device);
-        let mount_point = unescape_mount_field(raw_mount_point);
-        let fs_type = raw_fs_type.to_string();
-
-        if ignored_filesystems().contains(&fs_type.as_str())
-            || !seen_mounts.insert(mount_point.clone())
-        {
-            continue;
-        }
-
-        let stats = match statvfs_fn(&mount_point) {
-            Ok(stats) => stats,
-            Err(error) => {
-                warn!(
-                    mount_point = %mount_point,
-                    fs_type = %fs_type,
-                    error = ?error,
-                    "skipping disk mount after statvfs failure",
-                );
-                continue;
-            }
-        };
-        if stats.total_bytes == 0 {
-            continue;
-        }
-        let device_identity = format!("{device}:{}", stats.total_bytes);
-        if !seen_devices.insert(device_identity) {
-            continue;
-        }
-
-        disks.push(DiskUsage {
-            device,
-            mount_point,
-            fs_type,
-            total_bytes: stats.total_bytes,
-            available_bytes: stats.available_bytes,
-            used_bytes: stats.used_bytes,
-            used_percent: percentage(stats.used_bytes, stats.total_bytes),
-        });
-    }
-
-    disks.sort_by(|left, right| left.mount_point.cmp(&right.mount_point));
-    Ok(disks)
-}
-
-/// 默认忽略的"非物理"文件系统,这些通常代表内核虚拟视图或临时挂载。
-fn ignored_filesystems() -> &'static [&'static str] {
-    &[
-        "autofs",
-        "bpf",
-        "cgroup",
-        "cgroup2",
-        "configfs",
-        "debugfs",
-        "devpts",
-        "devtmpfs",
-        "fusectl",
-        "mqueue",
-        "overlay",
-        "proc",
-        "pstore",
-        "ramfs",
-        "securityfs",
-        "squashfs",
-        "sysfs",
-        "tmpfs",
-        "tracefs",
-    ]
-}
-
-/// `/proc/mounts` 中的空格会被转义为 `\040`,这里还原回真实字符。
-fn unescape_mount_field(value: &str) -> String {
-    value.replace("\\040", " ")
-}
-
-struct FilesystemStats {
-    total_bytes: u64,
-    available_bytes: u64,
-    used_bytes: u64,
-}
-
-/// 调用 libc 的 `statvfs` 获取挂载点容量,以字节为单位返回。
-/// 这是 [`StatvfsFn`] 的生产实现;测试通过 [`HostCollector::with_statvfs`] 注入桩替换它。
-fn real_statvfs(path: &str) -> Result<FilesystemStats> {
-    let c_path =
-        CString::new(path.as_bytes()).with_context(|| format!("path contains NUL byte: {path}"))?;
-    let mut stats = std::mem::MaybeUninit::<libc::statvfs>::uninit();
-    // SAFETY: `c_path` is a live NUL-terminated C string and `stats` points to
-    // writable storage large enough for libc to fill one `statvfs` value.
-    let result = unsafe { libc::statvfs(c_path.as_ptr(), stats.as_mut_ptr()) };
-    if result != 0 {
-        return Err(anyhow!("statvfs failed for {}", Path::new(path).display()));
-    }
-    // SAFETY: `statvfs` returned success, which means libc initialized `stats`.
-    let stats = unsafe { stats.assume_init() };
-
-    let block_size = stats.f_frsize;
-    let total_blocks = stats.f_blocks;
-    let available_blocks = stats.f_bavail;
-    let total_bytes = total_blocks.saturating_mul(block_size);
-    let available_bytes = available_blocks.saturating_mul(block_size);
-    let used_bytes = total_bytes.saturating_sub(available_bytes);
-
-    Ok(FilesystemStats {
-        total_bytes,
-        available_bytes,
-        used_bytes,
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-    use anyhow::Result;
-
-    use super::{
-        FilesystemStats, HostCollector, compute_cpu_usage, compute_network_metrics,
-        parse_cpu_sample, parse_load_average, parse_memory_usage, parse_network_totals,
-        real_statvfs,
-    };
-
-    /// RAII 临时目录:构造时创建唯一目录,析构时递归删除。
-    /// 即使断言 panic,Drop 仍会执行清理,避免临时目录泄漏。
-    struct TempDir {
-        path: PathBuf,
-    }
-
-    impl TempDir {
-        fn new(prefix: &str) -> Self {
-            static COUNTER: AtomicU64 = AtomicU64::new(0);
-            let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let path =
-                std::env::temp_dir().join(format!("{prefix}-{}-{unique}", std::process::id()));
-            std::fs::create_dir_all(&path).expect("create unique temp dir for collector test");
-            Self { path }
-        }
-
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.path);
-        }
-    }
-
-    /// statvfs 桩:返回固定容量,让磁盘采集完全脱离宿主机真实根文件系统。
-    fn mock_statvfs(_mount_point: &str) -> Result<FilesystemStats> {
-        Ok(FilesystemStats {
-            total_bytes: 100 * 1024 * 1024 * 1024,
-            available_bytes: 40 * 1024 * 1024 * 1024,
-            used_bytes: 60 * 1024 * 1024 * 1024,
-        })
-    }
-
-    #[test]
-    fn parses_cpu_sample_and_usage() {
-        let previous = parse_cpu_sample("cpu  100 0 50 400 10 0 0 0 0 0\n")
-            .expect("parse previous cpu sample");
-        let current =
-            parse_cpu_sample("cpu  160 0 70 430 20 0 0 0 0 0\n").expect("parse current cpu sample");
-        let usage = compute_cpu_usage(previous, current);
-        assert!(usage > 50.0 && usage < 70.0);
-    }
-
-    #[test]
-    fn parses_load_average() {
-        let load =
-            parse_load_average("0.11 0.22 0.33 1/100 12345\n").expect("parse load average line");
-        assert_eq!(load.one, 0.11);
-        assert_eq!(load.five, 0.22);
-        assert_eq!(load.fifteen, 0.33);
-    }
-
-    #[test]
-    fn parses_memory_usage() {
-        let memory = parse_memory_usage(
-            "MemTotal:       1024 kB\nMemAvailable:    256 kB\nSwapTotal:       512 kB\nSwapFree:        128 kB\n",
-        )
-        .expect("parse meminfo block");
-        assert_eq!(memory.total_bytes, 1024 * 1024);
-        assert_eq!(memory.used_bytes, 768 * 1024);
-        assert_eq!(memory.swap_used_bytes, 384 * 1024);
-    }
-
-    #[test]
-    fn parses_network_totals_and_rates() {
-        let totals = parse_network_totals(
-            "Inter-|   Receive                                                |  Transmit\n face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\n eth0: 200 20 0 2 0 0 0 0 100 10 0 1 0 0 0 0\n lo: 50 5 0 0 0 0 0 0 50 5 0 0 0 0 0 0\n",
-        )
-        .expect("parse /proc/net/dev block");
-        assert_eq!(totals.rx_bytes, 200);
-        assert_eq!(totals.tx_bytes, 100);
-        assert_eq!(totals.rx_packets, 20);
-        assert_eq!(totals.tx_packets, 10);
-        assert_eq!(totals.rx_dropped_packets, 2);
-        assert_eq!(totals.tx_dropped_packets, 1);
-
-        let previous = super::NetworkSample {
-            observed_at: Instant::now() - Duration::from_secs(2),
-            rx_bytes: 100,
-            tx_bytes: 40,
-            rx_packets: 10,
-            tx_packets: 4,
-            rx_dropped_packets: 0,
-            tx_dropped_packets: 0,
-        };
-        let metrics = compute_network_metrics(previous, Instant::now(), totals);
-        assert!(
-            metrics
-                .rx_bytes_per_sec
-                .expect("rx rate present after two samples")
-                > 40.0
-        );
-        assert!(
-            metrics
-                .tx_bytes_per_sec
-                .expect("tx rate present after two samples")
-                > 20.0
-        );
-        assert!(metrics.packet_loss_percent.is_some());
-    }
-
-    #[test]
-    fn real_statvfs_reports_missing_mount_errors() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock should be after unix epoch")
-            .as_nanos();
-        let missing = std::env::temp_dir().join(format!(
-            "nodelite-missing-statvfs-{}-{unique}",
-            std::process::id()
-        ));
-        let error = match real_statvfs(missing.to_string_lossy().as_ref()) {
-            Ok(_) => panic!("missing mount paths should surface statvfs errors"),
-            Err(error) => error,
-        };
-
-        assert!(error.to_string().contains("statvfs failed"));
-    }
-
-    #[test]
-    fn test_host_collector_with_mock_files() {
-        let temp = TempDir::new("nodelite-collector-test");
-        let root = temp.path();
-        std::fs::create_dir_all(root.join("proc/sys/kernel")).expect("create mock proc/sys/kernel");
-        std::fs::create_dir_all(root.join("proc/net")).expect("create mock proc/net");
-        std::fs::create_dir_all(root.join("etc")).expect("create mock etc");
-
-        // Write mock files
-        std::fs::write(root.join("proc/uptime"), "3600.50 12345.67\n")
-            .expect("write mock proc/uptime");
-        std::fs::write(root.join("proc/sys/kernel/hostname"), "mock-host\n")
-            .expect("write mock hostname");
-        std::fs::write(
-            root.join("etc/os-release"),
-            "PRETTY_NAME=\"Mock Linux OS\"\n",
-        )
-        .expect("write mock os-release");
-        std::fs::write(root.join("proc/sys/kernel/osrelease"), "6.8.0-mock\n")
-            .expect("write mock osrelease");
-        std::fs::write(
-            root.join("proc/cpuinfo"),
-            "processor\t: 0\nmodel name\t: Mock CPU @ 3.0GHz\n\nprocessor\t: 1\nmodel name\t: Mock CPU @ 3.0GHz\n",
-        )
-        .expect("write mock cpuinfo");
-        std::fs::write(
-            root.join("proc/stat"),
-            "cpu  100 0 50 400 10 0 0 0 0 0\ncpu0 50 0 25 200 5 0 0 0 0 0\n",
-        )
-        .expect("write mock proc/stat");
-        std::fs::write(
-            root.join("proc/net/dev"),
-            "Inter-|   Receive                                                |  Transmit\n face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\n eth0: 200 20 0 2 0 0 0 0 100 10 0 1 0 0 0 0\n",
-        )
-        .expect("write mock proc/net/dev");
-        std::fs::write(root.join("proc/loadavg"), "0.15 0.30 0.45 1/100 12345\n")
-            .expect("write mock loadavg");
-        std::fs::write(
-            root.join("proc/meminfo"),
-            "MemTotal:       2097152 kB\nMemFree:         524288 kB\nMemAvailable:   1048576 kB\nSwapTotal:      1048576 kB\nSwapFree:        524288 kB\n",
-        )
-        .expect("write mock meminfo");
-        std::fs::write(
-            root.join("proc/mounts"),
-            "/dev/vda1 / ext4 rw,relatime 0 0\ntmpfs /dev/shm tmpfs rw,nosuid,nodev 0 0\n",
-        )
-        .expect("write mock mounts");
-
-        // 注入 statvfs 桩,确保磁盘采集只读 mock 数据,不触碰真实根文件系统。
-        let mut collector =
-            HostCollector::new_with_root(root.to_path_buf()).with_statvfs(mock_statvfs);
-        let config = nodelite_proto::AgentConfig {
-            node_id: "test-node".to_string(),
-            node_label: "Test Node".to_string(),
-            server: "ws://127.0.0.1:8080/ws".to_string(),
-            token: "token".to_string(),
-            connect_timeout_secs: 5,
-            auth_timeout_secs: 20,
-            send_timeout_secs: 20,
-            inbound_timeout_secs: 90,
-            report_interval_secs: 5,
-            max_incoming_message_bytes: 65536,
-            insecure_transport_warn_interval_secs: 900,
-            tags: vec!["mock-tag".to_string()],
-            hostname_override: None,
-        };
-
-        // Check identity collection
-        let identity = collector
-            .collect_identity(&config, "1.0.0")
-            .expect("collect identity from mock root");
-        assert_eq!(identity.node_id, "test-node");
-        assert_eq!(identity.hostname, "mock-host");
-        assert_eq!(identity.os, "Mock Linux OS");
-        assert_eq!(identity.kernel_version, Some("6.8.0-mock".to_string()));
-        assert_eq!(identity.cpu_model, Some("Mock CPU @ 3.0GHz".to_string()));
-        assert_eq!(identity.cpu_cores, 2);
-        assert_eq!(identity.agent_version, "1.0.0");
-        assert_eq!(identity.tags, vec!["mock-tag".to_string()]);
-
-        // Check snapshot collection (first collection has None rates)
-        let snapshot1 = collector
-            .collect_snapshot()
-            .expect("collect snapshot from mock root");
-        assert_eq!(snapshot1.uptime_secs, 3600);
-        assert_eq!(snapshot1.load.one, 0.15);
-        assert_eq!(snapshot1.load.five, 0.30);
-        assert_eq!(snapshot1.load.fifteen, 0.45);
-        assert_eq!(snapshot1.memory.total_bytes, 2097152 * 1024);
-        assert_eq!(snapshot1.memory.available_bytes, 1048576 * 1024);
-        assert_eq!(snapshot1.memory.used_bytes, 1048576 * 1024);
-        assert_eq!(snapshot1.memory.swap_total_bytes, 1048576 * 1024);
-        assert_eq!(snapshot1.memory.swap_used_bytes, 524288 * 1024);
-
-        // Assert network totals
-        assert_eq!(snapshot1.network.total_rx_bytes, 200);
-        assert_eq!(snapshot1.network.total_tx_bytes, 100);
-        assert_eq!(snapshot1.network.rx_bytes_per_sec, None);
-        assert_eq!(snapshot1.network.tx_bytes_per_sec, None);
-        assert_eq!(snapshot1.network.packet_loss_percent, None);
-
-        // Disk usage comes entirely from the injected statvfs stub: the ext4 root is
-        // reported, tmpfs is ignored, and the host's real `/` is never queried.
-        assert_eq!(snapshot1.disks.len(), 1);
-        let root_disk = &snapshot1.disks[0];
-        assert_eq!(root_disk.device, "/dev/vda1");
-        assert_eq!(root_disk.mount_point, "/");
-        assert_eq!(root_disk.fs_type, "ext4");
-        assert_eq!(root_disk.total_bytes, 100 * 1024 * 1024 * 1024);
-        assert_eq!(root_disk.available_bytes, 40 * 1024 * 1024 * 1024);
-        assert_eq!(root_disk.used_bytes, 60 * 1024 * 1024 * 1024);
-
-        // 清理由 `TempDir` 的 Drop 负责,无需手动 remove_dir_all。
-    }
 }

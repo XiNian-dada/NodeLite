@@ -56,7 +56,8 @@
   * 每天 9:00 自动汇总结算过去 24 小时的健康度巡检摘要。
 * 📈 **开放可观测性**：
   * 内置标准 Prometheus `/metrics` 抓取端点，并提供官方 Grafana 仪表盘模板；
-  * 支持在线 API（ipwho.is）及本地 MaxMind / DB-IP 离线库（`.mmdb`）进行物理地理位置解析。
+  * 支持在线 API（ipwho.is）及本地 MaxMind / DB-IP 离线库（`.mmdb`）进行物理地理位置解析；
+  * 默认智能过滤容器 `overlay`、`tmpfs` 等虚拟文件系统，有效抑制指标序列基数（Cardinality）膨胀。
 
 ---
 
@@ -292,8 +293,8 @@ sudo systemctl restart nodelite-server.service
   - 签发的一次性安装 Token 有效期为 15 分钟。超时后重新在服务端执行 `install-agent` 即可。
 - **Agent 被 `/ws` 限流拦截？**
   - 如果使用了远端反代或 CDN/WAF，请在 `server.toml` 的 `trusted_proxies` 中添加代理 IP 网段，否则多台 Agent 会被识别为同一个代理 IP 并触发频率限制。
-- **Prometheus 抓取配置？**
-  - `/metrics` 与控制台共享只读认证，在 `prometheus.yml` 中添加 `basic_auth` 即可，详见 [`ops/prometheus/prometheus.yml`](ops/prometheus/prometheus.yml)。
+- **Prometheus 抓取与 Series 膨胀控制？**
+  - `/metrics` 与控制台共享只读认证，详见 [`ops/prometheus/prometheus.yml`](ops/prometheus/prometheus.yml)。Agent 默认排除了 `overlay`、`tmpfs` 等挂载，可在 `[agent].ignored_filesystems` 中自定。
 
 ---
 
@@ -306,6 +307,13 @@ sudo systemctl restart nodelite-server.service
 cargo check
 cargo test --workspace
 cargo clippy --all-targets -- -D warnings
+```
+
+### 压测基准 (Benchmarks)
+
+```bash
+cargo bench -p nodelite-server --features bench-internals --bench load -- scaling
+cargo bench -p nodelite-server --features bench-internals --bench load -- reconnect
 ```
 
 ### 编译 Linux 静态 Musl 二进制

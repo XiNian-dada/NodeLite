@@ -1208,10 +1208,12 @@ version = "0.1.0"
 dependencies = [
  "base32",
  "chrono",
+ "flate2",
  "http",
  "ipnet",
  "serde",
  "serde_json",
+ "thiserror",
  "toml",
  "toml_edit",
  "url",
@@ -2070,6 +2072,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]

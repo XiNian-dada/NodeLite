@@ -70,6 +70,13 @@ enable_2fa = false
 # 可选:TOTP base32 secret。仅在 enable_2fa = true 时必须配置。
 # totp_secret = "<base32-secret-from-setup>"
 
+# 内存中的 Agent 排障日志独立限额，不包含历史/审计库和进程其他内存。
+[agent_logs]
+# 允许 128..=100000 条；每节点另有 200 条上限。
+max_entries = 10000
+# 估算分配预算，允许 65536..=67108864 字节；低内存部署可设置 2097152（2 MiB）。
+max_estimated_bytes = 8388608
+
 [audit]
 # 安全审计日志开关。关闭后不再写入 /api/audit-log 也会返回 503。
 enabled = true

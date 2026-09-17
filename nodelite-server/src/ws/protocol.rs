@@ -83,6 +83,21 @@ pub(crate) fn parse_wire_message(message: Message) -> Result<ParsedFrame, Protoc
     }
 }
 
+pub(crate) fn parse_agent_frame(
+    message: Message,
+    compressed: bool,
+    limit: usize,
+) -> Result<ParsedFrame, ProtocolError> {
+    match message {
+        Message::Binary(bytes) if compressed => {
+            nodelite_proto::compression::decode_metrics(&bytes, limit)
+                .map(|metrics| ParsedFrame::Wire(Box::new(WireMessage::Metrics(metrics))))
+                .map_err(|error| ProtocolError::Client(error.to_string()))
+        }
+        message => parse_wire_message(message),
+    }
+}
+
 /// 把 `WireMessage` 序列化为 JSON 文本帧后发送。
 pub(crate) async fn send_wire_message(
     socket: &mut WebSocket,

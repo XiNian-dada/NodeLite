@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 
 use super::{MatrixCase, MatrixCaseResult, run_matrix_case};
 
-const MATRIX_CHILD_TEST: &str = "load_test::load_test_history_query_matrix_case";
+const MATRIX_CHILD_TEST: &str = "history-matrix-child";
 const ENV_DB_PATH: &str = "NODELITE_HISTORY_MATRIX_DB_PATH";
 const ENV_START_TIMESTAMP: &str = "NODELITE_HISTORY_MATRIX_START_TIMESTAMP";
 const ENV_END_TIMESTAMP: &str = "NODELITE_HISTORY_MATRIX_END_TIMESTAMP";
@@ -60,7 +60,6 @@ pub(super) async fn run_case_process(
     let output = tokio::task::spawn_blocking(move || {
         Command::new(executable)
             .arg(MATRIX_CHILD_TEST)
-            .args(["--exact", "--ignored", "--nocapture"])
             .env(ENV_DB_PATH, db_path)
             .env(ENV_START_TIMESTAMP, start.timestamp().to_string())
             .env(ENV_END_TIMESTAMP, end.timestamp().to_string())

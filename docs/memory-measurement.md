@@ -192,3 +192,30 @@ and throughput are useful, but their RSS is not a Server-only memory baseline.
 Release decisions should compare like-for-like scenarios and define budgets
 per scenario. Historical `<15MB Server` and `<2MB Agent` statements did not
 specify a platform or metric and are therefore not release gates.
+
+## Agent 日志预算
+
+`[agent_logs]` 默认保留最多 10000 条日志和 8 MiB 估算分配，每节点最多 200 条。低内存实例可使用 `max_estimated_bytes = 2097152`（2 MiB）；允许范围为 64 KiB–64 MiB，条数范围为 128–100000。写入和驱逐在同一次锁操作中完成，估算包含字符串容量、队列预留空间与结构开销；稀疏队列和节点表会释放多余容量。该预算只约束 Agent 日志，不代表整个 Server 的 RSS 上限。
+
+用 `nodelite_agent_logs_entries`、`nodelite_agent_logs_estimated_bytes` 和对应 `max_*` 指标观察预算；`nodelite_agent_logs_evictions_total{reason="global_budget"|"node_limit"}` 与 `nodelite_agent_logs_dropped_total` 表示已丢失的日志。节点注销和注册表重载会清理不再登记的节点日志，不计为预算驱逐。
+
+
+2026-09-14 在隔离的 Linux aarch64 VM 中，以 Rust `bench` 优化构建运行四个独立进程。密集场景为 200 节点、每批 64 条 512 字节消息；稀疏场景为 12000 节点、每批 1 条短消息，各重复四轮以覆盖驱逐和分配器保留。仅加载日志存储与 Tokio，增量相对于该进程开始写日志前的 RSS：
+
+| 配置预算 | 布局 | 驻留条数 | 估算字节 | RSS 峰值增量 |
+| --- | --- | ---: | ---: | ---: |
+| 2 MiB | 密集 | 1903 | 2097106 | 2359296（2.25 MiB） |
+| 2 MiB | 稀疏 | 3512 | 2096600 | 2830336（2.70 MiB） |
+| 8 MiB | 密集 | 7612 | 8388232 | 7208960（6.88 MiB） |
+| 8 MiB | 稀疏 | 10000 | 5969872 | 6033408（5.75 MiB） |
+
+四组都发生了全局驱逐，RSS 增量均不超过预算加 1 MiB 的运行时/分配器容差。进程总 RSS 包含其初始运行时；该测试不证明生产 Server 整体内存占用。不同平台需重新采集：
+
+```bash
+for log_budget in 2097152 8388608; do
+  for log_layout in log-memory log-memory-sparse; do
+    NODELITE_LOG_BUDGET_BYTES="$log_budget" \
+      cargo bench -p nodelite-server --features bench-internals --bench load -- "$log_layout"
+  done
+done
+```

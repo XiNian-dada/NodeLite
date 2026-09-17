@@ -8,8 +8,8 @@ use tokio::time::timeout;
 
 use super::diagnostics::current_rss_bytes;
 use super::fake_agent::{
-    fake_identity, run_fake_agent, run_fake_agent_session, seed_history_points,
-    wait_for_all_offline, wait_for_final_snapshots, wait_for_seeded_history_points,
+    fake_identity, run_fake_agent, seed_history_points, wait_for_final_snapshots,
+    wait_for_seeded_history_points,
 };
 use super::probes::{
     probe_node_history_latencies, probe_node_status_latencies, probe_nodes_latencies,
@@ -20,10 +20,10 @@ use super::{
     AgentCredential, AgentWorkload, ApiScenarioResult, LOAD_TEST_HISTORY_POINTS,
     LOAD_TEST_METRICS_PER_NODE, LOAD_TEST_OVERVIEW_PROBES, LOAD_TEST_READ_PROBES,
     LOAD_TEST_STEADY_METRIC_DELAY_MS, LOAD_TEST_STEADY_METRICS_PER_NODE, LOAD_TEST_STORM_CYCLES,
-    LOAD_TEST_STORM_METRIC_DELAY_MS, LOAD_TEST_STORM_METRICS_PER_CYCLE,
-    LOAD_TEST_STORM_READ_PROBES, LOAD_TEST_TIMEOUT_SECS, ScenarioResult, StormScenarioResult,
+    LOAD_TEST_STORM_METRICS_PER_CYCLE, LOAD_TEST_STORM_READ_PROBES, LOAD_TEST_TIMEOUT_SECS,
+    ScenarioResult,
 };
-use crate::registry::{IssueNodeRequest, NodeRegistry, issue_node};
+use nodelite_server::bench_support::{IssueNodeRequest, NodeRegistry, issue_node};
 
 const TOKEN_VERIFY_STORM_NODES: usize = 200;
 const ARGON2_VERIFY_WORKING_BYTES: u64 = 19 * 1024 * 1024;
@@ -98,7 +98,7 @@ pub(super) async fn run_reconnect_storm_load_test() -> Result<()> {
         LOAD_TEST_STORM_READ_PROBES,
     );
     for &node_count in &scenarios {
-        let result = run_reconnect_storm_scenario(node_count).await?;
+        let result = super::reconnect::run(node_count).await?;
         println!(
             "STORM_RESULT nodes={} cycles={} sessions_total={} connect_p50_ms={:.2} connect_p95_ms={:.2} connect_max_ms={:.2} recover_p50_ms={:.2} recover_p95_ms={:.2} recover_max_ms={:.2} disconnect_p50_ms={:.2} disconnect_p95_ms={:.2} disconnect_max_ms={:.2} overview_p50_ms={:.2} overview_p95_ms={:.2} overview_max_ms={:.2} nodes_p50_ms={:.2} nodes_p95_ms={:.2} nodes_max_ms={:.2}",
             result.nodes,
@@ -236,7 +236,7 @@ async fn execute_token_verify_storm(
     let peak = sampler_handle
         .await
         .context("join token verify sampler")??;
-    let final_metrics = registry.token_verify_metrics();
+    let final_metrics = nodelite_server::bench_support::token_verify_metrics(&registry);
     let rss_delta_bytes = peak.rss_bytes.saturating_sub(baseline_rss_bytes);
     Ok(TokenVerifyStormResult {
         elapsed,
@@ -326,7 +326,7 @@ async fn sample_token_verify_peak(
     mut stop_rx: watch::Receiver<bool>,
     ready_tx: oneshot::Sender<()>,
 ) -> Result<TokenVerifyPeak> {
-    let metrics = registry.token_verify_metrics();
+    let metrics = nodelite_server::bench_support::token_verify_metrics(&registry);
     let mut peak = TokenVerifyPeak {
         rss_bytes: current_rss_bytes()?,
         active: metrics.active,
@@ -343,7 +343,7 @@ async fn sample_token_verify_peak(
                 break;
             }
             _ = interval.tick() => {
-                let metrics = registry.token_verify_metrics();
+                let metrics = nodelite_server::bench_support::token_verify_metrics(&registry);
                 peak.rss_bytes = peak.rss_bytes.max(current_rss_bytes()?);
                 peak.active = peak.active.max(metrics.active);
                 peak.waiting = peak.waiting.max(metrics.waiting);
@@ -557,113 +557,7 @@ async fn run_api_surface_scenario(node_count: usize) -> Result<ApiScenarioResult
     })
 }
 
-async fn run_reconnect_storm_scenario(node_count: usize) -> Result<StormScenarioResult> {
-    let (server, credentials) = TestServer::start(node_count).await?;
-    let mut connect_latencies = Vec::with_capacity(LOAD_TEST_STORM_CYCLES);
-    let mut recover_latencies = Vec::with_capacity(LOAD_TEST_STORM_CYCLES);
-    let mut disconnect_latencies = Vec::with_capacity(LOAD_TEST_STORM_CYCLES);
-    let mut overview_latencies =
-        Vec::with_capacity(LOAD_TEST_STORM_CYCLES * LOAD_TEST_STORM_READ_PROBES);
-    let mut nodes_latencies =
-        Vec::with_capacity(LOAD_TEST_STORM_CYCLES * LOAD_TEST_STORM_READ_PROBES);
-
-    for cycle in 0..LOAD_TEST_STORM_CYCLES {
-        let (ready_tx, mut ready_rx) = mpsc::unbounded_channel::<String>();
-        let burst_barrier = Arc::new(Barrier::new(node_count + 1));
-        let mut handles = Vec::with_capacity(node_count);
-        let workload = AgentWorkload {
-            uptime_start: cycle as u64 * 1_000 + 1,
-            metrics_per_node: LOAD_TEST_STORM_METRICS_PER_CYCLE,
-            inter_message_delay: Duration::from_millis(LOAD_TEST_STORM_METRIC_DELAY_MS),
-            hold_after_send: Duration::from_millis(250),
-            disk_entries: 1,
-        };
-        let expected_final_uptime = workload.uptime_start + workload.metrics_per_node - 1;
-        let connect_started = Instant::now();
-
-        for credential in credentials.clone() {
-            handles.push(tokio::spawn(run_fake_agent_session(
-                server.addr,
-                credential,
-                workload,
-                ready_tx.clone(),
-                burst_barrier.clone(),
-            )));
-        }
-        drop(ready_tx);
-
-        wait_for_ready_nodes(
-            &mut ready_rx,
-            node_count,
-            &format!("storm cycle {}", cycle + 1),
-        )
-        .await?;
-        connect_latencies.push(connect_started.elapsed());
-
-        let overview_task = tokio::spawn(probe_overview_latencies(
-            server.addr,
-            LOAD_TEST_STORM_READ_PROBES,
-        ));
-        let nodes_task = tokio::spawn(probe_nodes_latencies(
-            server.addr,
-            LOAD_TEST_STORM_READ_PROBES,
-            node_count,
-        ));
-
-        let recover_started = Instant::now();
-        burst_barrier.wait().await;
-        wait_for_final_snapshots(
-            server.shared.clone(),
-            &credentials,
-            expected_final_uptime,
-            Duration::from_secs(LOAD_TEST_TIMEOUT_SECS),
-            false,
-        )
-        .await?;
-        recover_latencies.push(recover_started.elapsed());
-
-        for handle in handles {
-            handle
-                .await
-                .map_err(|error| anyhow!("join storm agent task: {error}"))??;
-        }
-
-        let disconnect_started = Instant::now();
-        wait_for_all_offline(
-            server.shared.clone(),
-            &credentials,
-            Duration::from_secs(LOAD_TEST_TIMEOUT_SECS),
-        )
-        .await?;
-        disconnect_latencies.push(disconnect_started.elapsed());
-
-        overview_latencies.extend(
-            overview_task
-                .await
-                .map_err(|error| anyhow!("join storm overview probe task: {error}"))??,
-        );
-        nodes_latencies.extend(
-            nodes_task
-                .await
-                .map_err(|error| anyhow!("join storm nodes probe task: {error}"))??,
-        );
-    }
-
-    server.shutdown().await?;
-
-    Ok(StormScenarioResult {
-        nodes: node_count,
-        cycles: LOAD_TEST_STORM_CYCLES,
-        sessions_total: node_count * LOAD_TEST_STORM_CYCLES,
-        connect: summarize_latencies(&connect_latencies)?,
-        recover: summarize_latencies(&recover_latencies)?,
-        disconnect: summarize_latencies(&disconnect_latencies)?,
-        overview: summarize_latencies(&overview_latencies)?,
-        nodes_api: summarize_latencies(&nodes_latencies)?,
-    })
-}
-
-async fn wait_for_ready_nodes(
+pub(super) async fn wait_for_ready_nodes(
     ready_rx: &mut mpsc::UnboundedReceiver<String>,
     node_count: usize,
     label: &str,

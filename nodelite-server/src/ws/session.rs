@@ -13,9 +13,7 @@ use nodelite_proto::{
 use tokio::time::{MissedTickBehavior, interval};
 use tracing::{info, warn};
 
-use super::protocol::{
-    ParsedFrame, encode_ping_message, parse_wire_message, prune_outstanding_pings,
-};
+use super::protocol::{ParsedFrame, encode_ping_message, prune_outstanding_pings};
 use super::refresh::{
     ensure_current_token, handle_refresh_request, refresh_session_token, should_refresh_agent_token,
 };
@@ -76,7 +74,9 @@ pub(crate) async fn run_authenticated_session(
 
     let notice = WireMessage::ServerNotice(ServerNoticeMessage {
         level: nodelite_proto::NoticeLevel::Info,
-        code: None,
+        code: session
+            .metrics_zlib
+            .then_some(nodelite_proto::ServerNoticeCode::MetricsZlibV1),
         message: "authenticated".to_string(),
     });
     let payload = serde_json::to_string(&notice)
@@ -147,7 +147,11 @@ async fn handle_incoming_frame(
     loop_state: &mut SessionLoopState,
     frame: Message,
 ) -> Result<LoopAction, super::ProtocolError> {
-    match parse_wire_message(frame)? {
+    match super::protocol::parse_agent_frame(
+        frame,
+        session.metrics_zlib,
+        shared.config().max_message_bytes,
+    )? {
         ParsedFrame::Close => Ok(LoopAction::Break),
         ParsedFrame::Control => Ok(LoopAction::Continue),
         ParsedFrame::Wire(message) => {
@@ -367,6 +371,7 @@ async fn handle_agent_logs_message(
     session: &mut ActiveSession,
     message: AgentLogsMessage,
 ) -> Result<LoopAction, super::ProtocolError> {
+    let _logs_guard = state.agent_logs.lifecycle_lock.lock().await;
     if !ensure_current_token(
         state,
         session,
@@ -397,6 +402,7 @@ async fn handle_agent_logs_message(
             dropped_batch_cap = result.dropped_batch_cap,
             dropped_sanitize = result.dropped_sanitize,
             evicted_global_budget = result.evicted_global_budget,
+            evicted_per_node = result.evicted_per_node,
             "some agent runtime log entries dropped"
         );
     }
@@ -548,6 +554,7 @@ mod tests {
 
     fn hello_message() -> HelloMessage {
         HelloMessage {
+            supports_metrics_zlib: false,
             protocol_version: WIRE_PROTOCOL_VERSION,
             identity: identity(),
             token: "secret".to_string(),

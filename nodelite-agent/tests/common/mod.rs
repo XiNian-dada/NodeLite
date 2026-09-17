@@ -53,6 +53,10 @@ pub fn test_config(local_addr: SocketAddr) -> AgentConfig {
         send_timeout_secs: 20,
         inbound_timeout_secs: 90,
         report_interval_secs: 5,
+        ignored_filesystems: nodelite_proto::config::DEFAULT_AGENT_IGNORED_FILESYSTEMS
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect(),
         max_incoming_message_bytes: 65536,
         insecure_transport_warn_interval_secs: 900,
         tags: vec![],

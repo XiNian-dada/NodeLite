@@ -239,7 +239,7 @@ impl SharedState {
     }
 
     /// 把在线会话的控制通道挂到节点上,供 HTTP 处理器向该节点下发命令。
-    pub async fn attach_session_control(
+    pub(crate) async fn attach_session_control(
         &self,
         node_id: &str,
         session_id: u64,
@@ -353,7 +353,7 @@ impl SharedState {
     }
 
     /// 对在线 Agent 发起一次“立即续期”请求,返回一个用于等待结果的 receiver。
-    pub async fn request_live_token_refresh(
+    pub(crate) async fn request_live_token_refresh(
         &self,
         node_id: &str,
     ) -> Result<oneshot::Receiver<Result<SessionRefreshReply, String>>, SessionCommandError> {
@@ -444,7 +444,7 @@ impl SharedState {
 
     /// 返回缓存后的 `/metrics` 响应体。
     /// 缓存键由节点视图 revision、服务 readiness 摘要与最大存活时间共同决定。
-    pub async fn metrics_text(&self, readiness: &ServerReadiness) -> Bytes {
+    pub(crate) async fn metrics_text(&self, readiness: &ServerReadiness) -> Bytes {
         let revision = self.metrics_revision.load(Ordering::Acquire);
         let readiness_snapshot = ReadinessSnapshot::capture(readiness);
         let max_age = Duration::from_secs(self.config.refresh_interval_secs.max(1));

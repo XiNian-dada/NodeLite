@@ -231,7 +231,7 @@ impl NodeRegistry {
     }
 
     /// 更新设置页展示用的节点运营元数据。
-    pub async fn update_service_metadata(
+    pub(crate) async fn update_service_metadata(
         &self,
         node_id: &str,
         metadata: NodeServiceMetadata,

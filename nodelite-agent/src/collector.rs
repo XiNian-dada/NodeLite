@@ -42,8 +42,15 @@ pub async fn collect_identity_blocking(
 }
 
 /// Collect a host snapshot on Tokio's blocking pool while preserving collector delta state.
-pub async fn collect_snapshot_blocking(collector: &mut HostCollector) -> Result<NodeSnapshot> {
-    with_collector_blocking(collector, HostCollector::collect_snapshot).await
+pub async fn collect_snapshot_blocking(
+    collector: &mut HostCollector,
+    ignored_filesystems: &[String],
+) -> Result<NodeSnapshot> {
+    let ignored_filesystems = ignored_filesystems.to_vec();
+    with_collector_blocking(collector, move |collector| {
+        collector.collect_snapshot(&ignored_filesystems)
+    })
+    .await
 }
 
 async fn with_collector_blocking<T, F>(collector: &mut HostCollector, operation: F) -> Result<T>
