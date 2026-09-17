@@ -24,6 +24,7 @@
 ## 目录
 
 - [✨ 核心特性](#-核心特性)
+- [📸 界面预览](#-界面预览)
 - [⚡ 5 分钟快速上手](#-5-分钟快速上手)
 - [🏗️ 系统架构与数据流](#️-系统架构与数据流)
 - [⚙️ 核心配置速查](#️-核心配置速查)
@@ -58,6 +59,18 @@
   * 内置标准 Prometheus `/metrics` 抓取端点，并提供官方 Grafana 仪表盘模板；
   * 支持在线 API（ipwho.is）及本地 MaxMind / DB-IP 离线库（`.mmdb`）进行物理地理位置解析；
   * 默认智能过滤容器 `overlay`、`tmpfs` 等虚拟文件系统，有效抑制指标序列基数（Cardinality）膨胀。
+
+---
+
+## 📸 界面预览
+
+<p align="center">
+  <img src="images/zh_cn/dark_home_page.png" alt="NodeLite 全球服务器监控大盘（暗色）" width="100%" />
+</p>
+
+<p align="center">
+  <img src="images/zh_cn/dark_detail_page.png" alt="NodeLite 节点详情与 24 小时多维历史监控曲线" width="100%" />
+</p>
 
 ---
 

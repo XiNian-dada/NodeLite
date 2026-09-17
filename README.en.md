@@ -24,6 +24,7 @@ Designed for **minimal resource footprint** (Server RSS < 15MB, Agent < 2MB), **
 ## Table of Contents
 
 - [✨ Features](#-features)
+- [📸 Screenshots](#-screenshots)
 - [⚡ 5-Minute Quickstart](#-5-minute-quickstart)
 - [🏗️ System Architecture & Data Flow](#️-system-architecture--data-flow)
 - [⚙️ Core Configuration Cheat Sheet](#️-core-configuration-cheat-sheet)
@@ -57,6 +58,18 @@ Designed for **minimal resource footprint** (Server RSS < 15MB, Agent < 2MB), **
 * 📈 **Open Observability**:
   * Built-in Prometheus `/metrics` exposition endpoint with official Grafana dashboard templates;
   * Physical location inference via online ipwho.is or local MaxMind/DB-IP `.mmdb` files.
+
+---
+
+## 📸 Screenshots
+
+<p align="center">
+  <img src="images/en/dark_home_page.png" alt="NodeLite Dashboard Overview (Dark Theme)" width="100%" />
+</p>
+
+<p align="center">
+  <img src="images/en/dark_detail_page.png" alt="NodeLite Node Detail & Multi-dimensional 24h Metrics" width="100%" />
+</p>
 
 ---
 
