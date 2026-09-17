@@ -5,34 +5,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="NodeLite 快速部署指南，涵盖 5 分钟上手路径、服务端安装、Agent 部署、反向代理、Prometheus 集成与常见排障。"
+      content="NodeLite 快速部署与运维指南，涵盖 5 分钟上手路径、单机与生产环境部署、反向代理、告警配置、Linux 限速、Prometheus 集成与常见排障。"
     />
-    <title>NodeLite — 快速部署指南</title>
+    <title>NodeLite — 快速部署与运维指南</title>
     <style>
       :root {
         color-scheme: light;
-        --bg-app: #f5f5f5;
+        --bg-app: #f8fafc;
         --bg-sidebar: #ffffff;
         --bg-card: #ffffff;
-        --bg-card-soft: #f7f7f7;
-        --bg-elevated: #eeeeee;
+        --bg-card-soft: #f1f5f9;
+        --bg-elevated: #e2e8f0;
         --border-soft: rgba(0, 0, 0, 0.08);
         --border-strong: rgba(0, 0, 0, 0.16);
-        --text-primary: #111111;
-        --text-secondary: #333333;
-        --text-muted: #6b6b6b;
-        --text-dim: #9a9a9a;
-        --accent-blue: #6f8cff;
+        --text-primary: #0f172a;
+        --text-secondary: #334155;
+        --text-muted: #64748b;
+        --text-dim: #94a3b8;
+        --accent-blue: #3b82f6;
         --accent-blue-soft: rgba(59, 130, 246, 0.12);
-        --accent-green: #25e487;
-        --accent-green-soft: rgba(34, 197, 94, 0.16);
-        --accent-yellow: #f5c542;
-        --accent-yellow-soft: rgba(234, 179, 8, 0.18);
-        --accent-red: #ff4d6d;
-        --accent-red-soft: rgba(239, 68, 68, 0.16);
-        --accent-purple: #c779ff;
-        --accent-purple-soft: rgba(168, 85, 247, 0.14);
-        --panel-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+        --accent-green: #10b981;
+        --accent-green-soft: rgba(16, 185, 129, 0.14);
+        --accent-yellow: #f59e0b;
+        --accent-yellow-soft: rgba(245, 158, 11, 0.16);
+        --accent-red: #ef4444;
+        --accent-red-soft: rgba(239, 68, 68, 0.14);
+        --accent-purple: #8b5cf6;
+        --accent-purple-soft: rgba(139, 92, 246, 0.14);
+        --panel-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03);
         --shadow-soft: var(--panel-shadow);
         --shadow-card: var(--panel-shadow);
         font-family: "Inter", "PingFang SC", "Helvetica Neue", "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -47,7 +47,7 @@
         color: var(--text-primary);
         background: var(--bg-app);
         font-size: 14px;
-        line-height: 1.5;
+        line-height: 1.6;
         -webkit-font-smoothing: antialiased;
       }
       a {
@@ -75,45 +75,54 @@
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 18px;
+        gap: 16px;
+        z-index: 10;
+        transition: width 200ms ease;
       }
       .brand {
-        display: block;
-        width: 58px;
-        height: 58px;
-        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        padding: 0 12px;
+        margin-bottom: 4px;
       }
       .brand-copy { display: none; }
+      .brand-copy strong {
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        color: var(--text-primary);
+      }
       .brand-copy small {
         display: block;
-        margin-top: 2px;
         color: var(--text-muted);
-        font-size: 12px;
+        font-size: 11px;
         font-weight: 500;
       }
       .brand-mark {
-        width: 58px;
-        height: 58px;
-        border-radius: 8px;
+        width: 44px;
+        height: 44px;
+        border-radius: 10px;
         overflow: hidden;
-        background-color: transparent;
+        background-color: var(--bg-card-soft);
         background-image: url("./assets/brand-logo-light.webp");
         background-position: center;
         background-repeat: no-repeat;
-        background-size: 66px 66px;
-      }
-      .brand-mark img {
-        display: none;
+        background-size: 40px 40px;
+        border: 1px solid var(--border-soft);
+        flex-shrink: 0;
       }
       .nav-group {
-        margin-bottom: 20px;
+        margin-bottom: 16px;
         width: 100%;
+        padding: 0 10px;
       }
       .nav-stack {
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 10px;
+        gap: 6px;
       }
       .nav-label {
         display: none;
@@ -121,2036 +130,1068 @@
       .nav-link {
         width: 44px;
         height: 44px;
-        display: grid;
-        place-items: center;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         padding: 0;
         border-radius: 8px;
         color: var(--text-muted);
         font-size: 0;
         font-weight: 500;
-        transition: background 150ms ease, color 150ms ease, transform 150ms ease;
+        transition: background 150ms ease, color 150ms ease;
         cursor: pointer;
         border: 0;
         background: transparent;
       }
-      .nav-link:hover { background: var(--bg-card-soft); color: var(--text-secondary); }
+      .nav-link:hover { background: var(--bg-card-soft); color: var(--text-primary); }
       .nav-link.active {
-        background: var(--bg-card-soft);
-        color: var(--accent-green);
-        box-shadow: inset 0 0 0 1px rgba(37, 228, 135, 0.16);
-      }
-      .nav-link.external::after {
-        content: none;
+        background: var(--accent-green-soft);
+        color: #059669;
+        font-weight: 600;
       }
       .nav-link svg { width: 20px; height: 20px; flex-shrink: 0; }
       .sidebar-bottom {
         margin-top: auto;
-        padding: 0;
-        border-top: 0;
+        padding: 0 10px;
+        width: 100%;
       }
       .sidebar-bottom a {
         color: var(--text-muted);
         font-size: 0;
-        display: grid;
-        place-items: center;
-        width: 44px;
-        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        height: 40px;
         border-radius: 8px;
+        transition: background 150ms ease, color 150ms ease;
       }
-      .sidebar-bottom a:hover { color: var(--text-secondary); background: var(--bg-card-soft); }
+      .sidebar-bottom a:hover { color: var(--text-primary); background: var(--bg-card-soft); }
       .sidebar-bottom svg { width: 20px; height: 20px; }
+
+      /* Desktop Sidebar Expanded (宽屏自适应文字导航) */
+      @media (min-width: 1024px) {
+        .app {
+          grid-template-columns: 220px minmax(0, 1fr);
+        }
+        .sidebar {
+          align-items: stretch;
+          padding: 20px 14px;
+        }
+        .brand {
+          justify-content: flex-start;
+          gap: 12px;
+        }
+        .brand-copy { display: block; }
+        .nav-stack {
+          align-items: stretch;
+        }
+        .nav-link {
+          width: 100%;
+          height: 38px;
+          justify-content: flex-start;
+          gap: 12px;
+          padding: 0 12px;
+          font-size: 13px;
+        }
+        .nav-label {
+          display: inline;
+        }
+        .sidebar-bottom a {
+          justify-content: flex-start;
+          gap: 10px;
+          padding: 0 12px;
+          font-size: 12px;
+        }
+        .sidebar-bottom-label {
+          display: inline !important;
+        }
+      }
+      .sidebar-bottom-label {
+        display: none;
+      }
 
       /* ---------- Main ---------- */
       .main {
-        --main-inline-padding: clamp(20px, 2.5vw, 40px);
-        padding: 24px var(--main-inline-padding) 40px;
+        --main-inline-padding: clamp(16px, 3vw, 48px);
+        padding: 24px var(--main-inline-padding) 60px;
         max-width: none;
         min-width: 0;
         width: 100%;
       }
       .doc-shell {
-        max-width: 1180px;
+        max-width: 1100px;
         min-width: 0;
         margin: 0 auto;
       }
       .page-header {
-        margin-bottom: 22px;
+        margin-bottom: 28px;
       }
       .eyebrow {
         display: inline-flex;
         align-items: center;
         gap: 8px;
-        padding: 7px 10px;
-        border-radius: 8px;
+        padding: 5px 12px;
+        border-radius: 9999px;
         background: var(--bg-card);
         border: 1px solid var(--border-soft);
-        color: var(--accent-green);
+        color: #059669;
         font-size: 12px;
         font-weight: 600;
         margin-bottom: 12px;
       }
       .page-header h1 {
         margin: 0;
-        font-size: clamp(28px, 4vw, 38px);
-        font-weight: 600;
-        letter-spacing: 0;
-        line-height: 1.12;
+        font-size: clamp(26px, 3.5vw, 36px);
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        line-height: 1.2;
       }
       .page-header p {
-        margin: 4px 0 0;
+        margin: 6px 0 0;
         color: var(--text-muted);
-        font-size: 14px;
-        max-width: 920px;
+        font-size: 15px;
       }
+
+      /* Hero Section */
       .hero {
         margin-top: 18px;
       }
       .hero-grid {
-        display: block;
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 16px;
       }
-      .hero-panel,
-      .hero-mini {
+      .hero-panel {
         background: var(--bg-card);
         border: 1px solid var(--border-soft);
-        border-radius: 8px;
+        border-radius: 14px;
         padding: 24px;
-        box-shadow: var(--panel-shadow);
-        overflow: hidden;
-        position: relative;
+        box-shadow: var(--shadow-card);
       }
-      .hero-panel::after {
-        content: "";
-        position: absolute;
-        left: 24px;
-        right: 24px;
-        bottom: 0;
-        height: 3px;
-        background: linear-gradient(90deg, var(--accent-green), var(--accent-blue), var(--accent-purple), var(--accent-green));
-        opacity: 0.78;
-      }
-      .hero-panel h2,
-      .hero-mini h2 {
+      .hero-panel h2 {
         margin: 0 0 8px;
-        font-size: 16px;
-        letter-spacing: 0;
+        font-size: 18px;
+        font-weight: 700;
       }
-      .hero-panel p,
-      .hero-mini p {
-        margin: 0;
-        color: var(--text-muted);
+      .hero-panel p {
+        margin: 0 0 18px;
+        color: var(--text-secondary);
         font-size: 14px;
       }
-      .hero-mini {
-        display: none;
+      .hero-steps {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 12px;
+        margin-bottom: 20px;
+      }
+      .hero-step {
+        background: var(--bg-card-soft);
+        border: 1px solid var(--border-soft);
+        border-radius: 10px;
+        padding: 14px;
+      }
+      .hero-step strong {
+        display: block;
+        color: #059669;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 4px;
+      }
+      .hero-step span {
+        font-size: 13px;
+        color: var(--text-secondary);
+        font-weight: 500;
       }
       .hero-actions {
         display: flex;
         flex-wrap: wrap;
-        gap: 10px;
-        margin-top: 16px;
-      }
-      .hero-steps {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 12px;
-        margin-top: 18px;
-      }
-      .hero-step {
-        padding: 14px;
-        border-radius: 8px;
-        background: var(--bg-card-soft);
-        border: 1px solid var(--border-soft);
-      }
-      .hero-step strong {
-        display: block;
-        margin-bottom: 6px;
-        font-size: 13px;
-        color: var(--accent-green);
-      }
-      .hero-step span {
-        color: var(--text-secondary);
-        font-size: 14px;
+        gap: 8px;
       }
       .action-chip {
         display: inline-flex;
         align-items: center;
-        gap: 8px;
-        padding: 10px 12px;
+        padding: 6px 14px;
         border-radius: 8px;
-        border: 1px solid var(--border-soft);
-        background: var(--bg-card);
-        color: var(--text-secondary);
-        font-size: 13px;
+        font-size: 12px;
         font-weight: 600;
-        transition: transform 140ms ease, border-color 140ms ease, color 140ms ease;
-      }
-      .action-chip:hover {
-        transform: translateY(-1px);
-        border-color: var(--border-strong);
-        color: var(--accent-green);
-      }
-      .stats-row {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 12px;
-        margin-top: 18px;
-      }
-      .stat-pill {
         background: var(--bg-card-soft);
         border: 1px solid var(--border-soft);
-        border-radius: 8px;
-        padding: 16px;
-        min-height: 116px;
-      }
-      .stat-pill strong {
-        display: block;
-        font-size: 18px;
-        letter-spacing: -0.02em;
-        line-height: 1.15;
-      }
-      .stat-pill span {
-        display: block;
-        margin-top: 8px;
-        color: var(--text-muted);
-        font-size: 12px;
-      }
-      .tag-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        margin-top: 14px;
-      }
-      .tag {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 8px 12px;
-        border-radius: 8px;
-        background: var(--bg-card);
-        border: 1px solid var(--border-soft);
         color: var(--text-secondary);
-        font-size: 13px;
-        font-weight: 600;
+        transition: all 150ms ease;
+      }
+      .action-chip:hover {
+        background: var(--accent-blue-soft);
+        color: var(--accent-blue);
+        border-color: var(--accent-blue);
       }
       .hero-callout {
         margin-top: 16px;
-        padding: 14px 16px;
+        padding: 12px 16px;
         border-radius: 8px;
-        background: var(--accent-green-soft);
-        border: 1px solid rgba(37, 228, 135, 0.22);
-      }
-      .hero-callout strong {
-        display: block;
-        margin-bottom: 6px;
-        font-size: 14px;
-      }
-      .hero-callout p {
-        margin: 0;
+        background: #ecfdf5;
+        border: 1px solid #a7f3d0;
         font-size: 13px;
-      }
-      .hero-points {
-        margin-top: 14px;
-      }
-      .hero-points li {
-        color: var(--text-secondary);
+        color: #065f46;
       }
 
-      /* ---------- Section ---------- */
+      /* Sections & Cards */
       .section {
-        margin-bottom: 40px;
-        min-width: 0;
+        margin-top: 48px;
+        scroll-margin-top: 32px;
       }
       .section-title {
-        font-size: 20px;
-        font-weight: 600;
-        letter-spacing: 0;
-        margin: 0 0 4px;
         display: flex;
         align-items: center;
         gap: 10px;
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        margin: 0 0 6px;
       }
       .section-desc {
+        margin: 0 0 20px;
         color: var(--text-muted);
         font-size: 14px;
-        margin: 0 0 20px;
       }
-      .section-wide {
-        width: min(1320px, calc(100vw - 72px - var(--main-inline-padding) - var(--main-inline-padding)));
-        max-width: calc(100vw - 72px - var(--main-inline-padding) - var(--main-inline-padding));
-        margin-left: 50%;
-        transform: translateX(-50%);
-      }
-
-      /* ---------- Cards ---------- */
       .card {
         background: var(--bg-card);
         border: 1px solid var(--border-soft);
-        border-radius: 8px;
-        padding: 20px;
-        margin-bottom: 16px;
-        box-shadow: var(--panel-shadow);
-        min-width: 0;
-      }
-      .card:last-child { margin-bottom: 0; }
-      .card-hover:hover {
-        border-color: var(--border-strong);
-        transform: translateY(-1px);
+        border-radius: 14px;
+        padding: 24px;
+        margin-bottom: 20px;
+        box-shadow: var(--shadow-card);
       }
       .card-header {
         display: flex;
         align-items: flex-start;
-        gap: 12px;
+        gap: 14px;
         margin-bottom: 14px;
       }
-      .content-grid {
-        display: grid;
-        gap: 16px;
+      .card-icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
       }
-      .content-grid.two-up {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-      .content-grid.columns-2 {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-      .content-grid.feature-split {
-        grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
-        align-items: start;
-      }
-      .guide-stack {
-        display: grid;
-        gap: 16px;
-      }
-      .guide-stack > *,
-      .detail-list > *,
-      .content-grid > * {
-        min-width: 0;
-      }
-      .guide-section-title {
-        margin: 0 0 10px;
-        font-size: 14px;
+      .card-icon.green { background: var(--accent-green-soft); color: #059669; }
+      .card-icon.blue { background: var(--accent-blue-soft); color: var(--accent-blue); }
+      .card-icon.yellow { background: var(--accent-yellow-soft); color: #d97706; }
+      .card-icon.purple { background: var(--accent-purple-soft); color: var(--accent-purple); }
+      .card-icon.red { background: var(--accent-red-soft); color: var(--accent-red); }
+      .card-icon svg { width: 20px; height: 20px; }
+      .card-title {
+        margin: 0;
+        font-size: 16px;
         font-weight: 700;
-        color: var(--text-primary);
       }
-      .guide-note {
+      .card-sub {
+        margin: 2px 0 0;
+        font-size: 12px;
         color: var(--text-muted);
+      }
+      .body-copy {
+        margin: 0 0 16px;
+        color: var(--text-secondary);
         font-size: 14px;
-        margin: 10px 0 0;
       }
-      .check-grid {
-        display: grid;
-        gap: 18px;
+
+      /* Command Block with Copy Button */
+      .cmd-block {
+        position: relative;
+        margin: 14px 0;
+        border-radius: 10px;
+        overflow: hidden;
+        border: 1px solid var(--border-strong);
+        background: #0f172a;
       }
-      .check-block + .check-block {
-        padding-top: 18px;
-        border-top: 1px solid var(--border-soft);
+      .cmd-label {
+        display: block;
+        background: #1e293b;
+        color: #94a3b8;
+        padding: 6px 14px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        border-bottom: 1px solid #334155;
       }
-      .detail-list {
-        display: grid;
-        gap: 14px;
+      .cmd-block pre {
+        margin: 0;
+        padding: 14px 16px;
+        color: #f8fafc;
+        font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 13px;
+        line-height: 1.5;
+        overflow-x: auto;
       }
+      .cmd-block pre .comment {
+        color: #64748b;
+      }
+      .copy-btn {
+        position: absolute;
+        top: 6px;
+        right: 8px;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-size: 11px;
+        font-weight: 600;
+        background: #334155;
+        border: 1px solid #475569;
+        color: #cbd5e1;
+        cursor: pointer;
+        transition: all 150ms ease;
+      }
+      .copy-btn:hover {
+        background: #475569;
+        color: #ffffff;
+      }
+      .copy-btn.copied {
+        background: #065f46;
+        border-color: #059669;
+        color: #34d399;
+      }
+
+      /* Alerts */
+      .alert {
+        display: flex;
+        gap: 12px;
+        padding: 14px 16px;
+        border-radius: 10px;
+        margin: 14px 0;
+        font-size: 13px;
+      }
+      .alert.info {
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+        color: #1e40af;
+      }
+      .alert.warn {
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        color: #92400e;
+      }
+      .alert svg {
+        width: 20px;
+        height: 20px;
+        flex-shrink: 0;
+      }
+      .alert-body p {
+        margin: 0 0 4px;
+      }
+      .alert-body p:last-child {
+        margin-bottom: 0;
+      }
+
+      /* Details list */
       .guide-detail {
         background: var(--bg-card);
         border: 1px solid var(--border-soft);
-        border-radius: 8px;
-        box-shadow: var(--panel-shadow);
-        padding: 0 20px;
-        min-width: 0;
+        border-radius: 12px;
+        margin-bottom: 12px;
+        overflow: hidden;
+        transition: border-color 150ms ease;
+      }
+      .guide-detail[open] {
+        border-color: var(--border-strong);
       }
       .guide-summary {
-        list-style: none;
-        cursor: pointer;
         display: flex;
-        align-items: flex-start;
+        align-items: center;
         gap: 14px;
-        padding: 20px 0;
+        padding: 16px 20px;
+        cursor: pointer;
+        user-select: none;
+        list-style: none;
       }
-      .guide-summary::-webkit-details-marker {
-        display: none;
-      }
+      .guide-summary::-webkit-details-marker { display: none; }
       .guide-summary-icon {
-        width: 40px;
-        height: 40px;
+        width: 34px;
+        height: 34px;
         border-radius: 8px;
-        display: grid;
-        place-items: center;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         flex-shrink: 0;
-        padding: 10px;
       }
-      .guide-summary-icon svg {
-        width: 20px;
-        height: 20px;
-        display: block;
-      }
+      .guide-summary-icon.blue { background: var(--accent-blue-soft); color: var(--accent-blue); }
+      .guide-summary-icon.green { background: var(--accent-green-soft); color: #059669; }
+      .guide-summary-icon.yellow { background: var(--accent-yellow-soft); color: #d97706; }
+      .guide-summary-icon.purple { background: var(--accent-purple-soft); color: var(--accent-purple); }
+      .guide-summary-icon svg { width: 18px; height: 18px; }
       .guide-summary-text {
-        min-width: 0;
         flex: 1;
       }
       .guide-summary-text strong {
         display: block;
-        font-size: 18px;
-        letter-spacing: -0.01em;
+        font-size: 15px;
+        font-weight: 600;
       }
       .guide-summary-text span {
-        display: block;
-        margin-top: 4px;
+        font-size: 12px;
         color: var(--text-muted);
-        font-size: 14px;
       }
       .guide-summary-caret {
-        width: 20px;
-        height: 20px;
-        color: var(--text-dim);
-        flex-shrink: 0;
-        margin-top: 4px;
-        transition: transform 160ms ease;
+        width: 18px;
+        height: 18px;
+        color: var(--text-muted);
+        transition: transform 200ms ease;
       }
       .guide-detail[open] .guide-summary-caret {
         transform: rotate(180deg);
       }
       .guide-body {
-        padding: 0 0 22px;
+        padding: 0 20px 20px;
+        border-top: 1px solid var(--border-soft);
+        margin-top: -4px;
+        padding-top: 16px;
       }
-      .card-icon {
-        width: 40px;
-        height: 40px;
-        border-radius: 8px;
-        display: grid;
-        place-items: center;
-        flex-shrink: 0;
-        font-size: 16px;
-        padding: 10px;
-      }
-      .card-icon svg {
-        width: 20px;
-        height: 20px;
-        display: block;
-      }
-      .card-icon.blue,
-      .guide-summary-icon.blue { background: var(--accent-blue-soft); color: var(--accent-blue); }
-      .card-icon.green,
-      .guide-summary-icon.green { background: var(--accent-green-soft); color: var(--accent-green); }
-      .card-icon.purple,
-      .guide-summary-icon.purple { background: var(--accent-purple-soft); color: var(--accent-purple); }
-      .card-icon.yellow,
-      .guide-summary-icon.yellow { background: var(--accent-yellow-soft); color: var(--accent-yellow); }
-      .card-icon.red,
-      .guide-summary-icon.red { background: var(--accent-red-soft); color: var(--accent-red); }
-      .card-title {
-        font-size: 16px;
-        font-weight: 600;
-        margin: 0 0 2px;
-      }
-      .card-sub {
-        font-size: 13px;
-        color: var(--text-muted);
-        margin: 0;
-      }
-      .body-copy {
-        margin: 0 0 12px;
-        font-size: 14px;
-        color: var(--text-secondary);
-      }
-      .body-copy:last-child { margin-bottom: 0; }
-      .text-link {
-        color: var(--accent-green);
-        text-decoration: none;
-      }
-      .text-link:hover { text-decoration: underline; }
 
-      /* ---------- Steps ---------- */
+      /* Step List */
       .step-list {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-        counter-reset: step;
+        margin: 0 0 16px;
+        padding-left: 20px;
+        color: var(--text-secondary);
+        font-size: 13px;
       }
       .step-list li {
-        counter-increment: step;
-        padding: 4px 0 4px 32px;
-        position: relative;
-        margin-bottom: 6px;
-        font-size: 14px;
-      }
-      .step-list li::before {
-        content: counter(step);
-        position: absolute;
-        left: 0;
-        top: 4px;
-        width: 22px;
-        height: 22px;
-        border-radius: 6px;
-        background: var(--accent-green-soft);
-        color: var(--accent-green);
-        font-size: 12px;
-        font-weight: 600;
-        display: grid;
-        place-items: center;
-      }
-
-      /* ---------- Command blocks ---------- */
-      .cmd-block {
-        margin: 12px 0;
-        min-width: 0;
-      }
-      .cmd-block:last-child { margin-bottom: 0; }
-      .cmd-label {
-        font-size: 12px;
-        font-weight: 600;
-        color: var(--text-muted);
-        margin-bottom: 4px;
-        display: block;
-      }
-      pre {
-        background: #080808;
-        color: #f4f4f5;
-        border: 1px solid var(--border-soft);
-        border-radius: 8px;
-        padding: 14px 16px;
-        font-size: 13px;
-        line-height: 1.5;
-        overflow-x: auto;
-        margin: 0;
-        max-width: 100%;
-        min-width: 0;
-        font-family: "SF Mono", "JetBrains Mono", "Fira Code", monospace;
-      }
-      pre .comment { color: #64748b; }
-      code:not(pre code) {
-        background: var(--bg-card-soft);
-        color: var(--accent-green);
-        padding: 2px 6px;
-        border-radius: 4px;
-        font-size: 13px;
-        font-family: "SF Mono", "JetBrains Mono", "Fira Code", monospace;
-      }
-
-      /* ---------- Alert ---------- */
-      .alert {
-        display: flex;
-        align-items: flex-start;
-        gap: 10px;
-        padding: 12px 16px;
-        border-radius: 8px;
-        margin: 12px 0;
-        font-size: 14px;
-        min-width: 0;
-      }
-      .alert svg { width: 18px; height: 18px; flex-shrink: 0; margin-top: 1px; }
-      .alert-body {
-        min-width: 0;
-        flex: 1;
-      }
-      .alert-body strong {
-        display: block;
-        margin-bottom: 4px;
-        font-size: 13px;
-      }
-      .alert-body p {
-        margin: 0;
-      }
-      .alert-body p + p {
-        margin-top: 6px;
-      }
-      .alert.info {
-        background: var(--accent-blue-soft);
-        color: #4f6bff;
-      }
-      .alert.warn {
-        background: var(--accent-yellow-soft);
-        color: #a16207;
-      }
-      .alert.good {
-        background: var(--accent-green-soft);
-        color: #15803d;
-      }
-
-      /* ---------- Architecture ---------- */
-      .architecture-grid {
-        display: grid;
-        gap: 18px;
-      }
-      .arch-board {
-        background: var(--bg-card);
-        border: 1px solid var(--border-soft);
-        border-radius: 8px;
-        padding: 20px;
-        box-shadow: var(--panel-shadow);
-        overflow: hidden;
-      }
-      .arch-board h3 {
-        margin: 0 0 6px;
-        font-size: 16px;
-        letter-spacing: -0.01em;
-      }
-      .arch-board > p {
-        margin: 0 0 16px;
-        color: var(--text-muted);
-        font-size: 13px;
-      }
-      .arch-lane {
-        min-width: 860px;
-        display: grid;
-        gap: 14px;
-      }
-      .arch-row {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 12px;
-        align-items: stretch;
-      }
-      .arch-row.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-      .arch-row.five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-      .arch-node {
-        border: 1px solid var(--border-soft);
-        border-radius: 8px;
-        background: var(--bg-card-soft);
-        padding: 12px;
-        min-height: 92px;
-      }
-      .arch-node strong {
-        display: block;
-        color: var(--text-primary);
-        font-size: 13px;
         margin-bottom: 6px;
       }
-      .arch-node span,
-      .arch-node li {
-        color: var(--text-secondary);
-        font-size: 12px;
-        line-height: 1.55;
+
+      /* Check Grid */
+      .check-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 16px;
       }
-      .arch-node ul {
+      .check-block h3 {
+        margin: 0 0 8px;
+        font-size: 14px;
+        font-weight: 700;
+      }
+      .mini-list {
         margin: 0;
-        padding-left: 16px;
-      }
-      .arch-node.blue { background: var(--accent-blue-soft); border-color: rgba(59, 130, 246, 0.18); }
-      .arch-node.green { background: var(--accent-green-soft); border-color: rgba(34, 197, 94, 0.2); }
-      .arch-node.purple { background: var(--accent-purple-soft); border-color: rgba(168, 85, 247, 0.2); }
-      .arch-node.yellow { background: var(--accent-yellow-soft); border-color: rgba(234, 179, 8, 0.22); }
-      .arch-node.red { background: var(--accent-red-soft); border-color: rgba(239, 68, 68, 0.18); }
-      .arch-node.dark { background: #eef2f8; border-color: rgba(15, 23, 42, 0.12); }
-      .arch-arrow {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: var(--text-muted);
-        font-size: 12px;
-        font-weight: 700;
-        min-height: 24px;
-      }
-      .arch-flow {
-        display: grid;
-        grid-template-columns: minmax(140px, 1fr) 34px minmax(140px, 1fr) 34px minmax(140px, 1fr) 34px minmax(140px, 1fr);
-        gap: 0;
-        align-items: center;
-      }
-      .arch-stack {
-        display: grid;
-        gap: 10px;
-      }
-      .arch-label {
-        display: inline-flex;
-        width: fit-content;
-        padding: 4px 8px;
-        border-radius: 8px;
-        background: var(--bg-card);
-        border: 1px solid var(--border-soft);
-        color: var(--text-muted);
-        font-size: 11px;
-        font-weight: 700;
-        margin-bottom: 4px;
-      }
-      .arch-sequence {
-        min-width: 860px;
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 18px;
-        position: relative;
-      }
-      .arch-sequence::before {
-        content: "";
-        position: absolute;
-        left: 50%;
-        top: 36px;
-        bottom: 12px;
-        width: 1px;
-        background: var(--border-strong);
-      }
-      .sequence-col {
-        display: grid;
-        gap: 10px;
-      }
-      .sequence-head {
-        text-align: center;
-        font-weight: 700;
-        color: var(--text-primary);
+        padding-left: 18px;
+        color: var(--text-secondary);
         font-size: 13px;
       }
-      .sequence-step {
-        border: 1px solid var(--border-soft);
-        border-radius: 8px;
-        padding: 10px 12px;
-        background: var(--bg-card-soft);
-        color: var(--text-secondary);
-        font-size: 12px;
-        min-height: 42px;
+      .mini-list li {
+        margin-bottom: 6px;
       }
-      .sequence-step.send { border-color: rgba(34, 197, 94, 0.28); background: rgba(34, 197, 94, 0.1); }
-      .sequence-step.recv { border-color: rgba(59, 130, 246, 0.24); background: rgba(59, 130, 246, 0.09); }
-      .arch-footnotes {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 10px;
-        margin-top: 14px;
-      }
-      .arch-footnotes span {
-        border: 1px solid var(--border-soft);
-        border-radius: 8px;
-        padding: 10px;
-        background: var(--bg-card-soft);
-        color: var(--text-muted);
-        font-size: 12px;
-      }
-      .arch-svg {
-        display: block;
-        width: 100%;
-        min-width: 0;
-        height: auto;
-        border-radius: 8px;
-        background: var(--bg-card-soft);
-      }
-      .arch-svg text {
-        font-family: "Inter", "PingFang SC", "Helvetica Neue", "Segoe UI", system-ui, -apple-system, sans-serif;
-        fill: var(--text-primary);
-      }
-      .arch-svg .small { font-size: 12px; fill: var(--text-muted); }
-      .arch-svg .label { font-size: 13px; font-weight: 700; }
-      .arch-svg .title { font-size: 17px; font-weight: 800; }
-      .arch-svg .tiny { font-size: 11px; fill: var(--text-muted); }
-      .arch-svg .small-center,
-      .arch-svg .tiny-center {
-        text-anchor: middle;
-      }
-      .arch-svg .small-center { font-size: 12px; fill: var(--text-muted); }
-      .arch-svg .tiny-center { font-size: 11px; fill: var(--text-muted); }
-      .arch-svg .boundary { fill: rgba(255, 255, 255, 0.64); stroke: rgba(15, 23, 42, 0.18); stroke-width: 1.5; stroke-dasharray: 8 6; }
-      .arch-svg .edge-chip {
-        fill: rgba(255, 255, 255, 0.94);
-        stroke: rgba(148, 163, 184, 0.42);
-        stroke-width: 1;
-      }
-      .arch-svg .edge-chip-soft {
-        fill: rgba(248, 250, 252, 0.94);
-        stroke: rgba(148, 163, 184, 0.32);
-        stroke-width: 1;
-      }
-      .arch-svg .edge-text {
-        font-size: 11px;
-        font-weight: 600;
-        fill: #64748b;
-        text-anchor: middle;
-        letter-spacing: 0.01em;
-      }
-      .arch-svg .box-blue { fill: #eaf2ff; stroke: #9cc5ff; stroke-width: 1.4; }
-      .arch-svg .box-green { fill: #e9f9ef; stroke: #94e2ad; stroke-width: 1.4; }
-      .arch-svg .box-purple { fill: #f2e8ff; stroke: #d8b4fe; stroke-width: 1.4; }
-      .arch-svg .box-yellow { fill: #fff6db; stroke: #f4d17a; stroke-width: 1.4; }
-      .arch-svg .box-red { fill: #fff0f0; stroke: #fca5a5; stroke-width: 1.4; }
-      .arch-svg .box-gray { fill: #eef2f8; stroke: #cbd5e1; stroke-width: 1.4; }
-      .arch-svg .arrow { stroke: #334155; stroke-width: 2.2; fill: none; }
-      .arch-svg .arrow-blue { stroke: #2563eb; stroke-width: 2.2; fill: none; }
-      .arch-svg .arrow-green { stroke: #16a34a; stroke-width: 2.2; fill: none; }
-      .arch-svg .arrow-red { stroke: #dc2626; stroke-width: 2.2; fill: none; }
-      .arch-svg .dashed { stroke-dasharray: 7 5; }
 
-      /* ---------- Faq ---------- */
+      /* FAQ items */
+      .faq-card {
+        padding: 12px 20px;
+      }
       .faq-item {
         border-bottom: 1px solid var(--border-soft);
-        padding: 18px 0;
       }
-      .faq-item:first-child { padding-top: 0; }
-      .faq-item:last-child { border-bottom: 0; padding-bottom: 0; }
+      .faq-item:last-child {
+        border-bottom: none;
+      }
       .faq-q {
         width: 100%;
         display: flex;
-        justify-content: space-between;
         align-items: center;
-        gap: 12px;
-        cursor: pointer;
-        border: 0;
+        justify-content: space-between;
+        padding: 16px 0;
         background: transparent;
-        padding: 0;
+        border: none;
+        cursor: pointer;
         text-align: left;
-        -webkit-user-select: none;
-        user-select: none;
+        color: var(--text-primary);
       }
       .faq-q-text {
+        margin: 0;
         font-size: 15px;
         font-weight: 600;
-        color: var(--text-primary);
-        margin: 0;
       }
       .faq-chevron {
-        width: 20px;
-        height: 20px;
+        width: 18px;
+        height: 18px;
         color: var(--text-muted);
-        flex-shrink: 0;
         transition: transform 200ms ease;
+        flex-shrink: 0;
       }
-      .faq-item.open .faq-chevron { transform: rotate(180deg); }
+      .faq-item.open .faq-chevron {
+        transform: rotate(180deg);
+      }
       .faq-a {
-        max-height: 0;
-        overflow: hidden;
-        transition: max-height 240ms ease, opacity 200ms ease;
-        opacity: 0;
-      }
-      .faq-a[hidden] { display: block; }
-      .faq-item.open .faq-a {
-        max-height: 720px;
-        opacity: 1;
-      }
-      .faq-a-inner {
-        padding-top: 12px;
-        font-size: 14px;
+        padding: 0 0 16px;
         color: var(--text-secondary);
-        line-height: 1.7;
-      }
-      .faq-a-inner p { margin: 0 0 8px; }
-      .faq-a-inner p:last-child { margin-bottom: 0; }
-      .faq-a-inner code { font-size: 12px; }
-      .faq-a-inner ul { margin: 4px 0; padding-left: 20px; }
-
-      .faq-card { padding: 8px 20px; }
-      .mini-list {
-        margin: 10px 0 0;
-        padding-left: 18px;
-        color: var(--text-secondary);
-        font-size: 14px;
-      }
-      .mini-list li + li { margin-top: 6px; }
-      .inline-note {
-        margin-top: 10px;
-        color: var(--text-muted);
         font-size: 13px;
+        line-height: 1.6;
       }
+      .faq-a pre {
+        background: #0f172a;
+        color: #f8fafc;
+        padding: 10px 14px;
+        border-radius: 8px;
+        font-size: 12px;
+        overflow-x: auto;
+      }
+
+      /* Footer */
       .footer {
-        margin-top: 48px;
-        padding-top: 20px;
+        margin-top: 60px;
+        padding-top: 24px;
         border-top: 1px solid var(--border-soft);
         text-align: center;
         color: var(--text-muted);
         font-size: 13px;
       }
-      .footer-links {
-        display: inline-flex;
-        align-items: center;
-        gap: 10px;
-        flex-wrap: wrap;
-        justify-content: center;
+      .footer a {
+        color: var(--text-primary);
+        font-weight: 500;
       }
-      .footer-links a {
-        color: var(--accent-green);
+      .footer a:hover {
+        text-decoration: underline;
       }
-      .footer-links a:hover { text-decoration: underline; }
-
-      /* ---------- Responsive ---------- */
-      @media (max-width: 768px) {
-        .app { grid-template-columns: 1fr; }
-        .sidebar {
-          position: static;
-          height: auto;
-          padding: 16px;
-          border-right: 0;
-          border-bottom: 1px solid var(--border-soft);
-          align-items: stretch;
-          gap: 14px;
-        }
-        .brand {
-          align-items: center;
-          display: flex;
-          gap: 12px;
-          height: auto;
-          margin-bottom: 0;
-          width: auto;
-        }
-        .brand-copy {
-          color: var(--text-primary);
-          display: block;
-          font-size: 18px;
-          font-weight: 600;
-        }
-        .brand-mark {
-          width: 44px;
-          height: 44px;
-        }
-        .nav-group { margin-bottom: 0; }
-        .nav-stack {
-          flex-direction: row;
-          flex-wrap: wrap;
-          gap: 8px;
-          justify-content: flex-start;
-        }
-        .nav-link {
-          width: auto;
-          height: 38px;
-          display: flex;
-          gap: 8px;
-          border: 1px solid var(--border-soft);
-          background: var(--bg-card);
-          color: var(--text-secondary);
-          font-size: 13px;
-          padding: 8px 10px;
-        }
-        .nav-link.external::after {
-          content: "↗";
-          color: var(--text-dim);
-          font-size: 12px;
-          margin-left: 2px;
-        }
-        .nav-link svg {
-          width: 16px;
-          height: 16px;
-        }
-        .sidebar-bottom { display: none; }
-        .main {
-          --main-inline-padding: 16px;
-          padding: 20px var(--main-inline-padding) 40px;
-        }
-        .section-wide {
-          width: 100%;
-          max-width: 100%;
-          margin-left: 0;
-          transform: none;
-        }
-        .arch-lane,
-        .arch-sequence {
-          min-width: 0;
-        }
-        .page-header h1 { font-size: 28px; }
-        .page-header p { font-size: 15px; }
-        .hero-grid,
-        .hero-steps,
-        .stats-row,
-        .content-grid.two-up,
-        .content-grid.columns-2,
-        .content-grid.feature-split,
-        .arch-footnotes { grid-template-columns: 1fr; }
-        .card { padding: 20px; }
-        .faq-card { padding: 8px 20px; }
-        .arch-board { padding: 18px; }
-      }
-
-      /* ---------- Print ---------- */
-      @media print {
-        .sidebar { display: none; }
-        .app { grid-template-columns: 1fr; }
-        .hero { box-shadow: none; }
-        .faq-chevron { display: none; }
-        .faq-a { max-height: none; opacity: 1; }
-      }
-
-      /* ---------- Scrollbar ---------- */
-      ::-webkit-scrollbar { width: 6px; height: 6px; }
-      ::-webkit-scrollbar-track { background: transparent; }
-      ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
-      ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
     </style>
   </head>
   <body>
     <div class="app">
       <!-- Sidebar -->
       <aside class="sidebar">
-        <div class="brand">
-          <div class="brand-mark">
-            <img src="./assets/brand-logo-light.webp" alt="NodeLite" />
-          </div>
+        <a class="brand" href="#deploy" title="NodeLite 部署指南">
+          <div class="brand-mark"></div>
           <div class="brand-copy">
-            NodeLite
-            <small>Quick Deploy Guide</small>
+            <strong>NodeLite</strong>
+            <small>部署与运维指南</small>
           </div>
-        </div>
+        </a>
 
         <div class="nav-group">
-          <div class="nav-label">目录</div>
-          <nav class="nav-stack" aria-label="页面导航">
-            <a class="nav-link active" href="#deploy" title="快速部署" aria-label="快速部署">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16"/><path d="M12 4v16"/></svg>
-              快速部署
+          <nav class="nav-stack">
+            <a class="nav-link active" href="#deploy" title="快速部署">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h16"/><path d="M12 4v16"/></svg>
+              <span class="nav-label">快速部署</span>
             </a>
-            <a class="nav-link" href="#advanced" title="进阶配置" aria-label="进阶配置">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
-              进阶配置
+            <a class="nav-link" href="#advanced" title="进阶配置">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+              <span class="nav-label">进阶配置</span>
             </a>
-            <a class="nav-link" href="#faq" title="常见问题" aria-label="常见问题">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-              常见问题
+            <a class="nav-link" href="#alerts-tc" title="告警与限速">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+              <span class="nav-label">告警与限速</span>
             </a>
-            <a class="nav-link" href="#architecture" title="系统架构" aria-label="系统架构">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7l9 5 9-5-9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg>
-              系统架构
+            <a class="nav-link" href="#faq" title="常见问题">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              <span class="nav-label">排障 FAQ</span>
             </a>
-            <a class="nav-link external" href="https://github.com/XiNian-dada/NodeLite" target="_blank" rel="noreferrer" title="GitHub" aria-label="GitHub">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
-              GitHub
+            <a class="nav-link external" href="https://github.com/XiNian-dada/NodeLite" target="_blank" rel="noreferrer" title="GitHub 仓库">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
+              <span class="nav-label">GitHub 仓库</span>
             </a>
           </nav>
         </div>
 
         <div class="sidebar-bottom">
-          <a href="https://github.com/XiNian-dada/NodeLite" target="_blank" rel="noreferrer" title="GitHub" aria-label="GitHub">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-            github.com/XiNian-dada/NodeLite
+          <a href="https://github.com/XiNian-dada/NodeLite/releases" target="_blank" rel="noreferrer" title="Releases">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <span class="sidebar-bottom-label">v3.0.x 发布页</span>
           </a>
         </div>
       </aside>
 
-      <!-- Main -->
+      <!-- Main Content -->
       <main class="main">
         <div class="doc-shell">
-        <div class="page-header">
-          <div class="eyebrow">GitHub Pages / Quick Start / Public Docs</div>
-          <h1>NodeLite</h1>
-          <p>5 分钟把 NodeLite 跑起来，再按需接入 HTTPS、WSS、Prometheus 和 2FA。</p>
-          <div class="hero">
-            <div class="hero-grid">
+          <!-- Page Header -->
+          <div class="page-header">
+            <div class="eyebrow">NodeLite v3.0.x 官方部署与运维文档</div>
+            <h1>NodeLite 部署指南</h1>
+            <p>基于 Rust 构建的轻量级高性能监控面板。几分钟完成安装，支持单文件交付、无锁广播、Linux 套餐限速与多通道告警。</p>
+
+            <div class="hero">
               <div class="hero-panel">
-                <h2>默认推荐路径</h2>
-                <p>第一次部署时，先只做能让第一台节点上线的那几步。等确认面板正常工作，再继续配 HTTPS、Prometheus、2FA 和反向代理，会清爽很多。</p>
+                <h2>推荐上线流程</h2>
+                <p>先让服务端和第一台 Agent 连通并验证面板显示，再配置域名 TLS 反向代理、告警通道与安全加固。</p>
                 <div class="hero-steps">
                   <div class="hero-step">
-                    <strong>Step 1</strong>
-                    <span>安装服务端并完成初始化</span>
+                    <strong>第 1 步</strong>
+                    <span>一键安装服务端 (nodelite-server)</span>
                   </div>
                   <div class="hero-step">
-                    <strong>Step 2</strong>
-                    <span>签发节点并在子机执行 Agent 安装命令</span>
+                    <strong>第 2 步</strong>
+                    <span>配置反向代理 (Nginx / Caddy)</span>
                   </div>
                   <div class="hero-step">
-                    <strong>Step 3</strong>
-                    <span>确认节点在线后，再补生产环境配置</span>
+                    <strong>第 3 步</strong>
+                    <span>签发并执行 Agent 安装命令</span>
                   </div>
                 </div>
                 <div class="hero-actions">
-                  <a class="action-chip" href="#architecture">查看系统架构</a>
-                  <a class="action-chip" href="#deploy">先看最快部署路径</a>
-                  <a class="action-chip" href="#advanced">查看进阶配置</a>
-                  <a class="action-chip" href="#faq">查看排障 FAQ</a>
-                  <a class="action-chip" href="https://github.com/XiNian-dada/NodeLite/releases" target="_blank" rel="noreferrer">下载 Release</a>
-                </div>
-                <div class="hero-callout">
-                  <strong>一句话建议</strong>
-                  <p>把“一键安装 + Agent 上线”先跑通，就是这页最重要的部分；其余内容都可以按需慢慢展开。</p>
+                  <a class="action-chip" href="#deploy">快速部署</a>
+                  <a class="action-chip" href="#advanced">反代与进阶配置</a>
+                  <a class="action-chip" href="#alerts-tc">告警与 Linux 限速</a>
+                  <a class="action-chip" href="#faq">排障 FAQ</a>
+                  <a class="action-chip" href="https://github.com/XiNian-dada/NodeLite/releases" target="_blank" rel="noreferrer">下载最新 Release</a>
                 </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- ==================== 快速部署 ==================== -->
-        <section class="section" id="deploy">
-          <h2 class="section-title">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16"/><path d="M12 4v16"/></svg>
-            快速部署
-          </h2>
-          <p class="section-desc">如果你只想尽快看到第一台节点在线，先按下面的最短路径走；生产环境的细化配置放在下一节。</p>
+          <!-- ==================== 快速部署 ==================== -->
+          <section class="section" id="deploy">
+            <h2 class="section-title">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue)" stroke-width="2"><path d="M4 12h16"/><path d="M12 4v16"/></svg>
+              快速部署
+            </h2>
+            <p class="section-desc">根据你的实际环境，选择最适合的部署路径：</p>
 
-          <div class="guide-stack">
-          <!-- 一键安装 -->
-          <div class="card card-hover">
-            <div class="card-header">
-              <div class="card-icon green">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
-              </div>
-              <div>
-                <h3 class="card-title">一键安装（推荐）</h3>
-                <p class="card-sub">交互式安装器，适合快速上手</p>
-              </div>
-            </div>
-            <p class="body-copy">
-              服务端一条命令安装。脚本会自动检测架构、校验二进制哈希、生成配置和 systemd unit。
-            </p>
-
-            <div class="cmd-block">
-              <span class="cmd-label">服务端安装</span>
-              <pre><span class="comment"># 一条命令安装，同样命令也可用于升级</span>
-curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/install-server.sh | sudo sh</pre>
-            </div>
-
-            <div class="cmd-block">
-              <span class="cmd-label">升级服务端</span>
-              <pre>curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/install-server.sh | \
-  sudo NODELITE_SERVER_MODE=upgrade sh</pre>
-            </div>
-
-            <div class="alert info">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-              安装脚本会自动引导你输入安装目录、监听端口、对外域名和面板账号密码。
-            </div>
-          </div>
-
-          <div class="card">
-            <div class="check-grid">
-              <div class="check-block">
-                <h3 class="guide-section-title">开始前确认</h3>
-                <ul class="mini-list">
-                  <li>一台可 SSH 的 Linux 主机，用来部署 <code>nodelite-server</code></li>
-                  <li>一台或多台 Linux 子机，用来部署 <code>nodelite-agent</code></li>
-                  <li>服务端建议预留一个域名，后面用于 HTTPS / WSS 和安装脚本分发</li>
-                  <li>生产环境建议提前放行 <code>80/443</code>，并让服务端只监听回环地址</li>
-                </ul>
-                <p class="guide-note">如果只是本地验证，先用内网 IP 或临时域名也可以，跑通后再补反向代理。</p>
-              </div>
-              <div class="check-block">
-                <h3 class="guide-section-title">跑通后检查</h3>
-                <ul class="mini-list">
-                  <li>服务端 <code>systemctl status nodelite-server</code> 为 <code>active (running)</code></li>
-                  <li>Agent 日志中出现成功连接到 <code>/ws</code> 的记录</li>
-                  <li>浏览器打开面板后能看到至少一台节点处于在线状态</li>
-                  <li><code>/metrics</code> 可以被抓取，或至少本地 <code>curl</code> 返回 Prometheus 文本</li>
-                </ul>
-              </div>
-            </div>
-          </div>
-          </div>
-        </section>
-
-        <!-- ==================== 进阶配置 ==================== -->
-        <section class="section" id="advanced">
-          <h2 class="section-title">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
-            进阶配置
-          </h2>
-          <p class="section-desc">当第一台节点已经跑起来后，再看这一节会更容易理解，也更适合生产环境使用。</p>
-
-          <div class="detail-list">
-          <!-- 手工部署服务端 -->
-          <details class="guide-detail">
-            <summary class="guide-summary">
-              <div class="guide-summary-icon blue">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-              </div>
-              <div class="guide-summary-text">
-                <strong>手工部署</strong>
-                <span>适合需要精细控制配置的进阶用户</span>
-              </div>
-              <svg class="guide-summary-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-            </summary>
-            <div class="guide-body">
-            <ol class="step-list">
-              <li>从 <a href="https://github.com/XiNian-dada/NodeLite/releases" target="_blank" rel="noreferrer" class="text-link">GitHub Releases</a> 下载对应架构的 <code>nodelite-server</code> 二进制</li>
-              <li>复制 <code>config/server.example.toml</code> 并修改关键配置（监听地址、域名、认证凭据、GeoIP 模式等）</li>
-              <li>将二进制安装到 <code>/usr/local/bin/nodelite-server</code>，配置文件放到 <code>/opt/nodelite/config/server.toml</code></li>
-              <li>创建 systemd unit 并启动</li>
-              <li>执行 <code>install-agent</code> 签发节点命令</li>
-            </ol>
-
-            <div class="cmd-block">
-              <span class="cmd-label">查看服务状态</span>
-              <pre>sudo systemctl status nodelite-server.service
-sudo journalctl -u nodelite-server.service -f</pre>
-            </div>
-
-            <div class="alert warn">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-              如果服务端起不来，第一时间检查 <code>sudo journalctl -u nodelite-server.service -n 100 --no-pager</code>
-            </div>
-            </div>
-          </details>
-
-          <!-- 节点定位 / GeoIP -->
-          <details class="guide-detail">
-            <summary class="guide-summary">
-              <div class="guide-summary-icon green">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15 15 0 0 1 0 20"/><path d="M12 2a15 15 0 0 0 0 20"/></svg>
-              </div>
-              <div class="guide-summary-text">
-                <strong>节点定位 &amp; GeoIP</strong>
-                <span>默认用 ipwhois 在线查询，dbip 只在需要本地数据库时启用</span>
-              </div>
-              <svg class="guide-summary-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-            </summary>
-            <div class="guide-body">
-              <div class="alert info">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-                <div class="alert-body">
-                  <strong>默认行为</strong>
-                  <p>NodeLite 默认使用 <code>provider = "ipwhois"</code> 在线查询 GeoIP，不需要下载 DB-IP Lite 数据库。</p>
-                  <p>如果切到 <code>provider = "dbip"</code>，才会启用数据库下载，右下角的 DB-IP attribution 也只在这个模式下显示。</p>
+            <div class="card">
+              <div class="card-header">
+                <div class="card-icon green">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+                </div>
+                <div>
+                  <h3 class="card-title">第一步：一键安装服务端</h3>
+                  <p class="card-sub">在主控机（Linux + systemd）上执行，自动识别架构并配置服务</p>
                 </div>
               </div>
 
               <div class="cmd-block">
-                <span class="cmd-label">GeoIP 配置示例</span>
-                <pre>[geoip]
-enabled = true
-provider = "ipwhois"
-edition = "country-lite"
-database_path = "./data/geoip/dbip.mmdb"</pre>
+                <span class="cmd-label">服务端一键安装命令</span>
+                <pre>curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/install-server.sh | sudo sh</pre>
               </div>
 
-              <div class="alert warn">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                <div class="alert-body">
-                  <strong>手动位置优先</strong>
-                  <p>如果你在节点设置页手动指定了位置，手动结果会覆盖自动 GeoIP；需要离线使用本地数据库时再改成 <code>provider = "custom"</code> 并指定自己的 <code>database_path</code>。</p>
+              <p class="body-copy">
+                安装器会自动引导你配置安装目录（默认 <code>/opt/nodelite</code>）、监听端口、对外访问域名以及管理员强密码，随后自动生成 systemd 服务并启动。
+              </p>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div class="card-icon blue">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>
+                </div>
+                <div>
+                  <h3 class="card-title">第二步：签发并安装被控端 (Agent)</h3>
+                  <p class="card-sub">在服务端签发含 15 分钟有效期的临时 Token 命令，粘贴到被控子机执行</p>
                 </div>
               </div>
-            </div>
-          </details>
 
-          <!-- 节点签发与 Agent 安装 -->
-          <details class="guide-detail">
-            <summary class="guide-summary">
-              <div class="guide-summary-icon purple">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/></svg>
-              </div>
-              <div class="guide-summary-text">
-                <strong>节点签发 &amp; Agent 部署</strong>
-                <span>在服务端生成含一次性 token 的安装命令，粘贴到目标子机执行</span>
-              </div>
-              <svg class="guide-summary-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-            </summary>
-            <div class="guide-body">
-
-            <div class="cmd-block">
-              <span class="cmd-label">服务端签发节点</span>
-              <pre><span class="comment"># 在服务端执行，生成一条可直接粘贴到子机执行的安装命令</span>
-/usr/local/bin/nodelite-server \
+              <div class="cmd-block">
+                <span class="cmd-label">在服务端签发节点安装命令</span>
+                <pre>/usr/local/bin/nodelite-server \
   --config /opt/nodelite/config/server.toml \
   install-agent \
   --node-id hk-01 \
   --node-label "Hong Kong 01"</pre>
-            </div>
+              </div>
 
-            <div class="cmd-block">
-              <span class="cmd-label">子机执行（复制上一步的输出）</span>
-              <pre>curl -fsSL https://monitor.example.com/install/install-agent.sh | \
+              <div class="cmd-block">
+                <span class="cmd-label">在目标子机（Linux / macOS）上粘贴执行服务端输出的命令</span>
+                <pre>curl -fsSL https://monitor.example.com/install/install-agent.sh | \
   NODELITE_AGENT_INSTALL_TOKEN='one-time-token' sh -s -- \
   --bootstrap-url https://monitor.example.com/install/bootstrap \
   --base-url https://github.com/XiNian-dada/NodeLite/releases/latest/download</pre>
-            </div>
+              </div>
 
-            <div class="cmd-block">
-              <span class="cmd-label">Agent 升级</span>
-              <pre><span class="comment"># 不需要重新 bootstrap，保留现有 agent.toml</span>
-curl -fsSL https://monitor.example.com/install/install-agent.sh | \
-  NODELITE_AGENT_MODE=upgrade sh -s -- \
-  --base-url https://github.com/XiNian-dada/NodeLite/releases/latest/download</pre>
-            </div>
-
-            <div class="alert info">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-              <div class="alert-body">
-                <strong>token 提示</strong>
-                <p>一次性 install token 有效期 15 分钟。过期后重新执行 <code>install-agent</code> 生成新的 token 即可。</p>
-                <p>长期 node token 只在 bootstrap 响应体中下发，不会出现在 URL 或命令参数中。</p>
+              <div class="alert info">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                <div class="alert-body">
+                  <strong>安全说明</strong>
+                  <p>一次性 Token 仅用于首次握手获取长期节点凭据。长期 Token 会安全保存于 Agent 的 <code>0600</code> 权限配置文件中，绝不会在命令行或 URL 中泄露。</p>
+                </div>
               </div>
             </div>
+
+            <div class="card">
+              <div class="check-grid">
+                <div class="check-block">
+                  <h3>前置条件与端口规划</h3>
+                  <ul class="mini-list">
+                    <li>一台 Linux 主机用于部署服务端，开放 <code>80/443</code> 供反代访问</li>
+                    <li>一个解析到服务端的域名（生产环境强推荐配合 HTTPS / WSS）</li>
+                    <li>服务端默认监听 <code>127.0.0.1:8080</code>，由前置 Nginx/Caddy 转发</li>
+                    <li>被控子机仅需出站访问服务端的 443 端口，无需在子机放行任何入站端口</li>
+                  </ul>
+                </div>
+                <div class="check-block">
+                  <h3>部署就绪检查清单</h3>
+                  <ul class="mini-list">
+                    <li>执行 <code>systemctl status nodelite-server</code> 确认服务端处于 running</li>
+                    <li>浏览器打开面板域名，输入安装时生成的账号密码成功登录</li>
+                    <li>子机执行完安装命令后，面板在 2 秒内刷新出该节点的 CPU、内存与流量卡片</li>
+                    <li>访问 <code>/metrics</code> 端点可获取 Prometheus 指标数据</li>
+                  </ul>
+                </div>
+              </div>
             </div>
-          </details>
+          </section>
 
-          <!-- 反向代理 -->
-          <details class="guide-detail">
-            <summary class="guide-summary">
-              <div class="guide-summary-icon yellow">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-              </div>
-              <div class="guide-summary-text">
-                <strong>反向代理配置</strong>
-                <span>Nginx 终结 HTTPS/WSS，服务端监听回环地址</span>
-              </div>
-              <svg class="guide-summary-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-            </summary>
-            <div class="guide-body">
-            <p class="body-copy">
-              生产环境推荐：<code>nodelite-server</code> 监听 <code>127.0.0.1:&lt;port&gt;</code>，Nginx 对外暴露 <code>443</code> 端口。
-            </p>
+          <!-- ==================== 进阶配置 ==================== -->
+          <section class="section" id="advanced">
+            <h2 class="section-title">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue)" stroke-width="2"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+              进阶配置与反向代理
+            </h2>
+            <p class="section-desc">生产部署的标准配置指南，包含反代、手工安装与 Prometheus 接入。</p>
 
-            <div class="cmd-block">
-              <span class="cmd-label">Nginx 配置参考</span>
-              <pre>server {
+            <div class="detail-list">
+              <!-- Nginx 反向代理 -->
+              <details class="guide-detail" open>
+                <summary class="guide-summary">
+                  <div class="guide-summary-icon yellow">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                  </div>
+                  <div class="guide-summary-text">
+                    <strong>Nginx 反向代理配置（强烈推荐）</strong>
+                    <span>终结 HTTPS / WSS，代理静态页面与长连接</span>
+                  </div>
+                  <svg class="guide-summary-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                </summary>
+                <div class="guide-body">
+                  <p class="body-copy">
+                    将以下配置保存为 <code>/etc/nginx/conf.d/nodelite.conf</code>。请将域名与证书路径替换为你的实际信息：
+                  </p>
+
+                  <div class="cmd-block">
+                    <span class="cmd-label">完整的 Nginx 配置模板</span>
+                    <pre>server {
     listen 443 ssl http2;
     server_name monitor.example.com;
 
-    ssl_certificate     /path/to/fullchain.pem;
-    ssl_certificate_key /path/to/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/monitor.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/monitor.example.com/privkey.pem;
 
+    # 1. 静态面板与 API 路由
     location / {
-        proxy_pass http://127.0.0.1:&lt;port&gt;;
+        proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    # 2. Agent 与浏览器 WebSocket 连接 (必须配置 Upgrade 与长超时)
     location /ws {
-        proxy_pass http://127.0.0.1:&lt;port&gt;/ws;
+        proxy_pass http://127.0.0.1:8080/ws;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 120s;
         proxy_send_timeout 120s;
     }
 
+    # 3. Agent 安装脚本与 bootstrap 端点
     location /install/ {
-        proxy_pass http://127.0.0.1:&lt;port&gt;;
+        proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 }</pre>
-            </div>
+                  </div>
 
-            <div class="alert info">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-              Caddy 也可用 — 自动 TLS、无需手动配置证书。同机反代不需要额外配 <code>trusted_proxies</code>。
-            </div>
-            </div>
-          </details>
+                  <div class="alert info">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                    <div class="alert-body">
+                      <strong>Caddy 用户提示</strong>
+                      <p>如果使用 Caddy，仅需简单的 <code>reverse_proxy 127.0.0.1:8080</code> 即可，Caddy 会全自动申请并续签 SSL 证书，并天然支持 WebSocket 代理。</p>
+                    </div>
+                  </div>
+                </div>
+              </details>
 
-          <!-- Prometheus -->
-          <details class="guide-detail">
-            <summary class="guide-summary">
-              <div class="guide-summary-icon blue">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-              </div>
-              <div class="guide-summary-text">
-                <strong>Prometheus 集成</strong>
-                <span>NodeLite 提供 <code>/metrics</code> 端点，输出 Prometheus exposition 文本</span>
-              </div>
-              <svg class="guide-summary-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-            </summary>
-            <div class="guide-body">
-            <p class="body-copy">
-              <code>/metrics</code> 与仪表盘共用只读认证，抓取端需带上同样的 Basic Auth 凭据。
-            </p>
-            <div class="cmd-block">
-              <span class="cmd-label">验证</span>
-              <pre>curl -u '&lt;readonly-username&gt;:&lt;generated-strong-password&gt;' https://monitor.example.com/metrics</pre>
-            </div>
-            <div class="cmd-block">
-              <span class="cmd-label">Prometheus 配置</span>
-              <pre>scrape_configs:
-  - job_name: nodelite
+              <!-- 手工解耦安装 -->
+              <details class="guide-detail">
+                <summary class="guide-summary">
+                  <div class="guide-summary-icon blue">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                  </div>
+                  <div class="guide-summary-text">
+                    <strong>手动解压与配置部署</strong>
+                    <span>适合 Docker、离线环境或需要深度定制目录结构的用户</span>
+                  </div>
+                  <svg class="guide-summary-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                </summary>
+                <div class="guide-body">
+                  <ol class="step-list">
+                    <li>从 GitHub Releases 下载对应的 <code>nodelite-server-linux-musl.tar.gz</code> 二进制包；</li>
+                    <li>将可执行文件放置于 <code>/usr/local/bin/nodelite-server</code> 并赋予执行权限；</li>
+                    <li>创建配置目录 <code>/opt/nodelite/config</code>，复制 <code>config/server.example.toml</code> 至 <code>server.toml</code> 并调整参数；</li>
+                    <li>创建独立服务账号 <code>nodelite-server</code>，配置 systemd unit 启动；</li>
+                    <li>执行 <code>install-agent</code> 签发子机安装命令。</li>
+                  </ol>
+                </div>
+              </details>
+
+              <!-- Prometheus 监控集成 -->
+              <details class="guide-detail">
+                <summary class="guide-summary">
+                  <div class="guide-summary-icon purple">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                  </div>
+                  <div class="guide-summary-text">
+                    <strong>Prometheus /metrics 接入与 Grafana 看板</strong>
+                    <span>内置标准 Prometheus exposition 格式抓取端点</span>
+                  </div>
+                  <svg class="guide-summary-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                </summary>
+                <div class="guide-body">
+                  <p class="body-copy">
+                    <code>/metrics</code> 端点与前端控制台共享只读 Basic Auth 鉴权。可在 <code>prometheus.yml</code> 中添加如下配置：
+                  </p>
+                  <div class="cmd-block">
+                    <span class="cmd-label">prometheus.yml 抓取配置</span>
+                    <pre>scrape_configs:
+  - job_name: 'nodelite'
     scheme: https
     metrics_path: /metrics
     basic_auth:
-      username: &lt;readonly-username&gt;
-      password: &lt;generated-strong-password&gt;
+      username: '&lt;readonly-username&gt;'
+      password: '&lt;generated-strong-password&gt;'
     static_configs:
-      - targets:
-          - monitor.example.com</pre>
-            </div>
-            </div>
-          </details>
-
-          <!-- 交叉编译 -->
-          <details class="guide-detail">
-            <summary class="guide-summary">
-              <div class="guide-summary-icon green">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-              </div>
-              <div class="guide-summary-text">
-                <strong>交叉编译</strong>
-                <span>在开发机上构建 Linux 静态二进制</span>
-              </div>
-              <svg class="guide-summary-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-            </summary>
-            <div class="guide-body">
-            <p class="body-copy">
-              仓库内置 musl 目标的 <code>lld</code> 链接配置，可直接交叉编译静态二进制。
-            </p>
-            <div class="cmd-block">
-              <span class="cmd-label">构建</span>
-              <pre>cargo build --release --target x86_64-unknown-linux-musl \
-  -p nodelite-server \
-  -p nodelite-agent
-
-cargo build --release --target aarch64-unknown-linux-musl \
-  -p nodelite-server \
-  -p nodelite-agent</pre>
-            </div>
-            </div>
-          </details>
-          </div>
-        </section>
-
-        <!-- ==================== 常见问题 ==================== -->
-        <section class="section" id="faq">
-          <h2 class="section-title">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-            常见问题
-          </h2>
-          <p class="section-desc">部署和使用中可能遇到的问题及解决方法。</p>
-
-          <div class="card faq-card">
-            <div class="faq-item open">
-              <button class="faq-q" type="button" aria-expanded="true">
-                <h4 class="faq-q-text">面板能打开但没有任何节点显示</h4>
-                <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-              </button>
-              <div class="faq-a">
-                <div class="faq-a-inner">
-                  <p>先检查 Agent 日志：</p>
-                  <pre>sudo journalctl -u nodelite-agent.service -n 50 --no-pager</pre>
-                  <p>常见原因：</p>
-                  <ul>
-                    <li>Agent 配置中的 <code>server</code> 不是 <code>wss://</code> 或证书有问题</li>
-                    <li>反向代理未正确转发 WebSocket（检查 <code>Upgrade</code> 和 <code>Connection</code> 头）</li>
-                    <li>Agent 的 node token 与服务端 <code>server.json</code> 不匹配</li>
-                    <li>防火墙未放行 443 端口或 WebSocket 路径</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-
-            <div class="faq-item">
-              <button class="faq-q" type="button" aria-expanded="false">
-                <h4 class="faq-q-text">服务端频繁出现 TLS 警告</h4>
-                <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-              </button>
-              <div class="faq-a" hidden>
-                <div class="faq-a-inner">
-                  <p>你仍然在使用 <code>http://</code> 或 <code>ws://</code> 明文链路。NodeLite 会在启动日志中每隔一段时间输出不安全传输警告。</p>
-                  <p>解决方法：配置 Nginx/Caddy 终结 HTTPS/WSS，确保 <code>server.toml</code> 中的 <code>public_base_url</code> 以 <code>https://</code> 开头。</p>
-                </div>
-              </div>
-            </div>
-
-            <div class="faq-item">
-              <button class="faq-q" type="button" aria-expanded="false">
-                <h4 class="faq-q-text">关闭 2FA 后服务端启动失败</h4>
-                <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-              </button>
-              <div class="faq-a" hidden>
-                <div class="faq-a-inner">
-                  <p>请升级到 <code>1.2.16</code> 或更新版本。旧版本中即使 2FA 关闭，服务端也会因为 <code>totp_secret</code> 配置而拒绝启动。</p>
-                  <p>如果你不想升级，临时方案是删除 <code>server.toml</code> 中的 <code>totp_secret</code> 字段。</p>
-                </div>
-              </div>
-            </div>
-
-            <div class="faq-item">
-              <button class="faq-q" type="button" aria-expanded="false">
-                <h4 class="faq-q-text">子机安装提示 "invalid install token"</h4>
-                <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-              </button>
-              <div class="faq-a" hidden>
-                <div class="faq-a-inner">
-                  <p>一次性 install token 有效期只有 <strong>15 分钟</strong>。超时后需要在服务端重新执行 <code>install-agent</code> 或 <code>issue-node</code> 来生成新的 token。</p>
-                  <pre>/usr/local/bin/nodelite-server \
-  --config /opt/nodelite/config/server.toml \
-  install-agent \
-  --node-id hk-01 \
-  --node-label "Hong Kong 01"</pre>
-                </div>
-              </div>
-            </div>
-
-            <div class="faq-item">
-              <button class="faq-q" type="button" aria-expanded="false">
-                <h4 class="faq-q-text">Agent 被 /ws 限流挡住（WebSocket 连接被拒绝）</h4>
-                <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-              </button>
-              <div class="faq-a" hidden>
-                <div class="faq-a-inner">
-                  <p>检查以下配置：</p>
-                  <ul>
-                    <li>服务端 <code>[ws]</code> 段的 <code>max_total_connections</code> 和 <code>max_connections_per_ip</code> 是否太小</li>
-                    <li>远端反代/WAF 的出口网段是否已写入 <code>server.trusted_proxies</code></li>
-                    <li>同机 Nginx/Caddy 不需要额外配置 <code>trusted_proxies</code></li>
-                  </ul>
-                  <p>限流参数（位于 <code>server.toml</code>）：</p>
-                  <pre>[ws]
-max_total_connections = 1024
-max_connections_per_ip = 32
-auth_fail_window_secs = 300
-auth_fail_max_attempts = 12
-auth_block_secs = 900</pre>
-                </div>
-              </div>
-            </div>
-
-            <div class="faq-item">
-              <button class="faq-q" type="button" aria-expanded="false">
-                <h4 class="faq-q-text">Agent token 过期了怎么办</h4>
-                <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-              </button>
-              <div class="faq-a" hidden>
-                <div class="faq-a-inner">
-                  <p>每个节点 token 默认 <strong>30 天</strong> 有效期。正常在线的节点会在 token 剩余不足 7 天时自动刷新。</p>
-                  <p>如果 Agent 离线超过 token 有效期：</p>
-                  <ul>
-                    <li>Agent 进入 1 小时间隔的退避重连</li>
-                    <li>在服务端执行 <code>install-agent --rotate-token</code> 轮换 token</li>
-                    <li>将新的 <code>agent.toml</code> 部署到该子机</li>
-                  </ul>
-                  <pre>/usr/local/bin/nodelite-server \
-  --config /opt/nodelite/config/server.toml \
-  install-agent \
-  --node-id hk-01 \
-  --node-label "Hong Kong 01" \
-  --rotate-token</pre>
-                </div>
-              </div>
-            </div>
-
-            <div class="faq-item">
-              <button class="faq-q" type="button" aria-expanded="false">
-                <h4 class="faq-q-text">如何修改面板密码</h4>
-                <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-              </button>
-              <div class="faq-a" hidden>
-                <div class="faq-a-inner">
-                  <p>两种方式：</p>
-                  <ul>
-                    <li>修改 <code>server.toml</code> 中的 <code>[auth] password</code>，然后重启服务端</li>
-                    <li>登录面板，在设置页（<code>/</code> → 右下角齿轮图标 → 设置）中修改密码</li>
-                  </ul>
-                  <p>注意：密码必须是 <strong>12 到 128 个字符</strong> 的强密码，并同时包含大写字母、小写字母、数字和特殊字符；常见弱密码会被拒绝，启动期校验不通过时服务端会直接拒绝启动。</p>
-                </div>
-              </div>
-            </div>
-
-            <div class="faq-item">
-              <button class="faq-q" type="button" aria-expanded="false">
-                <h4 class="faq-q-text">如何开启 TOTP 二次验证</h4>
-                <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-              </button>
-              <div class="faq-a" hidden>
-                <div class="faq-a-inner">
-                  <p>在 <code>server.toml</code> 中配置：</p>
-                  <pre>[auth]
-username = "&lt;readonly-username&gt;"
-password = "&lt;generated-strong-password&gt;"
-enable_2fa = true
-totp_secret = "&lt;base32-secret-from-setup&gt;"</pre>
-                  <p>生成一个新的 base32 secret：</p>
-                  <pre>python3 - <<'PY'
-import base64, secrets
-print(base64.b32encode(secrets.token_bytes(20)).decode().rstrip("="))
-PY</pre>
-                  <p>使用二维码格式添加到认证器 App：</p>
-                  <pre>otpauth://totp/NodeLite:viewer?secret=&lt;totp_secret&gt;&amp;issuer=NodeLite</pre>
-                </div>
-              </div>
-            </div>
-
-            <div class="faq-item">
-              <button class="faq-q" type="button" aria-expanded="false">
-                <h4 class="faq-q-text">2FA 登录流程是怎样的</h4>
-                <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-              </button>
-              <div class="faq-a" hidden>
-                <div class="faq-a-inner">
-                  <ol style="padding-left:20px;margin:0">
-                    <li>浏览器弹出 Basic Auth 对话框，输入用户名和密码</li>
-                    <li>通过后跳转到 <code>/verify-2fa</code> 页面，输入 6 位 TOTP 动态码</li>
-                    <li>验证通过后进入面板，会话有效期 <strong>24 小时</strong></li>
-                  </ol>
-                  <p style="margin-top:8px">
-                    连续 5 次 TOTP 输错会强制失效，必须重新走 Basic Auth。同一个 30 秒步长内的 TOTP 码不会被接受两次（重放防御）。
+      - targets: ['monitor.example.com']</pre>
+                  </div>
+                  <p class="body-copy">
+                    官方 Grafana 看板模板位于仓库的 <code>ops/grafana/nodelite-dashboard.json</code>，直接在 Grafana 中选择 Import JSON 即可一键导入。
                   </p>
                 </div>
+              </details>
+            </div>
+          </section>
+
+          <!-- ==================== 告警与限速 ==================== -->
+          <section class="section" id="alerts-tc">
+            <h2 class="section-title">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-red)" stroke-width="2"><path d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+              告警通知与 Linux 限速
+            </h2>
+            <p class="section-desc">NodeLite v3.0 的杀手级特性：多通道即时告警、每日巡检摘要以及内核级 VPS 流量限速。</p>
+
+            <div class="card">
+              <div class="card-header">
+                <div class="card-icon red">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                </div>
+                <div>
+                  <h3 class="card-title">1. 配置告警通道与每日巡检报告</h3>
+                  <p class="card-sub">在 server.toml 中启用并配置 SMTP 邮件或 Webhook（Telegram/Discord）</p>
+                </div>
+              </div>
+
+              <div class="cmd-block">
+                <span class="cmd-label">server.toml 中的 [alerts] 配置片段</span>
+                <pre>[alerts]
+enabled = true
+
+# SMTP 邮件通知
+[alerts.smtp]
+enabled = true
+host = "smtp.example.com"
+port = 587
+username = "alert@example.com"
+password = "your-email-password"
+sender = "alert@example.com"
+recipients = ["admin@example.com"]
+send_resolved = true
+
+# Webhook 机器人通知 (Telegram / Discord / 钉钉 / 飞书)
+[alerts.webhook]
+enabled = true
+url = "https://api.telegram.org/bot&lt;TOKEN&gt;/sendMessage?chat_id=&lt;CHAT_ID&gt;"
+send_resolved = true
+
+# 每日定时巡检报告 (每天 09:00 汇总 24 小时健康度)
+[alerts.inspection]
+enabled = true
+local_time = "09:00"
+delivery = ["smtp", "webhook"]</pre>
               </div>
             </div>
 
-            <div class="faq-item">
-              <button class="faq-q" type="button" aria-expanded="false">
-                <h4 class="faq-q-text">如何查看审计日志</h4>
-                <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-              </button>
-              <div class="faq-a" hidden>
-                <div class="faq-a-inner">
-                  <p>审计日志默认记录认证失败、TOTP 校验结果、token 事件和限流封禁等安全事件。</p>
-                  <p>通过 API 查询：</p>
-                  <pre><span class="comment"># 查看最近 100 条失败认证</span>
-curl -u '&lt;readonly-username&gt;:&lt;generated-strong-password&gt;' 'https://monitor.example.com/api/audit-log?event_type=login_failure&success=false&limit=100'</pre>
-                  <p>审计日志默认保留 90 天，可在 <code>server.toml</code> 的 <code>[audit]</code> 段调整。</p>
+            <div class="card">
+              <div class="card-header">
+                <div class="card-icon yellow">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                </div>
+                <div>
+                  <h3 class="card-title">2. 启用 Linux Agent 流量套餐限速 (tc)</h3>
+                  <p class="card-sub">当 VPS 流量超出预设计费套餐时，由 Agent 端内核动态实施限速，杜绝高额超标账单</p>
+                </div>
+              </div>
+
+              <p class="body-copy">
+                安装或升级 Agent 时，仅需传入 <code>--enable-traffic-control</code> 参数：
+              </p>
+
+              <div class="cmd-block">
+                <span class="cmd-label">启用限速能力的 Agent 安装命令</span>
+                <pre>curl -fsSL https://monitor.example.com/install/install-agent.sh | \
+  NODELITE_AGENT_INSTALL_TOKEN='one-time-token' sh -s -- \
+  --enable-traffic-control</pre>
+              </div>
+
+              <div class="alert warn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                <div class="alert-body">
+                  <strong>环境依赖要求</strong>
+                  <p>被控机需安装发行版自带的 <code>iproute2</code>（包含 <code>tc</code> 工具）。Agent 仍以非特权用户运行，仅按最小权限原则授予 <code>CAP_NET_ADMIN</code>，其余 systemd 安全沙箱依然完好保留。</p>
                 </div>
               </div>
             </div>
+          </section>
 
-            <div class="faq-item">
-              <button class="faq-q" type="button" aria-expanded="false">
-                <h4 class="faq-q-text">密码忘记了怎么办</h4>
-                <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-              </button>
-              <div class="faq-a" hidden>
-                <div class="faq-a-inner">
-                  <p>如果你有 SSH 和服务端文件系统访问权限：</p>
-                  <ol style="padding-left:20px;margin:0">
-                    <li>编辑 <code>server.toml</code> 中的 <code>auth.password</code></li>
-                    <li>重启服务端：<code>sudo systemctl restart nodelite-server.service</code></li>
-                  </ol>
-                  <p style="margin-top:8px">如果你开启了 2FA 且丢失了认证器，同上操作可以同时重置密码和关闭 2FA（<code>enable_2fa = false</code>）。</p>
-                </div>
-              </div>
-            </div>
+          <!-- ==================== 常见问题 ==================== -->
+          <section class="section" id="faq">
+            <h2 class="section-title">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              排障与常见问题 (FAQ)
+            </h2>
+            <p class="section-desc">汇总部署与生产运行中最常见的问题诊断与应对措施。</p>
 
-            <div class="faq-item">
-              <button class="faq-q" type="button" aria-expanded="false">
-                <h4 class="faq-q-text">服务端和 Agent 的内存占用该怎么理解</h4>
-                <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-              </button>
-              <div class="faq-a" hidden>
-                <div class="faq-a-inner">
-                  <p>NodeLite 不使用单一的“内存占用”数字作为发布基线。进程 RSS/PSS、匿名驻留内存和 systemd cgroup <code>MemoryCurrent</code> 回答的是不同问题，必须结合负载场景一起记录。</p>
+            <div class="card faq-card">
+              <!-- 问题 1 -->
+              <div class="faq-item open">
+                <button class="faq-q" type="button" aria-expanded="true">
+                  <h4 class="faq-q-text">面板打得开，但列表里没有任何节点在线</h4>
+                  <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div class="faq-a">
+                  <p>首先在被控机上排查 Agent 日志：</p>
+                  <pre>sudo journalctl -u nodelite-agent.service -n 50 --no-pager</pre>
+                  <p>常见排查清单：</p>
                   <ul>
-                    <li><strong>RSS/PSS</strong>：用于比较进程驻留工作集；PSS 会按比例分摊共享页。</li>
-                    <li><strong>匿名内存</strong>：用于近似观察 heap、线程栈和 runtime 私有状态。</li>
-                    <li><strong>MemoryCurrent</strong>：用于 systemd 总资源预算，也包含 SQLite/WAL 产生的可回收文件页缓存。</li>
-                    <li><strong>对照条件</strong>：使用同一机器、同一构建目标和相同节点数，区分 dashboard/History 冷、热场景。</li>
+                    <li>反向代理是否漏掉了 WebSocket 转发头（检查 Nginx 的 <code>proxy_set_header Upgrade $http_upgrade;</code> 与 <code>Connection "upgrade";</code>）；</li>
+                    <li>Agent 配置的服务器地址必须以 <code>wss://</code> 开头（生产环境严格校验 TLS 证书）；</li>
+                    <li>子机是否无法解析服务端域名或被机房安全组拦截了出站 443 端口。</li>
                   </ul>
-                  <p>生产实例中的 cgroup 数字可能明显高于进程 RSS，其中大部分差值可能是可回收的数据库文件页缓存，不能直接描述为 Rust heap 或内存泄漏。</p>
-                  <p>完整采集命令、场景定义和报告模板见 <a href="https://github.com/XiNian-dada/NodeLite/blob/main/docs/memory-measurement.md" target="_blank" rel="noopener">内存测量规范</a>。</p>
+                </div>
+              </div>
+
+              <!-- 问题 2 -->
+              <div class="faq-item">
+                <button class="faq-q" type="button" aria-expanded="false">
+                  <h4 class="faq-q-text">子机安装提示 "invalid install token"</h4>
+                  <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div class="faq-a" hidden>
+                  <p>出于防暴力猜测的安全机制，服务端签发的一次性 install token 有效期为 <strong>15 分钟</strong>。若超时未执行，只需在服务端重新执行一次 <code>install-agent</code> 签发命令即可。</p>
+                </div>
+              </div>
+
+              <!-- 问题 3 -->
+              <div class="faq-item">
+                <button class="faq-q" type="button" aria-expanded="false">
+                  <h4 class="faq-q-text">Agent 被服务端的 /ws 限流规则拦截拒绝</h4>
+                  <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div class="faq-a" hidden>
+                  <p>如果你的服务端前面使用了外部反代、CDN 或 Cloudflare WAF，所有 Agent 请求可能会以相同的代理 IP 到达服务端，从而触发防刷连接池阈值。</p>
+                  <p><strong>解决方案</strong>：在 <code>server.toml</code> 的 <code>trusted_proxies</code> 中添加前置反代的 CIDR 網段。如果反代与服务端在同一台机器上，则无需额外配置。</p>
+                </div>
+              </div>
+
+              <!-- 问题 4 -->
+              <div class="faq-item">
+                <button class="faq-q" type="button" aria-expanded="false">
+                  <h4 class="faq-q-text">如何开启 TOTP 2FA 并在忘记密码/丢失口令时重置</h4>
+                  <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div class="faq-a" hidden>
+                  <p>在 <code>server.toml</code> 的 <code>[auth]</code> 段配置 <code>enable_2fa = true</code> 与 <code>totp_secret</code> 即可开启二次动态验证。</p>
+                  <p>若丢失 2FA 设备或遗忘密码，只要拥有服务端主机权限，直接编辑 <code>server.toml</code>：修改 <code>password</code> 并将 <code>enable_2fa = false</code>，执行 <code>sudo systemctl restart nodelite-server</code> 即可瞬间恢复访问。</p>
+                </div>
+              </div>
+
+              <!-- 问题 5 -->
+              <div class="faq-item">
+                <button class="faq-q" type="button" aria-expanded="false">
+                  <h4 class="faq-q-text">内存占用指标如何正确理解</h4>
+                  <svg class="faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div class="faq-a" hidden>
+                  <p>在 Linux 下通过 <code>systemctl status</code> 查看到的 cgroup 内存（<code>MemoryCurrent</code>）包含 SQLite WAL 产生的可回收文件页缓存（Page Cache），不能等同于进程自身的堆内存占用或泄漏。</p>
+                  <p>NodeLite 进程本身的纯私有驻留内存（RSS/PSS）服务端在常规负载下仅为 10~15MB，Agent 通常小于 2MB。详见仓库根目录的 <code>docs/memory-measurement.md</code>。</p>
                 </div>
               </div>
             </div>
-          </div>
-        </section>
+          </section>
 
-        <!-- ==================== 系统架构 ==================== -->
-        <section class="section section-wide" id="architecture">
-          <h2 class="section-title">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7l9 5 9-5-9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg>
-            系统架构
-          </h2>
-          <p class="section-desc">按当前源码绘制：Agent 采集并通过 WebSocket 上报，Server 认证、清洗、聚合、持久化，再向 Web UI、JSON API 和 Prometheus 暴露视图。</p>
-
-          <div class="architecture-grid">
-            <div class="arch-board">
-              <h3>整体运行架构</h3>
-              <p>从部署入口到 Agent 上报、Server 内存状态、历史写入和前端读取的主路径。</p>
-              <svg class="arch-svg" viewBox="0 0 1180 620" role="img" aria-label="NodeLite overall runtime architecture">
-                <defs>
-                  <marker id="arrow-main" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                    <path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"></path>
-                  </marker>
-                  <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                    <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"></path>
-                  </marker>
-                  <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                    <path d="M 0 0 L 10 5 L 0 10 z" fill="#16a34a"></path>
-                  </marker>
-                </defs>
-
-                <rect class="boundary" x="24" y="92" width="260" height="402" rx="18"></rect>
-                <text class="title" x="46" y="122">Linux Agent 节点</text>
-                <rect class="box-purple" x="46" y="148" width="216" height="76" rx="12"></rect>
-                <text class="label" x="66" y="178">runtime::run</text>
-                <text class="small" x="66" y="202">加载 agent.toml 配置</text>
-                <rect class="box-purple" x="46" y="246" width="216" height="116" rx="12"></rect>
-                <text class="label" x="66" y="276">HostCollector</text>
-                <text class="small" x="66" y="300">读取 /proc/stat、meminfo、loadavg</text>
-                <text class="small" x="66" y="322">读取 net/dev、mounts、statvfs</text>
-                <text class="small" x="66" y="344">生成节点身份与监控快照</text>
-                <rect class="box-purple" x="46" y="384" width="216" height="76" rx="12"></rect>
-                <text class="label" x="66" y="414">session::run_forever</text>
-                <text class="small" x="66" y="432">
-                  <tspan x="66" dy="0">hello / metrics</tspan>
-                  <tspan x="66" dy="16">/ pong / logs 消息</tspan>
-                </text>
-
-                <rect class="boundary" x="404" y="56" width="470" height="510" rx="18"></rect>
-                <text class="title" x="428" y="86">nodelite-server 进程</text>
-                <rect class="box-green" x="428" y="118" width="164" height="76" rx="12"></rect>
-                <text class="label" x="450" y="148">/ws handler</text>
-                <text class="small" x="450" y="172">接入控制与 Hello 握手</text>
-                <rect class="box-green" x="642" y="118" width="190" height="76" rx="12"></rect>
-                <text class="label" x="664" y="148">NodeRegistry</text>
-                <text class="small" x="664" y="166">
-                  <tspan x="664" dy="0">认证节点并维护</tspan>
-                  <tspan x="664" dy="16">token 代次</tspan>
-                </text>
-                <rect class="box-blue" x="428" y="232" width="190" height="104" rx="12"></rect>
-                <text class="label" x="450" y="262">Authenticated Session</text>
-                <text class="small" x="450" y="286">清洗上报快照</text>
-                <text class="small" x="450" y="308">记录 ping/pong 延迟</text>
-                <rect class="box-blue" x="668" y="232" width="164" height="104" rx="12"></rect>
-                <text class="label" x="690" y="262">SharedState</text>
-                <text class="small" x="690" y="286">节点状态</text>
-                <text class="small" x="690" y="308">总览视图 / 缓存</text>
-                <rect class="box-yellow" x="428" y="378" width="164" height="82" rx="12"></rect>
-                <text class="label" x="450" y="408">HistoryStore</text>
-                <text class="small" x="450" y="426">
-                  <tspan x="450" dy="0">有界队列</tspan>
-                  <tspan x="450" dy="16">+ 批量写入</tspan>
-                </text>
-                <rect class="box-yellow" x="642" y="378" width="190" height="82" rx="12"></rect>
-                <text class="label" x="664" y="408">AgentLogStore / AuditLog</text>
-                <text class="small" x="664" y="426">
-                  <tspan x="664" dy="0">运行日志</tspan>
-                  <tspan x="664" dy="16">+ 安全事件</tspan>
-                </text>
-
-                <rect class="boundary" x="934" y="92" width="220" height="402" rx="18"></rect>
-                <text class="title" x="956" y="122">外部访问</text>
-                <rect class="box-gray" x="956" y="148" width="176" height="76" rx="12"></rect>
-                <text class="label" x="978" y="178">Nginx / Caddy</text>
-                <text class="small" x="978" y="202">HTTPS / WSS 终结</text>
-                <rect class="box-blue" x="956" y="250" width="176" height="76" rx="12"></rect>
-                <text class="label" x="978" y="280">Web 面板 / API</text>
-                <text class="small" x="978" y="304">/ · /api/* · /metrics</text>
-                <rect class="box-yellow" x="956" y="352" width="176" height="102" rx="12"></rect>
-                <text class="label" x="978" y="382">本地持久化</text>
-                <text class="small" x="978" y="406">server.json</text>
-                <text class="small" x="978" y="428">history/audit.sqlite3</text>
-
-                <path class="arrow-green" marker-end="url(#arrow-green)" d="M262 422 C320 422 350 156 428 156"></path>
-                <rect class="edge-chip-soft" x="284" y="260" width="110" height="24" rx="12"></rect>
-                <text class="edge-text" x="339" y="276">wss / WireMessage</text>
-                <path class="arrow" marker-end="url(#arrow-main)" d="M592 156 H642"></path>
-                <rect class="edge-chip" x="580" y="128" width="74" height="22" rx="11"></rect>
-                <text class="edge-text" x="617" y="143">认证</text>
-                <path class="arrow-blue" marker-end="url(#arrow-blue)" d="M523 194 V232"></path>
-                <rect class="edge-chip" x="507" y="203" width="106" height="22" rx="11"></rect>
-                <text class="edge-text" x="560" y="218">认证通过</text>
-                <path class="arrow-blue" marker-end="url(#arrow-blue)" d="M618 284 H668"></path>
-                <rect class="edge-chip" x="613" y="257" width="58" height="22" rx="11"></rect>
-                <text class="edge-text" x="642" y="272">更新</text>
-                <path class="arrow" marker-end="url(#arrow-main)" d="M750 336 V378"></path>
-                <rect class="edge-chip" x="737" y="347" width="110" height="22" rx="11"></rect>
-                <text class="edge-text" x="792" y="362">日志 / 审计</text>
-                <path class="arrow" marker-end="url(#arrow-main)" d="M523 336 V378"></path>
-                <rect class="edge-chip" x="502" y="347" width="116" height="22" rx="11"></rect>
-                <text class="edge-text" x="560" y="362">历史点</text>
-                <path class="arrow-blue" marker-end="url(#arrow-blue)" d="M832 284 C878 284 900 288 956 288"></path>
-                <rect class="edge-chip-soft" x="836" y="255" width="116" height="22" rx="11"></rect>
-                <text class="edge-text" x="894" y="270">读取缓存视图</text>
-                <path class="arrow-blue" marker-end="url(#arrow-blue)" d="M1044 250 V224"></path>
-                <path class="arrow-blue" marker-end="url(#arrow-blue)" d="M956 186 C910 186 900 156 832 156"></path>
-                <rect class="edge-chip-soft" x="854" y="118" width="84" height="22" rx="11"></rect>
-                <text class="edge-text" x="896" y="133">代理 /ws</text>
-                <path class="arrow" marker-end="url(#arrow-main)" d="M737 194 V232"></path>
-                <rect class="edge-chip" x="712" y="203" width="96" height="22" rx="11"></rect>
-                <text class="edge-text" x="760" y="218">代次</text>
-                <path class="arrow" marker-end="url(#arrow-main)" d="M592 420 H642"></path>
-              </svg>
-            </div>
-
-            <div class="arch-board">
-              <h3>Server 内部组件图</h3>
-              <p><code>AppState</code> 是 Axum handler 和 WebSocket 会话拿到的共享上下文，后台任务围绕注册表、快照和离线状态运行。</p>
-              <svg class="arch-svg" viewBox="0 0 1180 680" role="img" aria-label="NodeLite server component architecture">
-                <defs>
-                  <marker id="arrow-server" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                    <path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"></path>
-                  </marker>
-                  <marker id="arrow-server-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                    <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"></path>
-                  </marker>
-                </defs>
-
-                <rect class="box-green" x="470" y="40" width="240" height="80" rx="14"></rect>
-                <text class="title" x="522" y="72">startup::run_server</text>
-                <text class="small" x="505" y="88">
-                  <tspan x="505" dy="0">加载配置 / 构建路由</tspan>
-                  <tspan x="505" dy="16">/ 启动后台任务</tspan>
-                </text>
-
-                <rect class="boundary" x="40" y="148" width="1100" height="430" rx="18"></rect>
-                <text class="title" x="64" y="180">AppState</text>
-
-                <rect class="box-blue" x="78" y="214" width="212" height="112" rx="12"></rect>
-                <text class="label" x="100" y="244">handlers::*</text>
-                <text class="small" x="100" y="268">页面 / API / 设置</text>
-                <text class="small" x="100" y="290">安装 / 认证路由</text>
-
-                <rect class="box-green" x="344" y="214" width="212" height="112" rx="12"></rect>
-                <text class="label" x="366" y="244">ws::session</text>
-                <text class="small" x="366" y="268">Hello 握手 -> 认证</text>
-                <text class="small" x="366" y="290">指标 / 心跳 / 刷新 token</text>
-
-                <rect class="box-blue" x="610" y="214" width="212" height="112" rx="12"></rect>
-                <text class="label" x="632" y="244">SharedState</text>
-                <text class="small" x="632" y="268">内存中的注册表</text>
-                <text class="small" x="632" y="290">视图版本 + 缓存</text>
-
-                <rect class="box-red" x="876" y="214" width="212" height="112" rx="12"></rect>
-                <text class="label" x="898" y="244">auth / admission</text>
-                <text class="small" x="898" y="268">Basic Auth + TOTP</text>
-                <text class="small" x="898" y="290">IP 封禁 / WS 准入</text>
-
-                <rect class="box-yellow" x="78" y="388" width="212" height="112" rx="12"></rect>
-                <text class="label" x="100" y="418">NodeRegistry</text>
-                <text class="small" x="100" y="442">server.json</text>
-                <text class="small" x="100" y="464">Argon2id token 哈希</text>
-
-                <rect class="box-yellow" x="344" y="388" width="212" height="112" rx="12"></rect>
-                <text class="label" x="366" y="418">HistoryStore</text>
-                <text class="small" x="366" y="442">mpsc 队列</text>
-                <text class="small" x="366" y="464">SQLite 批量写入</text>
-
-                <rect class="box-yellow" x="610" y="388" width="212" height="112" rx="12"></rect>
-                <text class="label" x="632" y="418">AgentLogStore / AuditLog</text>
-                <text class="small" x="632" y="442">近期 Agent 日志</text>
-                <text class="small" x="632" y="464">audit.sqlite3</text>
-
-                <rect class="box-gray" x="876" y="388" width="212" height="112" rx="12"></rect>
-                <text class="label" x="898" y="418">background tasks</text>
-                <text class="small" x="898" y="436">
-                  <tspan x="898" dy="0">重载注册表</tspan>
-                  <tspan x="898" dy="16">/ 清理陈旧节点</tspan>
-                </text>
-                <text class="small" x="898" y="472">持久化快照</text>
-
-                <path class="arrow-blue" marker-end="url(#arrow-server-blue)" d="M590 120 V148"></path>
-                <path class="arrow" marker-end="url(#arrow-server)" d="M290 270 H344"></path>
-                <path class="arrow" marker-end="url(#arrow-server)" d="M556 270 H610"></path>
-                <path class="arrow" marker-end="url(#arrow-server)" d="M822 270 H876"></path>
-                <path class="arrow" marker-end="url(#arrow-server)" d="M450 326 V388"></path>
-                <path class="arrow" marker-end="url(#arrow-server)" d="M716 326 V388"></path>
-                <path class="arrow" marker-end="url(#arrow-server)" d="M982 326 V388"></path>
-                <path class="arrow" marker-end="url(#arrow-server)" d="M344 444 H290"></path>
-                <path class="arrow dashed" marker-end="url(#arrow-server)" d="M982 388 C982 352 716 350 716 326"></path>
-                <path class="arrow dashed" marker-end="url(#arrow-server)" d="M982 500 C982 540 716 540 716 500"></path>
-                <rect class="edge-chip-soft" x="264" y="166" width="108" height="34" rx="14"></rect>
-                <text class="edge-text" x="318" y="182">
-                  <tspan x="318" dy="0">受保护路由</tspan>
-                  <tspan x="318" dy="12">读 / 写</tspan>
-                </text>
-                <rect class="edge-chip" x="530" y="174" width="108" height="22" rx="11"></rect>
-                <text class="edge-text" x="584" y="189">清洗后状态</text>
-                <rect class="edge-chip" x="401" y="343" width="98" height="22" rx="11"></rect>
-                <text class="edge-text" x="450" y="358">记录状态</text>
-                <rect class="edge-chip" x="787" y="343" width="110" height="22" rx="11"></rect>
-                <text class="edge-text" x="842" y="358">日志 / 事件</text>
-                <rect class="edge-chip-soft" x="786" y="520" width="120" height="34" rx="14"></rect>
-                <text class="edge-text" x="846" y="536">
-                  <tspan x="846" dy="0">清理缺失</tspan>
-                  <tspan x="846" dy="12">节点</tspan>
-                </text>
-              </svg>
-            </div>
-
-            <div class="arch-board">
-              <h3>WebSocket 协议时序</h3>
-              <p>握手、认证、实时上报、心跳 RTT、token 刷新和断开处理都在一条已认证会话里完成。</p>
-              <svg class="arch-svg" viewBox="0 0 1180 620" role="img" aria-label="NodeLite WebSocket sequence diagram">
-                <defs>
-                  <marker id="arrow-seq" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                    <path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"></path>
-                  </marker>
-                  <marker id="arrow-seq-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                    <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"></path>
-                  </marker>
-                  <marker id="arrow-seq-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                    <path d="M 0 0 L 10 5 L 0 10 z" fill="#16a34a"></path>
-                  </marker>
-                </defs>
-
-                <rect class="box-purple" x="80" y="36" width="180" height="58" rx="12"></rect>
-                <text class="title" x="140" y="72">Agent</text>
-                <rect class="box-green" x="500" y="36" width="180" height="58" rx="12"></rect>
-                <text class="title" x="548" y="72">Server /ws</text>
-                <rect class="box-yellow" x="920" y="36" width="180" height="58" rx="12"></rect>
-                <text class="title" x="954" y="72">Registry / State</text>
-
-                <path class="arrow dashed" d="M170 104 V560"></path>
-                <path class="arrow dashed" d="M590 104 V560"></path>
-                <path class="arrow dashed" d="M1010 104 V560"></path>
-
-                <path class="arrow-green" marker-end="url(#arrow-seq-green)" d="M170 132 H590"></path>
-                <text class="small-center" x="380" y="122">connect wss://domain/ws</text>
-                <path class="arrow-green" marker-end="url(#arrow-seq-green)" d="M170 184 H590"></path>
-                <text class="small-center" x="380" y="174">hello(protocol_version, token, identity)</text>
-                <path class="arrow" marker-end="url(#arrow-seq)" d="M590 224 H1010"></path>
-                <text class="small-center" x="800" y="214">authorize_identity + token_generation</text>
-                <path class="arrow" marker-end="url(#arrow-seq)" d="M1010 260 H590"></path>
-                <text class="small-center" x="800" y="250">AuthorizedNode</text>
-                <path class="arrow-blue" marker-end="url(#arrow-seq-blue)" d="M590 300 H170"></path>
-                <text class="small-center" x="380" y="290">server_notice(info, authenticated)</text>
-                <path class="arrow-green" marker-end="url(#arrow-seq-green)" d="M170 352 H590"></path>
-                <text class="small-center" x="380" y="342">metrics(snapshot)</text>
-                <path class="arrow" marker-end="url(#arrow-seq)" d="M590 386 H1010"></path>
-                <text class="small-center" x="800" y="376">sanitize + update_snapshot + history enqueue</text>
-                <path class="arrow-blue" marker-end="url(#arrow-seq-blue)" d="M590 430 H170"></path>
-                <text class="small-center" x="380" y="420">ping(nonce)</text>
-                <path class="arrow-green" marker-end="url(#arrow-seq-green)" d="M170 466 H590"></path>
-                <text class="small-center" x="380" y="456">pong(nonce)</text>
-                <path class="arrow" marker-end="url(#arrow-seq)" d="M590 500 H1010"></path>
-                <text class="small-center" x="800" y="490">update_latency</text>
-                <path class="arrow-blue" marker-end="url(#arrow-seq-blue)" d="M590 536 H170"></path>
-                <text class="small-center" x="380" y="526">refresh_token_response(new_token, expires_at)</text>
-              </svg>
-            </div>
-
-            <div class="arch-board">
-              <h3>存储、安全与部署边界</h3>
-              <p>敏感凭证不直接暴露给前端；Registry、History、Audit 与 Snapshot 分别承担授权、趋势、安全事件和恢复。</p>
-              <svg class="arch-svg" viewBox="0 0 1180 600" role="img" aria-label="NodeLite security storage deployment architecture">
-                <defs>
-                  <marker id="arrow-sec" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                    <path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"></path>
-                  </marker>
-                  <marker id="arrow-sec-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                    <path d="M 0 0 L 10 5 L 0 10 z" fill="#dc2626"></path>
-                  </marker>
-                </defs>
-
-                <rect class="boundary" x="40" y="48" width="300" height="456" rx="18"></rect>
-                <text class="title" x="64" y="80">访问入口</text>
-                <rect class="box-blue" x="66" y="110" width="248" height="74" rx="12"></rect>
-                <text class="label" x="88" y="140">Web UI / JSON API / Metrics</text>
-                <text class="small" x="88" y="164">Basic Auth 保护</text>
-                <rect class="box-red" x="66" y="214" width="248" height="94" rx="12"></rect>
-                <text class="label" x="88" y="244">ReadonlyRouteAuth + TOTP</text>
-                <text class="small" x="88" y="268">pending/auth cookie 仅存随机 token</text>
-                <text class="small" x="88" y="290">TOTP step 防重放</text>
-                <rect class="box-red" x="66" y="338" width="248" height="94" rx="12"></rect>
-                <text class="label" x="88" y="368">Admission Controllers</text>
-                <text class="small" x="88" y="392">/ws 连接配额</text>
-                <text class="small" x="88" y="414">install / 2FA / sensitive auth 失败封禁</text>
-
-                <rect class="boundary" x="440" y="48" width="300" height="456" rx="18"></rect>
-                <text class="title" x="464" y="80">Server 数据边界</text>
-                <rect class="box-yellow" x="466" y="110" width="248" height="82" rx="12"></rect>
-                <text class="label" x="488" y="140">server.json</text>
-                <text class="small" x="488" y="164">Argon2id token_hash / generation</text>
-                <rect class="box-yellow" x="466" y="220" width="248" height="82" rx="12"></rect>
-                <text class="label" x="488" y="250">history.sqlite3</text>
-                <text class="small" x="488" y="274">history_points + WAL + indexes</text>
-                <rect class="box-yellow" x="466" y="330" width="248" height="82" rx="12"></rect>
-                <text class="label" x="488" y="360">audit.sqlite3</text>
-                <text class="small" x="488" y="384">login / TOTP / token / rate limit</text>
-                <rect class="box-yellow" x="466" y="440" width="248" height="44" rx="12"></rect>
-                <text class="label" x="488" y="468">snapshot.json 15s restore point</text>
-
-                <rect class="boundary" x="840" y="48" width="300" height="456" rx="18"></rect>
-                <text class="title" x="864" y="80">部署与恢复</text>
-                <rect class="box-gray" x="866" y="110" width="248" height="74" rx="12"></rect>
-                <text class="label" x="888" y="140">Nginx / Caddy</text>
-                <text class="small" x="888" y="164">TLS / WSS / real client IP</text>
-                <rect class="box-green" x="866" y="214" width="248" height="94" rx="12"></rect>
-                <text class="label" x="888" y="244">nodelite-server</text>
-                <text class="small" x="888" y="268">127.0.0.1:8080</text>
-                <text class="small" x="888" y="290">graceful shutdown + final flush</text>
-                <rect class="box-purple" x="866" y="338" width="248" height="94" rx="12"></rect>
-                <text class="label" x="888" y="368">nodelite-agent</text>
-                <text class="small" x="888" y="392">agent.toml token 原子替换</text>
-                <text class="small" x="888" y="414">指数退避重连</text>
-
-                <path class="arrow-red" marker-end="url(#arrow-sec-red)" d="M314 260 H466"></path>
-                <text class="tiny" x="344" y="246">auth events</text>
-                <path class="arrow" marker-end="url(#arrow-sec)" d="M714 151 H866"></path>
-                <text class="tiny" x="748" y="137">install bootstrap</text>
-                <path class="arrow" marker-end="url(#arrow-sec)" d="M866 260 H714"></path>
-                <text class="tiny" x="746" y="246">read/write state</text>
-                <path class="arrow" marker-end="url(#arrow-sec)" d="M990 338 V308"></path>
-                <text class="tiny" x="1002" y="326">/ws</text>
-                <path class="arrow" marker-end="url(#arrow-sec)" d="M590 412 V440"></path>
-                <text class="tiny" x="602" y="430">snapshot</text>
-              </svg>
-            </div>
-          </div>
-        </section>
-
-        <!-- Footer -->
-        <footer class="footer">
-          <p class="footer-links">
-            <span>NodeLite</span>
-            <span>&middot;</span>
-            <a href="https://github.com/XiNian-dada/NodeLite" target="_blank" rel="noreferrer">GitHub</a>
-            <span>&middot;</span>
-            <a href="https://github.com/XiNian-dada/NodeLite/releases" target="_blank" rel="noreferrer">Releases</a>
-            <span>&middot;</span>
-            <a href="https://github.com/XiNian-dada/NodeLite/blob/main/LICENSE" target="_blank" rel="noreferrer">License</a>
-          </p>
-        </footer>
+          <!-- Footer -->
+          <footer class="footer">
+            <p>
+              NodeLite · 基于 Rust 构建的现代化极轻量服务器监控面板 ·
+              <a href="https://github.com/XiNian-dada/NodeLite" target="_blank" rel="noreferrer">GitHub 源码</a> ·
+              <a href="https://github.com/XiNian-dada/NodeLite/releases" target="_blank" rel="noreferrer">Release 下载</a>
+            </p>
+          </footer>
         </div>
       </main>
     </div>
 
+    <!-- 交互逻辑 -->
     <script>
-      var navLinks = Array.prototype.slice.call(document.querySelectorAll('.nav-link[href^="#"]'));
-      var sectionLinks = new Map(
-        navLinks.map(function(link) {
-          return [link.getAttribute('href'), link];
-        })
-      );
-
-      function setActiveLink(hash) {
-        navLinks.forEach(function(link) {
-          link.classList.toggle('active', link.getAttribute('href') === hash);
-        });
-      }
-
-      document.querySelectorAll('.faq-item').forEach(function(item, index) {
+      // 1. FAQ 展开/收起切换
+      document.querySelectorAll('.faq-item').forEach(function(item) {
         var button = item.querySelector('.faq-q');
         var panel = item.querySelector('.faq-a');
-        var panelId = 'faq-panel-' + index;
-        var buttonId = 'faq-button-' + index;
-
-        button.id = buttonId;
-        button.setAttribute('aria-controls', panelId);
-        panel.id = panelId;
-        panel.setAttribute('role', 'region');
-        panel.setAttribute('aria-labelledby', buttonId);
-
-        function sync(open) {
-          item.classList.toggle('open', open);
-          button.setAttribute('aria-expanded', open ? 'true' : 'false');
-          panel.hidden = !open;
-        }
-
-        sync(item.classList.contains('open'));
 
         button.addEventListener('click', function() {
-          sync(!item.classList.contains('open'));
+          var isOpen = item.classList.contains('open');
+          item.classList.toggle('open', !isOpen);
+          button.setAttribute('aria-expanded', !isOpen);
+          panel.hidden = isOpen;
         });
       });
+
+      // 2. 为所有代码块自动挂载一键复制按钮
+      document.querySelectorAll('.cmd-block pre').forEach(function(pre) {
+        var btn = document.createElement('button');
+        btn.className = 'copy-btn';
+        btn.type = 'button';
+        btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> 复制';
+        
+        btn.addEventListener('click', function() {
+          var text = pre.innerText.replace(/^\$ /gm, '').trim();
+          navigator.clipboard.writeText(text).then(function() {
+            btn.innerHTML = '已复制 ✓';
+            btn.classList.add('copied');
+            setTimeout(function() {
+              btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> 复制';
+              btn.classList.remove('copied');
+            }, 2000);
+          });
+        });
+        pre.parentElement.appendChild(btn);
+      });
+
+      // 3. 滚动与侧边栏高亮联动
+      var navLinks = Array.prototype.slice.call(document.querySelectorAll('.nav-link[href^="#"]'));
+      var sections = document.querySelectorAll('section[id]');
 
       if ('IntersectionObserver' in window) {
-        var observer = new IntersectionObserver(
-          function(entries) {
-            entries.forEach(function(entry) {
-              if (!entry.isIntersecting) {
-                return;
-              }
-              var hash = '#' + entry.target.id;
-              if (sectionLinks.has(hash)) {
-                setActiveLink(hash);
-              }
-            });
-          },
-          {
-            rootMargin: '-20% 0px -60% 0px',
-            threshold: 0.01,
-          }
-        );
+        var observer = new IntersectionObserver(function(entries) {
+          entries.forEach(function(entry) {
+            if (entry.isIntersecting) {
+              var id = '#' + entry.target.id;
+              navLinks.forEach(function(link) {
+                link.classList.toggle('active', link.getAttribute('href') === id);
+              });
+            }
+          });
+        }, { rootMargin: '-20% 0px -70% 0px' });
 
-        document.querySelectorAll('section[id]').forEach(function(section) {
-          observer.observe(section);
-        });
+        sections.forEach(function(sec) { observer.observe(sec); });
       }
-
-      // Open hash anchor on load
-      (function() {
-        var hash = window.location.hash;
-        if (hash) {
-          setActiveLink(hash);
-          var target = document.querySelector(hash);
-          if (target) {
-            setTimeout(function() {
-              target.scrollIntoView({ behavior: 'smooth' });
-            }, 100);
-          }
-        } else {
-          setActiveLink('#deploy');
-        }
-      })();
-
-      window.addEventListener('hashchange', function() {
-        setActiveLink(window.location.hash || '#deploy');
-      });
     </script>
   </body>
 </html>

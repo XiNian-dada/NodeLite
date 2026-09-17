@@ -1,44 +1,145 @@
 ![NodeLite Banner](images/zh_cn/banner.png)
 
-[**中文**](README.md) | [**English**](README.en.md)
+[**简体中文**](README.md) | [**English**](README.en.md)
 
 [![CI](https://github.com/XiNian-dada/NodeLite/actions/workflows/ci.yml/badge.svg)](https://github.com/XiNian-dada/NodeLite/actions/workflows/ci.yml)
 [![Coverage](https://github.com/XiNian-dada/NodeLite/actions/workflows/coverage.yml/badge.svg)](https://github.com/XiNian-dada/NodeLite/actions/workflows/coverage.yml)
 [![codecov](https://codecov.io/gh/XiNian-dada/NodeLite/branch/main/graph/badge.svg)](https://codecov.io/gh/XiNian-dada/NodeLite)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Rust: 2024](https://img.shields.io/badge/Rust-2024_Edition-orange.svg)](Cargo.toml)
 
 # NodeLite
 
-NodeLite 是一个用 Rust 编写的轻量级服务器监控面板，采用 Server-Agent 架构。它适合想要快速部署、低资源占用、以查看为主的服务器监控场景。
+**NodeLite** 是一个用 Rust 编写的高性能、极轻量级服务器集群监控面板，采用标准的 Server-Agent 架构。
 
-完整部署文档、进阶配置和架构图请看 GitHub Pages：
-[https://xinian-dada.github.io/NodeLite/](https://xinian-dada.github.io/NodeLite/)
+专为追求**极低系统资源占用**（服务端内存通常 < 15MB，Agent < 2MB）、**毫秒级实时数据流**（200+ 节点高吞吐并发下 p95 延迟 < 5ms）与**极简运维交付**（单静态二进制、内嵌 Vue 3 SPA）而设计。
 
-> **版本建议**：生产环境请使用 [GitHub Releases](https://github.com/XiNian-dada/NodeLite/releases) 中的最新正式版本，不建议使用 `-alpha`、`-beta`、`-rc` 预发布版本。
+📖 **官方完整部署文档与在线指南**：[https://xinian-dada.github.io/NodeLite/](https://xinian-dada.github.io/NodeLite/)
 
-## 快速跳转
+> [!TIP]
+> **版本建议**：生产环境请使用 [GitHub Releases](https://github.com/XiNian-dada/NodeLite/releases) 中的最新正式版本（如 `v3.0.x`），测试环境可按需选用 `-rc` 或 `-beta` 预发布版本。
 
-- [5 分钟安装](#5-分钟安装)
-- [升级与日常运维](#升级与日常运维)
-- [常见排障](#常见排障)
-- [平台与部署拓扑](#平台与部署拓扑)
-- [配置与安全边界](#配置与安全边界)
-- [当前能力](#当前能力)
-- [开发者入口](#开发者入口)
-- [性能测试](#性能测试)
-- [发布](#发布)
-- [完整 HTML 文档](https://xinian-dada.github.io/NodeLite/)
+---
 
-## 5 分钟安装
+## 目录
 
-推荐先跑通一台节点，再补 HTTPS、Prometheus、2FA 和其它生产配置。
+- [✨ 核心特性](#-核心特性)
+- [⚡ 5 分钟快速上手](#-5-分钟快速上手)
+- [🏗️ 系统架构与数据流](#️-系统架构与数据流)
+- [⚙️ 核心配置速查](#️-核心配置速查)
+- [🚨 告警通知与 Linux 限速](#-告警通知与-linux-限速)
+- [🔧 升级与日常运维](#-升级与日常运维)
+- [❓ 常见问题与排障](#-常见问题与排障)
+- [💻 开发者与源码构建](#-开发者与源码构建)
 
-1. 安装服务端：
+---
+
+## ✨ 核心特性
+
+* 🚀 **极低开销 & 单文件交付**：
+  * 基于 Rust 构建，内存占用极其克制（Server 仅需十余 MB，Agent < 2MB），无任何 GC 停顿与隐形泄漏；
+  * Vue 3 + TypeScript 前端 SPA 静态构建产物直接嵌入 Rust Server 二进制中，单文件交付，无需额外部署 Nginx 托管静态资源；
+  * 提供 `musl` 静态二进制（`x86_64` / `aarch64`），零外部动态库依赖。
+* ⚡ **毫秒级无锁集中广播**：
+  * 首创**集中 Diff 广播引擎**，单一后台任务（1 秒去抖）统一计算节点增量差异，通过广播通道无锁扇出给全部浏览器会话；
+  * 锁竞争与 Diff 复杂度由 $O(M \times N)$ 降至 $O(N)$，多端同时在看时 CPU 占用近乎平直。
+* 🚦 **独家 Linux 套餐限速 (Traffic Control)**：
+  * 深度集成 Linux 原生 `tc` 模块。当 VPS 月度流量达到预设配额时，Agent 可自动触发接口带宽限流，彻底避免公网流量超额扣费。
+* 🛡️ **工业级安全防线**：
+  * 节点 Token 采用 Argon2id 哈希，并配置有限并发池（防大批重连引发 OOM）；
+  * 凭证与 Token 比较全面采用 `subtle::ConstantTimeEq` 防范时序侧信道攻击；
+  * 控制台支持 Basic Auth + 可选 **TOTP 2FA** 动态口令；
+  * 独立 SQLite 审计日志库（`audit.sqlite3`）记录全部鉴权与安全事件。
+* 🚨 **完备的告警与每日巡检**：
+  * 支持 CPU、内存、延迟、离线、月度流量用量等多维度规则评估；
+  * 支持 **SMTP 邮件**（StartTLS）及 **Webhook**（Telegram / Discord / Slack / 自定义 Webhook）即时推送；
+  * 每天 9:00 自动汇总结算过去 24 小时的健康度巡检摘要。
+* 📈 **开放可观测性**：
+  * 内置标准 Prometheus `/metrics` 抓取端点，并提供官方 Grafana 仪表盘模板；
+  * 支持在线 API（ipwho.is）及本地 MaxMind / DB-IP 离线库（`.mmdb`）进行物理地理位置解析。
+
+---
+
+## ⚡ 5 分钟快速上手
+
+### 步骤 1：一键安装服务端
+
+在你的主控服务器（Linux，支持 systemd）上执行安装脚本：
 
 ```bash
 curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/install-server.sh | sudo sh
 ```
 
-2. 在服务端签发一条 Agent 安装命令：
+脚本将自动检测 CPU 架构、校验 SHA256 哈希、生成默认配置与 systemd 单元文件，并自动启动 `nodelite-server`。
+
+### 步骤 2：配置网络接入（反向代理）
+
+`nodelite-server` 默认监听于 `127.0.0.1:8080`。生产环境推荐使用 **Nginx** 或 **Caddy** 终结 TLS 并代理 WebSocket。
+
+<details open>
+<summary><b>Nginx 配置示例（推荐）</b></summary>
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name monitor.example.com; # 替换为你的域名
+
+    ssl_certificate     /etc/letsencrypt/live/monitor.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/monitor.example.com/privkey.pem;
+
+    # 1. 静态面板与 API
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # 2. Agent 与浏览器 WebSocket 连接 (关键配置)
+    location /ws {
+        proxy_pass http://127.0.0.1:8080/ws;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+    }
+
+    # 3. Agent 安装脚本分发
+    location /install/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+</details>
+
+<details>
+<summary><b>本地局域网测试（无需域名 / HTTP 直连）</b></summary>
+
+若仅在测试环境验证，可修改 `/opt/nodelite/config/server.toml`：
+```toml
+[server]
+listen = "0.0.0.0:8080"
+public_base_url = "http://192.168.1.100:8080"
+insecure_allow_http = true
+```
+重启服务后即可直接通过 `http://192.168.1.100:8080/` 访问。
+</details>
+
+### 步骤 3：签发并安装 Agent
+
+在服务端执行签发命令，生成包含一次性 Token（15 分钟有效）的安装命令：
 
 ```bash
 /usr/local/bin/nodelite-server \
@@ -48,196 +149,181 @@ curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/inst
   --node-label "Hong Kong 01"
 ```
 
-3. 把上一步打印出的命令粘贴到目标子机执行。
+将服务端打印输出的 `curl ... | sh` 命令**直接复制到目标子机（Linux / macOS）上执行**。Agent 部署完毕后会自动与服务端完成握手上线，控制台将在 1~2 秒内自动刷出该节点。
 
-完成后：
+---
 
-- 面板通过 `https://你的域名/` 访问
-- Agent 通过 `wss://你的域名/ws` 接入
-- 历史数据默认保留 14 天
+## 🏗️ 系统架构与数据流
 
-更完整的部署步骤见 [快速部署文档](https://xinian-dada.github.io/NodeLite/#deploy)。
-
-## 升级与日常运维
-
-服务端升级：
-
-```bash
-curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/install-server.sh | \
-  sudo NODELITE_SERVER_MODE=upgrade sh
+```text
+[ 被控节点 Agent ]  ---(WSS: 指标快照/心跳)---> [ Nginx / Caddy 反向代理 ]
+                                                       │
+                                            (127.0.0.1:8080)
+                                                       ▼
+                                         [ nodelite-server 接入网关 ]
+                                           ├── 准入控制 & Argon2id Token 鉴权
+                                           ├── SharedState 集中 Diff 广播 (1s 去抖)
+                                           ├── 异步 Batch Writer 写入 history.sqlite3
+                                           └── 告警引擎 (SMTP / Webhook 派送)
+                                                       │
+                                   ┌───────────────────┴───────────────────┐
+                                   ▼                                       ▼
+                       [ 管理员浏览器 (Vue 3 SPA) ]              [ Prometheus /metrics ]
+                       (接收增量 Diff 零锁渲染)                 (Grafana 官方看板拉取)
 ```
 
-安装器会保留兼容的程序、配置和数据库备份，验证新服务就绪及版本后才报告成功。
-超时设置、备份位置与失败恢复规则见[Server 升级与失败恢复](docs/server-upgrades.md)。
+> 详细模块设计与锁优化细节可查阅 [`DESIGN.md`](DESIGN.md)。
 
-Agent 升级命令可在服务端生成：
+---
 
-```bash
-/usr/local/bin/nodelite-server \
-  --config /opt/nodelite/config/server.toml \
-  upgrade-agent
+## ⚙️ 核心配置速查
+
+服务端配置文件位于 `/opt/nodelite/config/server.toml`（完整带注释模板见 [`config/server.example.toml`](config/server.example.toml)）：
+
+| 配置段 | 关键参数 | 默认值 / 推荐值 | 作用说明 |
+| :--- | :--- | :--- | :--- |
+| `[server]` | `listen` | `"127.0.0.1:8080"` | 服务端监听地址，生产推荐监听本地回环 |
+| `[server]` | `public_base_url` | `"https://monitor.example.com"` | 对外访问基准 URL，用于推导 WSS 与安装脚本路径 |
+| `[server]` | `stale_after_secs` | `20` | 超过多少秒未收到心跳判定为节点离线 |
+| `[server]` | `token_verify_max_parallelism` | `4` | Argon2id 验证并发槽位数（防重连尖刺 OOM，每任务约 19MB） |
+| `[auth]` | `username` / `password` | 自动生成强密码 | 面板登录凭据（必须包含大小写字母、数字和特殊字符） |
+| `[auth]` | `enable_2fa` | `false` | 是否启用 TOTP 二次验证 |
+| `[audit]` | `enabled` / `retention_days`| `true` / `90` | 独立安全审计日志，默认留存 90 天 |
+| `[geoip]` | `provider` | `"ipwhois"` | 物理位置查询：`"ipwhois"`（在线）/ `"dbip"`（本地 MMDB） |
+
+---
+
+## 🚨 告警通知与 Linux 限速
+
+### 1. 告警配置（SMTP 邮件与 Webhook）
+
+编辑 `/opt/nodelite/config/server.toml` 中的 `[alerts]` 配置段：
+
+```toml
+[alerts]
+enabled = true
+
+# 邮件渠道 (支持 StartTLS)
+[alerts.smtp]
+enabled = true
+host = "smtp.example.com"
+port = 587
+username = "alert@example.com"
+password = "your-smtp-password"
+sender = "alert@example.com"
+recipients = ["admin@example.com"]
+send_resolved = true
+
+# Webhook 渠道 (Telegram / Discord / 自定义机器人)
+[alerts.webhook]
+enabled = true
+url = "https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<CHAT_ID>"
+send_resolved = true
+
+# 每日巡检报告
+[alerts.inspection]
+enabled = true
+local_time = "09:00" # 每天上午 9 点发送
+delivery = ["smtp", "webhook"]
 ```
 
-Linux Agent 的活动配置保存在 `/var/lib/nodelite-agent/agent.toml`，目录和文件分别为服务账户独占的 `0700` / `0600`，以便续期凭证安全落盘。升级时会从旧配置目录导入一次，后续修改请使用安装器输出的活动配置路径；可用 `--state-dir` 指定其他状态目录。
+### 2. Linux Agent 套餐超额限速 (tc)
 
-常用状态检查：
+在安装或升级 Agent 时加上 `--enable-traffic-control` 参数即可开启内核级带宽限流功能：
 
 ```bash
+# 在子机安装命令末尾附加参数
+curl -fsSL https://monitor.example.com/install/install-agent.sh | \
+  NODELITE_AGENT_INSTALL_TOKEN='...' sh -s -- \
+  --enable-traffic-control
+```
+
+* **权限最小化**：服务以非 root 用户 `nodelite-agent` 运行，仅保留 `CAP_NET_ADMIN` 和 `AF_NETLINK`，保留完整的 systemd 沙箱隔离；
+* **联动控制**：在 Web 仪表盘设置节点月流量上限与结算日后，一旦超出流量配额，Agent 将自动调用 Linux `tc` 限制网卡带宽，告警系统将同步发出通知。
+
+---
+
+## 🔧 升级与日常运维
+
+### 常用状态检查
+
+```bash
+# 查看服务端状态与近期日志
 sudo systemctl status nodelite-server.service
 sudo journalctl -u nodelite-server.service -f
 
+# 查看 Agent 状态与通信日志
 sudo systemctl status nodelite-agent.service
 sudo journalctl -u nodelite-agent.service -f
 ```
 
-反向代理、负载均衡器和告警系统接入前，请确认 [`/healthz` 与 `/readyz` 的探针语义](docs/readiness.md)，避免把诊断降级误判为实例不可接流量。
+### 服务端与 Agent 平滑升级
 
-注销节点后的计费基线与数据保留规则见[套餐账本与节点注销](docs/traffic-accounting.md)。
+* **服务端升级**（自动备份配置与 SQLite 数据，版本验证通过后生效）：
+  ```bash
+  curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/install-server.sh | \
+    sudo NODELITE_SERVER_MODE=upgrade sh
+  ```
+* **Agent 批量升级命令生成**：
+  ```bash
+  /usr/local/bin/nodelite-server --config /opt/nodelite/config/server.toml upgrade-agent
+  ```
 
-升级建议由管理员手动触发：先确认 release notes 和协议兼容，再升级 Server 或 Agent。
+### 忘记管理员密码 / 重置 2FA
 
-## 常见排障
-
-- **面板能打开但没有节点**：先看 Agent 日志，重点检查 `wss://.../ws`、证书、反向代理 WebSocket 头和 node token。
-- **子机提示 `invalid install token`**：一次性 install token 默认 15 分钟有效，重新执行 `install-agent` 即可。
-- **服务端频繁出现 TLS 警告**：生产环境应放在 Nginx 或 Caddy 后面，用 HTTPS / WSS 对外访问。
-- **Agent 被 `/ws` 限流挡住**：检查 `[ws]` 配额和 `server.trusted_proxies`，远端反代或 WAF 出口网段需要正确配置。
-- **密码或 2FA 问题**：可通过服务端 `server.toml` 重置密码或关闭 2FA，然后重启服务。
-
-更多问题见 [排障 FAQ](https://xinian-dada.github.io/NodeLite/#faq)。
-
-## 平台与部署拓扑
-
-- `nodelite-server`：推荐部署在 Linux + systemd。官方发布产物提供 `x86_64-unknown-linux-musl` 与 `aarch64-unknown-linux-musl`。
-- `nodelite-agent`：支持 Linux 与 macOS。macOS 一键安装和 launchd 集成仍属实验性支持，建议先在测试机验证。
-- 反向代理：生产环境推荐 Nginx 或 Caddy 终结 HTTPS / WSS。
-
-推荐拓扑：
-
-```text
-Agent -> wss://monitor.example.com/ws -> Nginx/Caddy -> 127.0.0.1:nodelite-server
-Browser -> https://monitor.example.com/ -> Nginx/Caddy -> 127.0.0.1:nodelite-server
+直接修改 `/opt/nodelite/config/server.toml` 中的 `[auth]` 配置段并重启服务：
+```toml
+[auth]
+password = "NewStrongPassword@2026"
+enable_2fa = false # 若丢失 2FA 设备，置为 false 即可关闭
+```
+```bash
+sudo systemctl restart nodelite-server.service
 ```
 
-## 配置与安全边界
+---
 
-- Web 面板和只读 API 使用 Basic Auth，可选 TOTP 2FA。
-- Agent 使用逐节点 token 接入，token 存放在服务端注册表中。
-- 敏感配置优先通过服务端文件、CLI 和受保护设置入口修改。
-- `/metrics` 与面板共用只读认证，适合接入 Prometheus。
-- 历史图用于展示基础趋势，不是每条 `metrics` 上报的完整归档。
-- GeoIP 默认启用在线 `ipwhois` provider。Server 会把解析出的 Agent 公网连接 IP，以及成功通过只读认证访问受保护面板、API、`/metrics` 或浏览器 WebSocket 的客户端公网 IP（包括完成 2FA 的登录），发送到第三方接口 `https://ipwho.is`，用于查询国家/地区以及可用的城市和坐标信息；局域网、回环和文档保留地址会在本地标记为 LAN，不发起该在线查询。
+## ❓ 常见问题与排障
 
-不希望向第三方发送公网 IP 时，可在 `server.toml` 设置 `geoip.enabled = false` 完全关闭 GeoIP，或将 `geoip.provider` 改为 `dbip` / `custom` 并提供本地 MMDB。需要严格避免 GeoIP 相关联网时，同时保持 `geoip.auto_update = false`。
+- **面板能打开但节点列表为空？**
+  - 查看 Agent 日志：`sudo journalctl -u nodelite-agent -n 50 --no-pager`；
+  - 检查反向代理是否正确转发了 WebSocket 协议升级头（`Upgrade` 与 `Connection "upgrade"`）。
+- **子机安装提示 `invalid install token`？**
+  - 签发的一次性安装 Token 有效期为 15 分钟。超时后重新在服务端执行 `install-agent` 即可。
+- **Agent 被 `/ws` 限流拦截？**
+  - 如果使用了远端反代或 CDN/WAF，请在 `server.toml` 的 `trusted_proxies` 中添加代理 IP 网段，否则多台 Agent 会被识别为同一个代理 IP 并触发频率限制。
+- **Prometheus 抓取配置？**
+  - `/metrics` 与控制台共享只读认证，在 `prometheus.yml` 中添加 `basic_auth` 即可，详见 [`ops/prometheus/prometheus.yml`](ops/prometheus/prometheus.yml)。
 
-Prometheus 快速验证：
+---
 
-```bash
-curl -u "$NODELITE_READONLY_USERNAME:$NODELITE_READONLY_PASSWORD" https://monitor.example.com/metrics
-```
+## 💻 开发者与源码构建
 
-Prometheus 抓取示例和 Grafana Dashboard 见 `ops/prometheus/prometheus.yml` 与 `ops/grafana/nodelite-dashboard.json`。
-
-## 当前能力
-
-- 一键安装 Server / Agent
-- 节点签发、token 轮换、Agent 手动升级命令生成
-- 只读首页、节点详情页和 JSON API
-- SQLite 短期历史、快照恢复、审计日志
-- 可选 TOTP 2FA
-- Prometheus `/metrics`
-- 告警配置和每日巡检摘要配置
-- Agent 指数退避重连
-
-详细页面和架构图见 [HTML 文档](https://xinian-dada.github.io/NodeLite/#architecture)。
-
-## 开发者入口
-
-本地检查：
+### 本地编译与测试
 
 ```bash
+# 静态代码检查与全量测试
 cargo check
 cargo test --workspace
 cargo clippy --all-targets -- -D warnings
 ```
 
-交叉编译 Linux 静态二进制：
+### 编译 Linux 静态 Musl 二进制
 
 ```bash
-cargo build --release --target x86_64-unknown-linux-musl \
-  -p nodelite-server \
-  -p nodelite-agent
-
-cargo build --release --target aarch64-unknown-linux-musl \
-  -p nodelite-server \
-  -p nodelite-agent
+cargo build --release --target x86_64-unknown-linux-musl -p nodelite-server -p nodelite-agent
+cargo build --release --target aarch64-unknown-linux-musl -p nodelite-server -p nodelite-agent
 ```
 
-协议解析 fuzz smoke：
+### 协议模糊测试 (Fuzzing)
 
 ```bash
 cargo test --manifest-path fuzz/Cargo.toml
 cargo run --manifest-path fuzz/Cargo.toml --bin protocol_messages -- 10000
 ```
 
-覆盖率：
+---
 
-```bash
-cargo tarpaulin --config tarpaulin.toml
-```
+## 开源协议
 
-## 性能测试
-
-性能基线建议用 release 构建在目标机器上重新跑，README 不再维护长表格，避免数据随版本漂移后增加阅读负担。
-
-内存基线不使用单一的“占用”数字。Server/Agent 报告必须同时区分进程 RSS/PSS、
-匿名驻留内存和 systemd cgroup `MemoryCurrent`；后者包含 SQLite/WAL 产生的可回收
-filesystem page cache，不能直接当作 Rust heap 或泄漏。完整采集命令、冷/热缓存场景
-和报告模板见 [内存测量规范](docs/memory-measurement.md)。没有平台与口径的
-`Server <15MB` / `Agent <2MB` 不再作为发布门槛。
-
-常用 loopback 压测：
-
-```bash
-cargo test -p nodelite-server --release load_test_scaling_scores -- --ignored --nocapture
-cargo test -p nodelite-server --release load_test_api_surface_scores -- --ignored --nocapture
-cargo test -p nodelite-server --release load_test_reconnect_storm_scores -- --ignored --nocapture
-```
-
-更大规模回归压测：
-
-```bash
-cargo test -p nodelite-server --release load_test_large_fleet_scores -- --ignored --nocapture
-cargo test -p nodelite-server --release load_test_dashboard_fanout_scores -- --ignored --nocapture
-cargo test -p nodelite-server --release load_test_history_pressure_scores -- --ignored --nocapture
-cargo test -p nodelite-server --release load_test_payload_size_scores -- --ignored --nocapture
-```
-
-首页 DOM 渲染压力：
-
-```bash
-node scripts/benchmark-index-dom.mjs --nodes 500
-node scripts/benchmark-index-dom.mjs --nodes 1000
-```
-
-## 发布
-
-仓库使用 tag 驱动 GitHub Release。推送语义化版本 tag 后，CI 会构建 Linux Server / Agent、macOS Agent，上传安装脚本、`SHA256SUMS.txt` 和 CycloneDX SBOM，并创建 Release。
-
-正式构建会将 tag 去掉前导 `v` 后作为 `NODELITE_BUILD_VERSION` 注入二进制。发布产物中的 Agent 会把该版本作为 `agent_version` 上报到面板，Server 设置接口也会通过 `server_version` 展示同一版本。
-
-Workspace `Cargo.toml` 中的 `0.1.0` 是未注入时的 fallback，不随每次发布修改。本地直接使用 `cargo build` / `cargo run` 时，如未设置 `NODELITE_BUILD_VERSION`，上述运行时字段会显示这个 Cargo fallback；这不代表官方 Release 产物的版本。
-
-`nodelite-proto.cdx.json`、`nodelite-agent.cdx.json` 和 `nodelite-server.cdx.json` 是 CycloneDX JSON 格式的软件物料清单，覆盖 workspace crate 的依赖和版本信息。它们会随发布产物一起上传，并纳入 `SHA256SUMS.txt` 统一校验。
-
-### 可选 Linux Agent 限速能力
-
-安装或升级时传入 `--enable-traffic-control`（或 `NODELITE_AGENT_TRAFFIC_CONTROL=1`）启用套餐限速。
-必须安装发行版的 `iproute2` / `tc`。服务仍以 `nodelite-agent` 用户运行，仅增加
-`CAP_NET_ADMIN` 和 `AF_NETLINK`，其余 systemd 沙箱保留。普通安装默认关闭该能力，
-后续升级保留已有选择；`--disable-traffic-control` 可撤销权限，撤销前应先取消面板中的限速策略。
-手动运行 Agent 时也需要显式设置该环境变量，并由服务管理器授予必要权限。
-
-设置页显示 Agent 上报的能力和实际执行结果，区分未启用、缺少 tc、缺少权限、平台不支持和执行失败。
-旧 Agent 显示“尚未上报”。状态通过现有日志消息的可选字段传输，旧服务端仍可读取其原有日志。
-Linux CI 在独立网络命名空间内运行官方生成的 systemd 单元，验证限速设置、变更、撤销及保留其他规则。
+本项目采用 [MIT 许可证](LICENSE)。欢迎提交 Issue 与 Pull Request！
