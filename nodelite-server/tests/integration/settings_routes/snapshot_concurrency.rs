@@ -52,12 +52,20 @@ async fn periodic_snapshot_and_delete_commit_latest_view_in_order() -> Result<()
         None,
         json!({"current_password": "secret"}),
     )));
-    assert!(
-        timeout(Duration::from_millis(100), &mut deletion)
-            .await
-            .is_err()
-    );
-    assert!(shared.list_statuses().await.is_empty());
+    timeout(Duration::from_secs(5), async {
+        loop {
+            tokio::select! {
+                _ = &mut deletion => panic!("deletion should not complete while snapshot lock is held"),
+                _ = tokio::time::sleep(Duration::from_millis(10)) => {
+                    if shared.list_statuses().await.is_empty() {
+                        break;
+                    }
+                }
+            }
+        }
+    })
+    .await
+    .expect("deletion should remove node from shared state while awaiting snapshot lock");
     drop(guard);
     assert!(periodic.await?);
     assert_eq!(deletion.await?.status(), StatusCode::OK);
