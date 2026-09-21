@@ -20,7 +20,7 @@ use crate::auth::{
 };
 use crate::handlers::record_audit_event;
 
-type Verify2FAResult<T> = Result<T, (StatusCode, Json<Verify2FAError>)>;
+pub(super) type Verify2FAResult<T> = Result<T, (StatusCode, Json<Verify2FAError>)>;
 
 /// 2FA 验证 API:验证 TOTP 码,成功后设置完整认证 cookie。
 pub(crate) async fn verify_2fa_api(
@@ -30,7 +30,7 @@ pub(crate) async fn verify_2fa_api(
     Json(request): Json<Verify2FARequest>,
 ) -> Verify2FAResult<Response> {
     let client_ip = resolve_client_ip(&state.shared.config().trusted_proxies, peer_addr, &headers);
-    ensure_verify_2fa_not_blocked(&state, &headers, client_ip).await?;
+    ensure_second_factor_not_blocked(&state, &headers, client_ip, "/api/verify-2fa").await?;
     let pending_token = require_pending_token(&state, &headers, client_ip).await?;
     let (auth_token, audit_user) = {
         // Rotation clears sessions under the write lock, so validation and
@@ -48,12 +48,21 @@ pub(crate) async fn verify_2fa_api(
     };
 
     state.verify_2fa_admission.clear_auth_failures(client_ip);
-    let login_event_id = record_totp_success(&state, &headers, client_ip, audit_user).await;
+    let login_event_id = record_second_factor_success(
+        &state,
+        &headers,
+        client_ip,
+        audit_user,
+        AuditEventType::TotpVerifySuccess,
+        "/api/verify-2fa",
+        "totp",
+    )
+    .await;
     state
         .two_factor_sessions
         .set_authenticated_login_event_id(&auth_token, login_event_id);
 
-    Ok(successful_verify_2fa_response(&state, &auth_token))
+    Ok(successful_second_factor_response(&state, &auth_token))
 }
 
 /// 登出并强制重新认证:返回 401 + WWW-Authenticate 头,触发浏览器清除缓存的
@@ -85,10 +94,11 @@ pub(crate) async fn logout_and_reauth(
         .into_response()
 }
 
-async fn ensure_verify_2fa_not_blocked(
+pub(super) async fn ensure_second_factor_not_blocked(
     state: &AppState,
     headers: &HeaderMap,
     client_ip: std::net::IpAddr,
+    endpoint: &str,
 ) -> Verify2FAResult<()> {
     let Err(retry_after_secs) = state.verify_2fa_admission.check(client_ip) else {
         return Ok(());
@@ -100,9 +110,9 @@ async fn ensure_verify_2fa_not_blocked(
         false,
         user_agent(headers),
         json!({
-            "endpoint": "/api/verify-2fa",
+            "endpoint": endpoint,
             "retry_after_secs": retry_after_secs,
-            "reason": "verify_2fa_block",
+            "reason": "second_factor_block",
         }),
     )
     .await;
@@ -120,24 +130,26 @@ async fn require_pending_token(
     client_ip: std::net::IpAddr,
 ) -> Verify2FAResult<String> {
     let Some(pending_token) = cookie_value(headers, TWO_FACTOR_PENDING_COOKIE) else {
-        record_totp_failure(
+        record_second_factor_failure(
             state,
             headers,
             client_ip,
+            AuditEventType::TotpVerifyFailure,
             json!({ "reason": "missing_pending_token" }),
         )
         .await;
-        return Err(verify_2fa_unauthorized_error());
+        return Err(second_factor_unauthorized_error());
     };
     if !state.two_factor_sessions.pending_exists(&pending_token) {
-        record_totp_failure(
+        record_second_factor_failure(
             state,
             headers,
             client_ip,
+            AuditEventType::TotpVerifyFailure,
             json!({ "reason": "unknown_pending_token" }),
         )
         .await;
-        return Err(verify_2fa_unauthorized_error());
+        return Err(second_factor_unauthorized_error());
     }
     Ok(pending_token)
 }
@@ -151,10 +163,11 @@ async fn handle_invalid_totp(
     let pending_invalidated = state
         .two_factor_sessions
         .record_failed_attempt(pending_token);
-    record_totp_failure(
+    record_second_factor_failure(
         state,
         headers,
         client_ip,
+        AuditEventType::TotpVerifyFailure,
         json!({
             "reason": "invalid_or_replayed_totp",
             "pending_invalidated": pending_invalidated,
@@ -177,16 +190,17 @@ async fn handle_invalid_totp(
     }
 }
 
-async fn record_totp_failure(
+pub(super) async fn record_second_factor_failure(
     state: &AppState,
     headers: &HeaderMap,
     client_ip: std::net::IpAddr,
+    event_type: AuditEventType,
     details: serde_json::Value,
 ) {
     state.verify_2fa_admission.record_auth_failure(client_ip);
     record_audit_event(
         state,
-        AuditEventType::TotpVerifyFailure,
+        event_type,
         client_ip.to_string(),
         false,
         user_agent(headers),
@@ -213,30 +227,31 @@ fn exchange_pending_two_factor_session(
         })
 }
 
-async fn record_totp_success(
+pub(super) async fn record_second_factor_success(
     state: &AppState,
     headers: &HeaderMap,
     client_ip: std::net::IpAddr,
     audit_user: Option<String>,
+    verification_event_type: AuditEventType,
+    endpoint: &str,
+    factor: &str,
 ) -> Option<i64> {
-    // 记录 TOTP 验证成功事件
-    let mut totp_event = NewAuditEvent::now(
-        AuditEventType::TotpVerifySuccess,
-        client_ip.to_string(),
-        true,
-    );
-    totp_event.user = audit_user.clone();
-    totp_event.user_agent = user_agent(headers);
-    totp_event.details = json!({
-        "endpoint": "/api/verify-2fa",
+    // The factor-specific event lets operators distinguish a TOTP recovery
+    // login from routine passkey use without storing authenticator details.
+    let mut factor_event = NewAuditEvent::now(verification_event_type, client_ip.to_string(), true);
+    factor_event.user = audit_user.clone();
+    factor_event.user_agent = user_agent(headers);
+    factor_event.details = json!({
+        "endpoint": endpoint,
     });
-    state.audit_log.record_best_effort(totp_event).await;
+    state.audit_log.record_best_effort(factor_event).await;
 
     // 2FA 验证成功 = 完整登录成功,记录 LoginSuccess 事件(包含 GeoIP)
     let geoip_info = state.geoip.lookup(client_ip).await;
     let mut login_details = json!({
-        "endpoint": "/api/verify-2fa",
+        "endpoint": endpoint,
         "two_factor_verified": true,
+        "second_factor": factor,
     });
     if let Some(info) = geoip_info
         && let Some(obj) = login_details.as_object_mut()
@@ -267,7 +282,7 @@ async fn record_totp_success(
     }
 }
 
-fn successful_verify_2fa_response(state: &AppState, auth_token: &str) -> Response {
+pub(super) fn successful_second_factor_response(state: &AppState, auth_token: &str) -> Response {
     let secure = secure_cookies(state.shared.config());
     (
         StatusCode::OK,
@@ -284,7 +299,7 @@ fn successful_verify_2fa_response(state: &AppState, auth_token: &str) -> Respons
         .into_response()
 }
 
-fn verify_2fa_unauthorized_error() -> (StatusCode, Json<Verify2FAError>) {
+pub(super) fn second_factor_unauthorized_error() -> (StatusCode, Json<Verify2FAError>) {
     (
         StatusCode::UNAUTHORIZED,
         Json(Verify2FAError {

@@ -11,6 +11,7 @@ use crate::audit::AuditLog;
 use crate::auth::{ReadonlyRouteAuth, TwoFactorSessions};
 use crate::geoip::GeoIpResolver;
 use crate::history::HistoryStore;
+use crate::passkeys::PasskeyService;
 use crate::registry::NodeRegistry;
 use crate::state::SharedState;
 use nodelite_proto::AlertingConfig;
@@ -45,6 +46,7 @@ pub(crate) struct AppState {
     /// 内层 `Arc` 让告警运行时和投递任务以指针克隆共享配置快照,
     /// 更新时整体替换内层 `Arc`(见 `handlers/settings/alerts.rs`)。
     pub(crate) alerting: Arc<RwLock<Arc<AlertingConfig>>>,
+    pub(crate) passkeys: PasskeyService,
     pub(crate) two_factor_sessions: TwoFactorSessions,
     pub(crate) config_path: Arc<PathBuf>,
     pub(crate) settings_write_lock: Arc<tokio::sync::Mutex<()>>,
@@ -129,6 +131,7 @@ impl AppState {
 
         let shutdown = CancellationToken::new();
         let shared = SharedState::new(config.clone());
+        let passkeys = PasskeyService::load(config_path.as_path(), &config.public_base_url).await?;
         // 测试环境也启动集中 diff 任务,JoinHandle detach(测试结束时 shutdown token 取消)
         std::mem::drop(crate::state::spawn_browser_incremental_task(
             shared.clone(),
@@ -162,6 +165,7 @@ impl AppState {
                 config.readonly_auth.clone(),
             ))),
             alerting: Arc::new(RwLock::new(Arc::new(config.alerting.clone()))),
+            passkeys,
             two_factor_sessions: TwoFactorSessions::new(),
             config_path,
             settings_write_lock: Arc::new(tokio::sync::Mutex::new(())),

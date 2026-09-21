@@ -24,6 +24,7 @@ fn manifest_contains_all_persistent_files_and_sqlite_sidecars_without_credential
     assert!(manifest.contains("ready_url=http://127.0.0.1:8080/readyz\n"));
     for path in [
         "/opt/nodelite/config/server.toml",
+        "/opt/nodelite/config/passkeys.json",
         "/opt/nodelite/config/nodes.json",
         "/opt/nodelite/data/snapshot.json",
         "/opt/nodelite/data/geoip.mmdb",
@@ -45,7 +46,7 @@ fn manifest_contains_all_persistent_files_and_sqlite_sidecars_without_credential
             .lines()
             .filter(|line| line.starts_with("path="))
             .count(),
-        12
+        13
     );
     assert!(!manifest.contains("password"));
     assert!(!manifest.contains("token"));
@@ -101,7 +102,13 @@ fn manifest_preserves_configured_symlinks_alongside_targets() {
     std::fs::create_dir(&entries).expect("entry directory");
     std::fs::create_dir(&targets).expect("target directory");
     std::os::unix::fs::symlink(&entries, dir.join("linked")).expect("directory link");
-    let filenames = ["server.toml", "nodes.json", "snapshot.json", "geoip.mmdb"];
+    let filenames = [
+        "server.toml",
+        "passkeys.json",
+        "nodes.json",
+        "snapshot.json",
+        "geoip.mmdb",
+    ];
     for filename in filenames {
         std::fs::write(targets.join(filename), "before upgrade").expect("file fixture");
         std::os::unix::fs::symlink(

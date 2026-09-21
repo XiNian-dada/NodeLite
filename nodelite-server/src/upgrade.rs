@@ -9,6 +9,8 @@ use thiserror::Error;
 
 use nodelite_proto::{ServerConfig, parse_server_config};
 
+use crate::passkeys::passkey_storage_path;
+
 #[derive(Debug, Error)]
 pub enum UpgradeError {
     #[error("failed to prepare upgrade manifest: {0}")]
@@ -34,8 +36,10 @@ fn render_manifest(
     working_dir: &Path,
 ) -> Result<String, UpgradeError> {
     let mut paths = BTreeSet::new();
+    let passkey_path = passkey_storage_path(config_path);
     for path in [
         config_path,
+        passkey_path.as_path(),
         config.node_registry_path.as_path(),
         config.snapshot_path.as_path(),
         config.geoip.database_path.as_path(),

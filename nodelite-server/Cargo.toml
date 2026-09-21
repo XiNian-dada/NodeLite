@@ -24,6 +24,8 @@ ipnet.workspace = true
 libc.workspace = true
 lru = "0.18.2"
 maxminddb.workspace = true
+# webauthn-rs uses OpenSSL; vendoring keeps musl release builds self-contained.
+openssl.workspace = true
 parking_lot = "0.12"
 qrcode.workspace = true
 reqwest.workspace = true
@@ -46,6 +48,8 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true
 webpki-roots = "1.0"
+uuid.workspace = true
+webauthn-rs.workspace = true
 nodelite-proto = { path = "../nodelite-proto", default-features = false, features = ["server-config", "wire-compression"] }
 include_dir = "0.7"
 

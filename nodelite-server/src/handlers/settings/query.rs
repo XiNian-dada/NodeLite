@@ -20,6 +20,13 @@ pub(crate) async fn settings(State(state): State<AppState>) -> impl IntoResponse
         let auth = state.readonly_auth.read().await;
         auth.config.clone()
     };
+    let passkeys = match state.passkeys.summaries() {
+        Ok(passkeys) => passkeys,
+        Err(error) => {
+            tracing::error!(error = ?error, "failed to list registered passkeys");
+            Vec::new()
+        }
+    };
     let statuses = state.shared.list_statuses().await;
     let status_by_id = statuses
         .into_iter()
@@ -103,6 +110,7 @@ pub(crate) async fn settings(State(state): State<AppState>) -> impl IntoResponse
             username: auth.map(|auth| auth.username.clone()),
             two_factor_enabled: auth.is_some_and(|auth| auth.enable_2fa),
             totp_secret_configured: auth.and_then(|auth| auth.totp_secret.as_ref()).is_some(),
+            passkeys,
             session_ttl_secs: TWO_FACTOR_AUTH_SECS,
             pending_ttl_secs: TWO_FACTOR_PENDING_SECS,
         },

@@ -49,7 +49,7 @@
 * 🛡️ **工业级安全防线**：
   * 节点 Token 采用 Argon2id 哈希，并配置有限并发池（防大批重连引发 OOM）；
   * 凭证与 Token 比较全面采用 `subtle::ConstantTimeEq` 防范时序侧信道攻击；
-  * 控制台支持 Basic Auth + 可选 **TOTP 2FA** 动态口令；
+  * 控制台支持 Basic Auth + **TOTP 2FA**，并可用 Passkey（Touch ID / Face ID / 设备解锁）完成日常二次验证；
   * 独立 SQLite 审计日志库（`audit.sqlite3`）记录全部鉴权与安全事件。
 * 🚨 **完备的告警与每日巡检**：
   * 支持 CPU、内存、延迟、离线、月度流量用量等多维度规则评估；
@@ -201,9 +201,17 @@ insecure_allow_http = true
 | `[server]` | `stale_after_secs` | `20` | 超过多少秒未收到心跳判定为节点离线 |
 | `[server]` | `token_verify_max_parallelism` | `4` | Argon2id 验证并发槽位数（防重连尖刺 OOM，每任务约 19MB） |
 | `[auth]` | `username` / `password` | 自动生成强密码 | 面板登录凭据（必须包含大小写字母、数字和特殊字符） |
-| `[auth]` | `enable_2fa` | `false` | 是否启用 TOTP 二次验证 |
+| `[auth]` | `enable_2fa` | `false` | 是否启用二次验证；启用后可绑定 TOTP 与 Passkey |
 | `[audit]` | `enabled` / `retention_days`| `true` / `90` | 独立安全审计日志，默认留存 90 天 |
 | `[geoip]` | `provider` | `"ipwhois"` | 物理位置查询：`"ipwhois"`（在线）/ `"dbip"`（本地 MMDB） |
+
+---
+
+### Passkey（二步验证的便捷替代）
+
+先在账户页启用 2FA 并完成 TOTP 绑定，再添加 Passkey。之后登录时可选择 Touch ID、Face ID 或设备锁屏验证；TOTP 会继续保留为恢复方式。Passkey 需要 `server.public_base_url` 使用 `https://`，且浏览器必须支持 WebAuthn。
+
+已绑定的公开凭证保存在 `server.toml` 同目录的 `passkeys.json`（权限为 `0600`），会随内置服务升级的兼容备份一起保留。不要手工编辑该文件；若全部验证设备丢失，可按下方步骤临时关闭 2FA 后重新绑定。
 
 ---
 

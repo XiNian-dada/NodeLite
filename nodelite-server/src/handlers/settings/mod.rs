@@ -8,6 +8,7 @@ mod agent_install;
 mod alerts;
 mod config_edit;
 mod helpers;
+mod passkeys;
 mod query;
 mod security;
 mod subprocess;
@@ -17,6 +18,9 @@ mod updates;
 pub(crate) use agent_delete::delete_agent;
 pub(crate) use agent_install::generate_agent_install;
 pub(crate) use alerts::{alert_settings, update_alert_settings};
+pub(crate) use passkeys::{
+    delete_passkey, finish_passkey_registration, start_passkey_registration,
+};
 pub(crate) use query::settings;
 pub(crate) use security::{
     change_readonly_password, disable_two_factor, enable_two_factor, start_two_factor_setup,
@@ -35,11 +39,12 @@ use helpers::{
 };
 use subprocess::{UpdateLaunchMode, spawn_server_update_subprocess};
 use types::{
-    ChangePasswordRequest, DeleteAgentRequest, DisableTwoFactorRequest, EnableTwoFactorRequest,
-    GenerateAgentInstallRequest, GenerateAgentInstallResponse, NodeTokenRefreshResponse,
-    ServerUpdateLogQuery, ServerUpdateLogResponse, SettingsActionResponse, SettingsAgentToken,
-    SettingsAuth, SettingsResponse, SettingsUpdates, StartServerUpdateRequest,
-    TwoFactorSetupResponse, UpdateNodeLocationOverrideRequest, UpdateNodeServiceMetadataRequest,
+    ChangePasswordRequest, DeleteAgentRequest, DeletePasskeyRequest, DisableTwoFactorRequest,
+    EnableTwoFactorRequest, GenerateAgentInstallRequest, GenerateAgentInstallResponse,
+    NodeTokenRefreshResponse, ServerUpdateLogQuery, ServerUpdateLogResponse,
+    SettingsActionResponse, SettingsAgentToken, SettingsAuth, SettingsResponse, SettingsUpdates,
+    StartPasskeyRegistrationRequest, StartServerUpdateRequest, TwoFactorSetupResponse,
+    UpdateNodeLocationOverrideRequest, UpdateNodeServiceMetadataRequest,
 };
 
 pub(super) const MAX_UPDATE_LOG_CHUNK_BYTES: u64 = 128 * 1024;

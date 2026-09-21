@@ -271,10 +271,11 @@ impl AuditLog {
         match event_type {
             AuditEventType::LoginSuccess
             | AuditEventType::TotpVerifySuccess
+            | AuditEventType::PasskeyVerifySuccess
             | AuditEventType::NodeConnected => self.config.log_successful_auth,
-            AuditEventType::LoginFailure | AuditEventType::TotpVerifyFailure => {
-                self.config.log_failed_auth
-            }
+            AuditEventType::LoginFailure
+            | AuditEventType::TotpVerifyFailure
+            | AuditEventType::PasskeyVerifyFailure => self.config.log_failed_auth,
             AuditEventType::TokenInvalid => self.config.log_token_events,
             AuditEventType::RateLimitExceeded => self.config.log_rate_limit,
         }

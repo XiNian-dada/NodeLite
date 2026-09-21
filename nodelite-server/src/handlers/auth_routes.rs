@@ -5,11 +5,13 @@ use axum::http::{HeaderMap, header};
 mod healthz;
 mod last_login;
 mod middleware;
+mod passkeys;
 mod two_factor;
 
 pub(crate) use healthz::{healthz, readyz};
 pub(crate) use last_login::last_login;
 pub(crate) use middleware::require_readonly_auth;
+pub(crate) use passkeys::{finish_passkey_authentication, start_passkey_authentication};
 pub(crate) use two_factor::{logout_and_reauth, verify_2fa_api};
 
 fn user_agent(headers: &HeaderMap) -> Option<String> {

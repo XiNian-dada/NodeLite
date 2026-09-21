@@ -35,15 +35,17 @@ use crate::background::{
 use crate::fs_security::log_if_directory_is_not_private;
 use crate::geoip::GeoIpResolver;
 use crate::handlers::{
-    alert_settings, audit_log, bootstrap, change_readonly_password, delete_agent,
-    disable_two_factor, enable_two_factor, generate_agent_install, healthz, index,
-    install_agent_script, install_bootstrap, last_login, logout_and_reauth, metrics, node_detail,
-    node_history, node_logs, node_status, nodes, overview, readyz, refresh_node_token,
-    require_readonly_auth, server_update_log, settings, start_server_update,
-    start_two_factor_setup, static_asset, update_alert_settings, update_node_location_override,
-    update_node_service_metadata, verify_2fa_api, verify_2fa_page,
+    alert_settings, audit_log, bootstrap, change_readonly_password, delete_agent, delete_passkey,
+    disable_two_factor, enable_two_factor, finish_passkey_authentication,
+    finish_passkey_registration, generate_agent_install, healthz, index, install_agent_script,
+    install_bootstrap, last_login, logout_and_reauth, metrics, node_detail, node_history,
+    node_logs, node_status, nodes, overview, readyz, refresh_node_token, require_readonly_auth,
+    server_update_log, settings, start_passkey_authentication, start_passkey_registration,
+    start_server_update, start_two_factor_setup, static_asset, update_alert_settings,
+    update_node_location_override, update_node_service_metadata, verify_2fa_api, verify_2fa_page,
 };
 use crate::history::HistoryStore;
+use crate::passkeys::PasskeyService;
 use crate::registry::NodeRegistry;
 use crate::snapshot::{load_snapshot, persist_current_snapshot, spawn_snapshot_persistor};
 use crate::state::SharedState;
@@ -57,6 +59,7 @@ pub(crate) const PROTECTED_CONTENT_SECURITY_POLICY: &str = "default-src 'self'; 
      form-action 'self'";
 pub(crate) const PROTECTED_CACHE_CONTROL: &str = "no-store, no-cache, must-revalidate";
 pub(crate) const JSON_WRITE_BODY_LIMIT_BYTES: usize = 16 * 1024;
+pub(crate) const PASSKEY_JSON_BODY_LIMIT_BYTES: usize = 64 * 1024;
 const NODELITE_LOG_FORMAT_ENV: &str = "NODELITE_LOG_FORMAT";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -163,6 +166,10 @@ async fn initialize_server_runtime(
         .apply_location_overrides(registry.list_location_overrides().await)
         .await;
 
+    let passkeys = PasskeyService::load(config_path, &config.public_base_url)
+        .await
+        .context("failed to load passkey credentials")?;
+
     let shutdown = CancellationToken::new();
     let state = AppState {
         agent_logs: AgentLogStore::with_limits(config.agent_logs),
@@ -189,6 +196,7 @@ async fn initialize_server_runtime(
         browser_ws_admission: WsAdmissionController::new(&config.ws),
         readonly_auth: Arc::new(RwLock::new(readonly_route_auth)),
         alerting: Arc::new(RwLock::new(Arc::new(config.alerting.clone()))),
+        passkeys,
         two_factor_sessions: TwoFactorSessions::new(),
         config_path: Arc::new(config_path.to_path_buf()),
         settings_write_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -349,6 +357,18 @@ pub(crate) fn build_router(state: AppState) -> Router {
                 .route("/api/verify-2fa", post(verify_2fa_api))
                 .layer(DefaultBodyLimit::max(JSON_WRITE_BODY_LIMIT_BYTES)),
         )
+        .merge(
+            Router::new()
+                .route(
+                    "/api/passkeys/authentication/start",
+                    post(start_passkey_authentication),
+                )
+                .route(
+                    "/api/passkeys/authentication/finish",
+                    post(finish_passkey_authentication),
+                )
+                .layer(DefaultBodyLimit::max(PASSKEY_JSON_BODY_LIMIT_BYTES)),
+        )
         .route("/install/install-agent.sh", get(install_agent_script))
         .route("/install/bootstrap", get(install_bootstrap))
         .route("/ws", get(ws_handler))
@@ -374,6 +394,20 @@ pub(crate) fn build_router(state: AppState) -> Router {
         .route("/api/settings/2fa/enable", post(enable_two_factor))
         .route("/api/settings/2fa/disable", post(disable_two_factor))
         .layer(DefaultBodyLimit::max(JSON_WRITE_BODY_LIMIT_BYTES));
+    let protected_passkey_routes = Router::new()
+        .route(
+            "/api/settings/passkeys/register/start",
+            post(start_passkey_registration),
+        )
+        .route(
+            "/api/settings/passkeys/register/finish",
+            post(finish_passkey_registration),
+        )
+        .route(
+            "/api/settings/passkeys/{passkey_id}",
+            delete(delete_passkey),
+        )
+        .layer(DefaultBodyLimit::max(PASSKEY_JSON_BODY_LIMIT_BYTES));
     let protected_routes = Router::new()
         .route("/", get(index))
         .route("/nodes/{node_id}", get(node_detail))
@@ -400,6 +434,7 @@ pub(crate) fn build_router(state: AppState) -> Router {
         .route("/api/settings/update/server/log", get(server_update_log))
         .route("/api/settings/2fa/start", post(start_two_factor_setup))
         .merge(protected_json_routes)
+        .merge(protected_passkey_routes)
         .route_layer(from_fn(set_protected_response_headers))
         .route_layer(from_fn_with_state(state.clone(), require_readonly_auth));
     Router::new()

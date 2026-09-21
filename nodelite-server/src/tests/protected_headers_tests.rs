@@ -223,6 +223,24 @@ fn json_write_routes_reject_oversized_bodies() {
             );
         }
 
+        // A WebAuthn assertion can exceed the normal settings JSON cap. Its
+        // route must reach authentication validation rather than being cut off
+        // by the generic 16 KiB limit.
+        let passkey_body = format!(
+            r#"{{"id":"{}","rawId":"AQ","type":"public-key","response":{{"authenticatorData":"AQ","clientDataJSON":"AQ","signature":"AQ"}}}}"#,
+            "x".repeat(crate::startup::JSON_WRITE_BODY_LIMIT_BYTES + 1),
+        );
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/passkeys/authentication/finish",
+                None,
+                passkey_body,
+            ))
+            .await
+            .expect("response should be produced");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
         let _ = std::fs::remove_dir_all(&temp_dir);
     });
 }

@@ -12,6 +12,7 @@ target/tarpaulin/
 /structure/
 shit-mountain-report.md
 AGENTS.md
+passkeys.json
 
 .claude/
 NodeLite_DIFFERENTIAL_REVIEW*.md

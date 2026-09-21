@@ -59,6 +59,28 @@ fn pending_session_invalidated_after_max_failed_attempts() {
 }
 
 #[test]
+fn passkey_exchange_consumes_the_pending_login_once() {
+    let sessions = TwoFactorSessions::new();
+    let pending = sessions
+        .create_pending()
+        .expect("pending session should be created");
+
+    let authenticated = sessions
+        .exchange_pending_for_passkey(&pending)
+        .expect("session token should be generated")
+        .expect("pending session should be accepted once");
+
+    assert!(!sessions.pending_exists(&pending));
+    assert!(sessions.is_authenticated(&authenticated));
+    assert_eq!(
+        sessions
+            .exchange_pending_for_passkey(&pending)
+            .expect("replay should not fail entropy generation"),
+        None
+    );
+}
+
+#[test]
 fn totp_step_consumption_blocks_replay() {
     let sessions = TwoFactorSessions::new();
     let step = 12345_u64;

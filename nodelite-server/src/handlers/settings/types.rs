@@ -4,6 +4,7 @@ use nodelite_proto::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::passkeys::PasskeySummary;
 use crate::registry::TrafficAccounting;
 
 /// 设置页读取的服务端与安全状态。这里刻意不包含任何 token / password 明文。
@@ -31,6 +32,7 @@ pub(crate) struct SettingsAuth {
     pub(crate) username: Option<String>,
     pub(crate) two_factor_enabled: bool,
     pub(crate) totp_secret_configured: bool,
+    pub(crate) passkeys: Vec<PasskeySummary>,
     pub(crate) session_ttl_secs: u64,
     pub(crate) pending_ttl_secs: u64,
 }
@@ -141,6 +143,25 @@ pub(crate) struct EnableTwoFactorRequest {
 pub(crate) struct DisableTwoFactorRequest {
     pub(crate) current_password: String,
     pub(crate) code: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StartPasskeyRegistrationRequest {
+    pub(crate) label: String,
+    #[serde(default)]
+    pub(crate) current_password: Option<String>,
+    #[serde(default)]
+    pub(crate) code: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DeletePasskeyRequest {
+    #[serde(default)]
+    pub(crate) current_password: Option<String>,
+    #[serde(default)]
+    pub(crate) code: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

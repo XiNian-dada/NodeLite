@@ -30,6 +30,7 @@ mod history;
 #[cfg(test)]
 #[path = "../tests/integration/mod.rs"]
 mod integration_tests;
+mod passkeys;
 mod qr;
 mod queue;
 mod registry;

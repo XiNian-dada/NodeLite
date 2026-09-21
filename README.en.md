@@ -49,7 +49,7 @@ Designed for **minimal resource footprint** (Server RSS < 15MB, Agent < 2MB), **
 * 🛡️ **Industrial-grade Security**:
   * Node tokens hashed with Argon2id under bounded concurrency slots (preventing OOM during reconnection storms);
   * Constant-time comparisons (`subtle::ConstantTimeEq`) across all token and credential verifications;
-  * Web dashboard supports Basic Auth + optional **TOTP 2FA**;
+  * Web dashboard supports Basic Auth + **TOTP 2FA**, with Passkeys (Touch ID, Face ID, or device unlock) for routine second-factor verification;
   * Dedicated SQLite audit trail database (`audit.sqlite3`) logging authentication and security events.
 * 🚨 **Comprehensive Alerting & Daily Inspections**:
   * Sliding-window rule evaluations for CPU, memory, latency, node offline, and monthly bandwidth;
@@ -198,9 +198,17 @@ Server configuration file: `/opt/nodelite/config/server.toml`:
 | `[server]` | `stale_after_secs` | `20` | Mark node offline after missing heartbeats |
 | `[server]` | `token_verify_max_parallelism` | `4` | Max parallel Argon2id workers (prevents OOM spikes) |
 | `[auth]` | `username` / `password` | Generated strong pass | Readonly Basic Auth credentials |
-| `[auth]` | `enable_2fa` | `false` | Enable TOTP 2FA |
+| `[auth]` | `enable_2fa` | `false` | Enable second-factor verification; TOTP and Passkeys can then be enrolled |
 | `[audit]` | `enabled` / `retention_days`| `true` / `90` | Audit trail SQLite retention |
 | `[geoip]` | `provider` | `"ipwhois"` | Location source: `"ipwhois"` (online) / `"dbip"` (local MMDB) |
+
+---
+
+### Passkeys (a convenient second-factor alternative)
+
+Enable 2FA and enrol TOTP from the Account page before adding a Passkey. Later sign-ins can use Touch ID, Face ID, or the device screen lock, while TOTP remains available for recovery. Passkeys require an `https://` `server.public_base_url` and a browser with WebAuthn support.
+
+Registered public credentials live in `passkeys.json` beside `server.toml` with `0600` permissions and are preserved by the built-in server-upgrade backup. Do not edit that file manually. If every verification device is lost, temporarily disable 2FA using the recovery procedure below, then enrol new factors.
 
 ---
 

@@ -342,6 +342,27 @@ impl TwoFactorSessions {
         Ok(Some(token))
     }
 
+    /// Consumes a pending browser login after a verified passkey ceremony.
+    ///
+    /// Unlike TOTP, WebAuthn includes its own challenge replay protection.  The
+    /// pending token is still consumed atomically so one Basic-auth login cannot
+    /// create more than one fully authenticated browser session.
+    pub(crate) fn exchange_pending_for_passkey(
+        &self,
+        pending_token: &str,
+    ) -> AuthSessionResult<Option<String>> {
+        let now = Instant::now();
+        let mut store = lock_mutex(&self.inner);
+        prune_expired_sessions(&mut store, now);
+        if !store.pending.contains_key(pending_token) {
+            return Ok(None);
+        }
+        let token = generate_session_token()?;
+        store.pending.remove(pending_token);
+        insert_authenticated_session(&mut store, &token, now);
+        Ok(Some(token))
+    }
+
     pub fn is_authenticated(&self, token: &str) -> bool {
         let mut store = lock_mutex(&self.inner);
         prune_expired_sessions(&mut store, Instant::now());
