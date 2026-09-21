@@ -198,6 +198,26 @@
         cursor: not-allowed;
         transform: none;
       }
+      .auth-divider {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 18px 0;
+        color: var(--text-dim);
+        font-size: 12px;
+      }
+      .auth-divider::before,
+      .auth-divider::after {
+        content: '';
+        height: 1px;
+        flex: 1;
+        background: var(--border-soft);
+      }
+      .passkey-button {
+        border-color: var(--border-strong);
+        color: var(--text-primary);
+        background: var(--bg-card-soft);
+      }
       .error {
         min-height: 20px;
         margin-top: 14px;
@@ -274,6 +294,17 @@
           <button class="auth-button" type="submit" id="submit-btn" disabled data-i18n="button">
             Continue
           </button>
+          <div id="passkey-section" hidden>
+            <div class="auth-divider" data-i18n="or">or</div>
+            <button
+              class="auth-button passkey-button"
+              type="button"
+              id="passkey-btn"
+              data-i18n="passkey_button"
+            >
+              Use a passkey
+            </button>
+          </div>
           <div id="error" class="error" role="alert"></div>
         </form>
       </div>
@@ -290,6 +321,12 @@
           subtitle: 'Enter the 6-digit code from your authenticator app to continue.',
           button: 'Continue',
           verifying: 'Verifying...',
+          or: 'or',
+          passkey_button: 'Use a passkey',
+          passkey_verifying: 'Waiting for your passkey...',
+          passkey_unavailable:
+            'No passkey is available for this account. Use your verification code instead.',
+          passkey_cancelled: 'Passkey verification was cancelled. Please try again.',
           incomplete: 'Please enter the full 6-digit code.',
           invalid: 'Invalid code. Please try again.',
           network: 'Network error. Please try again.',
@@ -304,6 +341,11 @@
           subtitle: '请输入验证器应用生成的 6 位验证码以继续。',
           button: '继续',
           verifying: '正在验证...',
+          or: '或',
+          passkey_button: '使用 Passkey',
+          passkey_verifying: '正在等待 Passkey 验证...',
+          passkey_unavailable: '此账号没有可用的 Passkey，请改用验证码验证。',
+          passkey_cancelled: '已取消 Passkey 验证，请重试。',
           incomplete: '请输入完整的 6 位验证码。',
           invalid: '验证码无效，请重试。',
           network: '网络错误，请重试。',
@@ -334,8 +376,69 @@
       const form = document.getElementById('verify-form');
       const cells = Array.from(document.querySelectorAll('.otp-cell'));
       const submitBtn = document.getElementById('submit-btn');
+      const passkeySection = document.getElementById('passkey-section');
+      const passkeyBtn = document.getElementById('passkey-btn');
       const errorDiv = document.getElementById('error');
       let submitting = false;
+
+      function supportsPasskeys() {
+        return window.PublicKeyCredential && navigator.credentials && navigator.credentials.get;
+      }
+
+      function base64UrlToBuffer(value) {
+        const base64 = value.replace(/-/g, '+').replace(/_/g, '/');
+        const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=');
+        const binary = window.atob(padded);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index += 1) {
+          bytes[index] = binary.charCodeAt(index);
+        }
+        return bytes.buffer;
+      }
+
+      function bufferToBase64Url(value) {
+        const bytes = new Uint8Array(value);
+        let binary = '';
+        for (const byte of bytes) binary += String.fromCharCode(byte);
+        return window.btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+      }
+
+      function passkeyRequest(options) {
+        const publicKey = options.publicKey;
+        return {
+          publicKey: {
+            ...publicKey,
+            challenge: base64UrlToBuffer(publicKey.challenge),
+            allowCredentials: (publicKey.allowCredentials || []).map((credential) => ({
+              ...credential,
+              id: base64UrlToBuffer(credential.id),
+            })),
+          },
+        };
+      }
+
+      function passkeyResponse(credential) {
+        const response = credential.response;
+        return {
+          id: credential.id,
+          rawId: bufferToBase64Url(credential.rawId),
+          type: credential.type,
+          response: {
+            authenticatorData: bufferToBase64Url(response.authenticatorData),
+            clientDataJSON: bufferToBase64Url(response.clientDataJSON),
+            signature: bufferToBase64Url(response.signature),
+            userHandle: response.userHandle ? bufferToBase64Url(response.userHandle) : null,
+          },
+          clientExtensionResults: credential.getClientExtensionResults(),
+        };
+      }
+
+      function markLoginComplete() {
+        try {
+          window.localStorage.setItem('nodelite.auth.timestamp', Date.now().toString());
+        } catch (_e) {}
+        window.location.replace('/');
+      }
 
       function codeValue() {
         return cells.map((cell) => cell.value).join('');
@@ -414,10 +517,7 @@
           });
 
           if (response.ok) {
-            try {
-              window.localStorage.setItem('nodelite.auth.timestamp', Date.now().toString());
-            } catch (_e) {}
-            window.location.replace('/');
+            markLoginComplete();
             return;
           }
 
@@ -449,6 +549,60 @@
         link.href = '/';
         link.textContent = t('back');
         errorDiv.append(link);
+      }
+
+      async function verifyPasskey() {
+        if (submitting) return;
+        submitting = true;
+        updateState();
+        passkeyBtn.disabled = true;
+        passkeyBtn.textContent = t('passkey_verifying');
+        errorDiv.textContent = '';
+        try {
+          const start = await fetch('/api/passkeys/authentication/start', { method: 'POST' });
+          if (start.status === 409) {
+            passkeySection.hidden = true;
+            showError(t('passkey_unavailable'));
+            return;
+          }
+          if (start.status === 401) {
+            showExpiredError();
+            return;
+          }
+          if (!start.ok) throw new Error('passkey start failed');
+          const options = await start.json();
+          const credential = await navigator.credentials.get(passkeyRequest(options));
+          if (!(credential instanceof PublicKeyCredential)) {
+            showError(t('passkey_cancelled'));
+            return;
+          }
+          const finish = await fetch('/api/passkeys/authentication/finish', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(passkeyResponse(credential)),
+          });
+          if (finish.ok) {
+            markLoginComplete();
+            return;
+          }
+          if (finish.status === 401) {
+            showError(t('passkey_cancelled'));
+          } else {
+            showExpiredError();
+          }
+        } catch (_error) {
+          showError(t('passkey_cancelled'));
+        } finally {
+          submitting = false;
+          passkeyBtn.disabled = false;
+          passkeyBtn.textContent = t('passkey_button');
+          updateState();
+        }
+      }
+
+      if (supportsPasskeys()) {
+        passkeySection.hidden = false;
+        passkeyBtn.addEventListener('click', verifyPasskey);
       }
 
       updateState();

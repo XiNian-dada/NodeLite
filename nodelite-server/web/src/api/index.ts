@@ -21,11 +21,15 @@ import type {
   NodeStatus,
   NodeTokenRefreshResponse,
   OverviewData,
+  PasskeyCredentialResponse,
+  PasskeyRegistrationOptions,
+  PasskeySummary,
   ReauthPayload,
   RefreshNodeTokenRequest,
   SettingsActionResponse,
   SettingsResponse,
   ServerUpdateLogResponse,
+  StartPasskeyRegistrationRequest,
   TwoFactorSetupResponse,
   UpdateNodeLocationOverrideRequest,
   UpdateAlertSettingsRequest,
@@ -70,9 +74,13 @@ export type {
   NodeStatus,
   NodeTokenRefreshResponse,
   OverviewData,
+  PasskeyCredentialResponse,
+  PasskeyRegistrationOptions,
+  PasskeySummary,
   ReauthPayload,
   RefreshNodeTokenRequest,
   SettingsActionResponse,
+  StartPasskeyRegistrationRequest,
   SettingsAgentToken,
   SettingsAuth,
   SettingsResponse,
@@ -156,6 +164,12 @@ export const apiClient = {
     postJson<SettingsActionResponse>('/api/settings/2fa/enable', body),
   twoFactorDisable: (body: DisableTwoFactorRequest) =>
     postJson<SettingsActionResponse>('/api/settings/2fa/disable', body),
+  passkeyRegistrationStart: (body: StartPasskeyRegistrationRequest) =>
+    postJson<PasskeyRegistrationOptions>('/api/settings/passkeys/register/start', body),
+  passkeyRegistrationFinish: (body: PasskeyCredentialResponse) =>
+    postJson<PasskeySummary>('/api/settings/passkeys/register/finish', body),
+  deletePasskey: (id: string, body: ReauthPayload) =>
+    deleteJson<SettingsActionResponse>(`/api/settings/passkeys/${encodeURIComponent(id)}`, body),
   changePassword: (body: ChangePasswordRequest) =>
     postJson<SettingsActionResponse>('/api/settings/password', body),
 

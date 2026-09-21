@@ -50,7 +50,7 @@ const Stub = defineComponent({ render: () => h('div') });
 function auth(over: Partial<SettingsAuth> = {}): SettingsAuth {
   return {
     enabled: true, username: 'admin', two_factor_enabled: false,
-    totp_secret_configured: false, session_ttl_secs: 86_400, pending_ttl_secs: 300, ...over,
+    totp_secret_configured: false, passkeys: [], session_ttl_secs: 86_400, pending_ttl_secs: 300, ...over,
   };
 }
 

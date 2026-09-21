@@ -3,6 +3,7 @@ import { computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AppLayout from '@/components/AppLayout.vue';
 import TwoFactorPanel from '@/components/TwoFactorPanel.vue';
+import PasskeyPanel from '@/components/PasskeyPanel.vue';
 import ChangePasswordCard from '@/components/ChangePasswordCard.vue';
 import SettingsMessage from '@/components/SettingsMessage.vue';
 import { AUTH_TIMESTAMP_KEY, LOGOUT_PATH } from '@/auth/expiry';
@@ -67,6 +68,10 @@ function logout(): void {
                 <dd>{{ auth.two_factor_enabled ? t('settings.enabled') : t('settings.disabled') }}</dd>
               </div>
               <div class="kv__row">
+                <dt>{{ t('settings.security.passkeys') }}</dt>
+                <dd>{{ auth.passkeys.length }}</dd>
+              </div>
+              <div class="kv__row">
                 <dt>{{ t('settings.security.session_ttl') }}</dt>
                 <dd>{{ sessionTtlText(auth.session_ttl_secs) }}</dd>
               </div>
@@ -80,6 +85,7 @@ function logout(): void {
 
           <div class="account__stack">
             <TwoFactorPanel :auth="auth" @changed="store.load()" />
+            <PasskeyPanel :auth="auth" @changed="store.load()" />
             <ChangePasswordCard />
           </div>
         </div>

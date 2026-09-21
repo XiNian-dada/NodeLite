@@ -200,8 +200,15 @@ export interface SettingsAuth {
   username: string | null;
   two_factor_enabled: boolean;
   totp_secret_configured: boolean;
+  passkeys: PasskeySummary[];
   session_ttl_secs: number;
   pending_ttl_secs: number;
+}
+
+export interface PasskeySummary {
+  id: string;
+  label: string;
+  created_at: string;
 }
 
 export interface SettingsUpdates {
@@ -338,6 +345,28 @@ export interface EnableTwoFactorRequest {
 export interface DisableTwoFactorRequest {
   current_password: string;
   code: string;
+}
+
+/** POST /api/settings/passkeys/register/start */
+export interface StartPasskeyRegistrationRequest extends ReauthPayload {
+  label: string;
+}
+
+/** Browser WebAuthn response fields are base64url strings for JSON transport. */
+export interface PasskeyCredentialResponse {
+  id: string;
+  rawId: string;
+  type: string;
+  response: Record<string, unknown>;
+  clientExtensionResults?: AuthenticationExtensionsClientOutputs;
+}
+
+/** JSON-serialised WebAuthn creation options returned by the server. */
+export interface PasskeyRegistrationOptions {
+  publicKey: Record<string, unknown> & {
+    challenge: string;
+    user: Record<string, unknown> & { id: string };
+  };
 }
 
 /** POST /api/settings/password */
