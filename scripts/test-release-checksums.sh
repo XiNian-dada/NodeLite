@@ -11,13 +11,17 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-mkdir -p "$ASSETS_DIR/release-scripts" "$ASSETS_DIR/release-test"
+mkdir -p "$ASSETS_DIR/release-scripts" "$ASSETS_DIR/release-sbom" "$ASSETS_DIR/release-test"
 cp "$SCRIPT_DIR/install-server.sh" "$ASSETS_DIR/release-scripts/install-server.sh"
 cp "$SCRIPT_DIR/install-server-config.sh" "$ASSETS_DIR/release-scripts/install-server-config.sh"
 cp "$SCRIPT_DIR/install-server-upgrade.sh" "$ASSETS_DIR/release-scripts/install-server-upgrade.sh"
 cp "$SCRIPT_DIR/install-agent.sh" "$ASSETS_DIR/release-scripts/install-agent.sh"
 printf '%064d  release-assets/release-test/nodelite-server-test\n' 0 \
   >"$ASSETS_DIR/release-test/SHA256SUMS-test.txt"
+cp "$SCRIPT_DIR/../THIRD_PARTY_NOTICES.md" "$ASSETS_DIR/release-sbom/THIRD_PARTY_NOTICES.md"
+notice_sha256="$(sha256sum "$ASSETS_DIR/release-sbom/THIRD_PARTY_NOTICES.md" | sed 's/[[:space:]].*$//')"
+printf '%s  release-assets/release-sbom/THIRD_PARTY_NOTICES.md\n' "$notice_sha256" \
+  >"$ASSETS_DIR/release-sbom/SHA256SUMS-sbom.txt"
 
 (
   cd "$TEST_ROOT"
@@ -31,6 +35,8 @@ grep -Fx "$server_sha256  release-assets/release-scripts/install-server.sh" \
 grep -Fx "$agent_sha256  release-assets/release-scripts/install-agent.sh" \
   "$ASSETS_DIR/SHA256SUMS.txt" >/dev/null
 grep -Fx "$(printf '%064d' 0)  release-assets/release-test/nodelite-server-test" \
+  "$ASSETS_DIR/SHA256SUMS.txt" >/dev/null
+grep -Fx "$notice_sha256  release-assets/release-sbom/THIRD_PARTY_NOTICES.md" \
   "$ASSETS_DIR/SHA256SUMS.txt" >/dev/null
 
 if [ "$(grep -Ec '^[0-9a-f]{64}  release-assets/release-scripts/install-(server|agent|server-config|server-upgrade)\.sh$' "$ASSETS_DIR/SHA256SUMS.txt")" -ne 4 ]; then

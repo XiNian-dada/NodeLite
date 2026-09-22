@@ -119,7 +119,7 @@ jobs:
         run: cargo audit --deny warnings
 
       - name: Check dependency policy
-        run: cargo deny check advisories
+        run: cargo deny check
 
   build-linux:
     # 针对 x86_64 / aarch64 两个 musl 目标分别构建。
@@ -344,7 +344,8 @@ jobs:
           cp nodelite-proto/nodelite-proto.cdx.json dist/
           cp nodelite-agent/nodelite-agent.cdx.json dist/
           cp nodelite-server/nodelite-server.cdx.json dist/
-          sha256sum dist/*.cdx.json > dist/SHA256SUMS-sbom.txt
+          cp THIRD_PARTY_NOTICES.md dist/
+          sha256sum dist/*.cdx.json dist/THIRD_PARTY_NOTICES.md > dist/SHA256SUMS-sbom.txt
 
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -354,6 +355,7 @@ jobs:
             dist/nodelite-proto.cdx.json
             dist/nodelite-agent.cdx.json
             dist/nodelite-server.cdx.json
+            dist/THIRD_PARTY_NOTICES.md
             dist/SHA256SUMS-sbom.txt
 
   release:
@@ -413,5 +415,6 @@ jobs:
             release-assets/release-sbom/nodelite-proto.cdx.json \
             release-assets/release-sbom/nodelite-agent.cdx.json \
             release-assets/release-sbom/nodelite-server.cdx.json \
+            release-assets/release-sbom/THIRD_PARTY_NOTICES.md \
             release-assets/SHA256SUMS.txt \
             --clobber
