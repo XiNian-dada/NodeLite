@@ -119,6 +119,7 @@ const settings = {
     username: 'admin',
     two_factor_enabled: false,
     totp_secret_configured: false,
+    passkeys: [],
     session_ttl_secs: 86_400,
     pending_ttl_secs: 300,
   },
