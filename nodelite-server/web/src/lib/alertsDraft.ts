@@ -59,12 +59,6 @@ export interface AlertsDraft {
   inspection: AlertSettingsView['inspection'];
 }
 
-/** Reauth carried by the save; matches the server's per-handler confirmation check. */
-export interface ReauthInput {
-  current_password: string;
-  code: string;
-}
-
 let ruleSeq = 0;
 function nextSeq(): number {
   ruleSeq += 1;
@@ -193,12 +187,12 @@ function ruleToPayload(rule: RuleDraft): UpdateAlertRuleRequest {
 }
 
 /**
- * Draft + reauth → POST payload. The `password`/`secret` keys are included
+ * Draft → POST payload. The `password`/`secret` keys are included
  * ONLY when a non-blank value was typed and the field isn't being cleared —
  * omitting the key (rather than sending null/undefined) lets the server keep the
- * stored secret. `current_password`/`code` are likewise omitted when blank.
+ * stored secret.
  */
-export function draftToPayload(draft: AlertsDraft, reauth: ReauthInput): UpdateAlertSettingsRequest {
+export function draftToPayload(draft: AlertsDraft): UpdateAlertSettingsRequest {
   const sendPassword = !draft.smtp.clear_password && draft.smtp.password.trim() !== '';
   const smtp: UpdateAlertSmtpSettingsRequest = {
     enabled: draft.smtp.enabled,
@@ -222,11 +216,7 @@ export function draftToPayload(draft: AlertsDraft, reauth: ReauthInput): UpdateA
     ...(sendSecret ? { secret: draft.webhook.secret } : {}),
   };
 
-  const currentPassword = reauth.current_password;
-  const code = reauth.code.trim();
   return {
-    ...(currentPassword.trim() !== '' ? { current_password: currentPassword } : {}),
-    ...(code !== '' ? { code } : {}),
     enabled: draft.enabled,
     smtp,
     webhook,

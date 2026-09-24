@@ -105,16 +105,15 @@ describe('PasskeyPanel', () => {
 
     await wrapper.find('[data-test="add-passkey"]').trigger('click');
     await wrapper.find('input[type="text"]').setValue('MacBook');
-    await wrapper.find('[data-test="reauth-code"]').setValue('123456');
     await wrapper.find('[data-test="add-passkey-form"]').trigger('submit');
     await flushPromises();
 
-    expect(mockStart).toHaveBeenCalledWith({ label: 'MacBook', code: '123456' });
+    expect(mockStart).toHaveBeenCalledWith({ label: 'MacBook' });
     expect(mockFinish).toHaveBeenCalledWith(expect.objectContaining({ id: 'credential' }));
     expect(wrapper.emitted('changed')).toHaveLength(1);
   });
 
-  it('requires a fresh code when removing a passkey', async () => {
+  it('removes a passkey without an inline code', async () => {
     mockDelete.mockResolvedValue({ ok: true, message: 'passkey removed' });
     const wrapper = mount(PasskeyPanel, {
       props: {
@@ -124,11 +123,10 @@ describe('PasskeyPanel', () => {
     });
 
     await wrapper.find('[data-test="remove-passkey-passkey-id"]').trigger('click');
-    await wrapper.find('[data-test="reauth-code"]').setValue('654321');
     await wrapper.find('[data-test="remove-passkey-form"]').trigger('submit');
     await flushPromises();
 
-    expect(mockDelete).toHaveBeenCalledWith('passkey-id', { code: '654321' });
+    expect(mockDelete).toHaveBeenCalledWith('passkey-id', {});
     expect(wrapper.emitted('changed')).toHaveLength(1);
   });
 });

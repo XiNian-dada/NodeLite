@@ -5,7 +5,6 @@ import {
   optionalNumber,
   optionalTrafficBytes,
   optionalTrafficKbps,
-  reauthBody,
   serviceExpiresAt,
   syncDraftsFromAgent,
   type LocationDraft,
@@ -34,14 +33,6 @@ describe('useNodeSettingsDraft helpers', () => {
     expect(optionalTrafficBytes('')).toBeNull();
     expect(optionalTrafficKbps('0')).toBeUndefined();
     expect(optionalTrafficBytes('invalid')).toBeUndefined();
-  });
-
-  it('omits blank reauth fields from refresh payloads', () => {
-    expect(reauthBody({ current_password: '', code: '' })).toEqual({});
-    expect(reauthBody({ current_password: 'hunter2', code: '' })).toEqual({
-      current_password: 'hunter2',
-    });
-    expect(reauthBody({ current_password: '', code: '123456' })).toEqual({ code: '123456' });
   });
 
   it('syncs service and location drafts when the selected agent changes', () => {

@@ -8,7 +8,6 @@ import WebhookChannelCard from '@/components/WebhookChannelCard.vue';
 import InspectionCard from '@/components/InspectionCard.vue';
 import RuleList from '@/components/RuleList.vue';
 import PreviewCard from '@/components/PreviewCard.vue';
-import ReauthFields from '@/components/ReauthFields.vue';
 import SettingsMessage from '@/components/SettingsMessage.vue';
 import { ApiAbortError } from '@/api/client';
 import { messageFromError } from '@/lib/apiError';
@@ -21,9 +20,6 @@ const store = useAlertsStore();
 // The reactive draft is the single source of truth (no DOM-as-state). Seeded
 // from the server config on load and re-seeded after each successful save.
 const draft = reactive(emptyAlertsConfig());
-// Both reauth fields always show (matches legacy); the server validates whichever
-// applies given the account's 2FA state. draftToPayload omits blanks.
-const reauth = reactive({ current_password: '', code: '' });
 const message = reactive<{ state: 'ok' | 'error' | null; text: string }>({ state: null, text: '' });
 
 function seedDraft(): void {
@@ -39,14 +35,15 @@ async function save(): Promise<void> {
   message.state = null;
   message.text = t('alerts.saving');
   try {
-    await store.save(draftToPayload(draft, reauth));
+    await store.save(draftToPayload(draft));
     seedDraft();
-    reauth.current_password = '';
-    reauth.code = '';
     message.state = 'ok';
     message.text = t('alerts.saved');
   } catch (e) {
-    if (e instanceof ApiAbortError) return;
+    if (e instanceof ApiAbortError) {
+      message.text = '';
+      return;
+    }
     message.state = 'error';
     message.text = t('alerts.save_failed', { error: messageFromError(e, 'unknown') });
   }
@@ -98,11 +95,6 @@ async function save(): Promise<void> {
           <aside class="alerts__aside">
             <PreviewCard :preview="store.preview" />
             <article class="save-bar panel" data-test="alerts-save-bar">
-              <ReauthFields
-                v-model:current-password="reauth.current_password"
-                v-model:code="reauth.code"
-                variant="both"
-              />
               <div class="save-bar__actions">
                 <button
                   type="button"

@@ -10,11 +10,6 @@ export type NodeSettingsTranslate = (
   named?: Record<string, number | string>,
 ) => string;
 
-export interface ReauthDraft {
-  current_password: string;
-  code: string;
-}
-
 export interface ServiceDraft {
   serviceDate: string;
   serviceUnlimited: boolean;
@@ -79,13 +74,6 @@ function mbpsInputValue(value: number | null | undefined): string {
   return value == null ? '' : String(value / KBPS_PER_MBPS);
 }
 
-export function reauthBody(reauth: ReauthDraft): { current_password?: string; code?: string } {
-  const body: { current_password?: string; code?: string } = {};
-  if (reauth.current_password) body.current_password = reauth.current_password;
-  if (reauth.code) body.code = reauth.code;
-  return body;
-}
-
 export function syncDraftsFromAgent(
   agent: SettingsAgentToken | undefined,
   serviceDraft: ServiceDraft,
@@ -113,7 +101,6 @@ function resetMessage(message: SettingsMessageState): void {
 export function useNodeSettingsDraft(nodeId: Ref<string>, t: NodeSettingsTranslate) {
   const settingsStore = useSettingsStore();
 
-  const reauth = reactive<ReauthDraft>({ current_password: '', code: '' });
   const message = reactive<SettingsMessageState>({ state: null, text: '' });
   const saving = reactive({ value: false });
   const serviceDraft = reactive<ServiceDraft>({
@@ -213,7 +200,10 @@ export function useNodeSettingsDraft(nodeId: Ref<string>, t: NodeSettingsTransla
       serviceMessage.state = 'ok';
       serviceMessage.text = resp.message || t('node.settings.service_meta_saved');
     } catch (e) {
-      if (e instanceof ApiAbortError) return;
+      if (e instanceof ApiAbortError) {
+        serviceMessage.text = '';
+        return;
+      }
       serviceMessage.state = 'error';
       serviceMessage.text = t('node.settings.service_meta_failed', {
         error: messageFromError(e, 'unknown'),
@@ -253,7 +243,10 @@ export function useNodeSettingsDraft(nodeId: Ref<string>, t: NodeSettingsTransla
       locationMessage.state = 'ok';
       locationMessage.text = resp.message || t('node.settings.location_saved');
     } catch (e) {
-      if (e instanceof ApiAbortError) return;
+      if (e instanceof ApiAbortError) {
+        locationMessage.text = '';
+        return;
+      }
       locationMessage.state = 'error';
       locationMessage.text = t('node.settings.location_failed', {
         error: messageFromError(e, 'unknown'),
@@ -268,14 +261,15 @@ export function useNodeSettingsDraft(nodeId: Ref<string>, t: NodeSettingsTransla
     message.text = t('node.settings.refreshing');
     saving.value = true;
     try {
-      const resp = await apiClient.refreshNodeToken(nodeId.value, reauthBody(reauth));
+      const resp = await apiClient.refreshNodeToken(nodeId.value, {});
       await settingsStore.refresh();
-      reauth.current_password = '';
-      reauth.code = '';
       message.state = 'ok';
       message.text = resp.message || t('node.settings.token_refreshed');
     } catch (e) {
-      if (e instanceof ApiAbortError) return;
+      if (e instanceof ApiAbortError) {
+        message.text = '';
+        return;
+      }
       message.state = 'error';
       message.text = t('node.settings.refresh_failed', { error: messageFromError(e, 'unknown') });
     } finally {
@@ -291,7 +285,6 @@ export function useNodeSettingsDraft(nodeId: Ref<string>, t: NodeSettingsTransla
     locationDraft,
     locationMessage,
     locationSaving,
-    reauth,
     message,
     refresh,
     saveLocationOverride,

@@ -8,6 +8,7 @@
  */
 
 import { AUTH_TIMESTAMP_KEY } from '@/auth/expiry';
+import { requestStepUp } from '@/auth/stepUp';
 
 export const VERIFY_2FA_PATH = '/verify-2fa';
 export const LOGOUT_PATH = '/logout-and-reauth';
@@ -34,7 +35,11 @@ export class ApiAbortError extends Error {
   }
 }
 
-export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+export async function api<T>(
+  path: string,
+  init?: RequestInit,
+  afterConfirmation = false,
+): Promise<T> {
   const res = await fetch(path, {
     ...init,
     credentials: 'same-origin',
@@ -55,6 +60,11 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     }
     window.location.assign(LOGOUT_PATH);
     throw new ApiAbortError('redirecting to logout-and-reauth');
+  }
+
+  if (res.status === 428 && !afterConfirmation && !path.startsWith('/api/settings/confirm')) {
+    if (!(await requestStepUp())) throw new ApiAbortError('settings confirmation cancelled');
+    return api<T>(path, init, true);
   }
 
   if (!res.ok) {

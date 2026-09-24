@@ -5,7 +5,6 @@ import { apiClient, type GenerateAgentInstallResponse, type SettingsResponse } f
 import { ApiAbortError } from '@/api/client';
 import { messageFromError } from '@/lib/apiError';
 import CsvField from './CsvField.vue';
-import ReauthFields from './ReauthFields.vue';
 import SettingsMessage from './SettingsMessage.vue';
 
 const props = defineProps<{ settings: SettingsResponse }>();
@@ -16,7 +15,6 @@ const open = ref(false);
 const submitting = ref(false);
 const result = ref<GenerateAgentInstallResponse | null>(null);
 const draft = reactive({ nodeId: '', nodeLabel: '', tags: [] as string[] });
-const reauth = reactive({ currentPassword: '', code: '' });
 const message = reactive<{ state: 'ok' | 'error' | null; text: string }>({
   state: null,
   text: '',
@@ -27,7 +25,6 @@ const copyMessage = reactive<{ state: 'ok' | 'error' | null; text: string }>({
 });
 
 const authEnabled = computed(() => props.settings.auth.enabled);
-const twoFactorEnabled = computed(() => props.settings.auth.two_factor_enabled);
 
 function formatDateTime(value: string): string {
   const timestamp = Date.parse(value);
@@ -40,12 +37,6 @@ function openForm(): void {
   message.text = '';
   copyMessage.state = null;
   copyMessage.text = '';
-}
-
-function confirmationPayload() {
-  return twoFactorEnabled.value
-    ? { code: reauth.code }
-    : { current_password: reauth.currentPassword };
 }
 
 async function generate(): Promise<void> {
@@ -67,15 +58,15 @@ async function generate(): Promise<void> {
       node_id: nodeId,
       tags: draft.tags,
       ...(nodeLabel ? { node_label: nodeLabel } : {}),
-      ...confirmationPayload(),
     });
-    reauth.currentPassword = '';
-    reauth.code = '';
     message.state = 'ok';
     message.text = result.value.message || t('settings.install.generated');
     emit('created');
   } catch (error) {
-    if (error instanceof ApiAbortError) return;
+    if (error instanceof ApiAbortError) {
+      message.text = '';
+      return;
+    }
     message.state = 'error';
     message.text = t('settings.install.generate_failed', {
       error: messageFromError(error, 'unknown'),
@@ -163,12 +154,6 @@ async function copyCommand(): Promise<void> {
           />
         </label>
       </div>
-      <ReauthFields
-        v-model:current-password="reauth.currentPassword"
-        v-model:code="reauth.code"
-        :two-factor-enabled="twoFactorEnabled"
-        variant="server-update"
-      />
       <p class="rotate-notice">{{ t('settings.install.rotate_notice') }}</p>
       <button
         class="btn btn--primary"

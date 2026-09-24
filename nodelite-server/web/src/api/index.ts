@@ -22,6 +22,7 @@ import type {
   NodeTokenRefreshResponse,
   OverviewData,
   PasskeyCredentialResponse,
+  PasskeyAuthenticationOptions,
   PasskeyRegistrationOptions,
   PasskeySummary,
   ReauthPayload,
@@ -30,6 +31,7 @@ import type {
   SettingsResponse,
   ServerUpdateLogResponse,
   StartPasskeyRegistrationRequest,
+  StartServerUpdateRequest,
   TwoFactorSetupResponse,
   UpdateNodeLocationOverrideRequest,
   UpdateAlertSettingsRequest,
@@ -75,12 +77,14 @@ export type {
   NodeTokenRefreshResponse,
   OverviewData,
   PasskeyCredentialResponse,
+  PasskeyAuthenticationOptions,
   PasskeyRegistrationOptions,
   PasskeySummary,
   ReauthPayload,
   RefreshNodeTokenRequest,
   SettingsActionResponse,
   StartPasskeyRegistrationRequest,
+  StartServerUpdateRequest,
   SettingsAgentToken,
   SettingsAuth,
   SettingsResponse,
@@ -151,7 +155,7 @@ export const apiClient = {
     postJson<GenerateAgentInstallResponse>('/api/settings/agents/install', body),
   deleteAgent: (id: string, body: ReauthPayload) =>
     deleteJson<SettingsActionResponse>(`/api/settings/agents/${encodeURIComponent(id)}`, body),
-  updateServer: (body: ReauthPayload) =>
+  updateServer: (body: StartServerUpdateRequest) =>
     postJson<SettingsActionResponse>('/api/settings/update/server', body),
   serverUpdateLog: (offset = 0) => {
     const params = new URLSearchParams({ offset: String(offset) });
@@ -164,6 +168,12 @@ export const apiClient = {
     postJson<SettingsActionResponse>('/api/settings/2fa/enable', body),
   twoFactorDisable: (body: DisableTwoFactorRequest) =>
     postJson<SettingsActionResponse>('/api/settings/2fa/disable', body),
+  confirmSettings: (body: ReauthPayload) =>
+    postJson<SettingsActionResponse>('/api/settings/confirm', body),
+  confirmSettingsPasskeyStart: () =>
+    postJson<PasskeyAuthenticationOptions>('/api/settings/confirm/passkey/start', {}),
+  confirmSettingsPasskeyFinish: (body: PasskeyCredentialResponse) =>
+    postJson<SettingsActionResponse>('/api/settings/confirm/passkey/finish', body),
   passkeyRegistrationStart: (body: StartPasskeyRegistrationRequest) =>
     postJson<PasskeyRegistrationOptions>('/api/settings/passkeys/register/start', body),
   passkeyRegistrationFinish: (body: PasskeyCredentialResponse) =>

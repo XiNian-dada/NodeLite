@@ -1,19 +1,18 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref } from 'vue';
+import { nextTick, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { SettingsResponse } from '@/api';
 import { apiClient } from '@/api';
 import { ApiAbortError } from '@/api/client';
 import { isNewerVersion, isStableVersionTag, normalizeVersionTag } from '@/lib/version';
 import { messageFromError } from '@/lib/apiError';
-import ReauthFields from './ReauthFields.vue';
 import SettingsMessage from './SettingsMessage.vue';
 import UpdateConsoleModal from './UpdateConsoleModal.vue';
 
 const props = defineProps<{ settings: SettingsResponse }>();
 const { t } = useI18n();
 
-const twoFactor = computed(() => props.settings.auth.two_factor_enabled);
+const updateMode = ref<'stable' | 'test'>('stable');
 
 // --- Check for update (direct GitHub call) ---
 const checkMsg = reactive<{ state: 'ok' | 'error' | null; text: string }>({
@@ -26,6 +25,7 @@ type GithubRelease = {
   tag_name?: string;
   draft?: boolean;
   prerelease?: boolean;
+  published_at?: string;
 };
 
 function githubReleasesUrl(): string | null {
@@ -37,26 +37,54 @@ function githubReleasesUrl(): string | null {
 function latestStableReleaseTag(releases: GithubRelease[]): string | null {
   const release = releases.find(
     (candidate) =>
-      !candidate.draft &&
-      !candidate.prerelease &&
-      isStableVersionTag(candidate.tag_name ?? ''),
+      !candidate.draft && !candidate.prerelease && isStableVersionTag(candidate.tag_name ?? ''),
   );
   return release?.tag_name ? normalizeVersionTag(release.tag_name) : null;
 }
 
-async function checkForUpdate(): Promise<void> {
+function latestTestReleaseTag(releases: GithubRelease[]): string | null {
+  const candidates = releases.filter(
+    (candidate) =>
+      !candidate.draft &&
+      candidate.prerelease &&
+      /^v?\d+(?:\.\d+){2,}-[0-9A-Za-z.-]+$/.test(candidate.tag_name ?? ''),
+  );
+  candidates.sort((left, right) => {
+    const leftTime = Date.parse(left.published_at ?? '');
+    const rightTime = Date.parse(right.published_at ?? '');
+    return Number.isFinite(leftTime) && Number.isFinite(rightTime) ? rightTime - leftTime : 0;
+  });
+  return candidates[0]?.tag_name ?? null;
+}
+
+async function fetchReleases(): Promise<GithubRelease[]> {
   const url = githubReleasesUrl();
-  if (!url) return;
+  if (!url) throw new Error('GitHub repository URL is unavailable');
+  const res = await fetch(url, { headers: { accept: 'application/vnd.github+json' } });
+  if (!res.ok) throw new Error(`GitHub ${res.status}`);
+  const body = (await res.json()) as GithubRelease[] | GithubRelease;
+  return Array.isArray(body) ? body : [body];
+}
+
+async function checkForUpdate(): Promise<void> {
   checking.value = true;
   checkMsg.state = null;
   checkMsg.text = t('settings.version.checking');
   try {
-    const res = await fetch(url, { headers: { accept: 'application/vnd.github+json' } });
-    if (!res.ok) throw new Error(`GitHub ${res.status}`);
-    const body = (await res.json()) as GithubRelease[] | GithubRelease;
-    const releases = Array.isArray(body) ? body : [body];
-    const latest = latestStableReleaseTag(releases);
-    if (latest && isNewerVersion(latest, props.settings.server_version)) {
+    const releases = await fetchReleases();
+    const latest =
+      updateMode.value === 'test'
+        ? latestTestReleaseTag(releases)
+        : latestStableReleaseTag(releases);
+    const available =
+      updateMode.value === 'test'
+        ? latest &&
+          normalizeVersionTag(latest) !== normalizeVersionTag(props.settings.server_version)
+        : latest &&
+          (isNewerVersion(latest, props.settings.server_version) ||
+            (!isStableVersionTag(props.settings.server_version) &&
+              normalizeVersionTag(props.settings.server_version).startsWith(`${latest}-`)));
+    if (available) {
       checkMsg.state = 'ok';
       checkMsg.text = t('settings.version.update_available', { version: latest });
     } else {
@@ -71,8 +99,7 @@ async function checkForUpdate(): Promise<void> {
   }
 }
 
-// --- Manual server update (POST with reauth) ---
-const reauth = reactive({ currentPassword: '', code: '' });
+// --- Manual server update ---
 const updateMsg = reactive<{ state: 'ok' | 'error' | null; text: string }>({
   state: null,
   text: '',
@@ -91,41 +118,31 @@ async function submitUpdate(): Promise<void> {
   updating.value = true;
   updateMsg.state = null;
   updateMsg.text = t('settings.version.update_starting');
-  await openUpdateConsole(false);
-  updateConsole.value?.reset();
-  updateConsole.value?.setStatus('waiting', t('settings.version.console_status_waiting'));
-  updateConsole.value?.setMeta(t('settings.version.console_preparing'));
-  updateConsole.value?.setText(`[client] ${t('settings.version.update_starting')}`);
-  // server-update reauth: 2FA → code only; else current_password only.
-  const payload = twoFactor.value
-    ? { code: reauth.code }
-    : { current_password: reauth.currentPassword };
   try {
-    const res = await apiClient.updateServer(payload);
+    const mode = updateMode.value;
+    const releaseTag = mode === 'test' ? latestTestReleaseTag(await fetchReleases()) : null;
+    if (mode === 'test' && !releaseTag) throw new Error(t('settings.version.no_test_release'));
+    const res = await apiClient.updateServer(
+      mode === 'test' ? { mode, release_tag: releaseTag! } : { mode },
+    );
     updateMsg.state = res.ok ? 'ok' : 'error';
     updateMsg.text = res.ok ? t('settings.version.update_started') : res.message;
     if (res.ok) {
-      reauth.currentPassword = '';
-      reauth.code = '';
+      await openUpdateConsole(false);
+      updateConsole.value?.reset();
       updateConsole.value?.appendLine(`[client] ${t('settings.version.update_started')}`);
       updateConsole.value?.setStatus('running', t('settings.version.console_status_running'));
       updateConsole.value?.setMeta(t('settings.version.console_connecting'));
       void updateConsole.value?.fetchLog({ reset: true });
-    } else {
-      updateConsole.value?.appendLine(`[client] ${res.message}`);
-      updateConsole.value?.setStatus('error', t('settings.version.console_status_error'));
-      updateConsole.value?.setMeta(t('settings.version.console_failed_to_start'));
     }
   } catch (e) {
-    if (e instanceof ApiAbortError) return;
+    if (e instanceof ApiAbortError) {
+      updateMsg.text = '';
+      return;
+    }
     updateMsg.state = 'error';
     const message = messageFromError(e, 'unknown');
     updateMsg.text = t('settings.version.update_failed', { error: message });
-    updateConsole.value?.appendLine(
-      `[client] ${t('settings.version.update_failed', { error: message })}`,
-    );
-    updateConsole.value?.setStatus('error', t('settings.version.console_status_error'));
-    updateConsole.value?.setMeta(t('settings.version.console_failed_to_start'));
   } finally {
     updating.value = false;
   }
@@ -179,19 +196,14 @@ async function submitUpdate(): Promise<void> {
     <SettingsMessage :state="checkMsg.state" :text="checkMsg.text" />
 
     <form class="update-form" data-test="server-update-form" @submit.prevent="submitUpdate">
-      <p class="note">
-        {{
-          twoFactor
-            ? t('settings.version.manual_update_note_2fa')
-            : t('settings.version.manual_update_note_password')
-        }}
-      </p>
-      <ReauthFields
-        v-model:current-password="reauth.currentPassword"
-        v-model:code="reauth.code"
-        :two-factor-enabled="twoFactor"
-        variant="server-update"
-      />
+      <p class="note">{{ t('settings.version.update_mode_note') }}</p>
+      <label class="update-mode">
+        <span>{{ t('settings.version.update_mode') }}</span>
+        <select v-model="updateMode" data-test="server-update-mode">
+          <option value="stable">{{ t('settings.version.stable') }}</option>
+          <option value="test">{{ t('settings.version.test') }}</option>
+        </select>
+      </label>
       <button
         type="submit"
         class="btn btn--primary"
@@ -240,6 +252,21 @@ async function submitUpdate(): Promise<void> {
   color: var(--text-primary);
   text-align: right;
   word-break: break-all;
+}
+.update-mode {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.update-mode select {
+  padding: 8px 10px;
+  color: var(--text-primary);
+  background: var(--bg-card-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
 }
 .actions {
   display: flex;

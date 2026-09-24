@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import { toRef } from 'vue';
 import { useI18n } from 'vue-i18n';
-import ReauthFields from '@/components/ReauthFields.vue';
 import SettingsMessage from '@/components/SettingsMessage.vue';
 import { useNodeSettingsDraft } from '@/composables/useNodeSettingsDraft';
 import { fmtBytes } from '@/lib/format';
 
 /**
  * Per-node settings tab: shows the current node's token info (from the global
- * settings store's agents array) and a refresh-token form with reauth. The
+ * settings store's agents array) and a refresh-token action. The
  * server's POST /api/nodes/{id}/refresh-token returns the new expiry; on
  * success, reload the settings store so the token table reflects the change.
  */
@@ -23,7 +22,6 @@ const {
   locationDraft,
   locationMessage,
   locationSaving,
-  reauth,
   message,
   refresh,
   saveLocationOverride,
@@ -271,11 +269,6 @@ const {
       </header>
 
       <div class="refresh-form">
-        <ReauthFields
-          v-model:current-password="reauth.current_password"
-          v-model:code="reauth.code"
-          variant="both"
-        />
         <button
           type="button"
           class="btn btn--primary"

@@ -37,7 +37,10 @@ async function startSetup(): Promise<void> {
     message.state = null;
     message.text = '';
   } catch (e) {
-    if (e instanceof ApiAbortError) return;
+    if (e instanceof ApiAbortError) {
+      message.text = '';
+      return;
+    }
     message.state = 'error';
     message.text = t('settings.security.action_failed', { error: messageFromError(e, 'unknown') });
   } finally {
@@ -68,7 +71,10 @@ async function enable(): Promise<void> {
     message.text = t('settings.security.enabled_saved');
     emit('changed');
   } catch (e) {
-    if (e instanceof ApiAbortError) return;
+    if (e instanceof ApiAbortError) {
+      message.text = '';
+      return;
+    }
     message.state = 'error';
     message.text = t('settings.security.action_failed', { error: messageFromError(e, 'unknown') });
   } finally {
@@ -83,14 +89,16 @@ async function disable(): Promise<void> {
   try {
     await apiClient.twoFactorDisable({
       current_password: form.currentPassword,
-      code: form.code,
     });
     resetForm();
     message.state = 'ok';
     message.text = t('settings.security.disabled_saved');
     emit('changed');
   } catch (e) {
-    if (e instanceof ApiAbortError) return;
+    if (e instanceof ApiAbortError) {
+      message.text = '';
+      return;
+    }
     message.state = 'error';
     message.text = t('settings.security.action_failed', { error: messageFromError(e, 'unknown') });
   } finally {
@@ -110,7 +118,8 @@ async function disable(): Promise<void> {
         <ReauthFields
           v-model:current-password="form.currentPassword"
           v-model:code="form.code"
-          variant="both"
+          variant="server-update"
+          :two-factor-enabled="false"
         />
         <button type="submit" class="btn btn--danger" :disabled="busy" data-test="disable-2fa">
           {{ t('settings.security.disable_2fa') }}

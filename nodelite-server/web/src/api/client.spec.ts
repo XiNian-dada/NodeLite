@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AUTH_TIMESTAMP_KEY } from '@/auth/expiry';
+import { finishStepUp, stepUpOpen } from '@/auth/stepUp';
 import { ApiAbortError, ApiError, LOGOUT_PATH, VERIFY_2FA_PATH, api } from './client';
 
 function makeResponse(init: {
@@ -16,8 +17,7 @@ function makeResponse(init: {
   if (init.contentType !== undefined) {
     headers.set('content-type', init.contentType);
   }
-  const bodyText =
-    typeof init.body === 'string' ? init.body : JSON.stringify(init.body ?? null);
+  const bodyText = typeof init.body === 'string' ? init.body : JSON.stringify(init.body ?? null);
   return {
     status,
     ok,
@@ -47,6 +47,7 @@ describe('api client', () => {
   });
 
   afterEach(() => {
+    if (stepUpOpen.value) finishStepUp(false);
     window.localStorage.clear();
     Object.defineProperty(window, 'location', {
       configurable: true,
@@ -70,9 +71,7 @@ describe('api client', () => {
 
   it('clears auth timestamp and redirects to logout on 401', async () => {
     window.localStorage.setItem(AUTH_TIMESTAMP_KEY, '12345');
-    fetchMock.mockResolvedValueOnce(
-      makeResponse({ status: 401, ok: false, body: 'unauthorized' }),
-    );
+    fetchMock.mockResolvedValueOnce(makeResponse({ status: 401, ok: false, body: 'unauthorized' }));
 
     await expect(api('/api/overview')).rejects.toBeInstanceOf(ApiAbortError);
     expect(window.localStorage.getItem(AUTH_TIMESTAMP_KEY)).toBeNull();
@@ -105,9 +104,7 @@ describe('api client', () => {
   });
 
   it('throws ApiError for non-401 error responses', async () => {
-    fetchMock.mockResolvedValueOnce(
-      makeResponse({ status: 404, ok: false, body: 'not found' }),
-    );
+    fetchMock.mockResolvedValueOnce(makeResponse({ status: 404, ok: false, body: 'not found' }));
 
     await expect(api('/api/nodes/missing')).rejects.toMatchObject({
       name: 'ApiError',
@@ -134,9 +131,7 @@ describe('api client', () => {
   });
 
   it('exports ApiError as a thrown subclass with status + body', async () => {
-    fetchMock.mockResolvedValueOnce(
-      makeResponse({ status: 503, ok: false, body: 'down' }),
-    );
+    fetchMock.mockResolvedValueOnce(makeResponse({ status: 503, ok: false, body: 'down' }));
 
     try {
       await api('/api/overview');
@@ -147,5 +142,30 @@ describe('api client', () => {
       expect(err.status).toBe(503);
       expect(err.body).toBe('down');
     }
+  });
+
+  it('prompts after a sensitive write returns 428 and retries after confirmation', async () => {
+    fetchMock.mockResolvedValueOnce(
+      makeResponse({ status: 428, ok: false, body: { message: 'reauth_required' } }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      makeResponse({ contentType: 'application/json', body: { ok: true } }),
+    );
+    const operation = api<{ ok: boolean }>('/api/settings/alerts', { method: 'POST', body: '{}' });
+    await vi.waitFor(() => expect(stepUpOpen.value).toBe(true));
+    finishStepUp(true);
+    await expect(operation).resolves.toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/settings/alerts');
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/settings/alerts');
+  });
+
+  it('does not retry a sensitive write when confirmation is cancelled', async () => {
+    fetchMock.mockResolvedValueOnce(makeResponse({ status: 428, ok: false }));
+    const operation = api('/api/settings/alerts', { method: 'POST', body: '{}' });
+    await vi.waitFor(() => expect(stepUpOpen.value).toBe(true));
+    finishStepUp(false);
+    await expect(operation).rejects.toBeInstanceOf(ApiAbortError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

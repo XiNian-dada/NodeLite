@@ -216,15 +216,14 @@ describe('NodeSettingsPanel', () => {
     expect(rows[0]?.text()).toContain('Never expires');
   });
 
-  it('refreshes the token with reauth and shows success message', async () => {
+  it('refreshes the token and shows success message', async () => {
     const wrapper = await mountPanel('node-a');
-    await wrapper.find('[data-test="reauth-password"]').setValue('hunter2');
     await wrapper.find('[data-test="refresh-token-button"]').trigger('click');
     await flushPromises();
 
     expect(mockRefresh).toHaveBeenCalledTimes(1);
     expect(mockRefresh.mock.calls[0]?.[0]).toBe('node-a');
-    expect(mockRefresh.mock.calls[0]?.[1]).toMatchObject({ current_password: 'hunter2' });
+    expect(mockRefresh.mock.calls[0]?.[1]).toEqual({});
     expect(mockSettings).toHaveBeenCalledTimes(2); // initial load + refresh after success
     expect(wrapper.find('[data-test="settings-message"]').text()).toBe('Token refreshed successfully');
   });

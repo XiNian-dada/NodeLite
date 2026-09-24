@@ -5,10 +5,7 @@ import {
   draftToPayload,
   emptyAlertsConfig,
   viewToDraft,
-  type ReauthInput,
 } from './alertsDraft';
-
-const NO_REAUTH: ReauthInput = { current_password: '', code: '' };
 
 function sampleView(): AlertSettingsView {
   return {
@@ -116,7 +113,7 @@ describe('viewToDraft', () => {
 describe('draftToPayload — secret keep/clear', () => {
   it('keep: blank password (configured) omits the key, clear flag false', () => {
     const draft = viewToDraft(sampleView()); // password '', clear false
-    const payload = draftToPayload(draft, NO_REAUTH);
+    const payload = draftToPayload(draft);
     expect('password' in payload.smtp).toBe(false);
     expect(payload.smtp.clear_password).toBe(false);
     expect('secret' in payload.webhook).toBe(false);
@@ -127,7 +124,7 @@ describe('draftToPayload — secret keep/clear', () => {
     const draft = viewToDraft(sampleView());
     draft.smtp.password = 's3cr3t ';
     draft.webhook.secret = 'hook-key';
-    const payload = draftToPayload(draft, NO_REAUTH);
+    const payload = draftToPayload(draft);
     // sent untrimmed so passwords with spaces survive
     expect(payload.smtp.password).toBe('s3cr3t ');
     expect(payload.smtp.clear_password).toBe(false);
@@ -140,7 +137,7 @@ describe('draftToPayload — secret keep/clear', () => {
     draft.smtp.clear_password = true;
     draft.webhook.secret = 'ignored';
     draft.webhook.clear_secret = true;
-    const payload = draftToPayload(draft, NO_REAUTH);
+    const payload = draftToPayload(draft);
     expect('password' in payload.smtp).toBe(false);
     expect(payload.smtp.clear_password).toBe(true);
     expect('secret' in payload.webhook).toBe(false);
@@ -150,27 +147,21 @@ describe('draftToPayload — secret keep/clear', () => {
   it('whitespace-only secret counts as keep (omitted), matching the server filter', () => {
     const draft = viewToDraft(sampleView());
     draft.smtp.password = '   ';
-    const payload = draftToPayload(draft, NO_REAUTH);
+    const payload = draftToPayload(draft);
     expect('password' in payload.smtp).toBe(false);
   });
 });
 
-describe('draftToPayload — reauth + rules + scalars', () => {
-  it('includes current_password / code only when non-blank', () => {
+describe('draftToPayload — rules + scalars', () => {
+  it('does not carry inline confirmation credentials', () => {
     const draft = emptyAlertsConfig();
-    expect('current_password' in draftToPayload(draft, NO_REAUTH)).toBe(false);
-    expect('code' in draftToPayload(draft, NO_REAUTH)).toBe(false);
-    const withPw = draftToPayload(draft, { current_password: 'pw', code: '' });
-    expect(withPw.current_password).toBe('pw');
-    expect('code' in withPw).toBe(false);
-    const withCode = draftToPayload(draft, { current_password: '', code: '123456' });
-    expect(withCode.code).toBe('123456');
-    expect('current_password' in withCode).toBe(false);
+    expect('current_password' in draftToPayload(draft)).toBe(false);
+    expect('code' in draftToPayload(draft)).toBe(false);
   });
 
   it('strips uid from rules and preserves every rule field', () => {
     const draft = viewToDraft(sampleView());
-    const payload = draftToPayload(draft, NO_REAUTH);
+    const payload = draftToPayload(draft);
     expect(payload.rules).toHaveLength(1);
     const rule = payload.rules[0];
     expect(rule).not.toHaveProperty('uid');
@@ -184,7 +175,7 @@ describe('draftToPayload — reauth + rules + scalars', () => {
   it('passes through enabled + numeric scalars and trims text fields', () => {
     const draft = viewToDraft(sampleView());
     draft.smtp.host = '  smtp.trim.me  ';
-    const payload = draftToPayload(draft, NO_REAUTH);
+    const payload = draftToPayload(draft);
     expect(payload.enabled).toBe(true);
     expect(payload.smtp.host).toBe('smtp.trim.me');
     expect(payload.smtp.port).toBe(465);

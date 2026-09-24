@@ -1,4 +1,8 @@
-import type { PasskeyCredentialResponse, PasskeyRegistrationOptions } from '@/api';
+import type {
+  PasskeyAuthenticationOptions,
+  PasskeyCredentialResponse,
+  PasskeyRegistrationOptions,
+} from '@/api';
 
 type SerializedCredentialDescriptor = Record<string, unknown> & { id: string };
 
@@ -33,7 +37,8 @@ export function supportsPasskeys(): boolean {
   return (
     typeof window !== 'undefined' &&
     typeof window.PublicKeyCredential !== 'undefined' &&
-    typeof navigator.credentials?.create === 'function'
+    typeof navigator.credentials?.create === 'function' &&
+    typeof navigator.credentials?.get === 'function'
   );
 }
 
@@ -79,4 +84,35 @@ export async function createPasskey(
     throw new Error('Passkey registration was cancelled');
   }
   return registrationResponse(credential);
+}
+
+/** Opens the browser's passkey chooser and serialises its assertion. */
+export async function authenticatePasskey(
+  options: PasskeyAuthenticationOptions,
+): Promise<PasskeyCredentialResponse> {
+  if (typeof navigator.credentials?.get !== 'function') {
+    throw new Error('Passkeys are not supported by this browser');
+  }
+  const credential = await navigator.credentials.get({
+    publicKey: {
+      ...options.publicKey,
+      challenge: base64UrlToBuffer(options.publicKey.challenge),
+      allowCredentials: decodeDescriptors(options.publicKey.allowCredentials),
+    } as PublicKeyCredentialRequestOptions,
+  });
+  if (!(credential instanceof PublicKeyCredential))
+    throw new Error('Passkey authentication was cancelled');
+  const response = credential.response as AuthenticatorAssertionResponse;
+  return {
+    id: credential.id,
+    rawId: bufferToBase64Url(credential.rawId),
+    type: credential.type,
+    response: {
+      authenticatorData: bufferToBase64Url(response.authenticatorData),
+      clientDataJSON: bufferToBase64Url(response.clientDataJSON),
+      signature: bufferToBase64Url(response.signature),
+      userHandle: response.userHandle ? bufferToBase64Url(response.userHandle) : null,
+    },
+    clientExtensionResults: credential.getClientExtensionResults(),
+  };
 }

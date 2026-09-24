@@ -187,29 +187,27 @@ describe('TokenTable', () => {
     });
   });
 
-  it('deletes an agent after password confirmation', async () => {
+  it('deletes an agent after clicking confirm', async () => {
     const wrapper = mountTable([agent({ node_id: 'a', node_label: 'Agent A' })]);
 
     await wrapper.find('[data-test="delete-agent"]').trigger('click');
     expect(wrapper.find('[data-test="delete-agent-modal"]').exists()).toBe(true);
-    await wrapper.find('[data-test="reauth-password"]').setValue('secret');
     await wrapper.find('[data-test="delete-agent-form"]').trigger('submit');
     await flushPromises();
 
-    expect(mockDeleteAgent).toHaveBeenCalledWith('a', { current_password: 'secret' });
+    expect(mockDeleteAgent).toHaveBeenCalledWith('a', {});
     expect(wrapper.emitted('deleted')).toHaveLength(1);
     expect(wrapper.find('[data-test="delete-agent-modal"]').exists()).toBe(false);
   });
 
-  it('uses a verification code to delete when 2FA is enabled', async () => {
+  it('deletes without inline credentials when 2FA is enabled', async () => {
     const wrapper = mountTable([agent({ node_id: 'a' })], { twoFactorEnabled: true });
 
     await wrapper.find('[data-test="delete-agent"]').trigger('click');
-    await wrapper.find('[data-test="reauth-code"]').setValue('123456');
     await wrapper.find('[data-test="delete-agent-form"]').trigger('submit');
     await flushPromises();
 
     expect(wrapper.find('[data-test="reauth-password"]').exists()).toBe(false);
-    expect(mockDeleteAgent).toHaveBeenCalledWith('a', { code: '123456' });
+    expect(mockDeleteAgent).toHaveBeenCalledWith('a', {});
   });
 });

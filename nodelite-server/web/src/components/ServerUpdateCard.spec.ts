@@ -37,6 +37,11 @@ const FAKE_DICT = {
     'settings.version.manual_update_note_2fa': 'Enter code',
     'settings.version.manual_update_note_password': 'Enter password',
     'settings.version.update_now': 'Update now',
+    'settings.version.update_mode': 'Update channel',
+    'settings.version.stable': 'Stable',
+    'settings.version.test': 'Test release',
+    'settings.version.update_mode_note': 'Choose release channel',
+    'settings.version.no_test_release': 'No test release',
     'settings.version.update_starting': 'Starting…',
     'settings.version.update_started': 'Started',
     'settings.version.update_failed': 'Failed: {error}',
@@ -70,6 +75,7 @@ type GithubReleaseFixture = {
   tag_name: string;
   draft?: boolean;
   prerelease?: boolean;
+  published_at?: string;
 };
 
 // fetch routes: ui-i18n.json → dict; api.github.com → release list.
@@ -165,7 +171,16 @@ describe('ServerUpdateCard', () => {
     expect(wrapper.find('[data-test="settings-message"]').text()).toContain('Up to date: 2.3.0');
   });
 
-  it('posts a server update with reauth and shows the started message', async () => {
+  it('offers stable channel when running an RC of the same version', async () => {
+    const wrapper = await mountCard({ server_version: '2.3.0-rc.2' }, [
+      { tag_name: 'v2.3.0', prerelease: false },
+    ]);
+    await wrapper.find('[data-test="check-update"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-test="settings-message"]').text()).toContain('New: 2.3.0');
+  });
+
+  it('posts a stable server update and shows the started message', async () => {
     mockUpdate.mockResolvedValueOnce({ ok: true, message: '' });
     mockUpdateLog.mockResolvedValueOnce({
       exists: true,
@@ -173,11 +188,10 @@ describe('ServerUpdateCard', () => {
       next_offset: 18,
       text: 'installer ready',
     });
-    const wrapper = await mountCard(); // 2FA off → password field
-    await wrapper.find('[data-test="reauth-password"]').setValue('pw');
+    const wrapper = await mountCard();
     await wrapper.find('[data-test="server-update-form"]').trigger('submit');
     await flushPromises();
-    expect(mockUpdate).toHaveBeenCalledWith({ current_password: 'pw' });
+    expect(mockUpdate).toHaveBeenCalledWith({ mode: 'stable' });
     expect(
       wrapper.find('[data-test="server-update-form"] [data-test="settings-message"]').text(),
     ).toContain('Started');
@@ -190,14 +204,37 @@ describe('ServerUpdateCard', () => {
       new ApiError(400, JSON.stringify({ ok: false, message: 'bad password' })),
     );
     const wrapper = await mountCard();
-    await wrapper.find('[data-test="reauth-password"]').setValue('nope');
     await wrapper.find('[data-test="server-update-form"]').trigger('submit');
     await flushPromises();
     expect(
       wrapper.find('[data-test="server-update-form"] [data-test="settings-message"]').text(),
     ).toContain('bad password');
-    expect(wrapper.find('[data-test="update-console-modal"]').exists()).toBe(true);
-    expect(wrapper.find('[data-test="update-console-log"]').text()).toContain('bad password');
+    expect(wrapper.find('[data-test="update-console-modal"]').exists()).toBe(false);
+  });
+
+  it('selects the latest prerelease for test mode', async () => {
+    mockUpdate.mockResolvedValueOnce({ ok: true, message: '' });
+    const wrapper = await mountCard({}, [
+      { tag_name: 'v2.4.0-rc.2', prerelease: true },
+      { tag_name: 'v2.4.0-rc.1', prerelease: true },
+      { tag_name: 'v2.3.0', prerelease: false },
+    ]);
+    await wrapper.find('[data-test="server-update-mode"]').setValue('test');
+    await wrapper.find('[data-test="server-update-form"]').trigger('submit');
+    await flushPromises();
+    expect(mockUpdate).toHaveBeenCalledWith({ mode: 'test', release_tag: 'v2.4.0-rc.2' });
+  });
+
+  it('chooses the most recently published test release even when the API list is out of order', async () => {
+    mockUpdate.mockResolvedValueOnce({ ok: true, message: '' });
+    const wrapper = await mountCard({}, [
+      { tag_name: 'v2.4.0-rc.1', prerelease: true, published_at: '2026-01-01T00:00:00Z' },
+      { tag_name: 'v2.4.0-rc.2', prerelease: true, published_at: '2026-01-02T00:00:00Z' },
+    ]);
+    await wrapper.find('[data-test="server-update-mode"]').setValue('test');
+    await wrapper.find('[data-test="server-update-form"]').trigger('submit');
+    await flushPromises();
+    expect(mockUpdate).toHaveBeenCalledWith({ mode: 'test', release_tag: 'v2.4.0-rc.2' });
   });
 
   it('opens the update console and fetches existing log output', async () => {

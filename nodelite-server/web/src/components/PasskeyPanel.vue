@@ -6,7 +6,6 @@ import { apiClient } from '@/api';
 import { ApiAbortError } from '@/api/client';
 import { createPasskey, supportsPasskeys } from '@/auth/passkey';
 import { messageFromError } from '@/lib/apiError';
-import ReauthFields from './ReauthFields.vue';
 import SettingsMessage from './SettingsMessage.vue';
 
 const props = defineProps<{ auth: SettingsAuth }>();
@@ -17,7 +16,6 @@ const adding = ref(false);
 const busy = ref(false);
 const deletingId = ref<string | null>(null);
 const label = ref('');
-const reauth = reactive({ code: '' });
 const message = reactive<{ state: 'ok' | 'error' | null; text: string }>({ state: null, text: '' });
 
 const enabled = computed(() => props.auth.two_factor_enabled);
@@ -25,7 +23,6 @@ const browserSupported = computed(supportsPasskeys);
 
 function resetForm(): void {
   label.value = '';
-  reauth.code = '';
 }
 
 function showAddForm(): void {
@@ -57,7 +54,6 @@ async function register(): Promise<void> {
   try {
     const options = await apiClient.passkeyRegistrationStart({
       label: label.value,
-      code: reauth.code,
     });
     const credential = await createPasskey(options);
     await apiClient.passkeyRegistrationFinish(credential);
@@ -67,7 +63,10 @@ async function register(): Promise<void> {
     message.text = t('settings.passkeys.added');
     emit('changed');
   } catch (error) {
-    if (error instanceof ApiAbortError) return;
+    if (error instanceof ApiAbortError) {
+      message.text = '';
+      return;
+    }
     message.state = 'error';
     message.text = t('settings.passkeys.action_failed', {
       error: messageFromError(error, 'unknown'),
@@ -80,7 +79,6 @@ async function register(): Promise<void> {
 function requestDelete(id: string): void {
   deletingId.value = id;
   adding.value = false;
-  reauth.code = '';
   message.state = null;
   message.text = '';
 }
@@ -91,14 +89,16 @@ async function remove(): Promise<void> {
   message.state = null;
   message.text = t('settings.passkeys.removing');
   try {
-    await apiClient.deletePasskey(deletingId.value, { code: reauth.code });
+    await apiClient.deletePasskey(deletingId.value, {});
     deletingId.value = null;
-    reauth.code = '';
     message.state = 'ok';
     message.text = t('settings.passkeys.removed');
     emit('changed');
   } catch (error) {
-    if (error instanceof ApiAbortError) return;
+    if (error instanceof ApiAbortError) {
+      message.text = '';
+      return;
+    }
     message.state = 'error';
     message.text = t('settings.passkeys.action_failed', {
       error: messageFromError(error, 'unknown'),
@@ -150,11 +150,6 @@ async function remove(): Promise<void> {
             :placeholder="t('settings.passkeys.label_placeholder')"
           />
         </label>
-        <ReauthFields
-          v-model:code="reauth.code"
-          variant="server-update"
-          :two-factor-enabled="true"
-        />
         <div class="actions">
           <button
             type="submit"
@@ -177,11 +172,6 @@ async function remove(): Promise<void> {
         @submit.prevent="remove"
       >
         <p class="note">{{ t('settings.passkeys.remove_note') }}</p>
-        <ReauthFields
-          v-model:code="reauth.code"
-          variant="server-update"
-          :two-factor-enabled="true"
-        />
         <div class="actions">
           <button
             type="submit"

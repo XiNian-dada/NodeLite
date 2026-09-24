@@ -108,15 +108,14 @@ describe('TwoFactorPanel', () => {
     expect(wrapper.emitted('changed')).toHaveLength(1);
   });
 
-  it('enabled: shows the disable form and posts password+code', async () => {
+  it('enabled: posts the password and defers second-factor confirmation', async () => {
     mockDisable.mockResolvedValueOnce({ ok: true, message: '' });
     const wrapper = mountPanel(auth({ two_factor_enabled: true }));
     expect(wrapper.find('[data-test="disable-2fa-form"]').exists()).toBe(true);
     await wrapper.find('[data-test="disable-2fa-form"] [data-test="reauth-password"]').setValue('pw');
-    await wrapper.find('[data-test="disable-2fa-form"] [data-test="reauth-code"]').setValue('654321');
     await wrapper.find('[data-test="disable-2fa-form"]').trigger('submit');
     await flushPromises();
-    expect(mockDisable).toHaveBeenCalledWith({ current_password: 'pw', code: '654321' });
+    expect(mockDisable).toHaveBeenCalledWith({ current_password: 'pw' });
     expect(wrapper.emitted('changed')).toHaveLength(1);
   });
 

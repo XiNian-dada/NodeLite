@@ -89,7 +89,6 @@ describe('InstallAgentCard', () => {
     await wrapper.find('[data-test="install-agent-node-id"]').setValue(' sg-01 ');
     await wrapper.find('[data-test="install-agent-node-label"]').setValue(' Singapore 01 ');
     await wrapper.find('[data-test="install-agent-tags"]').setValue(' edge, prod, ');
-    await wrapper.find('[data-test="reauth-password"]').setValue('secret');
     await wrapper.find('[data-test="install-agent-form"]').trigger('submit');
     await flushPromises();
 
@@ -97,17 +96,15 @@ describe('InstallAgentCard', () => {
       node_id: 'sg-01',
       node_label: 'Singapore 01',
       tags: ['edge', 'prod'],
-      current_password: 'secret',
     });
     expect(wrapper.find('[data-test="install-agent-command"]').text()).toContain('curl -fsSL');
     expect(wrapper.emitted('created')).toHaveLength(1);
   });
 
-  it('uses a verification code instead of the password when 2FA is enabled', async () => {
+  it('submits without inline confirmation when 2FA is enabled', async () => {
     const wrapper = await mountCard({ twoFactorEnabled: true });
     await wrapper.find('[data-test="open-install-agent"]').trigger('click');
     await wrapper.find('[data-test="install-agent-node-id"]').setValue('sg-01');
-    await wrapper.find('[data-test="reauth-code"]').setValue('123456');
     await wrapper.find('[data-test="install-agent-form"]').trigger('submit');
     await flushPromises();
 
@@ -115,7 +112,6 @@ describe('InstallAgentCard', () => {
     expect(mockGenerate).toHaveBeenCalledWith({
       node_id: 'sg-01',
       tags: [],
-      code: '123456',
     });
   });
 

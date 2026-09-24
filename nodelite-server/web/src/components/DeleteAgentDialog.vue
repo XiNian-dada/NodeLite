@@ -4,7 +4,6 @@ import { useI18n } from 'vue-i18n';
 import { apiClient, type SettingsAgentToken } from '@/api';
 import { ApiAbortError } from '@/api/client';
 import { messageFromError } from '@/lib/apiError';
-import ReauthFields from './ReauthFields.vue';
 import SettingsMessage from './SettingsMessage.vue';
 import NativeDialog from './NativeDialog.vue';
 
@@ -17,7 +16,6 @@ const { t } = useI18n();
 const titleId = useId();
 
 const deleting = ref(false);
-const reauth = reactive({ currentPassword: '', code: '' });
 const message = reactive<{ state: 'ok' | 'error' | null; text: string }>({
   state: null,
   text: '',
@@ -27,18 +25,12 @@ function close(): void {
   if (!deleting.value) emit('close');
 }
 
-function confirmationPayload() {
-  return props.twoFactorEnabled
-    ? { code: reauth.code }
-    : { current_password: reauth.currentPassword };
-}
-
 async function deleteAgent(): Promise<void> {
   deleting.value = true;
   message.state = null;
   message.text = '';
   try {
-    await apiClient.deleteAgent(props.agent.node_id, confirmationPayload());
+    await apiClient.deleteAgent(props.agent.node_id, {});
     emit('deleted');
   } catch (error) {
     if (error instanceof ApiAbortError) return;
@@ -81,12 +73,6 @@ async function deleteAgent(): Promise<void> {
         </button>
       </header>
       <p class="delete-modal__warning">{{ t('settings.tokens.delete_warning') }}</p>
-      <ReauthFields
-        v-model:current-password="reauth.currentPassword"
-        v-model:code="reauth.code"
-        :two-factor-enabled="twoFactorEnabled"
-        variant="server-update"
-      />
       <SettingsMessage :state="message.state" :text="message.text" />
       <footer class="delete-modal__actions">
         <button class="delete-modal__cancel" type="button" :disabled="deleting" @click="close">

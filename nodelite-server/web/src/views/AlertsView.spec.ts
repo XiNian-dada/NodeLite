@@ -119,14 +119,13 @@ describe('AlertsView', () => {
     expect(wrapper.find('[data-test="alerts-error"]').exists()).toBe(true);
   });
 
-  it('saves the draft with typed reauth and shows the saved message', async () => {
+  it('saves the draft without inline reauthentication and shows the saved message', async () => {
     const wrapper = await mountView();
-    await wrapper.find('[data-test="reauth-password"]').setValue('hunter2');
     await wrapper.find('[data-test="alerts-save"]').trigger('click');
     await flushPromises();
 
     expect(mockSave).toHaveBeenCalledTimes(1);
-    expect(mockSave.mock.calls[0]?.[0]).toMatchObject({ current_password: 'hunter2' });
+    expect(mockSave.mock.calls[0]?.[0]).not.toHaveProperty('current_password');
     expect(wrapper.find('[data-test="settings-message"]').text()).toBe('Saved');
   });
 

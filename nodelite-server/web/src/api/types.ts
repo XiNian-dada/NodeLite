@@ -283,10 +283,15 @@ export interface SettingsActionResponse {
   message: string;
 }
 
-/** Reauth carried by every sensitive settings write. */
+/** Legacy inline confirmation fields remain accepted by the server. */
 export interface ReauthPayload {
   current_password?: string;
   code?: string;
+}
+
+export interface StartServerUpdateRequest extends ReauthPayload {
+  mode?: 'stable' | 'test';
+  release_tag?: string;
 }
 
 /** POST /api/settings/agents/install */
@@ -344,7 +349,14 @@ export interface EnableTwoFactorRequest {
 /** POST /api/settings/2fa/disable */
 export interface DisableTwoFactorRequest {
   current_password: string;
-  code: string;
+  code?: string;
+}
+
+export interface PasskeyAuthenticationOptions {
+  publicKey: Record<string, unknown> & {
+    challenge: string;
+    allowCredentials?: Array<Record<string, unknown> & { id: string }>;
+  };
 }
 
 /** POST /api/settings/passkeys/register/start */
@@ -539,7 +551,7 @@ export interface UpdateInspectionSettingsRequest {
   memory_warn_percent: number;
 }
 
-/** POST /api/settings/alerts — UpdateAlertSettingsRequest (carries reauth). */
+/** POST /api/settings/alerts — UpdateAlertSettingsRequest. */
 export interface UpdateAlertSettingsRequest {
   current_password?: string;
   code?: string;
@@ -558,7 +570,7 @@ export interface NodeTokenRefreshResponse {
   token_expires_in_secs: number | null;
 }
 
-/** POST /api/nodes/{id}/refresh-token — request body (carries reauth). */
+/** POST /api/nodes/{id}/refresh-token — request body. */
 export interface RefreshNodeTokenRequest {
   current_password?: string;
   code?: string;

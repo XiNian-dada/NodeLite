@@ -53,7 +53,10 @@ async function submit(): Promise<void> {
     leaving.value = true;
     window.setTimeout(finishLogout, LOGOUT_DELAY_MS);
   } catch (e) {
-    if (e instanceof ApiAbortError) return;
+    if (e instanceof ApiAbortError) {
+      message.text = '';
+      return;
+    }
     message.state = 'error';
     message.text = t('settings.password.failed', { error: messageFromError(e, 'unknown') });
   } finally {
