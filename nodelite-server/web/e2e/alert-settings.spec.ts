@@ -6,21 +6,46 @@ import { setupApiFixtures, waitForAppShell } from './_helpers';
 //   - Create / update / delete an alert channel (webhook or smtp) round-trips
 //     through the API and shows in the list.
 //   - Same for alert rules.
-// IMPORTANT: alert mutations require reauth (security/server: require reauth
-// for alert settings, see recent commit a4f3b55) — the spec must satisfy that
-// challenge before asserting CRUD.
+// A protected save requests confirmation only after the first submit.
 test.beforeEach(async ({ page }) => {
   await setupApiFixtures(page);
 });
 
 test('alert channel CRUD round-trips', async ({ page }) => {
+  let saveAttempts = 0;
+  await page.route('**/api/settings/alerts', async (route) => {
+    if (route.request().method() !== 'POST') {
+      await route.fallback();
+      return;
+    }
+    saveAttempts += 1;
+    if (saveAttempts > 1) {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      status: 428,
+      contentType: 'application/json',
+      body: JSON.stringify({ message: 'reauth_required' }),
+    });
+  });
+  await page.route('**/api/settings/confirm', async (route) => {
+    const body = route.request().postDataJSON() as { current_password?: string };
+    await route.fulfill({
+      status: body.current_password === 'pw' ? 200 : 403,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: body.current_password === 'pw' }),
+    });
+  });
   await page.goto('/alerts');
   await waitForAppShell(page);
   await page.locator('[data-test="webhook-enabled"]').check();
   await page.locator('[data-test="webhook-url"]').fill('https://hooks.example.test/nodelite');
-  await page.locator('[data-test="reauth-password"]').fill('pw');
   await page.locator('[data-test="alerts-save"]').click();
+  await page.locator('[data-test="step-up-password"]').fill('pw');
+  await page.locator('[data-test="step-up-confirm"]').click();
   await expect(page.locator('[data-test="settings-message"]')).toContainText(/saved|已保存/i);
+  expect(saveAttempts).toBe(2);
 });
 
 test('alert rule CRUD round-trips', async ({ page }) => {
@@ -31,7 +56,6 @@ test('alert rule CRUD round-trips', async ({ page }) => {
   await expect(rule.locator('[data-test="rule-id"]')).toBeVisible();
   await rule.locator('[data-test="rule-id"]').fill('memory-hot');
   await rule.locator('[data-test="rule-name"]').fill('Memory hot');
-  await page.locator('[data-test="reauth-password"]').fill('pw');
   await page.locator('[data-test="alerts-save"]').click();
   await expect(page.locator('[data-test="settings-message"]')).toContainText(/saved|已保存/i);
 });

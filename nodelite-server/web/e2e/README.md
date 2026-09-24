@@ -51,7 +51,7 @@ with local fixtures. Live WebSocket flows run in the separate `e2e:live` command
 | 7 | `node-detail-tabs.spec.ts` | overview / monitor / network / logs |
 | 8 | `chart-interaction.spec.ts` | hover tooltip + modal open/close |
 | 9 | `settings-change-password.spec.ts` | Mutation posts reauth credentials |
-| 10 | `alert-settings.spec.ts` | Channel + rule CRUD (post-reauth) |
+| 10 | `alert-settings.spec.ts` | Channel + rule CRUD with deferred confirmation |
 | 11 | `map-node-location.spec.ts` | Marker click highlights + jumps to detail |
 | 12 | `ws-reconnect.spec.ts` | Drop → reconnect indicator → recovery |
 | 13 | `smoke.spec.ts` | Authenticated application shell and dashboard smoke check |
