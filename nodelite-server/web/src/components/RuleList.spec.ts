@@ -11,6 +11,8 @@ const FAKE_DICT = {
     'alerts.rules.title': 'Alert Rules',
     'alerts.rules.note': 'note',
     'alerts.rules.add': 'Add rule',
+    'alerts.rules.collapse_all': 'Collapse all',
+    'alerts.rules.expand_all': 'Expand all',
     'alerts.rules.empty': 'No alert rules yet.',
     // keys the nested RuleEditorCard renders
     'alerts.rules.name': 'Rule name',
@@ -104,5 +106,24 @@ describe('RuleList', () => {
     await wrapper.findAll('[data-test="rule-remove"]')[0]?.trigger('click');
     expect(rules).toHaveLength(1);
     expect(rules.some((r) => r.uid === firstUid)).toBe(false);
+  });
+
+  it('toggles expand all / collapse all across all rules', async () => {
+    const rules = reactive(viewToDraft(makeAlertSettingsView({ rules: makeAlertSettingsView().rules })).rules);
+    const wrapper = mountList(rules);
+    const toggleBtn = wrapper.find('[data-test="rule-toggle-all"]');
+    expect(toggleBtn.exists()).toBe(true);
+    expect(toggleBtn.text()).toBe('Collapse all');
+
+    // Initially all are open, clicking collapses all
+    await toggleBtn.trigger('click');
+    expect(toggleBtn.text()).toBe('Expand all');
+    const card = wrapper.findComponent({ name: 'RuleEditorCard' });
+    expect(card.props('open')).toBe(false);
+
+    // Clicking again expands all
+    await toggleBtn.trigger('click');
+    expect(toggleBtn.text()).toBe('Collapse all');
+    expect(card.props('open')).toBe(true);
   });
 });

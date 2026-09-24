@@ -30,6 +30,12 @@ const FAKE_DICT = {
     'alerts.secret.keep': 'leave blank to keep',
     'settings.disabled': 'Disabled',
     'common.not_available': 'n/a',
+    'common.collapse': 'Collapse',
+    'common.expand': 'Expand',
+    'alerts.section.delivery': 'Delivery Channels',
+    'alerts.section.delivery_note': 'Delivery note',
+    'alerts.section.inspection': 'Daily Inspection',
+    'alerts.section.inspection_note': 'Inspection note',
     'alerts.channel.smtp': 'SMTP',
     'alerts.channel.webhook': 'Webhook',
     'alerts.rules.title': 'Alert Rules',
@@ -140,5 +146,24 @@ describe('AlertsView', () => {
     const msg = wrapper.find('[data-test="settings-message"]');
     expect(msg.classes()).toContain('error');
     expect(msg.text()).toBe('Save failed: bad code');
+  });
+
+  it('toggles delivery channels and inspection sections collapse/expand', async () => {
+    const wrapper = await mountView();
+    const deliveryToggle = wrapper.find('[data-test="delivery-toggle"]');
+    expect(deliveryToggle.text()).toBe('Collapse');
+    expect(wrapper.find('[data-test="delivery-collapsed-summary"]').attributes('style')).toContain('display: none');
+
+    await deliveryToggle.trigger('click');
+    expect(deliveryToggle.text()).toBe('Expand');
+    expect(wrapper.find('[data-test="delivery-collapsed-summary"]').attributes('style') || '').not.toContain('display: none');
+
+    const inspectionToggle = wrapper.find('[data-test="inspection-toggle"]');
+    expect(inspectionToggle.text()).toBe('Collapse');
+    expect(wrapper.find('[data-test="inspection-collapsed-summary"]').attributes('style')).toContain('display: none');
+
+    await inspectionToggle.trigger('click');
+    expect(inspectionToggle.text()).toBe('Expand');
+    expect(wrapper.find('[data-test="inspection-collapsed-summary"]').attributes('style') || '').not.toContain('display: none');
   });
 });

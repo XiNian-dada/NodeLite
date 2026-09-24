@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive } from 'vue';
+import { onMounted, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AppLayout from '@/components/AppLayout.vue';
 import AlertOverviewCard from '@/components/AlertOverviewCard.vue';
@@ -21,6 +21,8 @@ const store = useAlertsStore();
 // from the server config on load and re-seeded after each successful save.
 const draft = reactive(emptyAlertsConfig());
 const message = reactive<{ state: 'ok' | 'error' | null; text: string }>({ state: null, text: '' });
+const deliveryOpen = ref(true);
+const inspectionOpen = ref(true);
 
 function seedDraft(): void {
   if (store.config) Object.assign(draft, viewToDraft(store.config));
@@ -72,10 +74,35 @@ async function save(): Promise<void> {
                   <h2 class="section-title">{{ t('alerts.section.delivery') }}</h2>
                   <p class="section-note">{{ t('alerts.section.delivery_note') }}</p>
                 </div>
+                <button
+                  type="button"
+                  class="btn btn--subtle btn--sm section-toggle"
+                  data-test="delivery-toggle"
+                  @click="deliveryOpen = !deliveryOpen"
+                >
+                  {{ deliveryOpen ? t('common.collapse') : t('common.expand') }}
+                </button>
               </header>
-              <div class="alerts__grid alerts__grid--channels">
+              <div v-show="deliveryOpen" class="alerts__grid alerts__grid--channels">
                 <SmtpChannelCard v-model="draft.smtp" />
                 <WebhookChannelCard v-model="draft.webhook" />
+              </div>
+              <div
+                v-show="!deliveryOpen"
+                class="section-summary-pill"
+                data-test="delivery-collapsed-summary"
+                @click="deliveryOpen = true"
+              >
+                <span class="summary-item">
+                  <span class="summary-label">SMTP:</span>
+                  <span class="summary-val">{{ draft.smtp.enabled ? (draft.smtp.host || t('alerts.rules.enabled')) : t('settings.disabled') }}</span>
+                </span>
+                <span class="summary-divider">·</span>
+                <span class="summary-item">
+                  <span class="summary-label">Webhook:</span>
+                  <span class="summary-val">{{ draft.webhook.enabled ? (draft.webhook.url || t('alerts.rules.enabled')) : t('settings.disabled') }}</span>
+                </span>
+                <span class="summary-expand-hint">{{ t('common.expand') }}</span>
               </div>
             </section>
 
@@ -85,8 +112,30 @@ async function save(): Promise<void> {
                   <h2 class="section-title">{{ t('alerts.section.inspection') }}</h2>
                   <p class="section-note">{{ t('alerts.section.inspection_note') }}</p>
                 </div>
+                <button
+                  type="button"
+                  class="btn btn--subtle btn--sm section-toggle"
+                  data-test="inspection-toggle"
+                  @click="inspectionOpen = !inspectionOpen"
+                >
+                  {{ inspectionOpen ? t('common.collapse') : t('common.expand') }}
+                </button>
               </header>
-              <InspectionCard v-model="draft.inspection" />
+              <div v-show="inspectionOpen">
+                <InspectionCard v-model="draft.inspection" />
+              </div>
+              <div
+                v-show="!inspectionOpen"
+                class="section-summary-pill"
+                data-test="inspection-collapsed-summary"
+                @click="inspectionOpen = true"
+              >
+                <span class="summary-item">
+                  <span class="summary-label">{{ t('alerts.inspection.title') }}:</span>
+                  <span class="summary-val">{{ draft.inspection.enabled ? `${draft.inspection.local_time || '09:00'} · ${draft.inspection.lookback_hours || 24}h` : t('settings.disabled') }}</span>
+                </span>
+                <span class="summary-expand-hint">{{ t('common.expand') }}</span>
+              </div>
             </section>
 
             <RuleList v-model="draft.rules" />
@@ -158,9 +207,56 @@ async function save(): Promise<void> {
 }
 .section-head {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+.section-toggle {
+  flex-shrink: 0;
+}
+.section-summary-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border: 1px dashed var(--border-soft);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+.section-summary-pill:hover {
+  background: var(--bg-card-soft);
+  border-color: var(--border-strong);
+}
+.summary-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.summary-label {
+  font-weight: 550;
+  color: var(--text-secondary);
+}
+.summary-val {
+  color: var(--text-muted);
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.summary-divider {
+  color: var(--border-strong);
+}
+.summary-expand-hint {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--accent-blue);
+  font-weight: 500;
 }
 .section-title {
   margin: 0;
@@ -201,26 +297,8 @@ async function save(): Promise<void> {
 .save-bar__actions {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
-}
-.btn {
-  align-self: flex-start;
-  background: var(--bg-card-soft);
-  color: var(--text-secondary);
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  padding: 8px 14px;
-  font: inherit;
-}
-.btn--primary {
-  color: #fff;
-  background: var(--accent-blue);
-  border-color: transparent;
-}
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+  align-items: stretch;
+  gap: var(--actions-gap);
 }
 .page-heading {
   margin: 0;

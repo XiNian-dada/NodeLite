@@ -19,7 +19,23 @@ import DeliveryCheckboxes from './DeliveryCheckboxes.vue';
  * Removal is an array-level concern, so it's emitted to the parent (RuleList).
  */
 const rule = defineModel<RuleDraft>({ required: true });
-const emit = defineEmits<{ remove: [] }>();
+const props = withDefaults(
+  defineProps<{
+    open?: boolean;
+  }>(),
+  {
+    open: true,
+  },
+);
+const emit = defineEmits<{
+  remove: [];
+  'update:open': [value: boolean];
+}>();
+
+function onToggle(e: Event): void {
+  const target = e.target as HTMLDetailsElement;
+  emit('update:open', target.open);
+}
 
 const { t } = useI18n();
 
@@ -83,7 +99,7 @@ const expression = computed(() => {
       </div>
     </header>
 
-    <details class="rule-details" open>
+    <details class="rule-details" :open="props.open" @toggle="onToggle">
       <summary>{{ t('alerts.rules.details') }}</summary>
       <div class="grid">
         <label class="field">
@@ -196,18 +212,30 @@ const expression = computed(() => {
   gap: 6px;
   cursor: pointer;
   list-style: none;
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 500;
   border: 1px solid var(--border-soft);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--bg-card);
   color: var(--text-secondary);
-  padding: 5px 10px;
+  padding: 4px 10px;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+.rule-details summary:hover {
+  background: var(--bg-card-soft);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
 }
 .rule-details summary::-webkit-details-marker {
   display: none;
 }
 .rule-details summary::before {
-  content: '>';
+  content: '›';
+  font-size: 14px;
+  line-height: 1;
   color: var(--text-muted);
   transform: rotate(90deg);
   transition: transform 0.16s ease;
@@ -248,18 +276,5 @@ const expression = computed(() => {
   gap: 6px;
   font-size: 13px;
   color: var(--text-secondary);
-}
-.btn {
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  padding: 6px 12px;
-  font: inherit;
-}
-.btn--danger {
-  color: var(--accent-red);
-  border-color: var(--accent-red-soft);
-  background: var(--accent-red-soft);
 }
 </style>

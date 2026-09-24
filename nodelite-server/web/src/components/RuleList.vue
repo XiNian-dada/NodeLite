@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, reactive } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { blankRule, type RuleDraft } from '@/lib/alertsDraft';
 import RuleEditorCard from './RuleEditorCard.vue';
@@ -14,11 +15,38 @@ const rules = defineModel<RuleDraft[]>({ required: true });
 
 const { t } = useI18n();
 
+// Track expansion state per rule by uid (defaults to true)
+const openMap = reactive<Record<string, boolean>>({});
+
+function isRuleOpen(uid: string): boolean {
+  return openMap[uid] ?? true;
+}
+
+function setRuleOpen(uid: string, open: boolean): void {
+  openMap[uid] = open;
+}
+
+const allOpen = computed(() => {
+  if (!rules.value.length) return true;
+  return rules.value.every((r) => isRuleOpen(r.uid));
+});
+
+function toggleAll(): void {
+  const next = !allOpen.value;
+  for (const r of rules.value) {
+    openMap[r.uid] = next;
+  }
+}
+
 function add(): void {
-  rules.value.push(blankRule());
+  const next = blankRule();
+  openMap[next.uid] = true;
+  rules.value.push(next);
 }
 
 function remove(index: number): void {
+  const rule = rules.value[index];
+  if (rule) delete openMap[rule.uid];
   rules.value.splice(index, 1);
 }
 
@@ -35,9 +63,20 @@ function update(index: number, next: RuleDraft): void {
         <h2 class="card-title">{{ t('alerts.rules.title') }}</h2>
         <p class="rules-note">{{ t('alerts.rules.note') }}</p>
       </div>
-      <button type="button" class="btn" data-test="rule-add" @click="add">
-        {{ t('alerts.rules.add') }}
-      </button>
+      <div class="rules-actions">
+        <button
+          v-if="rules.length > 0"
+          type="button"
+          class="btn btn--subtle btn--sm"
+          data-test="rule-toggle-all"
+          @click="toggleAll"
+        >
+          {{ allOpen ? t('alerts.rules.collapse_all') : t('alerts.rules.expand_all') }}
+        </button>
+        <button type="button" class="btn btn--primary btn--sm" data-test="rule-add" @click="add">
+          {{ t('alerts.rules.add') }}
+        </button>
+      </div>
     </header>
 
     <p v-if="!rules.length" class="rules-empty" data-test="rule-list-empty">
@@ -48,7 +87,9 @@ function update(index: number, next: RuleDraft): void {
         v-for="(rule, index) in rules"
         :key="rule.uid"
         :model-value="rule"
+        :open="isRuleOpen(rule.uid)"
         @update:model-value="(next) => update(index, next)"
+        @update:open="(val) => setRuleOpen(rule.uid, val)"
         @remove="remove(index)"
       />
     </div>
@@ -64,12 +105,18 @@ function update(index: number, next: RuleDraft): void {
 }
 .rules-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 .rules-intro {
   min-width: 0;
+}
+.rules-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--actions-gap);
+  flex-shrink: 0;
 }
 .card-title {
   margin: 0;
@@ -91,14 +138,5 @@ function update(index: number, next: RuleDraft): void {
   flex-direction: column;
   gap: 12px;
   margin-top: 14px;
-}
-.btn {
-  flex-shrink: 0;
-  background: var(--bg-card-soft);
-  color: var(--text-secondary);
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  padding: 8px 14px;
-  font: inherit;
 }
 </style>
