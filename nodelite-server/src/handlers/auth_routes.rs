@@ -14,6 +14,9 @@ pub(crate) use middleware::require_readonly_auth;
 pub(crate) use passkeys::{finish_passkey_authentication, start_passkey_authentication};
 pub(crate) use two_factor::{logout_and_reauth, verify_2fa_api};
 
+#[derive(Clone, Copy)]
+pub(crate) struct CurrentLoginEventId(pub i64);
+
 fn user_agent(headers: &HeaderMap) -> Option<String> {
     headers
         .get(header::USER_AGENT)

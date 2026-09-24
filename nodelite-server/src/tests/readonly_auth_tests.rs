@@ -67,6 +67,59 @@ fn readonly_auth_route_accepts_valid_basic_auth() {
 }
 
 #[test]
+fn last_login_excludes_current_login_on_first_request_before_cookie_arrives() {
+    let runtime = Runtime::new().expect("runtime should build");
+    runtime.block_on(async {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("nodelite-first-last-login-{unique}"));
+        std::fs::create_dir_all(&temp_dir).expect("temp dir");
+        let config = test_server_config(
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8080)),
+            "https://monitor.example.com".to_string(),
+            temp_dir.join("registry.json"),
+            temp_dir.join("history.sqlite3"),
+            temp_dir.join("snapshot.json"),
+        );
+        let state = AppState::test_fixture(config.into(), Arc::new(temp_dir.join("server.toml")))
+            .await
+            .expect("state fixture");
+        let previous = NewAuditEvent::now(AuditEventType::LoginSuccess, "203.0.113.10", true);
+        state
+            .audit_log
+            .record_and_return_id(previous)
+            .await
+            .expect("previous login");
+        let app = Router::new()
+            .route("/api/auth/last-login", get(last_login))
+            .route_layer(from_fn_with_state(state.clone(), require_readonly_auth))
+            .with_state(state.clone());
+        let response = app
+            .oneshot(protected_request(
+                "GET",
+                "/api/auth/last-login",
+                Some(TEST_BASIC_AUTH_HEADER),
+                SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 24), 51234)),
+            ))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(payload["ip_address"], "203.0.113.10");
+        state.shutdown.cancel();
+        state.history.shutdown().await;
+        state.audit_log.shutdown().await;
+        drop(state);
+        std::fs::remove_dir_all(&temp_dir).expect("cleanup");
+    });
+}
+
+#[test]
 fn last_login_uses_session_event_id_when_login_timestamps_match() {
     let runtime = Runtime::new().expect("runtime should build");
     runtime.block_on(async {
@@ -126,7 +179,7 @@ fn last_login_uses_session_event_id_when_login_timestamps_match() {
                 .expect("cookie header should parse"),
         );
 
-        let info = last_login(axum::extract::State(state.clone()), headers)
+        let info = last_login(axum::extract::State(state.clone()), headers, None)
             .await
             .expect("last-login response should succeed")
             .0;
@@ -201,7 +254,7 @@ fn last_login_uses_two_factor_session_event_id_when_login_timestamps_match() {
                 .expect("cookie header should parse"),
         );
 
-        let info = last_login(axum::extract::State(state.clone()), headers)
+        let info = last_login(axum::extract::State(state.clone()), headers, None)
             .await
             .expect("last-login response should succeed")
             .0;

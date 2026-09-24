@@ -10,7 +10,7 @@ use axum::response::{AppendHeaders, IntoResponse, Response};
 use serde_json::json;
 use tracing::error;
 
-use super::user_agent;
+use super::{CurrentLoginEventId, user_agent};
 use crate::AppState;
 use crate::admission::resolve_client_ip;
 use crate::audit::{AuditEventType, NewAuditEvent};
@@ -376,6 +376,9 @@ async fn issue_basic_auth_session_and_continue(
         return readonly_auth_unauthorized_response();
     };
     request.extensions_mut().insert(lifetime);
+    if let Some(id) = login_event_id {
+        request.extensions_mut().insert(CurrentLoginEventId(id));
+    }
     let secure = secure_cookies(state.shared.config());
     let mut response = next.run(request).await;
     response.headers_mut().insert(
