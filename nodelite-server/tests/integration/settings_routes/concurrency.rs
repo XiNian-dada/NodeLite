@@ -12,19 +12,18 @@ fn alert_request() -> Value {
 }
 
 #[tokio::test]
-async fn concurrent_settings_preserve_every_successful_change_on_disk_and_in_runtime() -> Result<()>
-{
+async fn auth_change_rejects_queued_sensitive_writes_with_stale_confirmation() -> Result<()> {
     let harness = SettingsHarness::new(readonly_auth(false, None)).await?;
     let guard = harness.state.settings_write_lock.lock().await;
     let code = current_totp_code_with_margin(TEST_TOTP_SECRET).await;
     let requests = [
-        ("/api/settings/alerts", alert_request()),
         (
             "/api/settings/2fa/enable",
             json!({
                 "current_password": "secret", "secret": TEST_TOTP_SECRET, "code": code,
             }),
         ),
+        ("/api/settings/alerts", alert_request()),
         (
             "/api/settings/password",
             json!({
@@ -44,9 +43,13 @@ async fn concurrent_settings_preserve_every_successful_change_on_disk_and_in_run
         pending.push(response);
     }
     drop(guard);
-    for response in pending {
+    for (response, expected) in pending.into_iter().zip([
+        StatusCode::OK,
+        StatusCode::PRECONDITION_REQUIRED,
+        StatusCode::PRECONDITION_REQUIRED,
+    ]) {
         let response = timeout(crate::test_support::TEST_TIMEOUT, response).await??;
-        assert_status(response.status(), StatusCode::OK, response).await?;
+        assert_status(response.status(), expected, response).await?;
     }
     assert_concurrent_changes(&harness).await?;
     harness.cleanup().await;
@@ -56,10 +59,10 @@ async fn concurrent_settings_preserve_every_successful_change_on_disk_and_in_run
 async fn assert_concurrent_changes(harness: &SettingsHarness) -> Result<()> {
     let persisted = parse_current_config(&harness.config_path).await?;
     let auth = persisted.readonly_auth.expect("auth retained");
-    assert_eq!(auth.password, "VeryStrong123!");
+    assert_eq!(auth.password, "secret");
     assert!(auth.enable_2fa);
     assert_eq!(auth.totp_secret.as_deref(), Some(TEST_TOTP_SECRET));
-    assert_eq!(persisted.alerting.inspection.cpu_warn_percent, 73);
+    assert_eq!(persisted.alerting.inspection.cpu_warn_percent, 85);
     let runtime = harness
         .state
         .readonly_auth
@@ -79,7 +82,7 @@ async fn assert_concurrent_changes(harness: &SettingsHarness) -> Result<()> {
             .await
             .inspection
             .cpu_warn_percent,
-        73
+        85
     );
     #[cfg(unix)]
     {

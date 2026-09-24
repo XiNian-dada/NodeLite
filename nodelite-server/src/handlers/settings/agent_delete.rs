@@ -2,7 +2,7 @@
 
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use tracing::{error, info};
 
@@ -17,6 +17,7 @@ use super::{DeleteAgentRequest, SettingsActionResponse, settings_json_error};
 pub(crate) async fn delete_agent(
     State(state): State<AppState>,
     Path(node_id): Path<String>,
+    headers: HeaderMap,
     Json(request): Json<DeleteAgentRequest>,
 ) -> Response {
     let current_auth = {
@@ -29,6 +30,7 @@ pub(crate) async fn delete_agent(
     if let Some(response) = settings_confirmation_error_for_sensitive_action(
         &state,
         &current_auth,
+        &headers,
         request.current_password.as_deref(),
         request.code.as_deref(),
     ) {

@@ -30,11 +30,12 @@ pub(crate) use auth_routes::{
 pub(crate) use install_routes::{install_agent_script, install_bootstrap};
 pub(crate) use page_routes::{index, node_detail, static_asset, verify_2fa_page};
 pub(crate) use settings::{
-    alert_settings, change_readonly_password, delete_agent, delete_passkey, disable_two_factor,
-    enable_two_factor, finish_passkey_registration, generate_agent_install, refresh_node_token,
+    alert_settings, change_readonly_password, confirm_settings, delete_agent, delete_passkey,
+    disable_two_factor, enable_two_factor, finish_passkey_registration,
+    finish_settings_passkey_confirmation, generate_agent_install, refresh_node_token,
     server_update_log, settings, start_passkey_registration, start_server_update,
-    start_two_factor_setup, update_alert_settings, update_node_location_override,
-    update_node_service_metadata,
+    start_settings_passkey_confirmation, start_two_factor_setup, update_alert_settings,
+    update_node_location_override, update_node_service_metadata,
 };
 
 async fn record_audit_event(

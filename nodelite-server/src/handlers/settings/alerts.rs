@@ -1,6 +1,6 @@
 use axum::Json;
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use chrono::Utc;
 use tracing::error;
@@ -24,16 +24,18 @@ pub(crate) async fn alert_settings(State(state): State<AppState>) -> impl IntoRe
 
 pub(crate) async fn update_alert_settings(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<UpdateAlertSettingsRequest>,
 ) -> Response {
     super::config_edit::with_settings_write(state, move |state| {
-        update_alert_settings_inner(state, request)
+        update_alert_settings_inner(state, headers, request)
     })
     .await
 }
 
 async fn update_alert_settings_inner(
     state: AppState,
+    headers: HeaderMap,
     request: UpdateAlertSettingsRequest,
 ) -> Response {
     let current_auth = {
@@ -46,6 +48,7 @@ async fn update_alert_settings_inner(
     if let Some(response) = settings_confirmation_error_for_sensitive_action(
         &state,
         &current_auth,
+        &headers,
         request.current_password.as_deref(),
         request.code.as_deref(),
     ) {

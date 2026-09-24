@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use axum::Json;
 use axum::extract::{Path as AxumPath, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use chrono::Utc;
 use tokio::fs;
@@ -12,12 +12,13 @@ use tracing::{error, info};
 
 use crate::AppState;
 use crate::registry::NodeServiceMetadata;
+use crate::sanitize::valid_test_release_tag;
 
 use super::security::settings_confirmation_error_for_sensitive_action;
 use super::{
     MAX_UPDATE_LOG_CHUNK_BYTES, NodeTokenRefreshResponse, ServerUpdateLogQuery,
-    ServerUpdateLogResponse, SettingsActionResponse, StartServerUpdateRequest, UpdateLaunchMode,
-    UpdateNodeLocationOverrideRequest, UpdateNodeServiceMetadataRequest,
+    ServerUpdateLogResponse, ServerUpdateMode, SettingsActionResponse, StartServerUpdateRequest,
+    UpdateLaunchMode, UpdateNodeLocationOverrideRequest, UpdateNodeServiceMetadataRequest,
     is_writable_paths_subset_of_install_root, server_update_cache_dir, server_update_install_root,
     server_update_log_path, server_update_shell_command, server_update_writable_paths,
     settings_json_error, spawn_server_update_subprocess,
@@ -31,6 +32,7 @@ const LIVE_TOKEN_REFRESH_TIMEOUT: Duration = Duration::from_millis(50);
 /// 从网页端手动触发一次服务端升级。
 pub(crate) async fn start_server_update(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<StartServerUpdateRequest>,
 ) -> Response {
     let current_auth = {
@@ -43,15 +45,35 @@ pub(crate) async fn start_server_update(
     if let Some(response) = settings_confirmation_error_for_sensitive_action(
         &state,
         &current_auth,
+        &headers,
         request.current_password.as_deref(),
         request.code.as_deref(),
     ) {
         return response;
     }
 
+    let release_tag = match request.mode {
+        ServerUpdateMode::Stable if request.release_tag.is_none() => None,
+        ServerUpdateMode::Test => {
+            let Some(tag) = request
+                .release_tag
+                .as_deref()
+                .filter(|tag| valid_test_release_tag(tag))
+            else {
+                return settings_json_error(StatusCode::BAD_REQUEST, "invalid test release tag");
+            };
+            Some(tag)
+        }
+        ServerUpdateMode::Stable => {
+            return settings_json_error(
+                StatusCode::BAD_REQUEST,
+                "stable updates do not accept a release tag",
+            );
+        }
+    };
     let log_path = server_update_log_path(state.shared.config());
     let cache_dir = server_update_cache_dir(state.shared.config());
-    let command = server_update_shell_command(&log_path, &cache_dir);
+    let command = server_update_shell_command(&log_path, &cache_dir, release_tag);
     let writable_paths = server_update_writable_paths(state.shared.config());
     let install_root = server_update_install_root(state.shared.config());
     if !is_writable_paths_subset_of_install_root(&writable_paths, &install_root) {
@@ -102,6 +124,7 @@ pub(crate) async fn start_server_update(
 pub(crate) async fn refresh_node_token(
     State(state): State<AppState>,
     AxumPath(node_id): AxumPath<String>,
+    headers: HeaderMap,
     Json(request): Json<StartServerUpdateRequest>,
 ) -> Response {
     let current_auth = {
@@ -114,6 +137,7 @@ pub(crate) async fn refresh_node_token(
     if let Some(response) = settings_confirmation_error_for_sensitive_action(
         &state,
         &current_auth,
+        &headers,
         request.current_password.as_deref(),
         request.code.as_deref(),
     ) {
@@ -311,4 +335,25 @@ pub(crate) async fn server_update_log(
         text: String::from_utf8_lossy(&bytes).into_owned(),
     })
     .into_response()
+}
+
+#[cfg(test)]
+mod update_mode_tests {
+    use crate::sanitize::valid_test_release_tag;
+
+    #[test]
+    fn accepts_only_versioned_prerelease_tags() {
+        assert!(valid_test_release_tag("v3.0.3-rc.2"));
+        assert!(valid_test_release_tag("3.1.0-beta.1"));
+        for tag in [
+            "v3.0.3",
+            "../evil",
+            "v3.0.3-",
+            "v3.0.3-rc/1",
+            "v3.0-rc.1",
+            "v3.0.3-rc;id",
+        ] {
+            assert!(!valid_test_release_tag(tag), "{tag} must be rejected");
+        }
+    }
 }

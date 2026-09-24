@@ -62,6 +62,7 @@ impl SettingsHarness {
 pub(super) fn settings_app(state: crate::AppState) -> Router {
     let protected_routes = Router::new()
         .route("/api/settings/password", post(change_readonly_password))
+        .route("/api/settings/confirm", post(confirm_settings))
         .route(
             "/ws/browser",
             axum::routing::get(crate::ws::ws_browser_handler),

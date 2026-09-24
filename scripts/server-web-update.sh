@@ -9,6 +9,7 @@ umask 077
 : "${NODELITE_UPDATE_LOG:?NODELITE_UPDATE_LOG is required}"
 : "${NODELITE_UPDATE_CACHE_DIR:?NODELITE_UPDATE_CACHE_DIR is required}"
 : "${NODELITE_UPDATE_REPOSITORY:?NODELITE_UPDATE_REPOSITORY is required}"
+NODELITE_UPDATE_TAG="${NODELITE_UPDATE_TAG:-}"
 
 log="$NODELITE_UPDATE_LOG"
 cache_dir="$NODELITE_UPDATE_CACHE_DIR"
@@ -108,32 +109,46 @@ case "$repository" in
     ;;
 esac
 
-release_url="$repository/releases/latest"
-printf '%s\n' "nodelite-update: resolving stable release from $release_url" >>"$log"
-if ! run_secure_curl \
-  --max-time "$CURL_RESOLVE_TIMEOUT_SECS" \
-  -fsSIL \
-  -o /dev/null \
-  -w '%{url_effective}' \
-  "$release_url" >"$tmp_resolved_url"; then
-  fail_update "failed to resolve latest stable release"
-fi
-resolved_url="$(cat "$tmp_resolved_url")"
+if [ -n "$NODELITE_UPDATE_TAG" ]; then
+  target_tag="$NODELITE_UPDATE_TAG"
+  case "$target_tag" in
+    *-*) ;;
+    *) fail_update "test release tag must be a prerelease" ;;
+  esac
+  case "$target_tag" in
+    *[!A-Za-z0-9._+-]*|""|*/*)
+      fail_update "invalid test release tag"
+      ;;
+  esac
+  printf '%s\n' "nodelite-update: selected test release tag=$target_tag" >>"$log"
+else
+  release_url="$repository/releases/latest"
+  printf '%s\n' "nodelite-update: resolving stable release from $release_url" >>"$log"
+  if ! run_secure_curl \
+    --max-time "$CURL_RESOLVE_TIMEOUT_SECS" \
+    -fsSIL \
+    -o /dev/null \
+    -w '%{url_effective}' \
+    "$release_url" >"$tmp_resolved_url"; then
+    fail_update "failed to resolve latest stable release"
+  fi
+  resolved_url="$(cat "$tmp_resolved_url")"
 
-tag_prefix="$repository/releases/tag/"
-case "$resolved_url" in
-  "$tag_prefix"*)
-    target_tag="${resolved_url#"$tag_prefix"}"
-    ;;
-  *)
-    fail_update "latest release redirected outside the configured repository"
-    ;;
-esac
-case "$target_tag" in
-  ""|*-*|*[!A-Za-z0-9._+]*)
-    fail_update "resolved release tag is not a stable version tag"
-    ;;
-esac
+  tag_prefix="$repository/releases/tag/"
+  case "$resolved_url" in
+    "$tag_prefix"*)
+      target_tag="${resolved_url#"$tag_prefix"}"
+      ;;
+    *)
+      fail_update "latest release redirected outside the configured repository"
+      ;;
+  esac
+  case "$target_tag" in
+    ""|*-*|*[!A-Za-z0-9._+]*)
+      fail_update "resolved release tag is not a stable version tag"
+      ;;
+  esac
+fi
 
 asset_base_url="$repository/releases/download/$target_tag"
 installer_url="$asset_base_url/install-server.sh"

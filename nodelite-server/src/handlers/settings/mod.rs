@@ -11,6 +11,7 @@ mod helpers;
 mod passkeys;
 mod query;
 mod security;
+mod step_up;
 mod subprocess;
 mod types;
 mod updates;
@@ -24,6 +25,9 @@ pub(crate) use passkeys::{
 pub(crate) use query::settings;
 pub(crate) use security::{
     change_readonly_password, disable_two_factor, enable_two_factor, start_two_factor_setup,
+};
+pub(crate) use step_up::{
+    confirm_settings, finish_settings_passkey_confirmation, start_settings_passkey_confirmation,
 };
 pub(crate) use updates::{
     refresh_node_token, server_update_log, start_server_update, update_node_location_override,
@@ -41,7 +45,7 @@ use subprocess::{UpdateLaunchMode, spawn_server_update_subprocess};
 use types::{
     ChangePasswordRequest, DeleteAgentRequest, DeletePasskeyRequest, DisableTwoFactorRequest,
     EnableTwoFactorRequest, GenerateAgentInstallRequest, GenerateAgentInstallResponse,
-    NodeTokenRefreshResponse, ServerUpdateLogQuery, ServerUpdateLogResponse,
+    NodeTokenRefreshResponse, ServerUpdateLogQuery, ServerUpdateLogResponse, ServerUpdateMode,
     SettingsActionResponse, SettingsAgentToken, SettingsAuth, SettingsResponse, SettingsUpdates,
     StartPasskeyRegistrationRequest, StartServerUpdateRequest, TwoFactorSetupResponse,
     UpdateNodeLocationOverrideRequest, UpdateNodeServiceMetadataRequest,

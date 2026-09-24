@@ -2,7 +2,7 @@
 
 use axum::Json;
 use axum::extract::State;
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use tracing::error;
 
@@ -18,6 +18,7 @@ use super::{GenerateAgentInstallRequest, GenerateAgentInstallResponse, settings_
 /// 签发一次性安装令牌并返回可直接在目标主机运行的 Agent 安装命令。
 pub(crate) async fn generate_agent_install(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<GenerateAgentInstallRequest>,
 ) -> Response {
     let current_auth = {
@@ -30,6 +31,7 @@ pub(crate) async fn generate_agent_install(
     if let Some(response) = settings_confirmation_error_for_sensitive_action(
         &state,
         &current_auth,
+        &headers,
         request.current_password.as_deref(),
         request.code.as_deref(),
     ) {
@@ -128,7 +130,7 @@ mod tests {
     use axum::Json;
     use axum::body::to_bytes;
     use axum::extract::State;
-    use axum::http::{StatusCode, header};
+    use axum::http::{HeaderMap, StatusCode, header};
     use serde_json::Value;
 
     use super::generate_agent_install;
@@ -174,6 +176,7 @@ mod tests {
         let (state, temp_dir) = test_state().await;
         let response = generate_agent_install(
             State(state.clone()),
+            HeaderMap::new(),
             Json(GenerateAgentInstallRequest {
                 node_id: "sg-01".to_string(),
                 node_label: Some("Singapore 01".to_string()),
@@ -213,6 +216,7 @@ mod tests {
         let (state, temp_dir) = test_state().await;
         let response = generate_agent_install(
             State(state.clone()),
+            HeaderMap::new(),
             Json(GenerateAgentInstallRequest {
                 node_id: "sg-01".to_string(),
                 node_label: None,
@@ -223,8 +227,42 @@ mod tests {
         )
         .await;
 
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
         assert!(state.registry.list_registered_nodes().await.is_empty());
+        cleanup(state, temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn recent_browser_confirmation_allows_install_without_inline_password() {
+        let (state, temp_dir) = test_state().await;
+        let token = state
+            .two_factor_sessions
+            .create_basic_auth_session(None)
+            .expect("session");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            format!("nodelite_basic_session={token}")
+                .parse()
+                .expect("cookie"),
+        );
+        let request = || GenerateAgentInstallRequest {
+            node_id: "sg-01".to_string(),
+            node_label: None,
+            tags: Vec::new(),
+            current_password: None,
+            code: None,
+        };
+        let challenge =
+            generate_agent_install(State(state.clone()), headers.clone(), Json(request())).await;
+        assert_eq!(challenge.status(), StatusCode::PRECONDITION_REQUIRED);
+        assert!(
+            state
+                .two_factor_sessions
+                .confirm_sensitive_action(&token, false)
+        );
+        let response = generate_agent_install(State(state.clone()), headers, Json(request())).await;
+        assert_eq!(response.status(), StatusCode::OK);
         cleanup(state, temp_dir).await;
     }
 
@@ -233,6 +271,7 @@ mod tests {
         let (state, temp_dir) = test_state().await;
         let response = generate_agent_install(
             State(state.clone()),
+            HeaderMap::new(),
             Json(GenerateAgentInstallRequest {
                 node_id: "invalid node id".to_string(),
                 node_label: None,

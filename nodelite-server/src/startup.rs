@@ -35,14 +35,16 @@ use crate::background::{
 use crate::fs_security::log_if_directory_is_not_private;
 use crate::geoip::GeoIpResolver;
 use crate::handlers::{
-    alert_settings, audit_log, bootstrap, change_readonly_password, delete_agent, delete_passkey,
-    disable_two_factor, enable_two_factor, finish_passkey_authentication,
-    finish_passkey_registration, generate_agent_install, healthz, index, install_agent_script,
-    install_bootstrap, last_login, logout_and_reauth, metrics, node_detail, node_history,
-    node_logs, node_status, nodes, overview, readyz, refresh_node_token, require_readonly_auth,
-    server_update_log, settings, start_passkey_authentication, start_passkey_registration,
-    start_server_update, start_two_factor_setup, static_asset, update_alert_settings,
-    update_node_location_override, update_node_service_metadata, verify_2fa_api, verify_2fa_page,
+    alert_settings, audit_log, bootstrap, change_readonly_password, confirm_settings, delete_agent,
+    delete_passkey, disable_two_factor, enable_two_factor, finish_passkey_authentication,
+    finish_passkey_registration, finish_settings_passkey_confirmation, generate_agent_install,
+    healthz, index, install_agent_script, install_bootstrap, last_login, logout_and_reauth,
+    metrics, node_detail, node_history, node_logs, node_status, nodes, overview, readyz,
+    refresh_node_token, require_readonly_auth, server_update_log, settings,
+    start_passkey_authentication, start_passkey_registration, start_server_update,
+    start_settings_passkey_confirmation, start_two_factor_setup, static_asset,
+    update_alert_settings, update_node_location_override, update_node_service_metadata,
+    verify_2fa_api, verify_2fa_page,
 };
 use crate::history::HistoryStore;
 use crate::passkeys::PasskeyService;
@@ -387,6 +389,7 @@ pub(crate) fn build_router(state: AppState) -> Router {
             post(update_node_location_override),
         )
         .route("/api/settings/password", post(change_readonly_password))
+        .route("/api/settings/confirm", post(confirm_settings))
         .route("/api/settings/agents/install", post(generate_agent_install))
         .route("/api/settings/agents/{node_id}", delete(delete_agent))
         .route("/api/settings/alerts", post(update_alert_settings))
@@ -398,6 +401,14 @@ pub(crate) fn build_router(state: AppState) -> Router {
         .route(
             "/api/settings/passkeys/register/start",
             post(start_passkey_registration),
+        )
+        .route(
+            "/api/settings/confirm/passkey/start",
+            post(start_settings_passkey_confirmation),
+        )
+        .route(
+            "/api/settings/confirm/passkey/finish",
+            post(finish_settings_passkey_confirmation),
         )
         .route(
             "/api/settings/passkeys/register/finish",

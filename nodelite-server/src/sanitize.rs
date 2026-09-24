@@ -1,9 +1,8 @@
-//! 把 Agent 上报的 NodeSnapshot 二次校验为"可信"形态。
+//! 校验 Agent 遥测与设置接口的外部输入。
 //!
-//! Agent 进程是不受信任的输入源(可能是 buggy 版本、可能被攻陷),所以在
-//! 进入聚合/历史表/UI 之前必须把不可能值卡到上限,否则会扭曲仪表盘汇总、
-//! 压垮加和、或污染历史样本。本模块只负责清洗;什么时候断开异常会话由
-//! 调用方根据 [`SanitizationReport`] + 滑动窗口决定。
+//! Agent 遥测在进入聚合/历史表/UI 前需限制不可能值；设置接口的发布标签
+//! 等外部字符串也在此处限定格式。什么时候断开异常 Agent 会话由调用方根据
+//! [`SanitizationReport`] + 滑动窗口决定。
 
 use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
@@ -23,6 +22,26 @@ pub const MAX_RENEWAL_PRICE_BYTES: usize = 64;
 pub const MAX_LOCATION_OVERRIDE_TEXT_BYTES: usize = 64;
 /// 计算 anomaly 触发阈值时使用的滑动窗口(秒),默认 5 分钟。
 pub const METRIC_ANOMALY_WINDOW_SECS: u64 = 300;
+
+pub(crate) fn valid_test_release_tag(tag: &str) -> bool {
+    if tag.len() > 64 || !tag.is_ascii() {
+        return false;
+    }
+    let version = tag.strip_prefix('v').unwrap_or(tag);
+    let Some((base, suffix)) = version.split_once('-') else {
+        return false;
+    };
+    if suffix.is_empty()
+        || !suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-')
+    {
+        return false;
+    }
+    let mut parts = base.split('.');
+    parts.clone().count() >= 3
+        && parts.all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+}
 
 pub(crate) fn validate_traffic_control_status(
     status: &nodelite_proto::TrafficControlStatus,

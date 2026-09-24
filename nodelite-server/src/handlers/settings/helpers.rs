@@ -88,7 +88,11 @@ pub(super) fn is_writable_paths_subset_of_install_root(
     })
 }
 
-pub(super) fn server_update_shell_command(log_path: &Path, cache_dir: &Path) -> String {
+pub(super) fn server_update_shell_command(
+    log_path: &Path,
+    cache_dir: &Path,
+    release_tag: Option<&str>,
+) -> String {
     [
         format!(
             "NODELITE_UPDATE_LOG={}",
@@ -101,6 +105,10 @@ pub(super) fn server_update_shell_command(log_path: &Path, cache_dir: &Path) -> 
         format!(
             "NODELITE_UPDATE_REPOSITORY={}",
             shell_quote(env!("CARGO_PKG_REPOSITORY"))
+        ),
+        format!(
+            "NODELITE_UPDATE_TAG={}",
+            shell_quote(release_tag.unwrap_or(""))
         ),
         include_str!("../../../../scripts/server-web-update.sh").to_string(),
     ]
@@ -298,7 +306,7 @@ mod tests {
         let config = sample_server_config();
         let log_path = Path::new("/tmp/nodelite-update.log");
         let cache_dir = server_update_cache_dir(&config);
-        let command = server_update_shell_command(log_path, &cache_dir);
+        let command = server_update_shell_command(log_path, &cache_dir, None);
 
         assert!(command.contains("umask 077"));
         assert!(

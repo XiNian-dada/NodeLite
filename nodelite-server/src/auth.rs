@@ -13,6 +13,7 @@
 
 mod browser;
 mod common_passwords;
+mod step_up;
 
 pub(crate) use browser::{BrowserAuthorization, BrowserSession};
 
@@ -103,6 +104,8 @@ pub const TWO_FACTOR_PENDING_SECS: u64 = 300;
 pub const TWO_FACTOR_AUTH_SECS: u64 = 24 * 60 * 60;
 /// Basic Auth 会话 cookie 的有效期(24 小时),用于避免每次请求都记录 LoginSuccess。
 pub const BASIC_AUTH_SESSION_SECS: u64 = 24 * 60 * 60;
+/// Sensitive settings confirmation is short-lived and bound to the browser session.
+pub const SENSITIVE_CONFIRMATION_SECS: u64 = 5 * 60;
 /// 单个 pending session 允许的最大 TOTP 错误尝试次数。达到后该 pending token
 /// 立即失效,客户端必须重新通过 Basic Auth 才能再次进入 verify-2fa 页面。
 /// 这与 `InstallAdmissionController` 的 IP 维度限流共同把 TOTP 暴力破解
@@ -198,12 +201,14 @@ struct TwoFactorSessionStore {
 struct BasicAuthSession {
     lifetime: BrowserSession,
     login_event_id: Option<i64>,
+    confirmed_until: Option<Instant>,
 }
 
 #[derive(Debug, Clone)]
 struct AuthenticatedSession {
     lifetime: BrowserSession,
     login_event_id: Option<i64>,
+    confirmed_until: Option<Instant>,
 }
 
 /// 一条待二次验证的会话:除了过期时间,还跟踪该 pending token 的连续失败
@@ -451,6 +456,7 @@ impl TwoFactorSessions {
             BasicAuthSession {
                 lifetime: BrowserSession::new(expires_at),
                 login_event_id,
+                confirmed_until: None,
             },
         );
         Ok(token)
@@ -494,6 +500,7 @@ fn insert_authenticated_session(store: &mut TwoFactorSessionStore, token: &str, 
         AuthenticatedSession {
             lifetime: BrowserSession::new(now + Duration::from_secs(TWO_FACTOR_AUTH_SECS)),
             login_event_id: None,
+            confirmed_until: Some(now + Duration::from_secs(SENSITIVE_CONFIRMATION_SECS)),
         },
     );
 }

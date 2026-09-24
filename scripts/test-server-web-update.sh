@@ -88,6 +88,12 @@ case "$url" in
   */releases/download/v1.2.3/install-server.sh)
     cp "$FAKE_FIXTURES/install-server.sh" "$output"
     ;;
+  */releases/download/v1.2.4-rc.2/SHA256SUMS.txt)
+    cp "$FAKE_FIXTURES/SHA256SUMS.txt" "$output"
+    ;;
+  */releases/download/v1.2.4-rc.2/install-server.sh)
+    cp "$FAKE_FIXTURES/install-server.sh" "$output"
+    ;;
   *)
     printf '%s\n' "unexpected curl URL: $url" >&2
     exit 1
@@ -149,6 +155,26 @@ if grep -v -- '--proto =https --proto-redir =https --connect-timeout 10' \
 fi
 grep -F -- '--max-time 30' "$CURL_LOG_PATH" >/dev/null
 grep -F -- '--max-time 60 --max-filesize 1048576' "$CURL_LOG_PATH" >/dev/null
+
+NODELITE_UPDATE_TAG=v1.2.4-rc.2
+export NODELITE_UPDATE_TAG
+: >"$CURL_LOG_PATH"
+run_bootstrap
+sed -n '1p' "$MARKER_PATH" | grep -Fx 'v1.2.4-rc.2' >/dev/null
+if grep -F '/releases/latest' "$CURL_LOG_PATH" >/dev/null; then
+  printf '%s\n' "test update unexpectedly resolved stable release" >&2
+  exit 1
+fi
+unset NODELITE_UPDATE_TAG
+
+rm -f "$MARKER_PATH"
+NODELITE_UPDATE_TAG='v1.2.4-rc.2/evil'
+export NODELITE_UPDATE_TAG
+capture_bootstrap_status
+assert_status 1
+assert_installer_did_not_run
+grep -F 'nodelite-update: error: invalid test release tag' "$LOG_PATH" >/dev/null
+unset NODELITE_UPDATE_TAG
 
 rm -f "$MARKER_PATH"
 printf '%064d  install-server.sh\n' 0 >"$FIXTURES/SHA256SUMS.txt"

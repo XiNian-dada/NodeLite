@@ -1,14 +1,14 @@
 use axum::Json;
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{AppendHeaders, IntoResponse, Response};
 use tracing::error;
 
 use crate::AppState;
 use crate::auth::{
-    ReadonlyRouteAuth, TWO_FACTOR_AUTH_COOKIE, TWO_FACTOR_AUTH_SECS, TWO_FACTOR_PENDING_COOKIE,
-    auth_cookie, constant_time_compare_bytes, decode_totp_secret, expire_cookie,
-    matching_totp_steps, secure_cookies,
+    BASIC_AUTH_SESSION_COOKIE, ReadonlyRouteAuth, TWO_FACTOR_AUTH_COOKIE, TWO_FACTOR_AUTH_SECS,
+    TWO_FACTOR_PENDING_COOKIE, auth_cookie, constant_time_compare_bytes, cookie_value,
+    decode_totp_secret, expire_cookie, matching_totp_steps, secure_cookies,
 };
 use crate::qr::qr_svg_for_text;
 use nodelite_proto::ReadonlyAuthConfig;
@@ -22,16 +22,18 @@ use super::{
 /// 修改只读面板密码:需要当前密码,同时更新运行时鉴权与 server.toml。
 pub(crate) async fn change_readonly_password(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<ChangePasswordRequest>,
 ) -> Response {
     super::config_edit::with_settings_write(state, move |state| {
-        change_readonly_password_inner(state, request)
+        change_readonly_password_inner(state, headers, request)
     })
     .await
 }
 
 async fn change_readonly_password_inner(
     state: AppState,
+    headers: HeaderMap,
     request: ChangePasswordRequest,
 ) -> Response {
     let current_auth = {
@@ -45,7 +47,16 @@ async fn change_readonly_password_inner(
         current_auth.password.as_bytes(),
         request.current_password.as_bytes(),
     ) {
-        return settings_json_error(StatusCode::UNAUTHORIZED, "current password is incorrect");
+        return settings_json_error(StatusCode::FORBIDDEN, "current password is incorrect");
+    }
+    if let Some(response) = settings_confirmation_error_for_sensitive_action(
+        &state,
+        &current_auth,
+        &headers,
+        Some(&request.current_password),
+        None,
+    ) {
+        return response;
     }
     if let Err(message) = validate_password_for_settings(&request.new_password) {
         return settings_json_error(StatusCode::BAD_REQUEST, message);
@@ -87,22 +98,36 @@ async fn change_readonly_password_inner(
 pub(super) fn settings_confirmation_error_for_sensitive_action(
     state: &AppState,
     auth: &ReadonlyAuthConfig,
+    headers: &HeaderMap,
     current_password: Option<&str>,
     code: Option<&str>,
 ) -> Option<Response> {
+    let token = sensitive_session_token(headers, auth.enable_2fa);
+    if token.as_deref().is_some_and(|token| {
+        state
+            .two_factor_sessions
+            .sensitive_action_confirmed(token, auth.enable_2fa)
+    }) {
+        return None;
+    }
     if !auth.enable_2fa {
         let Some(current_password) = current_password.filter(|password| !password.is_empty())
         else {
             return Some(settings_json_error(
-                StatusCode::UNAUTHORIZED,
-                "current password is required",
+                StatusCode::PRECONDITION_REQUIRED,
+                "reauth_required",
             ));
         };
         if constant_time_compare_bytes(auth.password.as_bytes(), current_password.as_bytes()) {
+            if let Some(token) = token {
+                state
+                    .two_factor_sessions
+                    .confirm_sensitive_action(&token, false);
+            }
             return None;
         }
         return Some(settings_json_error(
-            StatusCode::UNAUTHORIZED,
+            StatusCode::FORBIDDEN,
             "current password is incorrect",
         ));
     }
@@ -114,34 +139,50 @@ pub(super) fn settings_confirmation_error_for_sensitive_action(
     };
     let Some(code) = code.map(str::trim).filter(|code| !code.is_empty()) else {
         return Some(settings_json_error(
-            StatusCode::UNAUTHORIZED,
-            "verification code is required",
+            StatusCode::PRECONDITION_REQUIRED,
+            "reauth_required",
         ));
     };
     match verify_and_consume_totp_steps(state, &secret, code) {
         Ok(()) => {}
         Err(TotpVerificationError::Invalid) => {
             return Some(settings_json_error(
-                StatusCode::UNAUTHORIZED,
+                StatusCode::FORBIDDEN,
                 "invalid verification code",
             ));
         }
         Err(TotpVerificationError::AlreadyUsed) => {
             return Some(settings_json_error(
-                StatusCode::UNAUTHORIZED,
+                StatusCode::FORBIDDEN,
                 "verification code already used",
             ));
         }
     }
+    if let Some(token) = token {
+        state
+            .two_factor_sessions
+            .confirm_sensitive_action(&token, true);
+    }
     None
 }
 
-enum TotpVerificationError {
+pub(super) fn sensitive_session_token(headers: &HeaderMap, two_factor: bool) -> Option<String> {
+    cookie_value(
+        headers,
+        if two_factor {
+            TWO_FACTOR_AUTH_COOKIE
+        } else {
+            BASIC_AUTH_SESSION_COOKIE
+        },
+    )
+}
+
+pub(super) enum TotpVerificationError {
     Invalid,
     AlreadyUsed,
 }
 
-fn verify_and_consume_totp_steps(
+pub(super) fn verify_and_consume_totp_steps(
     state: &AppState,
     secret: &[u8],
     code: &str,
@@ -233,7 +274,7 @@ async fn enable_two_factor_inner(state: AppState, request: EnableTwoFactorReques
         current_auth.password.as_bytes(),
         request.current_password.as_bytes(),
     ) {
-        return settings_json_error(StatusCode::UNAUTHORIZED, "current password is incorrect");
+        return settings_json_error(StatusCode::FORBIDDEN, "current password is incorrect");
     }
     let secret = request.secret.replace(' ', "").to_ascii_uppercase();
     let Some(secret_bytes) = decode_totp_secret(&secret) else {
@@ -245,10 +286,10 @@ async fn enable_two_factor_inner(state: AppState, request: EnableTwoFactorReques
     match verify_and_consume_totp_steps(&state, &secret_bytes, &request.code) {
         Ok(()) => {}
         Err(TotpVerificationError::Invalid) => {
-            return settings_json_error(StatusCode::UNAUTHORIZED, "invalid verification code");
+            return settings_json_error(StatusCode::FORBIDDEN, "invalid verification code");
         }
         Err(TotpVerificationError::AlreadyUsed) => {
-            return settings_json_error(StatusCode::UNAUTHORIZED, "verification code already used");
+            return settings_json_error(StatusCode::FORBIDDEN, "verification code already used");
         }
     }
 
@@ -300,18 +341,23 @@ async fn enable_two_factor_inner(state: AppState, request: EnableTwoFactorReques
         .into_response()
 }
 
-/// 关闭 2FA:要求当前密码 + 当前 TOTP 验证码,避免无人值守浏览器被直接降级。
+/// 关闭 2FA:要求当前密码 + 最近的 TOTP/Passkey 确认,避免无人值守浏览器直接降级。
 pub(crate) async fn disable_two_factor(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<DisableTwoFactorRequest>,
 ) -> Response {
     super::config_edit::with_settings_write(state, move |state| {
-        disable_two_factor_inner(state, request)
+        disable_two_factor_inner(state, headers, request)
     })
     .await
 }
 
-async fn disable_two_factor_inner(state: AppState, request: DisableTwoFactorRequest) -> Response {
+async fn disable_two_factor_inner(
+    state: AppState,
+    headers: HeaderMap,
+    request: DisableTwoFactorRequest,
+) -> Response {
     let current_auth = {
         let auth = state.readonly_auth.read().await;
         auth.config.clone()
@@ -326,23 +372,16 @@ async fn disable_two_factor_inner(state: AppState, request: DisableTwoFactorRequ
         current_auth.password.as_bytes(),
         request.current_password.as_bytes(),
     ) {
-        return settings_json_error(StatusCode::UNAUTHORIZED, "current password is incorrect");
+        return settings_json_error(StatusCode::FORBIDDEN, "current password is incorrect");
     }
-    let Some(secret) = current_auth
-        .totp_secret
-        .as_deref()
-        .and_then(decode_totp_secret)
-    else {
-        return settings_json_error(StatusCode::CONFLICT, "2FA secret is not configured");
-    };
-    match verify_and_consume_totp_steps(&state, &secret, &request.code) {
-        Ok(()) => {}
-        Err(TotpVerificationError::Invalid) => {
-            return settings_json_error(StatusCode::UNAUTHORIZED, "invalid verification code");
-        }
-        Err(TotpVerificationError::AlreadyUsed) => {
-            return settings_json_error(StatusCode::UNAUTHORIZED, "verification code already used");
-        }
+    if let Some(response) = settings_confirmation_error_for_sensitive_action(
+        &state,
+        &current_auth,
+        &headers,
+        None,
+        request.code.as_deref(),
+    ) {
+        return response;
     }
 
     let next_auth = ReadonlyAuthConfig {

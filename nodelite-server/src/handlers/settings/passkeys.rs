@@ -50,6 +50,12 @@ pub(crate) async fn finish_passkey_registration(
             "authenticated session is required",
         );
     };
+    if !state
+        .two_factor_sessions
+        .sensitive_action_confirmed(&session_binding, true)
+    {
+        return settings_json_error(StatusCode::PRECONDITION_REQUIRED, "reauth_required");
+    }
     match state
         .passkeys
         .finish_registration(&session_binding, &response)
@@ -89,6 +95,7 @@ pub(crate) async fn delete_passkey(
     if let Some(response) = settings_confirmation_error_for_sensitive_action(
         &state,
         &current_auth,
+        &headers,
         request.current_password.as_deref(),
         request.code.as_deref(),
     ) {
@@ -137,6 +144,7 @@ async fn confirmed_passkey_session(
     if let Some(response) = settings_confirmation_error_for_sensitive_action(
         state,
         &current_auth,
+        headers,
         request.current_password.as_deref(),
         request.code.as_deref(),
     ) {

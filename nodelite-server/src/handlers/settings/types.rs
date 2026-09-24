@@ -110,6 +110,18 @@ pub(crate) struct ChangePasswordRequest {
 pub(crate) struct StartServerUpdateRequest {
     pub(crate) current_password: Option<String>,
     pub(crate) code: Option<String>,
+    #[serde(default)]
+    pub(crate) mode: ServerUpdateMode,
+    #[serde(default)]
+    pub(crate) release_tag: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ServerUpdateMode {
+    #[default]
+    Stable,
+    Test,
 }
 
 #[derive(Debug, Deserialize)]
@@ -142,7 +154,8 @@ pub(crate) struct EnableTwoFactorRequest {
 #[derive(Debug, Deserialize)]
 pub(crate) struct DisableTwoFactorRequest {
     pub(crate) current_password: String,
-    pub(crate) code: String,
+    #[serde(default)]
+    pub(crate) code: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

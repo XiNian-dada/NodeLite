@@ -17,11 +17,11 @@ use totp_lite::{Sha1, totp_custom};
 use tower::ServiceExt;
 
 use super::*;
-use crate::auth::{TWO_FACTOR_AUTH_COOKIE, decode_totp_secret};
+use crate::auth::{BASIC_AUTH_SESSION_COOKIE, TWO_FACTOR_AUTH_COOKIE, decode_totp_secret};
 use crate::handlers::{
-    change_readonly_password, delete_agent, disable_two_factor, enable_two_factor,
-    refresh_node_token, require_readonly_auth, start_server_update, start_two_factor_setup,
-    update_node_location_override,
+    change_readonly_password, confirm_settings, delete_agent, disable_two_factor,
+    enable_two_factor, refresh_node_token, require_readonly_auth, start_server_update,
+    start_two_factor_setup, update_node_location_override,
 };
 use crate::registry::{IssueNodeRequest, issue_node};
 use crate::set_protected_response_headers;
@@ -37,6 +37,47 @@ mod browser_auth;
 mod concurrency;
 mod snapshot_concurrency;
 mod traffic_cleanup;
+
+#[tokio::test]
+async fn settings_confirmation_grants_only_the_current_basic_browser_session() -> Result<()> {
+    let harness = SettingsHarness::new(readonly_auth(false, None)).await?;
+    let token = harness
+        .state
+        .two_factor_sessions
+        .create_basic_auth_session(None)?;
+    let other = harness
+        .state
+        .two_factor_sessions
+        .create_basic_auth_session(None)?;
+    let cookie = format!("{BASIC_AUTH_SESSION_COOKIE}={token}");
+    let mut request = json_request(
+        "/api/settings/confirm",
+        &basic_auth_header("secret"),
+        Some(&cookie),
+        json!({ "current_password": "secret" }),
+    );
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(SocketAddr::V4(
+            SocketAddrV4::new(Ipv4Addr::LOCALHOST, 12345),
+        )));
+    let response = harness.app.clone().oneshot(request).await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        harness
+            .state
+            .two_factor_sessions
+            .sensitive_action_confirmed(&token, false)
+    );
+    assert!(
+        !harness
+            .state
+            .two_factor_sessions
+            .sensitive_action_confirmed(&other, false)
+    );
+    harness.cleanup().await;
+    Ok(())
+}
 
 #[tokio::test]
 async fn settings_password_change_covers_failure_and_persistence_paths() -> Result<()> {
@@ -55,7 +96,7 @@ async fn settings_password_change_covers_failure_and_persistence_paths() -> Resu
             }),
         ))
         .await?;
-    assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(rejected.status(), StatusCode::FORBIDDEN);
 
     let changed = harness
         .app
@@ -170,22 +211,21 @@ async fn settings_two_factor_enable_rejects_replayed_totp() -> Result<()> {
     assert!(auth.totp_secret.is_some());
 
     let auth_token = harness.state.two_factor_sessions.create_authenticated()?;
-    let replayed = harness
-        .app
-        .clone()
-        .oneshot(json_request(
-            "/api/settings/2fa/disable",
-            &basic_auth_header("secret"),
-            Some(&auth_cookie(&auth_token)),
-            json!({
-                "current_password": "secret",
-                "code": code,
-            }),
-        ))
-        .await?;
-    assert_eq!(replayed.status(), StatusCode::UNAUTHORIZED);
+    let mut request = json_request(
+        "/api/settings/confirm",
+        &basic_auth_header("secret"),
+        Some(&auth_cookie(&auth_token)),
+        json!({ "code": code }),
+    );
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(SocketAddr::V4(
+            SocketAddrV4::new(Ipv4Addr::LOCALHOST, 12345),
+        )));
+    let replayed = harness.app.clone().oneshot(request).await?;
+    assert_eq!(replayed.status(), StatusCode::FORBIDDEN);
     let replay_body = response_json(replayed).await?;
-    assert_eq!(replay_body["message"], "verification code already used");
+    assert_eq!(replay_body["message"], "confirmation was not accepted");
 
     harness.cleanup().await;
     Ok(())
@@ -210,7 +250,7 @@ async fn settings_two_factor_disable_covers_password_failure_and_persistence() -
             }),
         ))
         .await?;
-    assert_eq!(wrong_password.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(wrong_password.status(), StatusCode::FORBIDDEN);
 
     let disabled = harness
         .app
@@ -538,7 +578,7 @@ async fn settings_agent_delete_revokes_enrollment_and_removes_runtime_node() -> 
             json!({ "current_password": "wrong" }),
         ))
         .await?;
-    assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(rejected.status(), StatusCode::FORBIDDEN);
     assert_eq!(harness.state.registry.count().await, 1);
     assert_eq!(
         harness.state.agent_logs.list("edge-sin-01", 1).await.len(),
@@ -622,7 +662,7 @@ async fn settings_server_update_requires_sensitive_confirmation() -> Result<()> 
             json!({}),
         ))
         .await?;
-    assert_eq!(missing_password.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(missing_password.status(), StatusCode::PRECONDITION_REQUIRED);
 
     let wrong_password = harness
         .app
@@ -634,7 +674,7 @@ async fn settings_server_update_requires_sensitive_confirmation() -> Result<()> 
             json!({ "current_password": "wrong" }),
         ))
         .await?;
-    assert_eq!(wrong_password.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(wrong_password.status(), StatusCode::FORBIDDEN);
 
     harness.cleanup().await;
     Ok(())
