@@ -381,13 +381,14 @@ const rows = computed(() =>
   color: var(--text-primary);
   background: var(--bg-card);
   border: 1px solid var(--border-soft);
-  border-radius: 7px;
+  border-radius: var(--input-radius);
   padding: 0 9px;
   font: inherit;
   font-size: 12px;
 }
 .meta-input:focus {
-  border-color: var(--border-strong);
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 2px var(--accent-blue-soft);
   outline: none;
 }
 .meta-input:disabled {
@@ -413,10 +414,19 @@ const rows = computed(() =>
   color: var(--text-primary);
   background: var(--bg-card-soft);
   border: 1px solid var(--border-soft);
-  border-radius: 7px;
+  border-radius: var(--btn-radius);
   font: inherit;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 550;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+.meta-save:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
 }
 .meta-save:disabled {
   cursor: not-allowed;
@@ -428,11 +438,20 @@ const rows = computed(() =>
   margin-top: 6px;
   color: var(--accent-red);
   background: transparent;
-  border: 1px solid currentColor;
-  border-radius: 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--btn-radius);
   font: inherit;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 550;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+.agent-delete:hover:not(:disabled) {
+  background: var(--accent-red-soft);
+  border-color: transparent;
 }
 .agent-delete:disabled {
   cursor: not-allowed;

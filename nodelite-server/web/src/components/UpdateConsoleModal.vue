@@ -262,17 +262,17 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--actions-gap);
   flex-wrap: wrap;
 }
 .update-console__status {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  height: 34px;
+  height: var(--btn-height);
   padding: 0 10px;
   border: 1px solid var(--border-soft);
-  border-radius: 8px;
+  border-radius: var(--btn-radius);
   background: var(--bg-card-soft);
   color: var(--text-secondary);
   font-size: 12px;
@@ -295,15 +295,30 @@ defineExpose({
   color: var(--accent-red);
 }
 .update-console__button {
-  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--btn-height);
   border: 1px solid var(--border-soft);
-  border-radius: 8px;
+  border-radius: var(--btn-radius);
   background: var(--bg-card-soft);
   color: var(--text-secondary);
   padding: 0 12px;
+  font-size: var(--btn-font-size);
+  font-weight: var(--btn-font-weight);
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
 }
 .update-console__button:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
   color: var(--text-primary);
+}
+.update-console__button:active {
+  transform: translateY(1px);
 }
 .update-console__toolbar {
   display: flex;

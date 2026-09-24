@@ -44,6 +44,22 @@
   --chart-load-five: #a1a1aa;
   --chart-load-fifteen: #71717a;
   --chart-disk: #14b8a6;
+  /* Design system tokens */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-full: 9999px;
+  --btn-radius: var(--radius-md);
+  --btn-height: 32px;
+  --btn-padding: 6px 14px;
+  --btn-font-size: 13px;
+  --btn-font-weight: 500;
+  --btn-gap: 8px;
+  --input-radius: var(--radius-md);
+  --input-padding: 8px 12px;
+  --input-font-size: 13px;
+  --actions-gap: 10px;
   font-family:
     'Inter',
     'PingFang SC',
@@ -119,3 +135,148 @@ button {
   font: inherit;
   cursor: pointer;
 }
+
+/* Standard Button System */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--btn-gap);
+  min-height: var(--btn-height);
+  padding: var(--btn-padding);
+  font: inherit;
+  font-size: var(--btn-font-size);
+  font-weight: var(--btn-font-weight);
+  line-height: 1.4;
+  border-radius: var(--btn-radius);
+  border: 1px solid var(--border-soft);
+  background: var(--bg-card-soft);
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  text-decoration: none;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.1s ease;
+  white-space: nowrap;
+}
+
+.btn:hover:not(:disabled):not([disabled]) {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
+}
+
+.btn:active:not(:disabled):not([disabled]) {
+  transform: translateY(1px);
+}
+
+.btn:focus-visible {
+  outline: none;
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 2px var(--accent-blue-soft);
+}
+
+.btn:disabled,
+.btn[disabled] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Button Variants */
+.btn--primary {
+  background: var(--accent-blue);
+  color: #ffffff;
+  border-color: transparent;
+  font-weight: 550;
+}
+
+.btn--primary:hover:not(:disabled):not([disabled]) {
+  background: #5b7bff;
+  color: #ffffff;
+  filter: brightness(1.06);
+}
+
+.btn--danger {
+  background: var(--accent-red-soft);
+  color: var(--accent-red);
+  border-color: transparent;
+  font-weight: 550;
+}
+
+.btn--danger:hover:not(:disabled):not([disabled]) {
+  background: rgba(255, 77, 109, 0.28);
+  color: #ff3358;
+}
+
+.btn--subtle,
+.btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+.btn--subtle:hover:not(:disabled):not([disabled]),
+.btn--ghost:hover:not(:disabled):not([disabled]) {
+  background: var(--bg-card-soft);
+  color: var(--text-primary);
+  border-color: var(--border-soft);
+}
+
+.btn--sm {
+  min-height: 28px;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: var(--radius-sm);
+}
+
+/* Standard Actions Container */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--actions-gap);
+  flex-wrap: wrap;
+}
+
+/* Standard Form Fields */
+input[type='text'],
+input[type='password'],
+input[type='number'],
+input[type='email'],
+input[type='search'],
+select,
+textarea {
+  box-sizing: border-box;
+  font: inherit;
+  font-size: var(--input-font-size);
+  color: var(--text-primary);
+  background: var(--bg-card-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--input-radius);
+  padding: var(--input-padding);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+input[type='text']:focus,
+input[type='password']:focus,
+input[type='number']:focus,
+input[type='email']:focus,
+input[type='search']:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 2px var(--accent-blue-soft);
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+

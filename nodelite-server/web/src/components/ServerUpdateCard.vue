@@ -270,9 +270,10 @@ async function submitUpdate(): Promise<void> {
 }
 .actions {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
-  margin: 16px 0 4px;
+  gap: var(--actions-gap, 10px);
+  margin: 16px 0 6px;
 }
 .note {
   color: var(--text-muted);
@@ -292,8 +293,8 @@ async function submitUpdate(): Promise<void> {
   background: var(--bg-card-soft);
   color: var(--text-secondary);
   border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  padding: 8px 14px;
+  border-radius: var(--btn-radius, 8px);
+  padding: var(--btn-padding, 6px 14px);
   font: inherit;
 }
 .btn:hover:not([disabled]) {

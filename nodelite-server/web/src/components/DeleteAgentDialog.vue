@@ -138,41 +138,67 @@ async function deleteAgent(): Promise<void> {
 .delete-modal__close,
 .delete-modal__cancel,
 .delete-modal__confirm {
-  height: 32px;
-  border-radius: 7px;
+  height: var(--btn-height, 32px);
+  border-radius: var(--btn-radius, 8px);
   font: inherit;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--btn-font-size, 13px);
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
 }
 .delete-modal__close {
-  width: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
   color: var(--text-muted);
   background: var(--bg-card-soft);
   border: 1px solid var(--border-soft);
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1;
+}
+.delete-modal__close:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
 }
 .delete-modal__actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--actions-gap, 10px);
 }
 .delete-modal__cancel {
   min-width: 64px;
-  color: var(--text-primary);
+  padding: 0 14px;
+  color: var(--text-secondary);
   background: var(--bg-card-soft);
   border: 1px solid var(--border-soft);
 }
+.delete-modal__cancel:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
+}
 .delete-modal__confirm {
   min-width: 96px;
+  padding: 0 14px;
   color: var(--accent-red);
-  background: transparent;
-  border: 1px solid currentColor;
+  background: var(--accent-red-soft);
+  border: 1px solid transparent;
+}
+.delete-modal__confirm:hover:not(:disabled) {
+  background: rgba(255, 77, 109, 0.28);
+  color: #ff3358;
 }
 .delete-modal__close:disabled,
 .delete-modal__cancel:disabled,
 .delete-modal__confirm:disabled {
   cursor: not-allowed;
-  opacity: 0.58;
+  opacity: 0.55;
 }
 </style>

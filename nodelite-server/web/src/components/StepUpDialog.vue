@@ -92,29 +92,34 @@ async function confirmPasskey(): Promise<void> {
             data-test="step-up-password"
           />
         </label>
-        <button type="submit" class="btn btn--primary" :disabled="busy" data-test="step-up-confirm">
-          {{ t('settings.confirm.confirm') }}
-        </button>
-      </form>
-      <div
-        v-if="auth?.two_factor_enabled && auth.passkeys.length && supportsPasskeys()"
-        class="step-up__passkey"
-      >
-        <span>{{ t('settings.confirm.or') }}</span>
-        <button
-          type="button"
-          class="btn"
-          :disabled="busy"
-          data-test="step-up-passkey"
-          @click="confirmPasskey"
+
+        <div
+          v-if="auth?.two_factor_enabled && auth.passkeys.length && supportsPasskeys()"
+          class="step-up__passkey"
         >
-          {{ t('settings.confirm.passkey') }}
-        </button>
-      </div>
-      <p v-if="error" class="step-up__error" role="alert">{{ error }}</p>
-      <button type="button" class="btn" :disabled="busy" @click="cancel">
-        {{ t('settings.passkeys.cancel') }}
-      </button>
+          <span class="step-up__or">{{ t('settings.confirm.or') }}</span>
+          <button
+            type="button"
+            class="btn btn--subtle"
+            :disabled="busy"
+            data-test="step-up-passkey"
+            @click="confirmPasskey"
+          >
+            {{ t('settings.confirm.passkey') }}
+          </button>
+        </div>
+
+        <p v-if="error" class="step-up__error" role="alert">{{ error }}</p>
+
+        <div class="actions step-up__actions">
+          <button type="button" class="btn" :disabled="busy" @click="cancel">
+            {{ t('settings.passkeys.cancel') }}
+          </button>
+          <button type="submit" class="btn btn--primary" :disabled="busy" data-test="step-up-confirm">
+            {{ t('settings.confirm.confirm') }}
+          </button>
+        </div>
+      </form>
     </section>
   </NativeDialog>
 </template>
@@ -130,41 +135,53 @@ async function confirmPasskey(): Promise<void> {
   background: rgba(0, 0, 0, 0.72);
 }
 .step-up__panel {
-  width: min(420px, 100%);
-  padding: 22px;
-  border-radius: 12px;
+  width: min(440px, 100%);
+  padding: 22px 24px;
+  border-radius: var(--radius-xl, 12px);
   border: 1px solid var(--border-soft);
   background: var(--bg-card);
   box-shadow: var(--panel-shadow);
 }
 .step-up__panel h2 {
-  margin: 0 0 8px;
+  margin: 0 0 6px;
   font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 .step-up__panel p {
+  margin: 0 0 16px;
   color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
 }
 .step-up__panel form,
 .step-up__panel label {
-  display: grid;
-  gap: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
-.step-up__panel input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 8px;
-  background: var(--bg-card-soft);
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
-  color: var(--text-primary);
+.step-up__panel label span {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 500;
 }
 .step-up__passkey {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin: 14px 0;
+  gap: 10px;
+  margin: 6px 0;
+}
+.step-up__or {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.step-up__actions {
+  justify-content: flex-end;
+  margin-top: 10px;
 }
 .step-up__error {
-  color: var(--danger, #e66767) !important;
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--accent-red) !important;
 }
 </style>

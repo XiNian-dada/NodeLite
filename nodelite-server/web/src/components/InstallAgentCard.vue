@@ -258,29 +258,8 @@ async function copyCommand(): Promise<void> {
   padding: 8px 10px;
   font: inherit;
 }
-.btn {
+.install-form > .btn {
   align-self: flex-start;
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  background: var(--bg-card-soft);
-  color: var(--text-secondary);
-  padding: 8px 14px;
-  font: inherit;
-}
-.btn:hover:not([disabled]) {
-  color: var(--text-primary);
-}
-.btn--primary {
-  border-color: var(--accent-blue);
-  background: var(--accent-blue);
-  color: #fff;
-}
-.btn--primary:hover:not([disabled]) {
-  filter: brightness(1.08);
-}
-.btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
 }
 .install-result {
   display: flex;

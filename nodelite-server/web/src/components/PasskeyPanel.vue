@@ -270,13 +270,14 @@ async function remove(): Promise<void> {
 }
 .actions {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: var(--actions-gap, 10px);
 }
 .btn {
   align-self: flex-start;
   border: 1px solid var(--border-soft);
-  border-radius: 10px;
-  padding: 8px 14px;
+  border-radius: var(--btn-radius, 8px);
+  padding: var(--btn-padding, 6px 14px);
   color: var(--text-secondary);
   background: var(--bg-card-soft);
   font: inherit;

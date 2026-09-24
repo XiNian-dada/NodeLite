@@ -411,16 +411,17 @@ const {
 }
 .location-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--actions-gap, 10px);
 }
 .btn {
   align-self: flex-start;
   background: var(--bg-card-soft);
   color: var(--text-secondary);
   border: 1px solid var(--border-soft);
-  border-radius: 10px;
-  padding: 8px 14px;
+  border-radius: var(--btn-radius, 8px);
+  padding: var(--btn-padding, 6px 14px);
   font: inherit;
 }
 .btn--primary {
@@ -429,7 +430,7 @@ const {
   border-color: transparent;
 }
 .btn:disabled {
-  opacity: 0.6;
+  opacity: 0.55;
   cursor: not-allowed;
 }
 @media (max-width: 720px) {
