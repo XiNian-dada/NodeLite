@@ -86,6 +86,16 @@ describe('AppLayout', () => {
     expect(wrapper.find('[data-test="slot-body"]').text()).toBe('Body');
   });
 
+  it('renders powered by NodeLite footer with github link', async () => {
+    const wrapper = await mountLayout();
+    const footer = wrapper.find('[data-test="app-footer"]');
+    expect(footer.exists()).toBe(true);
+    const link = footer.find('[data-test="footer-brand-link"]');
+    expect(link.exists()).toBe(true);
+    expect(link.attributes('href')).toBe('https://github.com/XiNian-dada/NodeLite');
+    expect(link.text()).toContain('NodeLite');
+  });
+
   it('renders DB-IP attribution only when the DB-IP provider is enabled', async () => {
     const wrapper = await mountLayout();
     expect(wrapper.find('.geoip-attribution').exists()).toBe(false);
