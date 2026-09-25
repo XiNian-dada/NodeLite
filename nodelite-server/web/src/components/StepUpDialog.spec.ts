@@ -41,6 +41,7 @@ const dictionary = {
 async function mountDialog(
   twoFactor: boolean,
   passkeys = twoFactor ? [{ id: 'one', label: 'Mac', created_at: '2026-01-01' }] : [],
+  settingsError = false,
 ) {
   __resetI18nForTest();
   vi.stubGlobal(
@@ -52,7 +53,8 @@ async function mountDialog(
   const settings = makeSettings();
   settings.auth.two_factor_enabled = twoFactor;
   settings.auth.passkeys = passkeys;
-  vi.mocked(apiClient.settings).mockResolvedValue(settings);
+  if (settingsError) vi.mocked(apiClient.settings).mockRejectedValue(new Error('unavailable'));
+  else vi.mocked(apiClient.settings).mockResolvedValue(settings);
   const wrapper = mount(StepUpDialog, {
     global: {
       plugins: [getI18n()],
@@ -109,6 +111,15 @@ describe('StepUpDialog', () => {
     await wrapper.find('form').trigger('submit');
     await flushPromises();
     expect(apiClient.confirmSettings).toHaveBeenCalledWith({ current_password: 'secret' });
+    wrapper.unmount();
+  });
+
+  it('keeps cancellation available when account settings fail to load', async () => {
+    const wrapper = await mountDialog(false, [], true);
+    expect(wrapper.find('[role="alert"]').text()).toContain('unavailable');
+    expect(wrapper.find('[data-test="step-up-confirm"]').exists()).toBe(false);
+    await wrapper.find('.step-up__actions button').trigger('click');
+    expect(finishStepUp).toHaveBeenCalledWith(false);
     wrapper.unmount();
   });
 });

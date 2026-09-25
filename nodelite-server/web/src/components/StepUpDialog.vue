@@ -9,6 +9,7 @@ import NativeDialog from './NativeDialog.vue';
 
 const { t } = useI18n();
 const titleId = useId();
+const formId = useId();
 const auth = ref<SettingsAuth | null>(null);
 const code = ref('');
 const password = ref('');
@@ -63,7 +64,7 @@ async function confirmPasskey(): Promise<void> {
     <section class="step-up__panel" data-test="step-up-dialog">
       <h2 :id="titleId">{{ t('settings.confirm.title') }}</h2>
       <p>{{ t('settings.confirm.note') }}</p>
-      <form v-if="auth" @submit.prevent="confirmCode">
+      <form v-if="auth" :id="formId" @submit.prevent="confirmCode">
         <label>
           <span>{{
             auth.two_factor_enabled
@@ -108,18 +109,23 @@ async function confirmPasskey(): Promise<void> {
             {{ t('settings.confirm.passkey') }}
           </button>
         </div>
-
-        <p v-if="error" class="step-up__error" role="alert">{{ error }}</p>
-
-        <div class="actions step-up__actions">
-          <button type="button" class="btn" :disabled="busy" @click="cancel">
-            {{ t('settings.passkeys.cancel') }}
-          </button>
-          <button type="submit" class="btn btn--primary" :disabled="busy" data-test="step-up-confirm">
-            {{ t('settings.confirm.confirm') }}
-          </button>
-        </div>
       </form>
+      <p v-if="error" class="step-up__error" role="alert">{{ error }}</p>
+      <div class="actions step-up__actions">
+        <button type="button" class="btn" :disabled="busy" @click="cancel">
+          {{ t('settings.passkeys.cancel') }}
+        </button>
+        <button
+          v-if="auth"
+          type="submit"
+          :form="formId"
+          class="btn btn--primary"
+          :disabled="busy"
+          data-test="step-up-confirm"
+        >
+          {{ t('settings.confirm.confirm') }}
+        </button>
+      </div>
     </section>
   </NativeDialog>
 </template>
