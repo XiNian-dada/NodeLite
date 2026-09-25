@@ -263,7 +263,7 @@ watch(
   padding: 16px 16px 0;
   display: flex;
   flex-direction: column;
-  min-height: 282px;
+  min-height: var(--node-card-height, 370px);
   transition:
     transform 160ms ease,
     border-color 160ms ease;
@@ -351,6 +351,7 @@ watch(
   background: var(--accent-red-soft);
 }
 .node-metrics {
+  flex-shrink: 0;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   border: 1px solid var(--border-soft);
@@ -452,8 +453,9 @@ watch(
   white-space: nowrap;
 }
 .node-spark {
+  flex-shrink: 0;
   height: 58px;
-  margin: 8px -16px -2px;
+  margin: 8px -16px 0;
   position: relative;
 }
 .node-spark svg {

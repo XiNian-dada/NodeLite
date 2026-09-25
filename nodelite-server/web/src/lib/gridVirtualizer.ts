@@ -1,4 +1,4 @@
-export const NODE_CARD_HEIGHT = 282;
+export const NODE_CARD_HEIGHT = 370;
 export const NODE_GRID_GAP = 14;
 export const NODE_GRID_MIN_COLUMN_WIDTH = 320;
 export const NODE_GRID_OVERSCAN_ROWS = 2;
