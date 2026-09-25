@@ -87,23 +87,32 @@ async function save(): Promise<void> {
                 <SmtpChannelCard v-model="draft.smtp" />
                 <WebhookChannelCard v-model="draft.webhook" />
               </div>
-              <div
+              <button
                 v-show="!deliveryOpen"
+                type="button"
                 class="section-summary-pill"
                 data-test="delivery-collapsed-summary"
                 @click="deliveryOpen = true"
               >
                 <span class="summary-item">
                   <span class="summary-label">SMTP:</span>
-                  <span class="summary-val">{{ draft.smtp.enabled ? (draft.smtp.host || t('alerts.rules.enabled')) : t('settings.disabled') }}</span>
+                  <span class="summary-val">{{
+                    draft.smtp.enabled
+                      ? draft.smtp.host || t('alerts.rules.enabled')
+                      : t('settings.disabled')
+                  }}</span>
                 </span>
                 <span class="summary-divider">·</span>
                 <span class="summary-item">
                   <span class="summary-label">Webhook:</span>
-                  <span class="summary-val">{{ draft.webhook.enabled ? (draft.webhook.url || t('alerts.rules.enabled')) : t('settings.disabled') }}</span>
+                  <span class="summary-val">{{
+                    draft.webhook.enabled
+                      ? draft.webhook.url || t('alerts.rules.enabled')
+                      : t('settings.disabled')
+                  }}</span>
                 </span>
                 <span class="summary-expand-hint">{{ t('common.expand') }}</span>
-              </div>
+              </button>
             </section>
 
             <section class="alerts-section" data-test="alerts-inspection-section">
@@ -124,18 +133,23 @@ async function save(): Promise<void> {
               <div v-show="inspectionOpen">
                 <InspectionCard v-model="draft.inspection" />
               </div>
-              <div
+              <button
                 v-show="!inspectionOpen"
+                type="button"
                 class="section-summary-pill"
                 data-test="inspection-collapsed-summary"
                 @click="inspectionOpen = true"
               >
                 <span class="summary-item">
                   <span class="summary-label">{{ t('alerts.inspection.title') }}:</span>
-                  <span class="summary-val">{{ draft.inspection.enabled ? `${draft.inspection.local_time || '09:00'} · ${draft.inspection.lookback_hours || 24}h` : t('settings.disabled') }}</span>
+                  <span class="summary-val">{{
+                    draft.inspection.enabled
+                      ? `${draft.inspection.local_time || '09:00'} · ${draft.inspection.lookback_hours || 24}h`
+                      : t('settings.disabled')
+                  }}</span>
                 </span>
                 <span class="summary-expand-hint">{{ t('common.expand') }}</span>
-              </div>
+              </button>
             </section>
 
             <RuleList v-model="draft.rules" />
@@ -218,12 +232,15 @@ async function save(): Promise<void> {
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
   padding: 10px 14px;
   background: var(--bg-card);
   border: 1px dashed var(--border-soft);
   border-radius: var(--radius-md);
+  font: inherit;
   font-size: 13px;
   color: var(--text-muted);
+  text-align: left;
   cursor: pointer;
   transition:
     background-color 0.15s ease,
@@ -232,6 +249,10 @@ async function save(): Promise<void> {
 .section-summary-pill:hover {
   background: var(--bg-card-soft);
   border-color: var(--border-strong);
+}
+.section-summary-pill:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
 }
 .summary-item {
   display: inline-flex;

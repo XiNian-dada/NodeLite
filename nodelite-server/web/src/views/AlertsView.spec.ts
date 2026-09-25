@@ -138,7 +138,9 @@ describe('AlertsView', () => {
   it('surfaces the server message when a save is rejected', async () => {
     const { ApiError } = await import('@/api/client');
     mockSave.mockReset();
-    mockSave.mockRejectedValueOnce(new ApiError(400, JSON.stringify({ ok: false, message: 'bad code' })));
+    mockSave.mockRejectedValueOnce(
+      new ApiError(400, JSON.stringify({ ok: false, message: 'bad code' })),
+    );
     const wrapper = await mountView();
     await wrapper.find('[data-test="alerts-save"]').trigger('click');
     await flushPromises();
@@ -152,18 +154,30 @@ describe('AlertsView', () => {
     const wrapper = await mountView();
     const deliveryToggle = wrapper.find('[data-test="delivery-toggle"]');
     expect(deliveryToggle.text()).toBe('Collapse');
-    expect(wrapper.find('[data-test="delivery-collapsed-summary"]').attributes('style')).toContain('display: none');
+    expect(wrapper.find('[data-test="delivery-collapsed-summary"]').attributes('style')).toContain(
+      'display: none',
+    );
 
     await deliveryToggle.trigger('click');
     expect(deliveryToggle.text()).toBe('Expand');
-    expect(wrapper.find('[data-test="delivery-collapsed-summary"]').attributes('style') || '').not.toContain('display: none');
+    const deliverySummary = wrapper.find('[data-test="delivery-collapsed-summary"]');
+    expect(deliverySummary.attributes('style') || '').not.toContain('display: none');
+    expect(deliverySummary.element.tagName).toBe('BUTTON');
+    await deliverySummary.trigger('click');
+    expect(deliveryToggle.text()).toBe('Collapse');
 
     const inspectionToggle = wrapper.find('[data-test="inspection-toggle"]');
     expect(inspectionToggle.text()).toBe('Collapse');
-    expect(wrapper.find('[data-test="inspection-collapsed-summary"]').attributes('style')).toContain('display: none');
+    expect(
+      wrapper.find('[data-test="inspection-collapsed-summary"]').attributes('style'),
+    ).toContain('display: none');
 
     await inspectionToggle.trigger('click');
     expect(inspectionToggle.text()).toBe('Expand');
-    expect(wrapper.find('[data-test="inspection-collapsed-summary"]').attributes('style') || '').not.toContain('display: none');
+    const inspectionSummary = wrapper.find('[data-test="inspection-collapsed-summary"]');
+    expect(inspectionSummary.attributes('style') || '').not.toContain('display: none');
+    expect(inspectionSummary.element.tagName).toBe('BUTTON');
+    await inspectionSummary.trigger('click');
+    expect(inspectionToggle.text()).toBe('Collapse');
   });
 });
