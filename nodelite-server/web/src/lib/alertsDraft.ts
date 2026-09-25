@@ -60,7 +60,7 @@ export interface AlertsDraft {
 }
 
 let ruleSeq = 0;
-function nextSeq(): number {
+export function nextSeq(): number {
   ruleSeq += 1;
   return ruleSeq;
 }

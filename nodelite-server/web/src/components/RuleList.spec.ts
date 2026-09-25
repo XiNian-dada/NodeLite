@@ -14,6 +14,21 @@ const FAKE_DICT = {
     'alerts.rules.collapse_all': 'Collapse all',
     'alerts.rules.expand_all': 'Expand all',
     'alerts.rules.empty': 'No alert rules yet.',
+    'alerts.rules.presets.title': 'Recommended Templates',
+    'alerts.rules.presets.subtitle': 'Quickly add standard alert rules with sensible thresholds and cooldowns.',
+    'alerts.rules.presets.add_from_preset': 'Add from template',
+    'alerts.rules.presets.add_blank': 'Add custom rule',
+    'alerts.rules.presets.add': 'Add template',
+    'alerts.rules.preset.offline.name': 'Node Offline',
+    'alerts.rules.preset.offline.desc': 'Alert when node is disconnected for > 5 min',
+    'alerts.rules.preset.latency.name': 'High Latency',
+    'alerts.rules.preset.latency.desc': 'Alert when latency exceeds 250 ms',
+    'alerts.rules.preset.cpu.name': 'High CPU Load',
+    'alerts.rules.preset.cpu.desc': 'Alert when CPU usage exceeds 90%',
+    'alerts.rules.preset.memory.name': 'High Memory Usage',
+    'alerts.rules.preset.memory.desc': 'Alert when RAM usage exceeds 90%',
+    'alerts.rules.preset.disk.name': 'High Disk Usage',
+    'alerts.rules.preset.disk.desc': 'Alert when disk partition usage exceeds 85%',
     // keys the nested RuleEditorCard renders
     'alerts.rules.name': 'Rule name',
     'alerts.rules.enabled': 'Enabled',
@@ -36,6 +51,7 @@ const FAKE_DICT = {
     'alerts.metric.disk': 'Disk',
     'alerts.metric.latency': 'Latency',
     'alerts.metric.offline': 'Offline',
+    'alerts.metric.traffic_usage': 'Traffic',
     'alerts.comparator.gt': '>',
     'alerts.comparator.lt': '<',
     'alerts.severity.warning': 'Warning',
@@ -81,11 +97,13 @@ describe('RuleList', () => {
     expect(wrapper.find('[data-test="rule-list-empty"]').exists()).toBe(false);
   });
 
-  it('shows the empty state when there are no rules', () => {
+  it('shows the empty state with presets when there are no rules', () => {
     const rules = reactive<RuleDraft[]>([]);
     const wrapper = mountList(rules);
     expect(wrapper.find('[data-test="rule-list-empty"]').exists()).toBe(true);
     expect(wrapper.findAll('[data-test="rule-card"]')).toHaveLength(0);
+    expect(wrapper.find('[data-test="preset-card-offline"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="preset-card-latency"]').exists()).toBe(true);
   });
 
   it('appends a blank rule on add', async () => {
@@ -94,6 +112,35 @@ describe('RuleList', () => {
     await wrapper.find('[data-test="rule-add"]').trigger('click');
     expect(rules).toHaveLength(1);
     expect(wrapper.findAll('[data-test="rule-card"]')).toHaveLength(1);
+  });
+
+  it('adds a rule from preset card in empty state', async () => {
+    const rules = reactive<RuleDraft[]>([]);
+    const wrapper = mountList(rules);
+    await wrapper.find('[data-test="preset-add-offline"]').trigger('click');
+    expect(rules).toHaveLength(1);
+    expect(rules[0]?.metric).toBe('offline_minutes');
+    expect(rules[0]?.threshold).toBe(5);
+    expect(rules[0]?.name).toBe('Node Offline');
+    expect(wrapper.findAll('[data-test="rule-card"]')).toHaveLength(1);
+  });
+
+  it('adds a rule from preset dropdown menu', async () => {
+    const rules = reactive(viewToDraft(makeAlertSettingsView()).rules);
+    const wrapper = mountList(rules);
+    expect(rules).toHaveLength(1);
+
+    // Open dropdown menu
+    await wrapper.find('[data-test="rule-add-preset-btn"]').trigger('click');
+    expect(wrapper.find('[data-test="rule-preset-menu"]').exists()).toBe(true);
+
+    // Click latency preset
+    await wrapper.find('[data-test="preset-menu-item-latency"]').trigger('click');
+    expect(rules).toHaveLength(2);
+    expect(rules[1]?.metric).toBe('latency_ms');
+    expect(rules[1]?.threshold).toBe(250);
+    expect(rules[1]?.name).toBe('High Latency');
+    expect(wrapper.find('[data-test="rule-preset-menu"]').exists()).toBe(false);
   });
 
   it('removes the rule whose card emitted remove', async () => {
