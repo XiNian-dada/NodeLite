@@ -7,7 +7,7 @@ import { messageFromError } from '@/lib/apiError';
 import { fmtBytes } from '@/lib/format';
 import NativeDialog from './NativeDialog.vue';
 
-type ConsoleStatus = 'idle' | 'waiting' | 'running' | 'error';
+type ConsoleStatus = 'idle' | 'waiting' | 'running' | 'success' | 'error';
 
 const props = defineProps<{ open: boolean }>();
 const emit = defineEmits<{ close: [] }>();
@@ -112,7 +112,16 @@ async function fetchLog(options: { reset?: boolean; silent?: boolean } = {}): Pr
 
     offset.value = Number(body.next_offset || 0);
     lastError.value = '';
-    setStatus('running', t('settings.version.console_status_running'));
+    const finished = /(?:^|\n)nodelite-update: finished exit=(\d+) at \S+\s*$/.exec(logText.value);
+    if (finished) {
+      const successful = finished[1] === '0';
+      setStatus(
+        successful ? 'success' : 'error',
+        t(`settings.version.console_status_${successful ? 'success' : 'error'}`),
+      );
+    } else {
+      setStatus('running', t('settings.version.console_status_running'));
+    }
     setMeta(
       t('settings.version.console_loaded', { size: fmtBytes(offset.value) ?? `${offset.value} B` }),
     );
@@ -179,7 +188,11 @@ defineExpose({
           <p>{{ t('settings.version.console_subtitle') }}</p>
         </div>
         <div class="update-console__actions">
-          <span class="update-console__status" :class="`update-console__status--${statusKind}`">
+          <span
+            class="update-console__status"
+            :class="`update-console__status--${statusKind}`"
+            data-test="update-console-status"
+          >
             {{ statusText }}
           </span>
           <button
@@ -285,7 +298,8 @@ defineExpose({
   border-radius: 50%;
   background: currentColor;
 }
-.update-console__status--running {
+.update-console__status--running,
+.update-console__status--success {
   color: var(--accent-green);
 }
 .update-console__status--waiting {

@@ -52,6 +52,7 @@ const FAKE_DICT = {
     'settings.version.console_status_idle': 'Idle',
     'settings.version.console_status_waiting': 'Launching',
     'settings.version.console_status_running': 'Streaming',
+    'settings.version.console_status_success': 'Completed',
     'settings.version.console_status_retrying': 'Reconnecting',
     'settings.version.console_status_error': 'Failed',
     'settings.version.console_empty': 'No update log loaded yet.',
@@ -251,4 +252,25 @@ describe('ServerUpdateCard', () => {
     expect(wrapper.find('[data-test="update-console-modal"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="update-console-log"]').text()).toContain('line one');
   });
+
+  it.each([
+    { exitCode: 0, status: 'Completed', className: 'update-console__status--success' },
+    { exitCode: 1, status: 'Failed', className: 'update-console__status--error' },
+  ])(
+    'shows the result of a finished update with exit code $exitCode',
+    async ({ exitCode, status, className }) => {
+      mockUpdateLog.mockResolvedValueOnce({
+        exists: true,
+        offset: 0,
+        next_offset: 93,
+        text: `nodelite-update: started at 2026-09-25T13:47:37Z\nnodelite-update: finished exit=${exitCode} at 2026-09-25T13:47:38Z\n`,
+      });
+      const wrapper = await mountCard();
+      await wrapper.find('[data-test="view-update-log"]').trigger('click');
+      await flushPromises();
+      const badge = wrapper.find('[data-test="update-console-status"]');
+      expect(badge.text()).toBe(status);
+      expect(badge.classes()).toContain(className);
+    },
+  );
 });
