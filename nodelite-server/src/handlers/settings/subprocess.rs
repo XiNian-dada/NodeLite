@@ -174,7 +174,8 @@ impl UpdateLauncher {
         systemd_run
             .arg("sh")
             .arg("-c")
-            .arg(command)
+            // systemd expands ${...} in ExecStart before sh sees the script.
+            .arg(command.replace('$', "$$"))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -308,10 +309,11 @@ mod tests {
             probe_timeout: Duration::from_millis(50),
         };
 
+        let command = "repository=\"${NODELITE_UPDATE_REPOSITORY%/}\"\nNODELITE_UPDATE_TAG=\"${NODELITE_UPDATE_TAG:-}\"";
         let mode = launcher
             .spawn_server_update_with_probe(
                 "nodelite-test-unit",
-                "echo update",
+                command,
                 &[
                     PathBuf::from("/opt/nodelite"),
                     PathBuf::from("/usr/local/bin"),
@@ -333,6 +335,8 @@ mod tests {
         assert!(captured.contains("--unit=nodelite-test-unit"));
         assert!(captured.contains("--property=ReadWritePaths=/opt/nodelite"));
         assert!(captured.contains("--property=ReadWritePaths=/usr/local/bin"));
+        assert!(captured.contains("repository=\"$${NODELITE_UPDATE_REPOSITORY%/}\""));
+        assert!(captured.contains("NODELITE_UPDATE_TAG=\"$${NODELITE_UPDATE_TAG:-}\""));
     }
 
     #[tokio::test]
