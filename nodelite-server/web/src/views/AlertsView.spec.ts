@@ -38,8 +38,16 @@ const FAKE_DICT = {
     'alerts.section.inspection_note': 'Inspection note',
     'alerts.channel.smtp': 'SMTP',
     'alerts.channel.webhook': 'Webhook',
+    'alerts.channel.configure': 'Configure',
+    'alerts.channel.status_configured': 'Configured',
+    'alerts.channel.status_not_configured': 'Not configured',
+    'alerts.modal.done': 'Done',
+    'alerts.inspection.schedule': 'Schedule & Window',
+    'alerts.rules.enabled': 'Enabled',
     'alerts.rules.title': 'Alert Rules',
     'alerts.rules.add': 'Add rule',
+    'alerts.rules.presets.add_from_preset': 'Add from template',
+    'alerts.rules.presets.add_blank': 'Add custom rule',
     'alerts.preview.title': 'Preview',
     'settings.password.current': 'Current password',
     'settings.security.verification_code': 'Code',
@@ -106,13 +114,19 @@ describe('AlertsView', () => {
     expect(wrapper.find('[data-test="alerts-view"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="alert-overview-card"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="alerts-save-bar"]').exists()).toBe(true);
-    expect(wrapper.find('[data-test="smtp-host"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="smtp-card"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="open-smtp-config"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="webhook-collapsed"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="webhook-url"]').exists()).toBe(false);
-    expect(wrapper.find('[data-test="inspection-lookback"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="inspection-card"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="open-inspection-config"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="rule-list"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="rule-card"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="preview-card"]').exists()).toBe(true);
+
+    // Open SMTP config modal and check field
+    await wrapper.find('[data-test="open-smtp-config"]').trigger('click');
+    expect(wrapper.find('[data-test="smtp-host"]').exists()).toBe(true);
   });
 
   it('shows an error message (not an infinite spinner) when the load fails', async () => {

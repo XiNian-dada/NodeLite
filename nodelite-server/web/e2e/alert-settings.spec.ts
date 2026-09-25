@@ -41,6 +41,7 @@ test('alert channel CRUD round-trips', async ({ page }) => {
   await waitForAppShell(page);
   await page.locator('[data-test="webhook-enabled"]').check();
   await page.locator('[data-test="webhook-url"]').fill('https://hooks.example.test/nodelite');
+  await page.locator('[data-test="webhook-modal-close"]').click();
   await page.locator('[data-test="alerts-save"]').click();
   await page.locator('[data-test="step-up-password"]').fill('pw');
   await page.locator('[data-test="step-up-confirm"]').click();
