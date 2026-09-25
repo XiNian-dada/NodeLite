@@ -70,7 +70,7 @@ const dots = computed<MapDot[]>(() => {
       left: `${x.toFixed(2)}%`,
       top: `${y.toFixed(2)}%`,
       edgeX: x > 72 ? 'right' : x < 28 ? 'left' : 'center',
-      edgeY: y < 28 ? 'bottom' : 'top',
+      edgeY: y < 48 ? 'bottom' : 'top',
       crowded: groupedDots.some(
         (other) =>
           other.id !== id &&
@@ -154,8 +154,10 @@ watch([geojson, theme], repaint);
       </div>
     </div>
     <div class="map-stage">
-      <div class="map-grid" />
-      <canvas ref="canvas" class="map-canvas" width="1200" height="600" aria-hidden="true" />
+      <div class="map-stage-bg-layer">
+        <div class="map-grid" />
+        <canvas ref="canvas" class="map-canvas" width="1200" height="600" aria-hidden="true" />
+      </div>
       <div class="map-dots" data-test="map-dots">
         <div
           v-for="dot in dots"
@@ -163,7 +165,7 @@ watch([geojson, theme], repaint);
           class="map-dot"
           :class="[dot.status, { 'map-dot--small': dot.crowded }]"
           :style="{ left: dot.left, top: dot.top }"
-          :title="dotTitle(dot)"
+          :aria-label="dotTitle(dot)"
           tabindex="0"
           data-test="map-dot"
           @pointerenter="activeDotId = dot.id"
@@ -263,7 +265,14 @@ watch([geojson, theme], repaint);
   background: linear-gradient(var(--map-stage-sheen), transparent), var(--map-stage-bg);
   border: 1px solid var(--map-stage-border);
   border-radius: 8px;
+  overflow: visible;
+}
+.map-stage-bg-layer {
+  position: absolute;
+  inset: 0;
+  border-radius: 7px;
   overflow: hidden;
+  pointer-events: none;
 }
 @media (max-width: 640px) {
   .map-stage {
@@ -350,7 +359,7 @@ watch([geojson, theme], repaint);
 }
 .map-hover-card {
   position: absolute;
-  z-index: 4;
+  z-index: 10;
   width: min(240px, calc(100% - 24px));
   padding: 12px 13px;
   color: var(--text-primary);

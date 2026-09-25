@@ -204,4 +204,43 @@ describe('NodeMap', () => {
     await nextTick();
     expect(getContext.mock.calls.length).toBeGreaterThan(callsAfterMount);
   });
+
+  it('positions hover card below the dot for northern nodes (e.g. London) to prevent clipping', async () => {
+    const wrapper = await mountWithNodes([
+      makeNode({
+        identity: { node_id: 'lon', node_label: 'OneTech', hostname: 'lon-1', tags: [] },
+        geoip_city: 'London',
+        geoip_country: 'GB',
+        geoip_latitude: 51.5074,
+        geoip_longitude: -0.1278,
+        online: true,
+      }),
+    ]);
+    const dot = wrapper.find('[data-test="map-dot"]');
+    expect(dot.attributes('aria-label')).toBe('OneTech');
+    expect(dot.attributes('title')).toBeUndefined();
+
+    await dot.trigger('pointerenter');
+    const card = wrapper.find('[data-test="map-hover-card"]');
+    expect(card.exists()).toBe(true);
+    expect(card.classes()).toContain('map-hover-card--y-bottom');
+  });
+
+  it('positions hover card above the dot for southern nodes (e.g. Sydney)', async () => {
+    const wrapper = await mountWithNodes([
+      makeNode({
+        identity: { node_id: 'syd', node_label: 'Sydney Edge', hostname: 'syd-1', tags: [] },
+        geoip_city: 'Sydney',
+        geoip_country: 'AU',
+        geoip_latitude: -33.8688,
+        geoip_longitude: 151.2093,
+        online: true,
+      }),
+    ]);
+    const dot = wrapper.find('[data-test="map-dot"]');
+    await dot.trigger('pointerenter');
+    const card = wrapper.find('[data-test="map-hover-card"]');
+    expect(card.exists()).toBe(true);
+    expect(card.classes()).toContain('map-hover-card--y-top');
+  });
 });
