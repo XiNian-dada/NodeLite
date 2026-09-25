@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="200 160 850 920" role="img" aria-labelledby="title desc">
+  <title id="title">NodeLite</title>
+  <desc id="desc">Transparent NodeLite logo for dark backgrounds: four connected nodes around a server and heartbeat, with outlined lettering.</desc>
+  <g fill="none" stroke="#d6dce6" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M545 247A286 286 0 0 0 351 441M704 247A286 286 0 0 1 898 441M350 600A286 286 0 0 0 545 798M899 600A286 286 0 0 1 704 798"/>
+    <circle cx="625" cy="235" r="43"/>
+    <circle cx="336" cy="520" r="43"/>
+    <circle cx="912" cy="520" r="43"/>
+    <circle cx="625" cy="805" r="43"/>
+    <rect x="480" y="383" width="288" height="116" rx="27"/>
+    <path d="M546 616H507A27 27 0 0 1 480 589V526A27 27 0 0 1 507 499H741A27 27 0 0 1 768 526V589A27 27 0 0 1 741 616H671M656 440H726M656 557H726"/>
+  </g>
+  <g fill="#41db64">
+    <circle cx="625" cy="235" r="32"/>
+    <circle cx="912" cy="520" r="32"/>
+    <circle cx="540" cy="440" r="15.5"/>
+  </g>
+  <g fill="#2671f9">
+    <circle cx="336" cy="520" r="32"/>
+    <circle cx="540" cy="557" r="15.5"/>
+  </g>
+  <circle cx="625" cy="805" r="32" fill="#8894a8"/>
+  <path d="M441 663H582L606 590L641 712L676 644L696 663H809" fill="none" stroke="#41db64" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="#e8ecf3" fill-rule="evenodd">
+    <path d="M237 904H257L334 1010V904H353V1042H333L256 936V1042H237Z"/>
+    <path d="M425 943C397 943 375 965 375 994S397 1044 425 1044S475 1022 475 994S453 943 425 943ZM425 960C443 960 456 975 456 994S443 1027 425 1027S394 1013 394 994S407 960 425 960Z"/>
+    <path d="M568 898H587V1042H568V1028C559 1039 548 1044 535 1044C508 1044 489 1023 489 994S508 943 535 943C549 943 560 949 568 959ZM538 960C520 960 508 974 508 994S520 1027 538 1027S568 1013 568 994S556 960 538 960Z"/>
+    <path d="M702 998H627C629 1016 641 1027 658 1027C669 1027 678 1022 685 1013L698 1024C688 1037 674 1044 657 1044C628 1044 608 1023 608 994C608 965 628 943 656 943C685 943 702 964 702 992ZM628 983H683C680 968 670 959 656 959S632 968 628 983Z"/>
+  </g>
+  <g fill="#41db64" fill-rule="evenodd">
+    <path d="M727 904H747V1023H813V1042H727Z"/>
+    <circle cx="841" cy="914" r="13"/>
+    <path d="M831 945H851V1042H831ZM887 916H906V945H931V962H906V1011C906 1022 910 1027 920 1027C924 1027 928 1026 931 1025V1041C926 1043 921 1044 915 1044C896 1044 887 1034 887 1014V962H869V945H887Z"/>
+    <path d="M1037 998H962C964 1016 976 1027 993 1027C1004 1027 1013 1022 1020 1013L1033 1024C1023 1037 1009 1044 992 1044C963 1044 943 1023 943 994C943 965 963 943 991 943C1020 943 1037 964 1037 992ZM963 983H1018C1015 968 1005 959 991 959S967 968 963 983Z"/>
+  </g>
+</svg>

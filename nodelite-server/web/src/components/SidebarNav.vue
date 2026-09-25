@@ -151,7 +151,7 @@ const route = useRoute();
   background-image: var(--brand-logo);
   background-position: center;
   background-repeat: no-repeat;
-  background-size: 66px 66px;
+  background-size: 54px 54px;
   margin-bottom: 8px;
 }
 .nav-button {

@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="preload" as="image" href="/assets/brand-logo-dark.png" />
-    <link rel="preload" as="image" href="/assets/brand-logo-light.png" />
+    <link rel="icon" type="image/svg+xml" href="/assets/brand-icon-light.svg" media="(prefers-color-scheme: light)" />
+    <link rel="icon" type="image/svg+xml" href="/assets/brand-icon-dark.svg" media="(prefers-color-scheme: dark)" />
     <title>NodeLite 2FA</title>
     <script>
       (function () {
@@ -19,7 +19,7 @@
     <style>
       :root {
         color-scheme: dark;
-        --brand-logo: url('/assets/brand-logo-dark.png');
+        --brand-logo: url('/assets/brand-logo-dark.svg');
         --bg-app: #000000;
         --bg-card: #080808;
         --bg-card-soft: #101010;
@@ -43,7 +43,7 @@
       }
       :root[data-theme='light'] {
         color-scheme: light;
-        --brand-logo: url('/assets/brand-logo-light.png');
+        --brand-logo: url('/assets/brand-logo-light.svg');
         --bg-app: #f5f5f5;
         --bg-card: #ffffff;
         --bg-card-soft: #f7f7f7;
@@ -93,9 +93,9 @@
         min-width: 0;
       }
       .brand-logo {
-        width: 172px;
-        height: 44px;
-        margin-bottom: 32px;
+        width: 112px;
+        height: 112px;
+        margin-bottom: 24px;
         background: var(--brand-logo) left center / contain no-repeat;
       }
       .brand-panel h1 {

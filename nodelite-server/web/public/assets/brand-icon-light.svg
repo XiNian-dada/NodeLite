@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="272 168 704 704" role="img" aria-labelledby="title desc">
+  <title id="title">NodeLite icon</title>
+  <desc id="desc">Transparent NodeLite icon for light backgrounds: four connected nodes around a server and heartbeat.</desc>
+  <g fill="none" stroke="#94a3b8" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M545 247A286 286 0 0 0 351 441M704 247A286 286 0 0 1 898 441M350 600A286 286 0 0 0 545 798M899 600A286 286 0 0 1 704 798"/>
+    <circle cx="625" cy="235" r="43"/>
+    <circle cx="336" cy="520" r="43"/>
+    <circle cx="912" cy="520" r="43"/>
+    <circle cx="625" cy="805" r="43"/>
+    <rect x="480" y="383" width="288" height="116" rx="27"/>
+    <path d="M546 616H507A27 27 0 0 1 480 589V526A27 27 0 0 1 507 499H741A27 27 0 0 1 768 526V589A27 27 0 0 1 741 616H671M656 440H726M656 557H726"/>
+  </g>
+  <g fill="#39b982">
+    <circle cx="625" cy="235" r="32"/>
+    <circle cx="912" cy="520" r="32"/>
+    <circle cx="540" cy="440" r="15.5"/>
+  </g>
+  <g fill="#4b7eed">
+    <circle cx="336" cy="520" r="32"/>
+    <circle cx="540" cy="557" r="15.5"/>
+  </g>
+  <circle cx="625" cy="805" r="32" fill="#c6cfdb"/>
+  <path d="M441 663H582L606 590L641 712L676 644L696 663H809" fill="none" stroke="#39b982" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
