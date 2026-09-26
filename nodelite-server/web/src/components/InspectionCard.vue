@@ -24,7 +24,6 @@ const summary = computed(() => {
   <article class="panel channel-card" data-test="inspection-card">
     <header class="card-head">
       <div class="card-title-group">
-        <span class="channel-icon">📋</span>
         <div>
           <h2 class="card-title">{{ t('alerts.inspection.title') }}</h2>
           <span class="status-badge" :class="inspection.enabled ? 'status-badge--active' : 'status-badge--disabled'">
@@ -61,7 +60,7 @@ const summary = computed(() => {
           data-test="open-inspection-config"
           @click="showModal = true"
         >
-          ⚙️ {{ t('alerts.channel.configure') }}
+          {{ t('alerts.channel.configure') }}
         </button>
       </div>
     </div>
@@ -71,7 +70,6 @@ const summary = computed(() => {
       <div class="modal-panel" data-test="inspection-modal">
         <header class="modal-head">
           <div class="modal-title-wrap">
-            <span class="modal-icon">📋</span>
             <div>
               <h2 :id="titleId" class="modal-title">{{ t('alerts.inspection.title') }}</h2>
               <p class="modal-subtitle">{{ t('alerts.inspection.thresholds') }}</p>

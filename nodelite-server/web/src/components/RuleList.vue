@@ -120,7 +120,7 @@ function update(index: number, next: RuleDraft): void {
               :data-test="`preset-menu-item-${preset.key}`"
               @click="addPreset(preset.key)"
             >
-              <span class="preset-menu-icon">{{ preset.icon }}</span>
+              <span class="preset-tag-pill">{{ preset.tag }}</span>
               <div class="preset-menu-content">
                 <span class="preset-menu-title">{{ t(preset.nameKey) }}</span>
                 <span class="preset-menu-desc">{{ t(preset.descKey) }}</span>
@@ -154,7 +154,7 @@ function update(index: number, next: RuleDraft): void {
             @keydown.space.prevent="addPreset(preset.key)"
           >
             <div class="preset-card-top">
-              <span class="preset-card-icon">{{ preset.icon }}</span>
+              <span class="preset-tag-pill">{{ preset.tag }}</span>
               <span class="preset-card-name">{{ t(preset.nameKey) }}</span>
             </div>
             <p class="preset-card-desc">{{ t(preset.descKey) }}</p>
@@ -262,9 +262,17 @@ function update(index: number, next: RuleDraft): void {
   background: var(--bg-elevated);
 }
 
-.preset-menu-icon {
-  font-size: 16px;
-  line-height: 1.2;
+.preset-tag-pill {
+  font-family: monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-card-soft);
+  color: var(--accent-blue);
+  border: 1px solid var(--border-soft);
+  flex-shrink: 0;
 }
 
 .preset-menu-content {
@@ -341,10 +349,6 @@ function update(index: number, next: RuleDraft): void {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.preset-card-icon {
-  font-size: 18px;
 }
 
 .preset-card-name {

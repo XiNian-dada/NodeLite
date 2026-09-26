@@ -32,7 +32,6 @@ watch(
   <article class="panel channel-card" data-test="webhook-card">
     <header class="card-head">
       <div class="card-title-group">
-        <span class="channel-icon">🔗</span>
         <div>
           <h2 class="card-title">{{ t('alerts.webhook.title') }}</h2>
           <span class="status-badge" :class="webhook.enabled ? 'status-badge--active' : 'status-badge--disabled'">
@@ -65,7 +64,7 @@ watch(
           data-test="open-webhook-config"
           @click="showModal = true"
         >
-          ⚙️ {{ t('alerts.channel.configure') }}
+          {{ t('alerts.channel.configure') }}
         </button>
       </div>
     </div>
@@ -75,7 +74,6 @@ watch(
       <div class="modal-panel" data-test="webhook-modal">
         <header class="modal-head">
           <div class="modal-title-wrap">
-            <span class="modal-icon">🔗</span>
             <div>
               <h2 :id="titleId" class="modal-title">{{ t('alerts.webhook.title') }}</h2>
               <p class="modal-subtitle">{{ t('alerts.details') }}</p>

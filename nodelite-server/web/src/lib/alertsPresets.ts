@@ -4,7 +4,7 @@ export interface AlertRulePreset {
   key: string;
   nameKey: string;
   descKey: string;
-  icon: string;
+  tag: string;
   draft: Omit<RuleDraft, 'uid' | 'id' | 'name'> & { idPrefix: string };
 }
 
@@ -13,7 +13,7 @@ export const ALERT_RULE_PRESETS: AlertRulePreset[] = [
     key: 'offline',
     nameKey: 'alerts.rules.preset.offline.name',
     descKey: 'alerts.rules.preset.offline.desc',
-    icon: '🔌',
+    tag: 'OFFLINE',
     draft: {
       idPrefix: 'offline',
       enabled: true,
@@ -34,7 +34,7 @@ export const ALERT_RULE_PRESETS: AlertRulePreset[] = [
     key: 'latency',
     nameKey: 'alerts.rules.preset.latency.name',
     descKey: 'alerts.rules.preset.latency.desc',
-    icon: '⚡',
+    tag: 'LATENCY',
     draft: {
       idPrefix: 'latency',
       enabled: true,
@@ -55,7 +55,7 @@ export const ALERT_RULE_PRESETS: AlertRulePreset[] = [
     key: 'cpu',
     nameKey: 'alerts.rules.preset.cpu.name',
     descKey: 'alerts.rules.preset.cpu.desc',
-    icon: '🔥',
+    tag: 'CPU',
     draft: {
       idPrefix: 'high-cpu',
       enabled: true,
@@ -76,7 +76,7 @@ export const ALERT_RULE_PRESETS: AlertRulePreset[] = [
     key: 'memory',
     nameKey: 'alerts.rules.preset.memory.name',
     descKey: 'alerts.rules.preset.memory.desc',
-    icon: '🧠',
+    tag: 'RAM',
     draft: {
       idPrefix: 'high-memory',
       enabled: true,
@@ -97,7 +97,7 @@ export const ALERT_RULE_PRESETS: AlertRulePreset[] = [
     key: 'disk',
     nameKey: 'alerts.rules.preset.disk.name',
     descKey: 'alerts.rules.preset.disk.desc',
-    icon: '💾',
+    tag: 'DISK',
     draft: {
       idPrefix: 'high-disk',
       enabled: true,
