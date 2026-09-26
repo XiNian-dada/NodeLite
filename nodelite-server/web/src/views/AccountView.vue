@@ -55,15 +55,12 @@ function logout(): void {
           <div class="account__grid">
             <aside class="account__sidebar">
               <article class="panel security-card" data-test="security-card">
-                <div class="user-profile-header">
-                  <div class="user-avatar">
-                    <span class="user-avatar-icon">🛡️</span>
-                  </div>
-                  <h2 class="user-name">{{ auth.username || t('settings.security.title') }}</h2>
-                  <span class="user-role-badge">
-                    {{ auth.enabled ? t('common.online') : t('common.offline') }}
-                  </span>
+                <div class="product-header">
+                  <div class="product-brand" role="img" aria-label="NodeLite" />
+                  <span class="product-badge">{{ t('account.about.badge') }}</span>
                 </div>
+
+                <p class="product-desc">{{ t('account.about.desc') }}</p>
 
                 <div class="profile-divider" />
 
@@ -74,10 +71,6 @@ function logout(): void {
                       <span class="dot" :class="auth.enabled ? 'dot--active' : 'dot--inactive'" />
                       {{ auth.enabled ? t('common.online') : t('common.offline') }}
                     </dd>
-                  </div>
-                  <div class="kv__row">
-                    <dt>{{ t('settings.security.username') }}</dt>
-                    <dd class="font-mono">{{ auth.username || t('common.not_available') }}</dd>
                   </div>
                   <div class="kv__row">
                     <dt>{{ t('settings.security.2fa') }}</dt>
@@ -103,7 +96,19 @@ function logout(): void {
 
                 <div class="actions">
                   <button type="button" class="btn btn--danger btn--full" data-test="account-logout" @click="logout">
-                    <span class="btn-icon">⎋</span>
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      class="btn-svg"
+                    >
+                      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                      <polyline points="16 17 21 12 16 7" />
+                      <line x1="21" y1="12" x2="9" y2="12" />
+                    </svg>
                     {{ t('settings.security.logout') }}
                   </button>
                 </div>
@@ -111,9 +116,9 @@ function logout(): void {
             </aside>
 
             <div class="account__stack">
+              <ChangePasswordCard />
               <TwoFactorPanel :auth="auth" @changed="store.load()" />
               <PasskeyPanel :auth="auth" @changed="store.load()" />
-              <ChangePasswordCard />
             </div>
           </div>
         </template>
@@ -169,48 +174,45 @@ function logout(): void {
   display: flex;
   flex-direction: column;
 }
-.user-profile-header {
+.product-header {
   display: flex;
   flex-direction: column;
   align-items: center;
-  text-align: center;
+  gap: 10px;
   padding: 6px 0 10px;
 }
-.user-avatar {
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
-  background: var(--bg-card-soft);
-  border: 2px solid var(--border-soft);
-  display: flex;
+.product-brand {
+  width: 90px;
+  height: 98px;
+  background-image: var(--brand-logo-full);
+  background-repeat: no-repeat;
+  background-size: contain;
+  background-position: center;
+}
+.product-badge {
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  margin-bottom: 12px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
-}
-.user-avatar-icon {
-  font-size: 30px;
-}
-.user-name {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-.user-role-badge {
-  display: inline-block;
-  margin-top: 6px;
   font-size: 11px;
-  font-weight: 500;
-  padding: 2px 8px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 2px 10px;
   border-radius: var(--radius-full);
   background: var(--accent-green-soft);
   color: var(--accent-green);
+  border: 1px solid rgba(37, 228, 135, 0.2);
+}
+.product-desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 0 4px;
 }
 .profile-divider {
   height: 1px;
   background: var(--border-soft);
-  margin: 14px 0 16px;
+  margin: 16px 0 16px;
 }
 .kv {
   margin: 0 0 20px;
@@ -233,9 +235,6 @@ function logout(): void {
   color: var(--text-primary);
   display: flex;
   align-items: center;
-}
-.font-mono {
-  font-family: monospace;
 }
 .status-indicator {
   display: flex;
@@ -282,7 +281,7 @@ function logout(): void {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
   border-radius: var(--btn-radius, 8px);
   padding: var(--btn-padding, 8px 14px);
   font: inherit;
@@ -303,8 +302,10 @@ function logout(): void {
   background: rgba(255, 77, 109, 0.25);
   border-color: var(--accent-red);
 }
-.btn-icon {
-  font-size: 14px;
+.btn-svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 .page-heading {
   margin: 0;

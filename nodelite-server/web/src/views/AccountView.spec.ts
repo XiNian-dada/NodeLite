@@ -20,6 +20,9 @@ const FAKE_DICT = {
   en: {
     'account.heading': 'Account',
     'account.subtitle': 'sub',
+    'account.about.title': 'About',
+    'account.about.badge': 'badge',
+    'account.about.desc': 'desc',
     'common.waiting_for_data': 'Waiting…',
     'common.language': 'Language',
     'common.theme_toggle': 'Toggle theme',
