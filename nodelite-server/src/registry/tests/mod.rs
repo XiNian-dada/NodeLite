@@ -1,3 +1,5 @@
+//! 注册表集成测试集合模块。
+
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

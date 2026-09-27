@@ -1,3 +1,7 @@
+//! 前端页面与静态资产交付路由模块。
+//!
+//! 将单页应用（SPA）入口、2FA 独立验证页与前端构建产物（CSS/JS/字体/图片）接入 Axum 路由。
+
 use axum::extract::Path as AxumPath;
 use axum::response::Response;
 

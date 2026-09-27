@@ -1,4 +1,4 @@
-//! Count a delivery until its result is consumed, including queued and cancelled work.
+//! 告警投递指标统计模块：追踪排队中、活跃中以及已完成的投递任务生命周期。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

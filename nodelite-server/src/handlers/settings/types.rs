@@ -1,3 +1,7 @@
+//! 系统设置请求与响应数据结构定义模块。
+//!
+//! 定义安全配置脱敏视图、告警规则设置、密码修改与安装请求等序列化结构。
+
 use chrono::{DateTime, Utc};
 use nodelite_proto::{
     AlertChannel, AlertComparator, AlertMetric, AlertScopeMode, AlertSeverity, AlertSmtpTransport,

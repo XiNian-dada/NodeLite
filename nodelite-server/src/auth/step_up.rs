@@ -1,4 +1,4 @@
-//! Tracks a brief confirmation grant on existing browser sessions.
+//! 敏感操作临时提权确认（Step-up Authentication）授权状态追踪模块。
 
 use std::time::{Duration, Instant};
 

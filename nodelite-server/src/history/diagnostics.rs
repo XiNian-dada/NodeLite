@@ -1,4 +1,4 @@
-//! Track durable writes separately from queue admission so low-load failures remain visible.
+//! 历史数据持久化写入诊断模块：独立追踪落盘写入与队列准入，确保低负载下的写入故障可观测。
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct HistoryWriteMetrics {

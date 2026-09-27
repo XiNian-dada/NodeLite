@@ -1,4 +1,4 @@
-//! GeoIP lookup, ipwhois online resolution, and DB-IP Lite database preparation.
+//! IP 地理位置解析模块：支持本地 DB-IP 数据库离线查询与 ipwhois 在线解析兜底。
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};

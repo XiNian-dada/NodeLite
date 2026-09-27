@@ -1,3 +1,7 @@
+//! 告警生命周期状态跟踪与冷却抑止模块。
+//!
+//! 维护已触发规则的活跃状态、抑制重复发送、管理恢复通知（Resolved）以及投递失败后的重试退避。
+
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Duration, Utc};

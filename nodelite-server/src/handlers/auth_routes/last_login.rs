@@ -108,8 +108,8 @@ fn previous_login(events: &[AuditEvent], current_id: Option<i64>) -> Option<&Aud
         let Some(current) = current else {
             return true;
         };
-        // Basic Auth browsers can open several protected requests before the new
-        // cookie arrives; those requests are one login burst, not prior logins.
+        // 浏览器在使用 Basic Auth 时，可能在新会话 cookie 到达生效前并发发出数个受保护请求；
+        // 这些请求属于同一次登录并发突发，而非真正的“上一次历史登录”。
         let same_basic_burst = current
             .details
             .get("basic_auth_only")

@@ -1,4 +1,4 @@
-//! Auth and runtime-focused library-unit tests.
+//! 认证与运行时单元测试。
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::{Arc, Barrier};

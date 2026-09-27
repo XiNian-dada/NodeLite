@@ -1,3 +1,7 @@
+//! 告警规则求值与每日巡检报告生成模块。
+//!
+//! 根据滑动窗口均值计算 CPU、内存、磁盘与延迟阈值，判定规则命中状态并汇总结算巡检报告。
+
 use chrono::{DateTime, Utc};
 use nodelite_proto::{
     AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode, InspectionConfig, NodeSnapshot,

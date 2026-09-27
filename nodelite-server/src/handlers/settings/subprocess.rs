@@ -1,9 +1,7 @@
-//! Server-update subprocess probing and launch strategy.
+//! 服务端更新子进程探测与启动策略模块。
 //!
-//! `start_server_update` needs one place that can be tested without invoking the
-//! real systemd binary. This module isolates the `systemd-run --version` probe,
-//! classifies timeout/non-zero/missing outcomes, and fails closed when the
-//! sandboxed launcher is unavailable.
+//! 隔离 `systemd-run --version` 探测逻辑，分类处理超时、非零退出码或命令缺失等情况，
+//! 在沙箱启动器不可用时安全闭环退出，便于在不调用真实 systemd 的情况下进行单元测试。
 
 use std::io;
 use std::path::{Path, PathBuf};

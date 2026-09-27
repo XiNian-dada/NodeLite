@@ -1,3 +1,5 @@
+//! NodeLite 服务端二进制主入口。
+
 use anyhow::Result;
 
 #[tokio::main]

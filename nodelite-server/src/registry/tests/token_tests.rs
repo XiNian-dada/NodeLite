@@ -1,3 +1,5 @@
+//! Argon2 Token 哈希与一次性安装令牌测试模块。
+
 use super::*;
 use proptest::prelude::*;
 

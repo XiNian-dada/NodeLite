@@ -1,3 +1,7 @@
+//! 服务端 REST API 核心路由处理模块。
+//!
+//! 提供节点列表、节点详情、历史时序采样、诊断日志、Bootstrap 前端元数据、审计日志及 Prometheus  端点。
+
 use std::path::{Path, PathBuf};
 
 use axum::Json;
@@ -225,8 +229,7 @@ pub(crate) fn process_resident_memory_bytes() -> Option<u64> {
     {
         let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
         let resident_pages = statm.split_whitespace().nth(1)?.parse::<u64>().ok()?;
-        // SAFETY: `_SC_PAGESIZE` does not use pointers; libc returns the page
-        // size by value or a non-positive error/sentinel value.
+        // SAFETY: _SC_PAGESIZE 不使用指针；libc 按值返回页大小或非正错误码。
         let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         if page_size <= 0 {
             return None;
@@ -236,8 +239,7 @@ pub(crate) fn process_resident_memory_bytes() -> Option<u64> {
 
     #[cfg(target_os = "macos")]
     {
-        // SAFETY: `getpid` has no preconditions and returns the current process
-        // id by value.
+        // SAFETY: getpid 无前置条件，按值返回当前进程 ID。
         let pid = unsafe { libc::getpid() };
         process_resident_memory_bytes_for_pid(pid)
     }
@@ -252,9 +254,7 @@ pub(crate) fn process_resident_memory_bytes() -> Option<u64> {
 fn process_resident_memory_bytes_for_pid(pid: libc::pid_t) -> Option<u64> {
     let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::zeroed();
     let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
-    // SAFETY: `info` points to writable storage for exactly one
-    // `proc_taskinfo`, and `size` matches that buffer. `proc_pidinfo` reports
-    // short/error writes via its byte-count return value, checked below.
+    // SAFETY: info 指向足够容纳一个 proc_taskinfo 的可写内存，size 与缓冲区大小匹配。proc_pidinfo 返回写入字节数。
     let status = unsafe {
         libc::proc_pidinfo(
             pid,
@@ -267,8 +267,7 @@ fn process_resident_memory_bytes_for_pid(pid: libc::pid_t) -> Option<u64> {
     if status != size {
         return None;
     }
-    // SAFETY: A full-size `proc_pidinfo` result means the kernel initialized
-    // every byte of `info`.
+    // SAFETY: proc_pidinfo 成功写入满大小，表明内核已正确初始化 info 的全部字节。
     let info = unsafe { info.assume_init() };
     Some(info.pti_resident_size)
 }

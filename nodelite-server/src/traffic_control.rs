@@ -1,4 +1,4 @@
-//! Session-scoped Agent capability reports never outlive their authenticated connection.
+//! Agent 流控能力声明管理模块：会话级能力状态生命周期绑定于已认证的 WebSocket 连接。
 
 use std::sync::Arc;
 

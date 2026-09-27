@@ -1,4 +1,4 @@
-//! Short-lived, session-bound confirmation for sensitive settings changes.
+//! 敏感设置修改的会话级短效二次确认（Step-up）状态模块。
 
 use std::net::{IpAddr, SocketAddr};
 

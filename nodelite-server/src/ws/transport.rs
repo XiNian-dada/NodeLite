@@ -1,4 +1,4 @@
-//! WebSocket transport buffer budgets shared by Agent and browser endpoints.
+//! WebSocket 传输缓冲区配额与参数调优模块（服务于 Agent 与浏览器端点）。
 
 use std::fmt::Display;
 use std::time::Duration;
@@ -12,7 +12,7 @@ const BROWSER_READ_BUFFER_BYTES: usize = 4 * 1024;
 const WRITE_BUFFER_BYTES: usize = 8 * 1024;
 const AGENT_MAX_WRITE_BUFFER_BYTES: usize = 128 * 1024;
 const BROWSER_MAX_WRITE_BUFFER_BYTES: usize = 64 * 1024 * 1024;
-/// Slow peers may apply backpressure briefly, but must not retain a session permit forever.
+/// 慢速对端可能会短暂停留背压，但绝不能无限期占用会话准入配额。
 const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy)]
@@ -29,7 +29,7 @@ struct WebSocketTransportConfig {
     max_message_bytes: usize,
 }
 
-/// Apply bounded buffers without coupling the eager read allocation to the message limit.
+/// 应用有界缓冲区，避免将急切分配的读取缓冲区与单条消息大小上限强绑定。
 pub(super) fn configure_upgrade<F>(
     ws: WebSocketUpgrade<F>,
     peer: WebSocketPeer,
@@ -45,11 +45,9 @@ pub(super) fn configure_upgrade<F>(
 
 fn websocket_config(peer: WebSocketPeer, max_message_bytes: usize) -> WebSocketTransportConfig {
     let (read_buffer_size, max_write_buffer_size) = match peer {
-        // Agent metrics can approach the 64 KiB protocol limit, but tungstenite reassembles
-        // frames across reads, so 8 KiB retains throughput without 128 KiB per connection.
+        // Agent 指标上报可接近 64 KiB 协议上限，tungstenite 跨读取分段拼装帧；8 KiB 即可保证吞吐同时避免单连接占用 128 KiB。
         WebSocketPeer::Agent => (AGENT_READ_BUFFER_BYTES, AGENT_MAX_WRITE_BUFFER_BYTES),
-        // Browsers only send a tiny application-level ping. Even 1000 max-sized node summaries
-        // serialize below 40 MiB; 64 MiB leaves room for framing and future fixed fields.
+        // 浏览器仅发送微小的心跳包；即使 1000 节点的完整摘要序列化也小于 40 MiB，64 MiB 足够容纳帧开销。
         WebSocketPeer::Browser => (BROWSER_READ_BUFFER_BYTES, BROWSER_MAX_WRITE_BUFFER_BYTES),
     };
     WebSocketTransportConfig {

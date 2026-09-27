@@ -1,3 +1,5 @@
+//! 内存节点注册与状态流转测试模块。
+
 use super::*;
 use nodelite_proto::{
     AlertChannel, AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode, AlertSeverity,

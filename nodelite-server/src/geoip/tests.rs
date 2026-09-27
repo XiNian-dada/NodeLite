@@ -1,4 +1,4 @@
-//! GeoIP provider and database behavior checked against local fixtures.
+//! 基于本地测试夹具的 GeoIP 解析器与数据库行为测试。
 
 use std::net::IpAddr;
 use std::path::PathBuf;

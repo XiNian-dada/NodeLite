@@ -1,3 +1,5 @@
+//! 审计日志测试支持模块。
+
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 

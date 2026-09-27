@@ -1,4 +1,4 @@
-//! Security-header and request-body policy tests.
+//! 安全响应头与请求体大小限制策略测试。
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
@@ -223,9 +223,8 @@ fn json_write_routes_reject_oversized_bodies() {
             );
         }
 
-        // A WebAuthn assertion can exceed the normal settings JSON cap. Its
-        // route must reach authentication validation rather than being cut off
-        // by the generic 16 KiB limit.
+        // WebAuthn 断言/凭据报文可能会超出普通设置接口的 JSON 大小上限。
+        // 其专用路由必须能够到达认证校验逻辑，而不应被通用的 16 KiB 限制提前截断。
         let passkey_body = format!(
             r#"{{"id":"{}","rawId":"AQ","type":"public-key","response":{{"authenticatorData":"AQ","clientDataJSON":"AQ","signature":"AQ"}}}}"#,
             "x".repeat(crate::startup::JSON_WRITE_BODY_LIMIT_BYTES + 1),

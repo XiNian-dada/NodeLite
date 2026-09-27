@@ -1,3 +1,5 @@
+//! 历史数据批处理写入与 WAL 同步测试模块。
+
 use super::*;
 
 fn persisted_history_point_count(db_path: &PathBuf) -> i64 {

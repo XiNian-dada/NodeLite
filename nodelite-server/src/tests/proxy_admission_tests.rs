@@ -1,4 +1,4 @@
-//! Proxy resolution and admission-control tests.
+//! 代理 IP 解析与准入控制测试。
 use nodelite_proto::config::DEFAULT_METRIC_ANOMALY_SESSION_LIMIT as METRIC_ANOMALY_SESSION_LIMIT;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};

@@ -1,3 +1,7 @@
+//! 节点身份鉴权与 Token 验证模块。
+//!
+//! 负责节点连接时的 Token 校验、Argon2 验证槽位并发控制、短期 Token 缓存及运行时节点身份校验。
+
 use std::sync::Arc;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};

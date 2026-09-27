@@ -1,3 +1,7 @@
+//! 服务端后台常驻工作线程与周期巡检调度模块。
+//!
+//! 包含超时节点死信回收（stale reaper）、注册表热重载、历史保留清理、每日巡检告警以及 GeoIP 数据库自动更新。
+
 use std::net::SocketAddr;
 use std::time::Duration;
 

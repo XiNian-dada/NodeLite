@@ -1,4 +1,4 @@
-//! Shutdown has a finite drain window even when external notification endpoints stop responding.
+//! 告警投递停机回收模块：即使外部通知端点无响应，停机也能在有限超时窗口内安全收敛。
 
 use std::time::Duration;
 
@@ -26,7 +26,7 @@ pub(super) async fn drain_delivery_dispatcher_with_timeout(
     delivery_dispatcher: JoinHandle<()>,
     timeout_duration: Duration,
 ) -> DeliveryDrainOutcome {
-    // The server's shared deadline can cancel this drain before its own timeout.
+    // 服务端全局共享的停机截止时间可能会在其自身超时前提前取消此 drain。
     let mut delivery_dispatcher = AbortOnDropHandle::new(delivery_dispatcher);
     match timeout(timeout_duration, &mut delivery_dispatcher).await {
         Ok(Ok(())) => {

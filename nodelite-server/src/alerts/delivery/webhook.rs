@@ -1,3 +1,7 @@
+//! Webhook 告警与巡检通知 HTTP 投递模块。
+//!
+//! 负责构造包含 HMAC-SHA256 签名的 JSON 告警负载，并通过带超时的 HTTP/HTTPS 管道推送到第三方系统。
+
 use std::sync::Arc;
 use std::time::Duration;
 

@@ -1,4 +1,4 @@
-//! Saturate real dispatcher channels with deterministic stalled delivery futures.
+//! 分发器满载与受阻投递并发测试。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};

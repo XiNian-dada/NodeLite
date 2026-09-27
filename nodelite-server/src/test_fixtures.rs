@@ -1,4 +1,4 @@
-//! Shared fixture data and handshake helpers for tests and the opt-in benchmark adapter.
+//! 共享测试固定资产数据与握手辅助工具模块。
 
 use std::time::Duration;
 

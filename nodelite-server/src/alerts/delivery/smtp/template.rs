@@ -1,3 +1,7 @@
+//! 告警与每日巡检邮件 MIME 模板渲染模块。
+//!
+//! 构造符合 RFC 2822 的 Multipart 邮件报文（纯文本 + 内嵌 HTML 样式与趋势图表）。
+
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use nodelite_proto::AlertSmtpConfig;
 

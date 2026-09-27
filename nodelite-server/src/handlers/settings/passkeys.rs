@@ -1,4 +1,4 @@
-//! Authenticated account settings endpoints for enrolling and revoking passkeys.
+//! 账户通行密钥（Passkey / WebAuthn）注册与注销设置路由。
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -18,7 +18,7 @@ use super::{
     settings_json_error,
 };
 
-/// Starts an enrollment ceremony after a fresh TOTP confirmation.
+/// 在完成二次密码/TOTP 确认后发起 Passkey 注册流程。
 pub(crate) async fn start_passkey_registration(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -38,7 +38,7 @@ pub(crate) async fn start_passkey_registration(
     }
 }
 
-/// Completes an enrollment ceremony that was bound to the current 2FA session.
+/// 完成绑定到当前 2FA 认证会话的 Passkey 注册仪式。
 pub(crate) async fn finish_passkey_registration(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -66,7 +66,7 @@ pub(crate) async fn finish_passkey_registration(
     }
 }
 
-/// Removes one enrolled passkey after a fresh TOTP confirmation.
+/// 在完成二次密码/TOTP 确认后注销指定的 Passkey 凭据。
 pub(crate) async fn delete_passkey(
     State(state): State<AppState>,
     Path(passkey_id): Path<Uuid>,

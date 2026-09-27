@@ -1,4 +1,4 @@
-//! Private filesystem operations shared by configuration and runtime persistence.
+//! 配置文件与运行时持久化共享的安全私有文件系统操作。
 
 use std::path::Path;
 
@@ -13,7 +13,7 @@ pub(crate) enum PrivateWriteError {
     Io(#[from] std::io::Error),
 }
 
-/// The temporary file is private from creation; only a fully synced payload replaces the target.
+/// 临时文件创建时即严格限制私有权限；只有完全 sync 刷盘的内容才会原子重命名替换目标文件。
 pub(crate) fn atomic_write_private(
     path: &Path,
     payload: &[u8],
@@ -47,8 +47,8 @@ pub(crate) fn atomic_write_private(
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    // Rename has already committed the visible contents. A durability warning
-    // must not prevent callers from applying that same content to runtime state.
+    // rename 已经原子提交了对外部可见的新文件内容。目录 fsync 的持久性告警
+    // 不应当阻断调用方将该配置或数据同步应用到内存运行时状态。
     if let Err(error) = std::fs::File::open(parent).and_then(|directory| directory.sync_all()) {
         tracing::warn!(?error, path = %path.display(), "private file committed but directory fsync failed");
     }

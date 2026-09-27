@@ -1,4 +1,4 @@
-//! Live log budgets and losses stay observable independently of cached node metrics.
+//! 诊断日志预算与丢弃指标 Prometheus 渲染模块。
 
 use super::emitter::MetricEmitter;
 use crate::agent_logs::AgentLogStats;

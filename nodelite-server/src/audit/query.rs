@@ -1,4 +1,4 @@
-//! Audit log query helpers.
+//! 审计日志分页查询与过滤辅助模块。
 
 use anyhow::anyhow;
 use chrono::{TimeZone, Utc};

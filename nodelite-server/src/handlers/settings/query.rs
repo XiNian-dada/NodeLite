@@ -1,3 +1,7 @@
+//! 系统设置状态查询路由模块。
+//!
+//! 提供运维面板基础信息（版本号、只读鉴权脱敏视图、Passkey 凭证列表、Agent 安装指引）。
+
 use std::path::Path;
 
 use axum::Json;

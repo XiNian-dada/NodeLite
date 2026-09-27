@@ -1,4 +1,4 @@
-//! Configuration writes keep disk and runtime changes in one serialized operation.
+//! 服务端配置原子修改与热重载模块：将磁盘持久化与运行时状态更新严格串行化。
 
 use anyhow::{Context, Result, anyhow, bail};
 use axum::http::StatusCode;

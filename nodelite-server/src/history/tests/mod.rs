@@ -1,4 +1,4 @@
-//! Tests for history store writer, query, and throttling behavior.
+//! 历史存储写入器、聚合查询与并发节流测试模块。
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

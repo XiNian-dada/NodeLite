@@ -1,4 +1,4 @@
-//! Audit log state machine and async lifecycle management.
+//! 安全审计日志状态机与异步生命周期管理模块。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

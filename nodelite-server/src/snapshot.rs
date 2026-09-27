@@ -1,8 +1,7 @@
 //! 节点状态磁盘快照:为了在 Server 重启后能立即展示"上一秒"的视图,
 //! 这里周期性地把 `SharedState` 的所有 `NodeStatus` 写入磁盘文件。
 //!
-//! Shared-state writers take the same lock before reading the latest view, so an
-//! older periodic write cannot overwrite a completed node deletion.
+//! 共享状态写入器在读取最新视图前持有同一个锁，防止较旧的周期快照覆盖已完成的节点删除。
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

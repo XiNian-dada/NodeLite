@@ -1,3 +1,7 @@
+//! Agent 一键安装脚本分发与安装 Bootstrap 引导路由模块。
+//!
+//! 提供客户端安装脚本下载、基于一次性 Token 的节点登记与初始 agent.toml 配置渲染。
+
 use std::net::SocketAddr;
 
 use axum::extract::{ConnectInfo, Request, State};

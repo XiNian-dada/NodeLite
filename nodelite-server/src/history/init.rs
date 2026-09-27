@@ -25,8 +25,8 @@ pub(super) fn initialize_database(
     }
 
     let mut connection = open_database_connection(db_path, true, sqlite_busy_timeout_secs)?;
-    // Schema changes and recovery must commit together so an interrupted upgrade
-    // cannot expose a new empty table while the samples remain in the old one.
+    // Schema 变更与故障恢复必须在同一个事务中原子提交，
+    // 防止升级中断时产生新的空表而旧表样本依然留存导致数据分裂。
     let transaction =
         connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     recover_interrupted_cpu_migration(&transaction)?;
@@ -76,8 +76,8 @@ fn recover_interrupted_cpu_migration(connection: &Connection) -> Result<()> {
             connection.query_row("SELECT EXISTS(SELECT 1 FROM history_points)", [], |row| {
                 row.get(0)
             })?;
-        // Both tables may contain independently collected samples. Refusing the
-        // ambiguous merge preserves them for an operator instead of losing data.
+        // 两张表中可能包含各自独立收集的监控样本。拒绝模棱两可的自动合并，
+        // 报错保留现场由运维人员排查，避免直接丢弃历史数据。
         anyhow::ensure!(
             !active_has_rows,
             "interrupted history migration: history_points and history_points_legacy_not_null_cpu both exist with active samples; recover the legacy table before starting history storage"

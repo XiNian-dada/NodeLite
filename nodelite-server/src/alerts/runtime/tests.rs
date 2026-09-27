@@ -1,3 +1,5 @@
+//! 告警运行时调度与规则触发测试模块。
+
 use std::sync::Arc;
 
 use chrono::{Duration, NaiveDate, NaiveTime, Utc};

@@ -1,4 +1,4 @@
-//! Tests for shared state caching and registry lifecycle helpers.
+//! 共享状态缓存与注册表生命周期测试。
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::PathBuf;

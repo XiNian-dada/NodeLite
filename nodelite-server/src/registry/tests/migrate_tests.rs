@@ -1,3 +1,5 @@
+//! 注册表历史数据与哈希迁移测试模块。
+
 use nodelite_proto::{MAX_NODE_IDENTITY_TEXT_BYTES, MAX_NODE_TAG_BYTES, MAX_NODE_TAGS};
 
 use super::*;

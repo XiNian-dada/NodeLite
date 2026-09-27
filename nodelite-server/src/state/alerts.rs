@@ -1,4 +1,4 @@
-//! Alert evaluation uses the same registry snapshot as the live node views.
+//! 告警评估注册表视图同步模块：使用与在线节点一致的内存快照。
 
 use chrono::{DateTime, Utc};
 

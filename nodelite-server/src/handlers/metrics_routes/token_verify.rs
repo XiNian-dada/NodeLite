@@ -1,4 +1,4 @@
-//! Prometheus rendering for Argon2 token verification pressure.
+//! Argon2 Token 验证压力与缓存指标的 Prometheus 渲染模块。
 
 use crate::registry::TokenVerifyMetrics;
 

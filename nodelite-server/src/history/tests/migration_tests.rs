@@ -1,4 +1,4 @@
-//! Interrupted migrations must either recover every sample or preserve both tables.
+//! 历史数据库断点升级恢复与数据一致性测试模块。
 
 use super::*;
 
@@ -46,7 +46,7 @@ fn history_migration_preserves_samples_and_is_idempotent() {
 fn history_migration_rolls_back_ddl_and_indexes_when_copy_fails() {
     let path = temp_history_db_path("migration-rollback");
     let legacy = seed_legacy_database(&path);
-    // A value rejected by the new schema injects failure after rename and CREATE.
+    // 被新 schema 拒绝的值在 rename 和 CREATE 之后注入写入失败。
     legacy
         .execute("UPDATE history_points SET memory_used_percent = NULL", [])
         .expect("inject invalid sample");

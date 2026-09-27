@@ -1,4 +1,4 @@
-//! A shared drain deadline prevents detached writers from racing final persistence.
+//! 优雅关停回收模块：共享超时截止时间防止孤立写入任务与最终持久化竞争。
 
 use std::time::Duration;
 

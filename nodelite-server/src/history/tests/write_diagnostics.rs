@@ -1,4 +1,4 @@
-//! Exercise SQLite failures below queue capacity and verify public diagnostics recover.
+//! 队列容量限制下的 SQLite 故障注入与诊断恢复测试模块。
 
 use axum::body::to_bytes;
 use axum::extract::State;
@@ -24,7 +24,7 @@ async fn check_failure_and_recovery(full: bool) {
     let path = temp_history_db_path(if full { "full" } else { "readonly" });
     let state = test_state(&path).await;
     inject_fault(&state.history, full).await;
-    // One large row needs new pages under SQLITE_FULL, without filling the writer queue.
+    // 在 SQLITE_FULL 下，单个超大行需要分配新页触发错误，而无需填满写入队列。
     let node_id = if full {
         "x".repeat(100_000)
     } else {

@@ -1,3 +1,7 @@
+//! 单节点 Prometheus 维度指标渲染模块。
+//!
+//! 将节点基础信息、运行状态、CPU、内存、磁盘以及网络流量指标格式化为标准 Prometheus Gauge 序列。
+
 use nodelite_proto::{MetricsConfig, NodeSnapshot};
 
 use super::PrometheusNode;

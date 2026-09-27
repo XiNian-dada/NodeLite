@@ -1,3 +1,5 @@
+//! 审计日志 SQLite 批处理存储测试模块。
+
 use tokio::runtime::Runtime;
 
 use super::{AuditEventType, AuditLog, NewAuditEvent};

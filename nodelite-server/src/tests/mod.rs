@@ -1,7 +1,4 @@
-//! Library-unit test module wiring.
-//!
-//! This module starts as a shim around the legacy `lib_tests.rs` file so the
-//! suite can be split incrementally without dropping coverage between commits.
+//! 服务端库单元测试模块集成。
 
 pub(crate) use super::{
     AppState, PROTECTED_CACHE_CONTROL, ServerReadiness, set_protected_response_headers,

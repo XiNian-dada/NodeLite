@@ -1,4 +1,4 @@
-//! Public passkey authentication endpoints for a pending browser login.
+//! 浏览器登录阶段公开 Passkey 认证挑战与校验路由模块。
 
 use std::net::SocketAddr;
 

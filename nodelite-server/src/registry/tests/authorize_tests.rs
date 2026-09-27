@@ -1,3 +1,5 @@
+//! 节点 Token 鉴权流程测试模块。
+
 use super::*;
 
 #[test]

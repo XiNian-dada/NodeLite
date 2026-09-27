@@ -1,3 +1,7 @@
+//! SMTP 邮件告警协议通信实现模块。
+//!
+//! 实现纯异步 SMTP 会话状态机（支持 Plain、STARTTLS 及直接 TLS 传输模式与 AUTH LOGIN 鉴权）。
+
 use std::sync::Arc;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};

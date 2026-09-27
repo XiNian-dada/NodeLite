@@ -1,7 +1,6 @@
-//! Bounded queue helpers shared by non-blocking server writers.
+//! 非阻塞写入器共享的有界队列工具模块。
 //!
-//! These helpers keep real-time paths from being backpressured by slower background tasks,
-//! while still preserving the caller-specific policy for full and closed queues.
+//! 避免慢速后台任务阻塞实时热路径，同时为通道满或关闭提供定制化丢弃/反压策略。
 
 use std::sync::atomic::{AtomicU64, Ordering};
 

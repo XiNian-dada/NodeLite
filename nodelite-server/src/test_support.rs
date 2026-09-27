@@ -1,3 +1,7 @@
+//! 服务端测试脚手架与测试环境支撑模块。
+//!
+//! 提供测试 TCP/HTTP 实例启动、WebSocket 模拟交互、假快照生成与鉴权 Header 构造。
+
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::PathBuf;
 use std::sync::Arc;

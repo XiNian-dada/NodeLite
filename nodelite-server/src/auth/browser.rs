@@ -1,4 +1,4 @@
-//! Long-lived browser connections inherit both credential and individual session lifetimes.
+//! 浏览器长连接认证与会话生命周期管理模块。
 
 use std::time::Instant;
 

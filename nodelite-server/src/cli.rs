@@ -1,4 +1,4 @@
-//! Operator commands share the same configuration and release identity as the service.
+//! 运维命令行工具模块：共享服务配置与发布身份信息。
 
 use std::path::{Path, PathBuf};
 

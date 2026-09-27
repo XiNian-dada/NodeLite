@@ -1,4 +1,4 @@
-//! Bound spawned tasks and result backlog as well as the input channel.
+//! 告警与巡检投递分发器：对投递任务数、结果通道积压和输入通道进行全局有界控制。
 
 use std::future::Future;
 
@@ -32,7 +32,7 @@ pub(super) fn delivery_channel(
 
 impl DeliverySender {
     pub(super) fn try_send(&self, job: DeliveryJob) -> Result<(), QueueSendError> {
-        // Reserve first so a rejected item never briefly exceeds the outstanding-work budget.
+        // 先通过 try_reserve 预留通道槽位，保证被拒绝的投递不会短暂突破最大待处理指标预算。
         match self.sender.try_reserve() {
             Ok(slot) => {
                 slot.send((job, self.metrics.track_outstanding()));
@@ -86,7 +86,7 @@ where
                     deliveries.spawn(async move {
                         let _active = active;
                         let result = deliver(job).await;
-                        // A slow result consumer also retains a worker slot instead of spawning more work.
+                        // 结果消费者如果消费过慢，投递任务会阻塞在 result_tx 发送上，从而占用 worker 槽位阻止拉起更多并发。
                         let _ = result_tx.send((result, outstanding)).await;
                     });
                 }

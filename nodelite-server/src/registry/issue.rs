@@ -1,3 +1,7 @@
+//! 节点签发与安装凭据生成模块。
+//!
+//! 负责新节点注册、Token 轮换、安装会话（Install Session）生成与参数合法性校验。
+
 use std::path::Path;
 
 use chrono::{Duration as ChronoDuration, Utc};

@@ -1,4 +1,4 @@
-//! Readonly-auth, 2FA, and audit-route tests.
+//! 只读认证、2FA 与审计路由测试。
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;

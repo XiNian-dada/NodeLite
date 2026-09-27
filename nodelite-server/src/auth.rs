@@ -104,7 +104,7 @@ pub const TWO_FACTOR_PENDING_SECS: u64 = 300;
 pub const TWO_FACTOR_AUTH_SECS: u64 = 24 * 60 * 60;
 /// Basic Auth 会话 cookie 的有效期(24 小时),用于避免每次请求都记录 LoginSuccess。
 pub const BASIC_AUTH_SESSION_SECS: u64 = 24 * 60 * 60;
-/// Sensitive settings confirmation is short-lived and bound to the browser session.
+/// 敏感设置修改的确认凭证为短效机制，且与当前浏览器会话绑定。
 pub const SENSITIVE_CONFIRMATION_SECS: u64 = 5 * 60;
 /// 单个 pending session 允许的最大 TOTP 错误尝试次数。达到后该 pending token
 /// 立即失效,客户端必须重新通过 Basic Auth 才能再次进入 verify-2fa 页面。
@@ -326,7 +326,7 @@ impl TwoFactorSessions {
         Ok(token)
     }
 
-    /// One pending login must not mint multiple sessions using different accepted drift steps.
+    /// 单个待定登录凭证不能利用允许的钟差区间生成多个会话（防重放与分支滥用）。
     pub(crate) fn exchange_pending(
         &self,
         pending_token: &str,
@@ -347,11 +347,10 @@ impl TwoFactorSessions {
         Ok(Some(token))
     }
 
-    /// Consumes a pending browser login after a verified passkey ceremony.
+    /// 在 Passkey 仪式验证通过后消费待定登录凭证。
     ///
-    /// Unlike TOTP, WebAuthn includes its own challenge replay protection.  The
-    /// pending token is still consumed atomically so one Basic-auth login cannot
-    /// create more than one fully authenticated browser session.
+    /// 与 TOTP 不同，WebAuthn 自身包含 Challenge 防重放保护。
+    /// 这里仍需原子消费待定 Token，确保一次 Basic Auth 只能建立一个完整的已认证会话。
     pub(crate) fn exchange_pending_for_passkey(
         &self,
         pending_token: &str,
@@ -428,7 +427,7 @@ impl TwoFactorSessions {
             .and_then(|session| session.login_event_id)
     }
 
-    /// Auth changes invalidate pending, authenticated, and Basic browser sessions together.
+    /// 鉴权配置变更时，一并作废所有待定凭证、已认证会话与 Basic 浏览器会话。
     pub fn clear_authenticated(&self) {
         let mut store = lock_mutex(&self.inner);
         store.pending.clear();
@@ -577,9 +576,8 @@ fn matching_totp_steps_at(totp_secret: Option<&[u8]>, code: &str, now_step: u64)
 }
 
 fn totp_code_for_step(secret: &[u8], step: u64) -> String {
-    // `totp_lite` expects Unix seconds and divides by `period` internally.
-    // We track replay protection by step, so convert the step back to the
-    // first second in that 30-second window before generating the code.
+    // totp_lite 接受 Unix 秒数并在内部除以 period (30s)。
+    // 我们按 step 跟踪防重放，因此在生成验证码前将其还原为该 30 秒窗口的起始秒。
     totp_custom::<Sha1>(30, 6, secret, step.saturating_mul(30))
 }
 
@@ -643,8 +641,7 @@ mod tests {
     fn totp_generation_uses_unix_seconds_for_rfc_6238_compatibility() {
         let secret = b"12345678901234567890";
 
-        // RFC 6238 Appendix B gives SHA1/8-digit code 94287082 at Unix time
-        // 59. With 6 digits the same dynamic truncation becomes 287082.
+        // RFC 6238 附录 B 中 Unix 时间 59 对应的 SHA1 8 位码为 94287082，截断为 6 位为 287082。
         assert_eq!(totp_code_for_step(secret, 59 / 30), "287082");
     }
 

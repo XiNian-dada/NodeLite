@@ -1,3 +1,7 @@
+//! 告警通知分发与重试管道模块。
+//!
+//! 支持 SMTP 邮件与 Webhook 通道，包含指数退避重试、错误分类与每日巡检报告投递。
+
 use std::future::Future;
 use std::time::Duration;
 

@@ -1,4 +1,4 @@
-//! Describe rollback inputs without opening databases or serializing credentials.
+//! 生成升级与回滚所需文件清单（Manifest），无需连接数据库且杜绝凭据泄漏。
 
 use std::collections::BTreeSet;
 use std::io::{self, Write};
@@ -23,7 +23,7 @@ pub enum UpgradeError {
 
 pub(crate) async fn print_upgrade_manifest(config_path: &Path) -> Result<(), UpgradeError> {
     let content = tokio::fs::read_to_string(config_path).await?;
-    // TOML error excerpts can contain passwords and would otherwise enter the update log.
+    // TOML 解析错误片段可能包含明文密码，直接透传会导致凭据泄漏到更新日志中。
     let config = parse_server_config(&content).map_err(|_| UpgradeError::Config)?;
     let manifest = render_manifest(config_path, &config, &std::env::current_dir()?)?;
     io::stdout().lock().write_all(manifest.as_bytes())?;
@@ -44,13 +44,13 @@ fn render_manifest(
         config.snapshot_path.as_path(),
         config.geoip.database_path.as_path(),
     ] {
-        // Atomic persistence can replace a configured symlink instead of modifying its target.
+        // 原子写入机制可能会替换软链接本身而非直接修改其目标，因此需要同时备份软链接和规范化真实路径。
         paths.extend(backup_paths(path, working_dir)?);
     }
     for database in [&config.history_db_path, &config.audit.db_path] {
         let [configured, database] = backup_paths(database, working_dir)?;
         paths.insert(configured);
-        // Stopping the service does not guarantee a clean checkpoint after an earlier crash.
+        // 仅停止服务无法保证之前的意外崩溃已执行干净的 checkpoint，需备份所有 WAL/SHM/Journal 辅助文件。
         for suffix in ["", "-wal", "-shm", "-journal"] {
             let mut path = database.as_os_str().to_os_string();
             path.push(suffix);

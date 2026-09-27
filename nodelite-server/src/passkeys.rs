@@ -1,4 +1,4 @@
-//! WebAuthn passkey state, credential persistence, and short-lived ceremonies.
+//! WebAuthn 通行密钥（Passkey）状态管理、凭据持久化与挑战协商模块。
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

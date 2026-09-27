@@ -1,4 +1,4 @@
-//! Test-only server and WebSocket configuration fixtures.
+//! 服务端与 WebSocket 配置测试套件辅助模块。
 
 use std::net::SocketAddr;
 use std::path::PathBuf;

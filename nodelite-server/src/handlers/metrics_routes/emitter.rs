@@ -1,3 +1,7 @@
+//! Prometheus 文本格式指标发射器模块。
+//!
+//! 负责格式化 HELP、TYPE 注解及带有动态标签维度的 Gauge/Counter 指标行。
+
 use std::collections::HashSet;
 use std::fmt::Write;
 

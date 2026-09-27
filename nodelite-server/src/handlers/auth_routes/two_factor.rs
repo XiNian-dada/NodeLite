@@ -33,8 +33,7 @@ pub(crate) async fn verify_2fa_api(
     ensure_second_factor_not_blocked(&state, &headers, client_ip, "/api/verify-2fa").await?;
     let pending_token = require_pending_token(&state, &headers, client_ip).await?;
     let (auth_token, audit_user) = {
-        // Rotation clears sessions under the write lock, so validation and
-        // issuance must both finish before that revocation can commit.
+        // 凭据轮换会在写锁下清空会话，因此校验和签发必须在写锁生效撤销前在此读锁内完成。
         let auth = state.readonly_auth.read().await;
         let matching_steps = matching_totp_steps(auth.totp_secret.as_deref(), &request.code);
         let token = exchange_pending_two_factor_session(&state, &pending_token, &matching_steps)?;
@@ -236,8 +235,8 @@ pub(super) async fn record_second_factor_success(
     endpoint: &str,
     factor: &str,
 ) -> Option<i64> {
-    // The factor-specific event lets operators distinguish a TOTP recovery
-    // login from routine passkey use without storing authenticator details.
+    // 细分认证方式的审计事件便于运维区分是常规 Passkey 登录还是 TOTP 应急恢复，
+    // 同时避免持久化具体的认证器底层细节。
     let mut factor_event = NewAuditEvent::now(verification_event_type, client_ip.to_string(), true);
     factor_event.user = audit_user.clone();
     factor_event.user_agent = user_agent(headers);

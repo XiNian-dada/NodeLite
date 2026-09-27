@@ -1,3 +1,5 @@
+//! 设置修改与 TOML 编辑往返测试模块。
+
 use nodelite_proto::{
     AlertChannel, AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode, AlertSeverity,
     AlertSmtpConfig, AlertSmtpTransport, AlertWebhookConfig, AlertingConfig, InspectionConfig,

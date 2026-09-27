@@ -1,4 +1,4 @@
-//! Security audit log module wiring and re-exports.
+//! 安全审计日志模块结构与公共导出。
 
 #[cfg(test)]
 mod disabled_tests;

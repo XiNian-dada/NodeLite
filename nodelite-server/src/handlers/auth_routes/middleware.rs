@@ -190,7 +190,7 @@ fn websocket_two_factor_required_response() -> Response {
 
 async fn issue_two_factor_redirect(state: &AppState, request: Request) -> Response {
     let auth = state.readonly_auth.read().await;
-    // Credential rotation may have completed since the middleware's first check.
+    // 中间件初次校验后可能恰好发生凭据轮换，因此在签发前需在读锁下二次确认 2FA 开启且当前凭据依然有效。
     if !auth.enable_2fa || !auth.is_authorized(&request) {
         return readonly_auth_unauthorized_response();
     }

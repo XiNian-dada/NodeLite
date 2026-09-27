@@ -1,4 +1,4 @@
-//! Bounded diagnostic logs: each mutation and eviction completes before releasing the lock.
+//! 有界诊断日志缓冲存储：在持有互斥锁的原子步骤内完成写入与驱逐。
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -13,7 +13,7 @@ use nodelite_proto::{
 const MAX_LOGS_PER_NODE: usize = 200;
 const MAX_BATCH_ENTRIES: usize = 64;
 const MAX_LOG_MESSAGE_BYTES: usize = 512;
-// Include spare deque slots, hash buckets and allocator overhead, not just serialized text.
+// 计入双端队列空闲槽位、哈希桶开销及分配器对齐开销，而非仅计算序列化文本长度。
 const ESTIMATED_LOG_ENTRY_OVERHEAD_BYTES: usize = 512;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -96,8 +96,7 @@ impl AgentLogStore {
         };
         let valid_node = validate_identifier("agent_logs.node_id", node_id).is_ok();
         let mut state = self.inner.lock().await;
-        // There are no suspension points between insertion and eviction, so cancellation
-        // cannot leave uncharged entries or a batch above either memory budget.
+        // 插入与驱逐之间没有 async 挂起点，因此外部任务取消不会导致未计费条目残留或超出内存预算。
         for entry in entries.into_iter().take(MAX_BATCH_ENTRIES) {
             let Some(entry) = sanitize_entry(entry).filter(|_| valid_node) else {
                 result.dropped_sanitize += 1;

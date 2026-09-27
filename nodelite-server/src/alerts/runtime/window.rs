@@ -1,3 +1,7 @@
+//! 告警评估时间窗口与时序历史关联模块。
+//!
+//! 从 SQLite 历史库与内存注册表中聚合指定时间窗口内的采样点，支撑滑动窗口阈值判定。
+
 use std::collections::HashMap;
 
 use chrono::{DateTime, Datelike, TimeZone, Utc};

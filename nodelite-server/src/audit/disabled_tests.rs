@@ -1,3 +1,5 @@
+//! 审计功能禁用状态行为测试模块。
+
 use std::path::PathBuf;
 
 use tokio::runtime::Runtime;

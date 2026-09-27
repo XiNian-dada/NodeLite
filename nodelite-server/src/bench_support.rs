@@ -1,4 +1,4 @@
-//! Opt-in adapters for external benchmarks without exposing runtime internals in release builds.
+//! 外部压测基准测试适配器模块（仅测试/压测启用，不暴露内部运行时状态）。
 
 use std::path::PathBuf;
 use std::sync::Arc;

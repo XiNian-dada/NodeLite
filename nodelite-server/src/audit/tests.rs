@@ -1,3 +1,5 @@
+//! 审计日志查询与过滤测试模块。
+
 use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::json;
 use tokio::runtime::Runtime;

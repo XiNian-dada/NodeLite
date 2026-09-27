@@ -1,3 +1,7 @@
+//! 邮件内嵌 SVG 趋势图表生成模块。
+//!
+//! 根据巡检时序数据生成轻量级矢量曲线图，直观展现 CPU、内存与网络延迟的历史走向。
+
 use super::super::super::InspectionTrendPoint;
 use super::escape_html;
 

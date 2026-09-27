@@ -1,4 +1,4 @@
-//! Prometheus rendering keeps live writer diagnostics outside cached node metrics.
+//! Prometheus 指标渲染模块：将实时写入诊断与节点缓存指标解耦隔离。
 
 use crate::ServerReadiness;
 #[cfg(test)]

@@ -1,4 +1,4 @@
-//! Audit event payloads, filters, and query errors.
+//! 审计事件载荷、查询过滤与错误类型定义。
 
 use anyhow::Error;
 use chrono::{DateTime, Utc};

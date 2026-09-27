@@ -140,7 +140,7 @@ pub struct HistoryStore {
     /// Writer task 的 join handle,用于在关停时显式 await。
     writer_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     traffic: TrafficTracker,
-    // Serialize quota lookup/enqueue with revocation so an in-flight sample cannot revive a ledger.
+    // 将配额查询/入队与节点吊销串行化，防止正在投递中的样本使已被吊销的流量账本意外复活。
     pub(crate) traffic_lifecycle_lock: Arc<Mutex<()>>,
     /// 历史写入被静默丢弃的总数(channel 满或已关闭)。监控该值可观察反压。
     dropped_writes: Arc<AtomicU64>,

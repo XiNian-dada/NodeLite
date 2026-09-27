@@ -1,4 +1,4 @@
-//! SQLite WAL checkpoint observation for runtime metrics.
+//! SQLite WAL checkpoint 观测与运行时指标收集模块。
 
 use std::path::Path;
 use std::sync::Arc;

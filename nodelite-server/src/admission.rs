@@ -695,8 +695,8 @@ mod tests {
             panic!("poison install admission state");
         }));
 
-        // After poison, valid state should be preserved, not reset
-        // The blocked_until is in the future, so check should return Err
+        // Mutex 发生 poison 异常后，已有的有效封禁状态应被安全保留而非重置
+        // blocked_until 在未来，check 应正确拒绝并返回 Err
         assert!(controller.check(client_ip).is_err());
         assert!(controller.state.lock().is_ok());
     }

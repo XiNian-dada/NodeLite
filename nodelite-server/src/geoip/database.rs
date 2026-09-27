@@ -1,4 +1,4 @@
-//! DB-IP database freshness, monthly download fallback, and atomic replacement.
+//! DB-IP 离线数据库保鲜、按月回退下载与原子更新替换模块。
 
 use std::io::Read;
 use std::path::{Path, PathBuf};

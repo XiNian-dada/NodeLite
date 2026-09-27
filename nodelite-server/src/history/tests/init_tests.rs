@@ -1,3 +1,5 @@
+//! 历史 SQLite 数据库初始化与迁移测试模块。
+
 use super::*;
 
 #[test]

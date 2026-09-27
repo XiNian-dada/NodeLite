@@ -7,11 +7,11 @@ use std::time::{Duration, Instant};
 use lru::LruCache;
 use nodelite_proto::HistoryPoint;
 
-/// Conservative metadata allowance for each heap allocation made by String or Vec.
+/// 为 String 或 Vec 的每次堆分配预留的保守元数据开销（jemalloc/glibc chunk 头）。
 const ALLOCATOR_METADATA_BYTES: usize = 16;
-/// LRU linked-list pointers, hash-table entry/control bytes, and node allocation metadata.
+/// 每个 LRU 缓存条目的双向链表指针、哈希表控制字节及节点元数据开销。
 const LRU_ENTRY_METADATA_BYTES: usize = 64;
-/// Covers allocator size classes and platform-specific alignment not visible through capacity().
+/// 针对内存分配器尺寸阶梯（size class）与底层对齐填充的估算安全冗余（~12.5%）。
 const ESTIMATE_SAFETY_MARGIN_DIVISOR: usize = 8;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]

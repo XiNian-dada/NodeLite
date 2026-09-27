@@ -1,3 +1,7 @@
+//! 节点 Token 密码学哈希、验证与安装会话管理模块。
+//!
+//! 基于 Argon2id 对 Token 进行安全哈希与恒定时间校验，管理一次性安装会话的时效与清理。
+
 use anyhow::anyhow;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::{Algorithm, Argon2, Params, Version};

@@ -1,4 +1,4 @@
-//! Backup inventory follows the real config parser, including external and relative paths.
+//! 升级备份清单解析与相对/绝对路径测试模块。
 
 use super::*;
 use crate::test_support::test_server_config;

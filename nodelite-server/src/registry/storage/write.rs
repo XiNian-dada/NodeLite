@@ -1,3 +1,7 @@
+//! 注册表文件同步原子写入与文件锁模块。
+//!
+//! 采用"写临时文件 -> fsync -> rename -> 目录 fsync -> 0600 加固"流程，结合 flock 防止并发进程冲突。
+
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::os::fd::{AsRawFd, RawFd};
@@ -216,9 +220,8 @@ fn unlock_file(file: &File) {
 
 #[cfg(unix)]
 fn flock_fd(fd: RawFd, operation: libc::c_int) -> std::io::Result<()> {
-    // SAFETY: `flock` only receives the process-local file descriptor and lock
-    // operation by value. Callers keep valid descriptors alive for normal use;
-    // invalid descriptors are reported by the kernel as `EBADF`.
+    // SAFETY: `flock` 仅通过值传递接收进程本地的文件描述符和锁操作标志位。
+    // 调用方在正常使用时保证描述符生命周期有效；若传入无效描述符，内核会直接返回 `EBADF`。
     let result = unsafe { libc::flock(fd, operation) };
     if result != 0 {
         return Err(std::io::Error::last_os_error());

@@ -1,4 +1,4 @@
-//! Test-only instrumentation for concurrent history query execution.
+//! 历史并发查询执行测试探针模块。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};

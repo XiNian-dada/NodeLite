@@ -1,8 +1,7 @@
-//! Web assets module: serves the Vue SPA and static files embedded at compile time.
+//! 静态 Web 资源交付模块：编译期内嵌并托管 Vue SPA 及前端资产。
 //!
-//! The Vite build output from `web/dist/` is embedded into the binary using `include_dir!`.
-//! This module provides handlers for serving the SPA entry point and static assets with
-//! appropriate cache headers.
+//! 产物目录 `web/dist/` 通过 `include_dir!` 宏打入二进制文件。
+//! 本模块负责为单页应用入口与静态资源提供正确的 Content-Type、CSP 以及缓存响应头。
 
 use std::sync::OnceLock;
 
@@ -16,11 +15,10 @@ use include_dir::{Dir, include_dir};
 use sha2::{Digest, Sha256};
 use tracing::error;
 
-/// Embedded web assets from `web/dist/`
+/// 编译期内嵌自 `web/dist/` 的前端静态资源目录
 static WEB_ASSETS: Dir = include_dir!("$CARGO_MANIFEST_DIR/web/dist");
 
-/// Content Security Policy for the SPA
-/// No inline scripts/styles needed since Vite outputs only external files
+/// 单页应用的 Content Security Policy（CSP）安全策略
 const SPA_CSP: &str = "default-src 'self'; \
     img-src 'self' data:; \
     connect-src 'self' https://raw.githubusercontent.com https://api.github.com; \
@@ -32,29 +30,24 @@ const SPA_CSP: &str = "default-src 'self'; \
     frame-ancestors 'none'; \
     form-action 'self'";
 
-/// Cache control for SPA entry points (never cache)
+/// SPA 入口页面的缓存控制策略（禁止缓存，保证实时性）
 const NO_CACHE: &str = "no-store, no-cache, must-revalidate";
 
-/// Cache control for hashed static assets (cache forever)
+/// 带哈希版本签名的静态资产缓存策略（永久强缓存）
 const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 
-/// Serves the SPA index.html (for `/` and `/nodes/:id` routes).
+/// 交付 SPA 入口 index.html（服务于 `/` 与 `/nodes/:id` 路由）。
 ///
-/// index.html ships two small bootstrap shims inline (theme anti-flash + 24h
-/// auth-timestamp check) that must run before the app bundle. Under the SPA's
-/// strict `script-src 'self'` they would be CSP-blocked, so we serve it with a
-/// CSP that pins those inline blocks by sha256 — without relaxing `style-src`.
+/// index.html 包含两段微型内联启动脚本（主题防闪烁与 24h 认证时间戳检查），
+/// 必须在主 JS Bundle 加载前执行。我们在 CSP 中对其进行 sha256 锁定，兼顾安全与加载体验。
 pub fn spa_index() -> Response {
     serve_file("index.html", NO_CACHE, spa_index_csp())
 }
 
-/// Serves the standalone 2FA verification page (`verify-2fa.html`).
+/// 交付独立的 2FA 验证页（`verify-2fa.html`）。
 ///
-/// This page is deliberately *not* part of the Vue SPA: it is a self-contained
-/// document with inline `<script>`/`<style>` blocks, served at the auth gate
-/// before the SPA bundle ever loads (the dev server also proxies `/verify-2fa`
-/// straight to the backend). Its CSP pins each inline block by sha256 so the page
-/// stays compatible with a strict `script-src 'self'` policy.
+/// 该页面独立于 Vue SPA，为内联脚本与样式的自包含页面，在 SPA 加载前阻断未授权访问。
+/// 同样采用基于 sha256 的 CSP 策略锁定内联代码。
 pub fn verify_2fa_page() -> Response {
     let file = match WEB_ASSETS.get_file("verify-2fa.html") {
         Some(f) => f,
@@ -75,12 +68,12 @@ pub fn verify_2fa_page() -> Response {
     )
 }
 
-/// Serves static assets from `/assets/*` path
+/// 交付 `/assets/*` 路径下的前端静态资源
 pub fn static_asset(path: &str) -> Response {
-    // The route captures everything after /assets/, so we need to prepend "assets/"
+    // 路由捕获 /assets/ 后的所有内容，需补齐 "assets/" 前缀
     let full_path = format!("assets/{}", path);
 
-    // Determine cache policy based on filename
+    // 根据文件名特征决定缓存策略（带哈希内容采用强缓存，否则协商缓存）
     let cache_control = if is_hashed_asset(&full_path) {
         IMMUTABLE
     } else {
@@ -90,7 +83,7 @@ pub fn static_asset(path: &str) -> Response {
     serve_file(&full_path, cache_control, SPA_CSP)
 }
 
-/// Serves a file from the embedded assets
+/// 从内嵌资源目录中读取并组装 HTTP 响应
 fn serve_file(path: &str, cache_control: &str, csp: &str) -> Response {
     let file = match WEB_ASSETS.get_file(path) {
         Some(f) => f,
@@ -105,8 +98,7 @@ fn serve_file(path: &str, cache_control: &str, csp: &str) -> Response {
         .header(header::CONTENT_TYPE, content_type)
         .header(header::CACHE_CONTROL, cache_control)
         .header(header::CONTENT_SECURITY_POLICY, csp);
-    // Legacy HTTP/1.0 proxies honour Pragma; pair it with no-cache responses so
-    // the SPA shell matches every other no-cache protected response.
+    // 兼容可能遵守 Pragma 的旧版 HTTP/1.0 代理，配合 no-cache 一同输出
     if cache_control == NO_CACHE {
         builder = builder.header(header::PRAGMA, "no-cache");
     }
@@ -123,18 +115,14 @@ fn finish_asset_response(asset: &str, response: Result<Response, axum::http::Err
     }
 }
 
-/// Determines if a path is a content-hashed asset (safe to cache forever).
+/// 判断路径是否为带有内容哈希签名的静态资产（可安全开启永久强缓存）。
 ///
-/// Vite emits hashed files as `assets/<name>.<hash>.<ext>` (see vite.config.ts
-/// `assetFileNames` / `chunkFileNames` / `entryFileNames`), where `<hash>` uses
-/// Vite's base64url alphabet (`A-Za-z0-9_-`). We treat a file as immutable only
-/// when it has that `name.hash.ext` shape with an 8+ char base64url hash segment.
-/// Unhashed build files (`index.html`, `assets/ui-i18n.json`,
-/// `assets/brand-logo-dark.webp`) must keep revalidating, so they fall through.
+/// Vite 构建产物规范为 `assets/<name>.<hash>.<ext>`，其中 `<hash>` 采用 base64url 字符集。
+/// 仅当匹配包含 8 位以上哈希段的文件时赋予 immutable 缓存；未带哈希的入口文件（如 ui-i18n.json）则每次重新校验。
 fn is_hashed_asset(path: &str) -> bool {
     let filename = path.rsplit('/').next().unwrap_or(path);
     let segments: Vec<&str> = filename.split('.').collect();
-    // Need at least `name` + `hash` + `ext`.
+    // 至少需要 `name` + `hash` + `ext` 3 部分
     if segments.len() < 3 {
         return false;
     }
@@ -145,7 +133,7 @@ fn is_hashed_asset(path: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
-/// Returns MIME type based on file extension
+/// 根据文件扩展名返回对应的标准 MIME 类型
 fn mime_type_for_path(path: &str) -> &'static str {
     match path.rsplit('.').next() {
         Some("html") => "text/html; charset=utf-8",
@@ -164,8 +152,7 @@ fn mime_type_for_path(path: &str) -> &'static str {
     }
 }
 
-/// Shared trailing CSP directives for the standalone 2FA page (everything past
-/// `default-src`/`script-src`/`style-src`, which `build_page_csp` computes).
+/// 独立 2FA 页面的公共尾部 CSP 指令
 const PAGE_CSP_DIRECTIVES: &str = "default-src 'self'; img-src 'self' data:; \
     connect-src 'self' https://raw.githubusercontent.com https://api.github.com; \
     font-src 'self'; object-src 'none'; media-src 'none'; worker-src 'none'; \
@@ -173,8 +160,7 @@ const PAGE_CSP_DIRECTIVES: &str = "default-src 'self'; img-src 'self' data:; \
 
 static VERIFY_2FA_CSP: OnceLock<String> = OnceLock::new();
 
-/// Computes (once) the page-specific CSP for the embedded `verify-2fa.html`,
-/// hashing its inline blocks so the served bytes and the CSP stay in lockstep.
+/// 计算（并缓存）内嵌 `verify-2fa.html` 的专属 CSP，对内联块哈希以确保与内容保持严格一致。
 fn verify_2fa_csp() -> &'static str {
     VERIFY_2FA_CSP
         .get_or_init(|| {
@@ -189,11 +175,9 @@ fn verify_2fa_csp() -> &'static str {
 
 static SPA_INDEX_CSP: OnceLock<String> = OnceLock::new();
 
-/// Computes (once) the CSP for the SPA shell: `SPA_CSP` plus an explicit
-/// `script-src 'self'` that also pins index.html's inline bootstrap shim(s)
-/// (theme anti-flash + 24h auth check) by sha256. Only `script-src` is widened;
-/// `style-src` stays at the strict `default-src 'self'` because the Vite build
-/// emits no inline styles.
+/// 计算（并缓存）SPA 外壳的 CSP：在 `SPA_CSP` 基础上增加显式的 `script-src 'self'`，
+/// 并通过 sha256 锁定 index.html 的内联引导脚本（防闪烁 + 24h 认证检测）。
+/// 仅放宽 script-src，style-src 严格保持 default-src 'self'。
 fn spa_index_csp() -> &'static str {
     SPA_INDEX_CSP
         .get_or_init(|| {
@@ -203,7 +187,7 @@ fn spa_index_csp() -> &'static str {
                 .unwrap_or_default();
             let script_hashes = extract_inline_tag_bodies(&html, "script")
                 .into_iter()
-                // Skip external `<script src=…>` (empty body); only hash real inline shims.
+                // 跳过外部 `<script src=…>`（空 body）；仅哈希真正的内联脚本
                 .filter(|body| !body.trim().is_empty())
                 .map(csp_hash)
                 .collect::<Vec<_>>()
@@ -216,8 +200,7 @@ fn spa_index_csp() -> &'static str {
         .as_str()
 }
 
-/// Pins a page's inline `<script>`/`<style>` blocks by sha256 so a strict
-/// `script-src 'self'` policy still permits them.
+/// 通过 sha256 锁定页面的内联 `<script>`/`<style>` 块，使严格的 CSP 策略依然允许其执行。
 fn build_page_csp(template: &str) -> String {
     let script_hashes = extract_inline_tag_bodies(template, "script")
         .into_iter()
@@ -238,8 +221,7 @@ fn build_page_csp(template: &str) -> String {
     )
 }
 
-/// Extracts the text bodies of every `<tag>…</tag>` block, matching the exact
-/// content the browser hashes for a CSP `'sha256-…'` source.
+/// 提取所有 `<tag>…</tag>` 块的文本主体，精确匹配浏览器为 CSP `'sha256-…'` 源所计算的内容。
 fn extract_inline_tag_bodies<'a>(document: &'a str, tag_name: &str) -> Vec<&'a str> {
     let mut bodies = Vec::new();
     let mut rest = document;
@@ -290,12 +272,12 @@ mod tests {
 
     #[test]
     fn test_is_hashed_asset() {
-        // Vite emits `<name>.<hash>.<ext>` with a base64url hash.
+        // Vite 构建产物采用带 base64url 哈希的 <name>.<hash>.<ext> 格式。
         assert!(is_hashed_asset("assets/index.B_MrJhzj.js"));
         assert!(is_hashed_asset("assets/AccountView.B5MJM2zL.css"));
         assert!(is_hashed_asset("assets/index.CHYP72L6.css"));
 
-        // Unhashed build files must keep revalidating, not be cached immutably.
+        // 未带哈希的文件必须每次协商缓存，不能使用 immutable 永久强缓存。
         assert!(!is_hashed_asset("index.html"));
         assert!(!is_hashed_asset("verify-2fa.html"));
         assert!(!is_hashed_asset("assets/brand-logo-dark.webp"));
@@ -320,7 +302,7 @@ mod tests {
 
     #[test]
     fn test_spa_index_exists() {
-        // This will fail at compile time if web/dist/index.html doesn't exist
+        // 若 web/dist/index.html 不存在，会在编译期触发 include_str! 失败。
         let response = spa_index();
         assert_eq!(response.status(), StatusCode::OK);
     }
@@ -334,11 +316,9 @@ mod tests {
             .expect("spa index should set a CSP")
             .to_str()
             .expect("CSP should be valid ascii");
-        // index.html's inline bootstrap shim must be pinned by sha256 so it is
-        // not CSP-blocked under script-src 'self'.
+        // index.html 中的内联 bootstrap shim 必须通过 sha256 锁定，避免在 script-src 'self' 下被拦截。
         assert!(csp.contains("script-src 'self' 'sha256-"), "csp={csp}");
-        // But the SPA has no inline styles, so style-src must stay strict —
-        // no 'unsafe-inline' should leak in from the hashing path.
+        // 单页应用没有内联样式，style-src 必须保持严格，不可混入 'unsafe-inline'。
         assert!(!csp.contains("'unsafe-inline'"), "csp={csp}");
         assert!(csp.contains("frame-ancestors 'none'"), "csp={csp}");
     }
@@ -353,7 +333,7 @@ mod tests {
             .expect("verify-2fa page should set a CSP")
             .to_str()
             .expect("CSP should be valid ascii");
-        // The page carries inline <script>/<style>, so the CSP must pin them.
+        // 该页面包含内联 <script>/<style>，因此 CSP 必须对其分别进行定向放行或 sha256 锁定。
         assert!(csp.contains("script-src 'self' 'sha256-"), "csp={csp}");
         assert!(
             csp.contains("style-src 'self' 'unsafe-inline'"),

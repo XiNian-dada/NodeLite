@@ -1,3 +1,7 @@
+//! 服务器共享全局状态定义模块。
+//!
+//! 汇集节点注册表、内存状态（SharedState）、准入限流器、历史与审计持久化、Passkey/2FA 鉴权及告警配置。
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

@@ -1,3 +1,7 @@
+//! 告警与每日巡检设置路由模块。
+//!
+//! 提供告警通道配置查询、在线规则实时试运行预览、敏感变更鉴权确认与原子 TOML 持久化。
+
 use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};

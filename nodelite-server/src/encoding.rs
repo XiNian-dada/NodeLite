@@ -1,3 +1,5 @@
+//! 基础文本与十六进制编码工具模块。
+
 /// Encode bytes as lowercase hexadecimal text.
 pub(crate) fn hex_encode(bytes: &[u8]) -> String {
     hex::encode(bytes)

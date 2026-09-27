@@ -1,3 +1,7 @@
+//! 系统设置路由通用辅助工具模块。
+//!
+//! 提供 JSON 错误封装、安全随机密钥生成、路径清理校验与安装命令生成。
+
 use std::path::{Component, Path, PathBuf};
 
 use axum::Json;

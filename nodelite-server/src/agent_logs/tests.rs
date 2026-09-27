@@ -1,4 +1,4 @@
-//! Log budget, sanitization, and concurrent writer regressions.
+//! 诊断日志预算、输入脱敏与并发写入回归测试模块。
 
 use chrono::Utc;
 use nodelite_proto::{AgentLogsConfig, NoticeLevel};

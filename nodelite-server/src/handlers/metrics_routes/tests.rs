@@ -1,4 +1,4 @@
-//! Tests for Prometheus metrics rendering helpers.
+//! Prometheus 指标渲染辅助函数测试模块。
 
 use chrono::Utc;
 

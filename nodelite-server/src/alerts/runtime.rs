@@ -1,4 +1,4 @@
-//! Evaluate alert state while bounded workers deliver notifications independently.
+//! 告警状态评估引擎与独立有界工作线程投递模块。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -142,7 +142,7 @@ async fn run_alert_runtime(
         }
     }
     drop(delivery_tx);
-    // Results are no longer applied after shutdown; releasing the receiver lets workers finish.
+    // 停机后不再应用投递结果；提前释放接收端（receiver）可让正在退出的 workers 快速结束。
     drop(result_rx);
     drain_delivery_dispatcher(delivery_dispatcher).await;
 }

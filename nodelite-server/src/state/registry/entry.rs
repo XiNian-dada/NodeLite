@@ -1,3 +1,7 @@
+//! 内存节点运行时状态条目（NodeEntry）定义模块。
+//!
+//! 维护节点的实时身份、网络快照、会话控制句柄、GeoIP 定位及流量限速状态。
+
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};

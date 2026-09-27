@@ -1,4 +1,4 @@
-//! Shared helpers for split library-unit tests.
+//! 服务端单元测试共享辅助工具。
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::PathBuf;

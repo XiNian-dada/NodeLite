@@ -1,4 +1,4 @@
-//! Include pending acknowledgements in the alert delivery resource budget.
+//! 告警投递资源预算与指标 Prometheus 渲染模块。
 
 use crate::alerts::{
     AlertDeliverySnapshot, DELIVERY_QUEUE_CAPACITY, DELIVERY_RESULT_CAPACITY,

@@ -1,3 +1,5 @@
+//! GeoIP 缓存与解析逻辑测试模块。
+
 use std::net::{IpAddr, Ipv6Addr};
 use std::path::PathBuf;
 

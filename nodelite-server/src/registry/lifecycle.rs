@@ -1,3 +1,7 @@
+//! 节点注册表生命周期管理与热重载模块。
+//!
+//! 提供内存注册表状态初始化、基于 mtime/size 指纹的热重载、节点注销、元数据更新与流量配额调整。
+
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

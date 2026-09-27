@@ -1,3 +1,5 @@
+//! SMTP 邮件组装与投递测试模块。
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 

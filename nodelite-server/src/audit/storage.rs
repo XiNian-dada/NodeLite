@@ -1,4 +1,4 @@
-//! SQLite schema and filesystem hardening helpers for audit persistence.
+//! 审计日志 SQLite 表结构初始化与文件权限加固模块。
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

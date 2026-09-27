@@ -1,3 +1,7 @@
+//! 系统安全设置与双因素认证管理路由模块。
+//!
+//! 提供只读面板密码变更、2FA 绑定/解绑、TOTP 二维码生成及敏感操作身份再确认。
+
 use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};

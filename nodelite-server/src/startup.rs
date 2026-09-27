@@ -1,3 +1,7 @@
+//! 服务端启动装配、路由注册与依赖注入模块。
+//!
+//! 负责解析配置文件、初始化 SQLite 与内存注册表、组装 Axum 路由与安全中间件、绑定监听端口并拉起后台服务。
+
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -422,9 +426,9 @@ pub(crate) fn build_router(state: AppState) -> Router {
     let protected_routes = Router::new()
         .route("/", get(index))
         .route("/nodes/{node_id}", get(node_detail))
-        // SPA history-mode routes: every top-level Vue route must return the SPA
-        // shell so deep links / refresh boot the app instead of hitting a 404.
-        // Keep in sync with web/src/router/index.ts.
+        // SPA HTML5 History 模式路由：每个顶层 Vue 路由都必须返回 index.html 外壳，
+        // 确保浏览器直接深链访问或刷新页面时正常加载前端应用而非返回 404。
+        // 与 web/src/router/index.ts 保持同步。
         .route("/settings", get(index))
         .route("/account", get(index))
         .route("/alerts", get(index))

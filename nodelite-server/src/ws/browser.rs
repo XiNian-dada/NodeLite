@@ -67,8 +67,7 @@ pub async fn ws_browser_handler(
         .on_upgrade(move |socket| async move {
             // permit 持有到会话结束;drop 时自动把连接配额归还给该 IP。
             let _permit = permit;
-            // Cancellation surrounds sends as well as receives, so a slow peer
-            // cannot keep a revoked connection alive by blocking the sink.
+            // 取消机制包裹了发送和接收，因此慢速对端无法通过阻塞发送通道来保持被吊销的连接存活。
             tokio::select! {
                 biased;
                 _ = authorization.ended() => {}

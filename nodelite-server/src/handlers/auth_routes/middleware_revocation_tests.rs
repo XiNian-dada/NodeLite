@@ -1,4 +1,4 @@
-//! Barriers keep login issuance on the credential-rotation boundary reproducible.
+//! 使用同步栅栏测试凭据轮换边界下的登录签发行为。
 
 use axum::Router;
 use axum::body::Body;

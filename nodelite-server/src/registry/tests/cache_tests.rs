@@ -1,3 +1,5 @@
+//! Token 验证缓存与淘汰策略测试模块。
+
 use super::*;
 
 #[tokio::test]
@@ -74,7 +76,7 @@ async fn token_cache_prevents_redundant_argon2_verifies_on_concurrent_requests()
     std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
     let path = temp_dir.join("server.json");
 
-    // Issue a node with a token
+    // 注册并签发测试节点与会话 token
     let issued = issue_node(
         &path,
         IssueNodeRequest {
@@ -86,7 +88,7 @@ async fn token_cache_prevents_redundant_argon2_verifies_on_concurrent_requests()
     .await
     .expect("node should be issued");
 
-    // Load registry with probe to count actual Argon2 verifications
+    // 加载注册表并注入探针以统计实际 Argon2 校验次数
     let probe = Arc::new(TokenVerifyProbe::new(Duration::from_millis(50)));
     let registry = NodeRegistry::load(&path)
         .await
@@ -95,9 +97,9 @@ async fn token_cache_prevents_redundant_argon2_verifies_on_concurrent_requests()
         .with_token_verify_probe_for_tests(Arc::clone(&probe));
     let identity = identity_for("cache-01");
 
-    // Launch 10 concurrent authorization requests with the same token
-    // Without cache: would run 10 Argon2 verifies (limited by semaphore to 2 parallel)
-    // With cache + double-check: should run only 1-2 Argon2 verifies
+    // 使用相同 token 发起 10 个并发认证请求：
+    // 无缓存：会执行 10 次 Argon2 验证（受信号量限制最大 2 并发）
+    // 有缓存 + 双重检查：仅执行 1-2 次 Argon2 验证
     let mut handles = Vec::new();
     for _ in 0..10 {
         let registry = registry.clone();
@@ -108,7 +110,7 @@ async fn token_cache_prevents_redundant_argon2_verifies_on_concurrent_requests()
         }));
     }
 
-    // All requests should succeed
+    // 所有并发认证请求均应成功
     for result in futures::future::join_all(handles).await {
         let authorized = result
             .expect("authorize task should complete")
@@ -116,17 +118,15 @@ async fn token_cache_prevents_redundant_argon2_verifies_on_concurrent_requests()
         assert_eq!(authorized.identity.node_id, "cache-01");
     }
 
-    // Cache should reduce actual Argon2 verifications to at most 2
-    // (the semaphore limit, since concurrent requests may both miss cache)
+    // 缓存应将实际 Argon2 验证次数削减到最多 2 次（并发请求同时未命中时受信号量限制）
     let max_active = probe.max_active();
     assert!(
         max_active <= 2,
         "expected at most 2 concurrent Argon2 verifies due to semaphore limit, got {max_active}"
     );
 
-    // Verify total Argon2 verifications is much less than 10 (the number of requests).
-    // Coverage instrumentation can widen the race window before the first cache fill, so
-    // the stable behavior to assert is "cache prevented a verify per request".
+    // 验证总 Argon2 次数远小于 10（总请求数）。覆盖率插桩可能会在首次填入缓存前放宽竞争窗口，
+    // 因此稳定的断言是“缓存有效避免了每个请求都执行一次完整验证”。
     let total_verifies = probe.total_entered();
     assert!(
         total_verifies < 10,
@@ -182,7 +182,7 @@ async fn token_cache_respects_ttl_and_evicts_expired_entries() {
         .with_token_verify_probe_for_tests(Arc::clone(&probe));
     let identity = identity_for("ttl-01");
 
-    // First authorization: cache miss, should run Argon2
+    // 首次认证：缓存未命中，执行 Argon2
     registry
         .authorize(&identity, &issued.node_session_token)
         .await
@@ -193,7 +193,7 @@ async fn token_cache_respects_ttl_and_evicts_expired_entries() {
         "first authorization should verify token"
     );
 
-    // Second authorization immediately: cache hit, no new Argon2
+    // 立即二次认证：命中热缓存，不触发新的 Argon2
     registry
         .authorize(&identity, &issued.node_session_token)
         .await
@@ -204,8 +204,7 @@ async fn token_cache_respects_ttl_and_evicts_expired_entries() {
         "cache hit should not trigger new Argon2 verify"
     );
 
-    // Note: Testing TTL expiration would require tokio::time::sleep(TOKEN_CACHE_TTL + margin)
-    // which is 5+ minutes. We verify the cache hit logic prevents redundant verifies instead.
+    // 注：完整测试 TTL 过期需要 sleep 5 分钟以上。此处重点验证缓存命中逻辑能有效阻止重复校验。
 
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_dir(&temp_dir);
@@ -237,21 +236,21 @@ async fn token_cache_distinguishes_current_and_grace_tokens_after_rotation() {
         .expect("registry should load");
     let identity = identity_for("rotate-01");
 
-    // Authorize with original token
+    // 使用原始 token 认证
     let authorized = registry
         .authorize(&identity, &issued.node_session_token)
         .await
         .expect("original token should authorize");
     assert_eq!(authorized.generation, 1);
 
-    // Refresh token (cache should be cleared)
+    // 刷新 token（缓存应被清除）
     let (new_token, _, new_generation) = registry
         .refresh_token("rotate-01", authorized.generation)
         .await
         .expect("token should refresh");
     assert_eq!(new_generation, 2);
 
-    // The old token remains usable only as the previous generation during the grace window.
+    // 在平滑过渡窗口内，旧 token 仅作为上一代凭据保持可用。
     let authorized = registry
         .authorize(&identity, &issued.node_session_token)
         .await
@@ -259,7 +258,7 @@ async fn token_cache_distinguishes_current_and_grace_tokens_after_rotation() {
     assert_eq!(authorized.generation, 1);
     assert!(authorized.token_expires_at.is_some());
 
-    // New token should authorize with updated generation
+    // 新 token 应使用更新后的 generation 完成认证
     let authorized = registry
         .authorize(&identity, &new_token)
         .await

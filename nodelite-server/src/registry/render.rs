@@ -1,3 +1,7 @@
+//! Agent 客户端配置与安装命令渲染模块。
+//!
+//! 根据服务端公网 URL 生成对应的 WebSocket 接入地址、渲染合法的 agent.toml 配置文本及安装 shell 命令。
+
 use url::Url;
 
 use crate::encoding::shell_quote;

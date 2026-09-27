@@ -1,3 +1,5 @@
+//! 历史数据只读连接池查询测试模块。
+
 use std::sync::Arc;
 
 use super::*;

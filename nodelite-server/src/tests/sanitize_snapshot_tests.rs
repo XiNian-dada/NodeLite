@@ -1,4 +1,4 @@
-//! Snapshot sanitization tests.
+//! 状态快照输入过滤与脱敏单元测试模块。
 use nodelite_proto::config::DEFAULT_METRIC_ANOMALY_SESSION_LIMIT as METRIC_ANOMALY_SESSION_LIMIT;
 use nodelite_proto::config::{
     DEFAULT_MAX_SANITIZED_DISKS as MAX_SANITIZED_DISKS,

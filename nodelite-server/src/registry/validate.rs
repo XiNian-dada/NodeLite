@@ -1,3 +1,7 @@
+//! 注册表数据结构与字段严格校验模块。
+//!
+//! 校验节点 ID 唯一性、标识符格式、标签长度上限、限速参数合法性以及运行时身份匹配。
+
 use std::collections::HashMap;
 use std::path::Path;
 

@@ -1,3 +1,5 @@
+//! 注册表输入校验与规则约束测试模块。
+
 use super::*;
 use nodelite_proto::MAX_NODE_IDENTITY_TEXT_BYTES;
 use proptest::prelude::*;
