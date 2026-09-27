@@ -193,7 +193,7 @@ insecure_allow_http = true
 
 ## 📊 性能基准实测
 
-> 真实测试环境：Linux x86_64（Ubuntu 6.8.0 内核，12 vCPU / 16GB RAM），Rust 1.98（Profile: `release`，开启 LTO），真实网络回环与全链路 TLS/WSS 鉴权。
+> 真实测试环境：Intel Core i5-13600K (12 Cores / 12 Threads)，16 GB RAM，Ubuntu 22.04 LTS (Linux 5.15 x86_64)，Rust 1.98（Profile: `release`，开启 LTO），真实网络回环与全链路 TLS/WSS 鉴权。
 
 ### 1. 节点扩展性压测 (Scaling Benchmark)
 

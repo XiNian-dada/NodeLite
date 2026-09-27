@@ -190,7 +190,7 @@ Copy the generated `curl ... | sh` command and run it on your target node (Linux
 
 ## 📊 Performance Benchmarks
 
-> Measured on dedicated Linux x86_64 host (Ubuntu kernel 6.8.0, 12 vCPUs / 16 GB RAM), Rust 1.98 (Profile: `release` with LTO), standard network loopback with full TLS/WSS authentication pipeline.
+> Measured on dedicated Linux x86_64 host (Intel Core i5-13600K 12C/12T, 16 GB RAM, Ubuntu 22.04 LTS / Linux 5.15), Rust 1.98 (Profile: `release` with LTO), standard network loopback with full TLS/WSS authentication pipeline.
 
 ### 1. Scaling Benchmark
 

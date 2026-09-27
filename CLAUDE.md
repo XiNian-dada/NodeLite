@@ -14,7 +14,7 @@ NodeLite 是一个轻量级 Rust 监控系统，采用 Server-Agent 架构。
 - Vue 3 Web UI，由 server 嵌入静态构建产物
 - 低资源占用：按场景跟踪 Server/Agent 的 RSS、PSS、匿名内存与 cgroup 总预算
 
-性能目标与实测基线（Linux 12-core x86_64）：
+性能目标与实测基线（Intel Core i5-13600K 12C / Ubuntu 22.04 LTS）：
 - 200 节点并发：> 110,000 指标/秒，连接建立 < 800ms
 - 1,000 节点极限集群：> 67,000 指标/秒，3.75s 完成接入，历史写入 0 丢失
 - 重连风暴：Token 缓存命中率 75%，热重连 < 4ms
