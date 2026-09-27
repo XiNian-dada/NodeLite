@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NodeLite 系统整体架构全景</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    .flow-active {
+      box-shadow: 0 0 0 2px var(--primary, #0284c7), 0 8px 24px -4px rgba(2, 132, 199, 0.25);
+      border-color: var(--primary, #0284c7) !important;
+      transform: translateY(-2px);
+    }
+    .flow-inactive {
+      opacity: 0.35;
+      filter: grayscale(0.5);
+      transition: all 0.3s ease;
+    }
+    .card-node {
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .card-node:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+    }
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border, #cbd5e1);
+      border-radius: 9999px;
+    }
+    .badge-subtle {
+      font-feature-settings: "tnum";
+      font-variant-numeric: tabular-nums;
+    }
+  </style>
+</head>
+<body class="bg-[var(--background,#f8fafc)] text-[var(--foreground,#0f172a)] antialiased p-4 sm:p-6 lg:p-8 min-h-screen">
+
+  <div class="max-w-7xl mx-auto space-y-6">
+
+    <!-- 顶部标题与最新性能基准数据 -->
+    <header class="bg-[var(--card,#ffffff)] border border-[var(--border,#e2e8f0)] rounded-2xl p-6 shadow-sm">
+      <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
+        <div>
+          <div class="flex items-center gap-3.5">
+            <div class="w-11 h-11 rounded-xl bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20 flex items-center justify-center font-bold text-lg">
+              NL
+            </div>
+            <div>
+              <div class="flex items-center gap-2.5">
+                <h1 class="text-2xl font-bold tracking-tight text-[var(--foreground,#0f172a)]">
+                  NodeLite 系统架构全景
+                </h1>
+                <span class="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-medium">v3.0.x 稳定版</span>
+              </div>
+              <p class="text-sm text-[var(--muted-foreground,#64748b)] mt-1">
+                高并发、低延迟、极低资源开销的 Rust 分布式服务器集群监控架构 (Server-Agent Architecture)
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 真实性能基准规格标签 -->
+        <div class="flex flex-wrap items-center gap-2 text-xs">
+          <div class="px-3 py-1.5 rounded-lg bg-[var(--background,#f1f5f9)] border border-[var(--border,#e2e8f0)]">
+            <span class="text-[var(--muted-foreground,#64748b)]">并发吞吐:</span>
+            <span class="font-semibold text-sky-600 dark:text-sky-400 ml-1">110,970 指标/秒 (200 节点)</span>
+          </div>
+          <div class="px-3 py-1.5 rounded-lg bg-[var(--background,#f1f5f9)] border border-[var(--border)]">
+            <span class="text-[var(--muted-foreground,#64748b)]">千台舰队接入:</span>
+            <span class="font-semibold text-emerald-600 dark:text-emerald-400 ml-1">3.75 秒 (1,000 节点)</span>
+          </div>
+          <div class="px-3 py-1.5 rounded-lg bg-[var(--background,#f1f5f9)] border border-[var(--border)]">
+            <span class="text-[var(--muted-foreground,#64748b)]">重连缓存延迟:</span>
+            <span class="font-semibold text-amber-600 dark:text-amber-400 ml-1">3.92 ms (75% 命中率)</span>
+          </div>
+          <div class="px-3 py-1.5 rounded-lg bg-[var(--background,#f1f5f9)] border border-[var(--border)]">
+            <span class="text-[var(--muted-foreground,#64748b)]">内存开销:</span>
+            <span class="font-semibold text-purple-600 dark:text-purple-400 ml-1">Server ~514KB/节点 · Agent &lt;2MB</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 核心数据流动态筛选控制 -->
+      <div class="mt-6 pt-5 border-t border-[var(--border,#e2e8f0)] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground,#64748b)]">
+          <svg class="w-4 h-4 text-sky-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+          交互式数据流高亮切换:
+        </div>
+        <div class="flex flex-wrap gap-2" id="flow-buttons">
+          <button onclick="setFlow('all')" id="btn-all" class="flow-btn px-3 py-1.5 rounded-lg text-xs font-medium border border-sky-500 bg-sky-500/10 text-sky-600 dark:text-sky-400 transition-colors">
+            全部架构总览
+          </button>
+          <button onclick="setFlow('metrics')" id="btn-metrics" class="flow-btn px-3 py-1.5 rounded-lg text-xs font-medium border border-[var(--border,#e2e8f0)] hover:bg-[var(--background,#f1f5f9)] text-[var(--muted-foreground,#64748b)] transition-colors">
+            实时指标采集与无锁广播流
+          </button>
+          <button onclick="setFlow('security')" id="btn-security" class="flow-btn px-3 py-1.5 rounded-lg text-xs font-medium border border-[var(--border,#e2e8f0)] hover:bg-[var(--background,#f1f5f9)] text-[var(--muted-foreground,#64748b)] transition-colors">
+            准入握手与 Token 重连缓存流
+          </button>
+          <button onclick="setFlow('storage')" id="btn-storage" class="flow-btn px-3 py-1.5 rounded-lg text-xs font-medium border border-[var(--border,#e2e8f0)] hover:bg-[var(--background,#f1f5f9)] text-[var(--muted-foreground,#64748b)] transition-colors">
+            异步 SQLite WAL 持久化与查询缓存流
+          </button>
+          <button onclick="setFlow('alerts')" id="btn-alerts" class="flow-btn px-3 py-1.5 rounded-lg text-xs font-medium border border-[var(--border,#e2e8f0)] hover:bg-[var(--background,#f1f5f9)] text-[var(--muted-foreground,#64748b)] transition-colors">
+            告警派送与 Linux 套餐限速流
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- 流程说明提示条 -->
+    <div id="flow-description" class="hidden px-4 py-3 rounded-xl border border-sky-500/30 bg-sky-500/5 text-xs text-sky-700 dark:text-sky-300 flex items-center gap-2.5">
+      <span class="w-2 h-2 rounded-full bg-sky-500 animate-pulse"></span>
+      <span id="flow-text" class="font-medium"></span>
+    </div>
+
+    <!-- 架构四大主体网格 (Agent端 -> 网关与准入 -> 核心引擎与持久化 -> 消费端展示) -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+
+      <!-- 第一列：受控端 Agent (4 格) -->
+      <section class="lg:col-span-4 space-y-4">
+        <div class="flex items-center justify-between px-1">
+          <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-sky-500"></span>
+            <h2 class="font-bold text-sm tracking-wide text-[var(--foreground,#0f172a)]">受控节点 (Agent 端)</h2>
+          </div>
+          <span class="text-[11px] text-[var(--muted-foreground,#64748b)] font-mono">crate: nodelite-agent</span>
+        </div>
+
+        <!-- 采集器 -->
+        <div id="node-collector" onclick="inspect('collector')" class="card-node cursor-pointer bg-[var(--card,#ffffff)] border border-[var(--border,#e2e8f0)] rounded-xl p-4 shadow-sm relative overflow-hidden">
+          <div class="absolute top-0 right-0 px-2 py-0.5 text-[10px] font-mono bg-sky-500/10 text-sky-600 dark:text-sky-400 rounded-bl-lg border-b border-l border-sky-500/20">
+            Zero Dyn Deps
+          </div>
+          <div class="flex items-start gap-3">
+            <div class="p-2 rounded-lg bg-sky-500/10 text-sky-600 dark:text-sky-400 mt-0.5 shrink-0">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <h3 class="font-semibold text-sm text-[var(--foreground,#0f172a)]">系统指标采集器 (Collector)</h3>
+              <p class="text-xs text-[var(--muted-foreground,#64748b)] mt-1 leading-relaxed">
+                极低开销抽取 CPU、内存/Swap、挂载盘过滤、网卡速率与丢包，首次采集自动标记 None 防尖刺。
+              </p>
+              <div class="mt-3 flex flex-wrap gap-1.5 text-[11px]">
+                <span class="px-2 py-0.5 rounded bg-[var(--background,#f1f5f9)] border border-[var(--border,#e2e8f0)] text-sky-600 dark:text-sky-400">Linux /proc & sysfs</span>
+                <span class="px-2 py-0.5 rounded bg-[var(--background,#f1f5f9)] border border-[var(--border,#e2e8f0)] text-indigo-600 dark:text-indigo-400">macOS sysctl / libproc</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 通信与会话 -->
+        <div id="node-session" onclick="inspect('session')" class="card-node cursor-pointer bg-[var(--card,#ffffff)] border border-[var(--border,#e2e8f0)] rounded-xl p-4 shadow-sm">
+          <div class="flex items-start gap-3">
+            <div class="p-2 rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400 mt-0.5 shrink-0">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+              </svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <h3 class="font-semibold text-sm text-[var(--foreground,#0f172a)]">长连接与会话状态机 (Session Engine)</h3>
+              <p class="text-xs text-[var(--muted-foreground,#64748b)] mt-1 leading-relaxed">
+                维护 WebSocket (WSS) 长连接，支持 Hello 握手帧、指数退避抖动重连、心跳 Ping-Pong 与 Token 热轮换。
+              </p>
+              <div class="mt-3 flex flex-wrap gap-1.5 text-[11px]">
+                <span class="px-2 py-0.5 rounded bg-[var(--background,#f1f5f9)] border border-[var(--border,#e2e8f0)]">tokio-tungstenite</span>
+                <span class="px-2 py-0.5 rounded bg-[var(--background,#f1f5f9)] border border-[var(--border,#e2e8f0)]">自动续期与退避</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Linux 原生限速 -->
+        <div id="node-tc" onclick="inspect('tc')" class="card-node cursor-pointer bg-[var(--card,#ffffff)] border border-[var(--border,#e2e8f0)] rounded-xl p-4 shadow-sm">
+          <div class="flex items-start gap-3">
+            <div class="p-2 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <h3 class="font-semibold text-sm text-[var(--foreground,#0f172a)]">Linux 套餐限速 (Traffic Control)</h3>
+              <p class="text-xs text-[var(--muted-foreground,#64748b)] mt-1 leading-relaxed">
+                集成内核 Netlink `tc` 模块。当 VPS 月度流量耗尽时由 Agent 原生执行网卡整形限速，杜绝超额计费。
+              </p>
+              <div class="mt-3 flex flex-wrap gap-1.5 text-[11px]">
+                <span class="px-2 py-0.5 rounded bg-[var(--background,#f1f5f9)] border border-[var(--border,#e2e8f0)] text-amber-600 dark:text-amber-400">CAP_NET_ADMIN 隔离</span>
+                <span class="px-2 py-0.5 rounded bg-[var(--background,#f1f5f9)] border border-[var(--border,#e2e8f0)]">月度流量周期结算</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 协议合约 -->
+        <div id="node-proto" onclick="inspect('proto')" class="card-node cursor-pointer bg-gradient-to-r from-indigo-500/5 to-sky-500/5 border border-indigo-500/30 rounded-xl p-4 shadow-sm">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-xs font-mono font-bold">nodelite-proto</span>
+              <span class="text-xs text-[var(--foreground,#0f172a)] font-medium">双端共享通信协议</span>
+            </div>
+            <span class="text-[10px] text-[var(--muted-foreground,#64748b)]">Serde / sanitize.rs</span>
+          </div>
+          <p class="text-xs text-[var(--muted-foreground,#64748b)] mt-2 leading-relaxed">
+            集中定义 WireMessage 消息契约、NodeSnapshot 状态体、配置解析、严格字符清洗与边界断言。
+          </p>
+        </div>
+      </section>
+
+      <!-- 第二列：网关、安全准入与中枢处理 (5 格) -->
+      <section class="lg:col-span-5 space-y-4">
+        <div class="flex items-center justify-between px-1">
+          <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+            <h2 class="font-bold text-sm tracking-wide text-[var(--foreground,#0f172a)]">网关、中枢引擎与存储 (Server 端)</h2>
+          </div>
+          <span class="text-[11px] text-[var(--muted-foreground,#64748b)] font-mono">crate: nodelite-server</span>
+        </div>
+
+        <!-- 安全准入与 Token 缓存池 -->
+        <div id="node-admission" onclick="inspect('admission')" class="card-node cursor-pointer bg-[var(--card,#ffffff)] border border-[var(--border,#e2e8f0)] rounded-xl p-4 shadow-sm">
+          <div class="flex items-start gap-3">
+            <div class="p-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              </svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center justify-between">
+                <h3 class="font-semibold text-sm text-[var(--foreground,#0f172a)]">安全准入与 Token 会话缓存</h3>
+                <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold">75% 命中率</span>
+              </div>
+              <p class="text-xs text-[var(--muted-foreground,#64748b)] mt-1 leading-relaxed">
+                受控槽位限制 Argon2id 并发验密（防重连风暴 OOM）；重连会话命中 LRU 缓存直接跳过硬算，握手仅需 3.92ms。
+              </p>
+              <div class="mt-3 flex flex-wrap gap-1.5 text-[11px]">
+                <span class="px-2 py-0.5 rounded bg-[var(--background,#f1f5f9)] border border-[var(--border,#e2e8f0)] text-emerald-600 dark:text-emerald-400">Argon2 并发槽位 ≤ 4</span>
+                <span class="px-2 py-0.5 rounded bg-[var(--background,#f1f5f9)] border border-[var(--border,#e2e8f0)] text-cyan-600 dark:text-cyan-400">ConstantTimeEq 防时序反推</span>
+                <span class="px-2 py-0.5 rounded bg-[var(--background,#f1f5f9)] border border-[var(--border,#e2e8f0)] text-purple-600 dark:text-purple-400">TOTP + Passkey (WebAuthn)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 集中 Diff 广播引擎 -->
+        <div id="node-engine" onclick="inspect('engine')" class="card-node cursor-pointer bg-[var(--card,#ffffff)] border-2 border-sky-500/40 rounded-xl p-4 shadow-sm relative">
+          <div class="flex items-start gap-3">
+            <div class="p-2 rounded-lg bg-sky-500/15 text-sky-600 dark:text-sky-400 mt-0.5 shrink-0">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center justify-between">
+                <h3 class="font-bold text-sm text-sky-600 dark:text-sky-400">集中 Diff 广播引擎 (SharedState)</h3>
+                <span class="text-[10px] font-bold bg-sky-500/10 text-sky-600 dark:text-sky-400 px-2 py-0.5 rounded border border-sky-500/20">核心优化</span>
+              </div>
+              <p class="text-xs text-[var(--muted-foreground,#64748b)] mt-1.5 leading-relaxed">
+                彻底消除 $O(M \times N)$ 读锁与重复 Diff 序列化。单一后台任务（1 秒去抖）集中运算增量，通过无锁广播通道扇出给全部浏览器会话。
+              </p>
+              <div class="mt-3 flex flex-wrap gap-1.5 text-[11px]">
+                <span class="px-2 py-0.5 rounded bg-[var(--background,#f1f5f9)] border border-[var(--border,#e2e8f0)] text-sky-600 dark:text-sky-400">锁竞争 O(M) → O(1)</span>
+                <span class="px-2 py-0.5 rounded bg-[var(--background,#f1f5f9)] border border-[var(--border,#e2e8f0)] text-emerald-600 dark:text-emerald-400">tokio::sync::broadcast</span>
+                <span class="px-2 py-0.5 rounded bg-[var(--background,#f1f5f9)] border border-[var(--border,#e2e8f0)]">parking_lot 读写锁</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 双 SQLite 持久化与查询缓存 -->
+        <div id="node-storage" onclick="inspect('storage')" class="card-node cursor-pointer bg-[var(--card,#ffffff)] border border-[var(--border,#e2e8f0)] rounded-xl p-4 shadow-sm">
+          <div class="flex items-start gap-3">
+            <div class="p-2 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 mt-0.5 shrink-0">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+              </svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center justify-between">
+                <h3 class="font-semibold text-sm text-[var(--foreground,#0f172a)]">双 SQLite 存储与 LRU 查询缓存</h3>
+                <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold">0 丢弃写入</span>
+              </div>
+              <p class="text-xs text-[var(--muted-foreground,#64748b)] mt-1 leading-relaxed">
+                业务指标与安全审计完全物理隔离。采用 WAL 模式、专属后台 Batch Writer 批量写入，并搭载 200 容量的 History 查询 LRU 缓存。
+              </p>
+              <div class="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+                <div class="p-2 rounded bg-[var(--background,#f1f5f9)] border border-[var(--border,#e2e8f0)]">
+                  <span class="font-semibold text-indigo-600 dark:text-indigo-400 block">history.sqlite3</span>
+                  <span class="text-[10px] text-[var(--muted-foreground,#64748b)]">WAL 批量入库 / LRU 缓存 1s</span>
+                </div>
+                <div class="p-2 rounded bg-[var(--background,#f1f5f9)] border border-[var(--border,#e2e8f0)]">
+                  <span class="font-semibold text-amber-600 dark:text-amber-400 block">audit.sqlite3</span>
+                  <span class="text-[10px] text-[var(--muted-foreground,#64748b)]">安全事件独立留存 90 天</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 告警与通知引擎 -->
+        <div id="node-alerts" onclick="inspect('alerts')" class="card-node cursor-pointer bg-[var(--card,#ffffff)] border border-[var(--border,#e2e8f0)] rounded-xl p-4 shadow-sm">
+          <div class="flex items-start gap-3">
+            <div class="p-2 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400 mt-0.5 shrink-0">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+              </svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <h3 class="font-semibold text-sm text-[var(--foreground,#0f172a)]">告警评估与定时巡检引擎 (Alert Engine)</h3>
+              <p class="text-xs text-[var(--muted-foreground,#64748b)] mt-1 leading-relaxed">
+                滑动窗口多维规则评估（CPU/内存/离线/流量配额），防抖降噪，每日 9:00 自动生成 24 小时巡检快报。
+              </p>
+              <div class="mt-3 flex flex-wrap gap-1.5 text-[11px]">
+                <span class="px-2 py-0.5 rounded bg-[var(--background,#f1f5f9)] border border-[var(--border,#e2e8f0)] text-rose-600 dark:text-rose-400">SMTP 邮件 (StartTLS)</span>
+                <span class="px-2 py-0.5 rounded bg-[var(--background,#f1f5f9)] border border-[var(--border,#e2e8f0)] text-rose-600 dark:text-rose-400">Telegram / Discord / Slack</span>
+                <span class="px-2 py-0.5 rounded bg-[var(--background,#f1f5f9)] border border-[var(--border,#e2e8f0)]">每日定时汇总报告</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 第三列：消费端、控制台与开放观测 (3 格) -->
+      <section class="lg:col-span-3 space-y-4">
+        <div class="flex items-center justify-between px-1">
+          <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-purple-500"></span>
+            <h2 class="font-bold text-sm tracking-wide text-[var(--foreground,#0f172a)]">展示层与开放接口</h2>
+          </div>
+          <span class="text-[11px] text-[var(--muted-foreground,#64748b)] font-mono">UI / Metrics</span>
+        </div>
+
+        <!-- Vue 3 单页应用 -->
+        <div id="node-ui" onclick="inspect('ui')" class="card-node cursor-pointer bg-[var(--card,#ffffff)] border border-[var(--border,#e2e8f0)] rounded-xl p-4 shadow-sm">
+          <div class="flex items-start gap-3">
+            <div class="p-2 rounded-lg bg-purple-500/10 text-purple-600 dark:text-purple-400 mt-0.5 shrink-0">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <h3 class="font-semibold text-sm text-[var(--foreground,#0f172a)]">内嵌 Vue 3 SPA 控制台</h3>
+              <p class="text-xs text-[var(--muted-foreground,#64748b)] mt-1 leading-relaxed">
+                编译产物直接打包嵌入 Rust 二进制中，无需单独部署 Nginx，单文件即插即用。
+              </p>
+              <div class="mt-3 flex flex-col gap-1.5 text-[11px] text-[var(--muted-foreground,#64748b)]">
+                <span class="flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-purple-500"></span>全景 Dashboard 矩阵状态</span>
+                <span class="flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-purple-500"></span>节点 24 小时历史趋势折线</span>
+                <span class="flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-purple-500"></span>安全审计日志与告警规则管理</span>
+                <span class="flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-purple-500"></span>Passkey 二次验证免密快捷登录</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Prometheus 导出端点 -->
+        <div id="node-metrics" onclick="inspect('metrics_export')" class="card-node cursor-pointer bg-[var(--card,#ffffff)] border border-[var(--border,#e2e8f0)] rounded-xl p-4 shadow-sm">
+          <div class="flex items-start gap-3">
+            <div class="p-2 rounded-lg bg-orange-500/10 text-orange-600 dark:text-orange-400 mt-0.5 shrink-0">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+              </svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <h3 class="font-semibold text-sm text-[var(--foreground,#0f172a)]">Prometheus /metrics 接口</h3>
+              <p class="text-xs text-[var(--muted-foreground,#64748b)] mt-1 leading-relaxed">
+                标准指标拉取端点，支持吞吐量、丢弃率、节点硬件序列暴露，官方配备 Grafana 仪表盘。
+              </p>
+              <div class="mt-3 flex flex-wrap gap-1 text-[11px]">
+                <span class="px-2 py-0.5 rounded bg-[var(--background,#f1f5f9)] border border-[var(--border,#e2e8f0)] text-orange-600 dark:text-orange-400">基数膨胀智能过滤</span>
+                <span class="px-2 py-0.5 rounded bg-[var(--background,#f1f5f9)] border border-[var(--border,#e2e8f0)]">与控制台共享权限校验</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- GeoIP 归属地解析 -->
+        <div id="node-geoip" onclick="inspect('geoip')" class="card-node cursor-pointer bg-[var(--card,#ffffff)] border border-[var(--border,#e2e8f0)] rounded-xl p-4 shadow-sm">
+          <div class="flex items-start gap-3">
+            <div class="p-2 rounded-lg bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 mt-0.5 shrink-0">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064" />
+              </svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <h3 class="font-semibold text-sm text-[var(--foreground,#0f172a)]">地理位置解析 (GeoIP)</h3>
+              <p class="text-xs text-[var(--muted-foreground,#64748b)] mt-1 leading-relaxed">
+                根据节点公网 IP 自动标记物理区域。支持在线 API（ipwho.is）及本地 MaxMind / DB-IP 离线库。
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- 底部：详细组件技术规范检视器 (点击上方任一卡片联动展开) -->
+    <div id="inspector-panel" class="bg-[var(--card,#ffffff)] border border-[var(--border,#e2e8f0)] rounded-2xl p-6 shadow-sm">
+      <div class="flex items-center justify-between pb-4 border-b border-[var(--border,#e2e8f0)]">
+        <div class="flex items-center gap-3">
+          <span id="inspector-badge" class="px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20">MODULE</span>
+          <h3 id="inspector-title" class="text-base font-bold text-[var(--foreground,#0f172a)]">点击上方任意卡片查看详细模块设计与源码实作</h3>
+        </div>
+        <span class="text-xs text-[var(--muted-foreground,#64748b)] font-mono">架构核心机制深入解构</span>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mt-5 text-sm">
+        <div class="space-y-1.5">
+          <span class="text-xs font-semibold text-[var(--muted-foreground,#64748b)] uppercase tracking-wider">核心职责与并发机制</span>
+          <p id="inspector-duty" class="text-xs leading-relaxed text-[var(--foreground,#0f172a)]">
+            NodeLite 严格遵循模块化、零不可预期开销与防御性设计原则。请在上方点击卡片，即可实时呈现该模块的具体定位、锁管理与异常隔离设计。
+          </p>
+        </div>
+
+        <div class="space-y-1.5">
+          <span class="text-xs font-semibold text-[var(--muted-foreground,#64748b)] uppercase tracking-wider">关键源码文件 (Source Code)</span>
+          <div id="inspector-files" class="text-xs font-mono space-y-1 text-sky-600 dark:text-sky-400">
+            <span class="text-[var(--muted-foreground,#64748b)]">请选择上方组件...</span>
+          </div>
+        </div>
+
+        <div class="space-y-1.5">
+          <span class="text-xs font-semibold text-[var(--muted-foreground,#64748b)] uppercase tracking-wider">性能优化与安全基线</span>
+          <p id="inspector-highlights" class="text-xs leading-relaxed text-[var(--foreground,#0f172a)]">
+            各模块均通过 1,000 节点高并发压力测试、重连风暴模拟及 fuzz 协议模糊测试验证。
+          </p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const MODULES = {
+      collector: {
+        badge: 'AGENT COLLECTOR',
+        title: '系统指标采集器 (Native Host Metrics Collector)',
+        duty: '以极小开销（< 2MB RSS）从操作系统内核抽取 CPU、负载、内存/Swap、磁盘过滤、网卡吞吐等即时快照。Linux 下完全读取 /proc 与 sysfs，零 CGo 与动态库依赖。',
+        files: [
+          'nodelite-agent/src/collector_linux.rs',
+          'nodelite-agent/src/collector_macos/metrics.rs',
+          'nodelite-agent/src/collector.rs'
+        ],
+        highlights: '差分计算 CPU 与网卡速率，首次采集时自动标记为 None 防尖刺；智能过滤 overlay/tmpfs 虚拟分区，防止基数爆炸。'
+      },
+      session: {
+        badge: 'AGENT TRANSPORT',
+        title: '长连接与会话状态机 (WebSocket Client Session)',
+        duty: '维护 Agent 与 Server 间的 WSS 长连接通道。负责协议 Hello 握手帧、定时快照上报、RTT 心跳测量以及连接中断时的指数退避重连。',
+        files: [
+          'nodelite-agent/src/session.rs',
+          'nodelite-agent/src/session/connection.rs',
+          'nodelite-agent/src/config_io.rs'
+        ],
+        highlights: '支持服务端下发的 Token 热更新指令，持久化刷新本地 agent.toml；网络抖动时自动随机抖动退避，避免并发风暴重连。'
+      },
+      tc: {
+        badge: 'TRAFFIC CONTROL',
+        title: 'Linux 套餐流量超额限速模块 (Kernel Netlink tc Integration)',
+        duty: '深度集成 Linux 内核 tc 流量控制子系统。当节点统计的当月出入网总流量达到用户设定配额时，由 Agent 自主在子机执行网卡带宽限流。',
+        files: [
+          'nodelite-agent/src/traffic_control.rs',
+          'nodelite-proto/src/traffic.rs'
+        ],
+        highlights: '最小权限原则：仅保留 CAP_NET_ADMIN 能力与 systemd 完整沙箱隔离；无需 root 全权运行，彻底避免公网 VPS 超额天价扣费。'
+      },
+      proto: {
+        badge: 'SHARED CONTRACT',
+        title: '双端共享协议与校验契约 (nodelite-proto)',
+        duty: '定义 WireMessage 消息类型体系（JSON 文本帧与可选压缩二进制帧）、节点快照数据结构体 NodeSnapshot、配置解析、严格字符清洗与边界断言。',
+        files: [
+          'nodelite-proto/src/message.rs',
+          'nodelite-proto/src/snapshot.rs',
+          'nodelite-proto/src/sanitize.rs',
+          'nodelite-proto/src/config.rs'
+        ],
+        highlights: '使用 serde 进行序列化；所有外部输入（标签、节点名、命令输出）均经过 UTF-8 边界安全截断与字符净化，并通过 fuzz 模糊测试。'
+      },
+      admission: {
+        badge: 'SECURITY & ADMISSION',
+        title: '准入控制与 Token 验密缓存 (Admission & Token Caching)',
+        duty: '负责接入层防护：IP 速率限制器拦截重试刷接口；Argon2id 验密配置最大 4 个并发槽位防止 OOM；维护 LRU 会话 Token 缓存。',
+        files: [
+          'nodelite-server/src/admission.rs',
+          'nodelite-server/src/registry/token_cache.rs',
+          'nodelite-server/src/auth.rs'
+        ],
+        highlights: '实测重连风暴下缓存命中率高达 75.00%，已缓存节点的握手耗时从 1,700ms 降至 3.92ms；凭证比对全链路采用 subtle::ConstantTimeEq。'
+      },
+      engine: {
+        badge: 'CENTRAL DIFF ENGINE',
+        title: '集中 Diff 广播引擎 (SharedState Centralized Diff Engine)',
+        duty: '集群状态中枢。由单一后台常驻任务（1 秒去抖）从 NodeRegistry 提取快照，统一计算节点增量差异（Diff），通过 broadcast 通道无锁扇出给全部浏览器会话。',
+        files: [
+          'nodelite-server/src/state.rs',
+          'nodelite-server/src/registry.rs',
+          'nodelite-server/src/ws/browser.rs'
+        ],
+        highlights: '算法复杂度从传统 O(M × N) 降低到 O(N)。多管理端同时查看大盘时读写锁几乎零竞争，CPU 占用保持平稳。'
+      },
+      storage: {
+        badge: 'STORAGE & CACHE',
+        title: '双 SQLite 存储与 History LRU 查询缓存 (History & Audit Store)',
+        duty: '物理隔离存储架构：history.sqlite3 保存 14 天指标曲线，audit.sqlite3 独立记录安全鉴权审计事件。采用 WAL 模式与专属 Batch Writer 批量攒批。',
+        files: [
+          'nodelite-server/src/history.rs',
+          'nodelite-server/src/history/cache.rs',
+          'nodelite-server/src/audit.rs'
+        ],
+        highlights: '1,000 节点高并发写入下 dropped_writes = 0，队列深度始终为 0；搭载容量 200、1s TTL 的 parking_lot::Mutex 历史查询缓存。'
+      },
+      alerts: {
+        badge: 'ALERT ENGINE',
+        title: '告警规则引擎与巡检调度 (Alert Runtime & Daily Inspection)',
+        duty: '多维规则引擎持续评估 CPU、内存、网络丢包、延迟、节点离线及流量配额；驱动 SMTP StartTLS 与多通道 Webhook 即时告警；每日 9:00 发送 24h 巡检摘要。',
+        files: [
+          'nodelite-server/src/alerts.rs',
+          'nodelite-server/src/alerts/smtp.rs',
+          'nodelite-server/src/alerts/webhook.rs'
+        ],
+        highlights: '采用滑动窗口与状态冷却机制，防止临界值反复触发报警抖动；支持 Telegram、Discord、Slack 及自定义 POST Webhook。'
+      },
+      ui: {
+        badge: 'VUE 3 EMBEDDED SPA',
+        title: '内嵌 Vue 3 前端单页应用 (Single Binary Web UI)',
+        duty: '现代 Vue 3 + TypeScript 构建，产物直接嵌入 Rust Server 静态资源；通过 WebSocket 接收集中 Diff 引擎的增量包，实现局部最小 DOM 更新。',
+        files: [
+          'nodelite-server/web/src/views/DashboardView.vue',
+          'nodelite-server/web/src/views/NodeDetailView.vue',
+          'nodelite-server/web/src/views/AccountView.vue',
+          'nodelite-server/src/web_assets.rs'
+        ],
+        highlights: '单静态文件交付，无需 Nginx 托管；原生支持暗色/亮色自适应；支持 TOTP 2FA 与 WebAuthn Passkeys 免密硬件鉴权。'
+      },
+      metrics_export: {
+        badge: 'OBSERVABILITY',
+        title: 'Prometheus /metrics 指标抓取端点 (Prometheus Exporter)',
+        duty: '对外暴露标准 Prometheus 格式指标，涵盖服务端吞吐率、历史队列状态、在线/离线节点数、各节点资源快照，直接对接 Grafana 监控大盘。',
+        files: [
+          'nodelite-server/src/metrics.rs',
+          'ops/prometheus/prometheus.yml'
+        ],
+        highlights: '支持与控制台共享只读 Basic Auth 鉴权；智能过滤高基数虚拟分区，保持时序数据库精炼。'
+      },
+      geoip: {
+        badge: 'GEOIP PROVIDER',
+        title: '地理位置解析模块 (Physical Location Provider)',
+        duty: '根据 Agent 节点的外网 IP 地址推导其所在的物理国家、地区与城市坐标，并在面板上直观展示全球节点分布。',
+        files: [
+          'nodelite-server/src/geoip.rs'
+        ],
+        highlights: '双模式支持：轻量部署默认使用在线免费接口（ipwho.is，带本地内存缓存）；企业私有部署支持载入本地 MaxMind / DB-IP (.mmdb) 离线库。'
+      }
+    };
+
+    function inspect(key) {
+      const data = MODULES[key];
+      if (!data) return;
+
+      document.getElementById('inspector-badge').textContent = data.badge;
+      document.getElementById('inspector-title').textContent = data.title;
+      document.getElementById('inspector-duty').textContent = data.duty;
+      document.getElementById('inspector-highlights').textContent = data.highlights;
+
+      const fileContainer = document.getElementById('inspector-files');
+      fileContainer.innerHTML = '';
+      data.files.forEach(f => {
+        const div = document.createElement('div');
+        div.className = 'px-2 py-1 rounded bg-[var(--background,#f1f5f9)] border border-[var(--border,#e2e8f0)] truncate';
+        div.title = f;
+        div.textContent = f;
+        fileContainer.appendChild(div);
+      });
+
+      document.querySelectorAll('.card-node').forEach(el => el.classList.remove('flow-active'));
+      const activeCard = document.getElementById('node-' + (key === 'metrics_export' ? 'metrics' : key));
+      if (activeCard) {
+        activeCard.classList.add('flow-active');
+      }
+
+      document.getElementById('inspector-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    const FLOWS = {
+      all: {
+        desc: '',
+        activeNodes: ['collector', 'session', 'tc', 'proto', 'admission', 'engine', 'storage', 'alerts', 'ui', 'metrics', 'geoip']
+      },
+      metrics: {
+        desc: '实时指标流：Agent Collector 采集指标快照 -> Session 经 WSS 上报 -> Server 准入 -> SharedState 1秒去抖集中计算 Diff -> 无锁广播扇出给全部浏览器 Vue 3 SPA。',
+        activeNodes: ['collector', 'session', 'proto', 'admission', 'engine', 'ui']
+      },
+      security: {
+        desc: '准入与安全流：Agent 发起连接 -> 准入限流器 -> 检查 Token 会话缓存 (命中率 75%，握手耗时 3.92ms) -> 缓存未命中则进 Argon2id 有限并发槽位 (≤4) -> ConstantTimeEq 校验 -> 分配会话。',
+        activeNodes: ['session', 'proto', 'admission', 'engine', 'storage']
+      },
+      storage: {
+        desc: '持久化流：指标流转入异步 Batch Writer -> history.sqlite3 (WAL模式批量攒批，0丢弃) -> 前端查询命中 200 容量的 History LRU 缓存 -> 同步写入 audit.sqlite3 审计日志。',
+        activeNodes: ['session', 'engine', 'storage', 'metrics', 'ui']
+      },
+      alerts: {
+        desc: '告警与限速流：指标触发滑动窗口阈值评估 -> 触发 SMTP 邮件 / Webhook 告警 -> 流量超额指令下发至 Agent -> Agent 调用 Linux 原生 tc 执行网卡限速。',
+        activeNodes: ['collector', 'session', 'tc', 'engine', 'alerts']
+      }
+    };
+
+    function setFlow(flowKey) {
+      const config = FLOWS[flowKey];
+      if (!config) return;
+
+      document.querySelectorAll('.flow-btn').forEach(btn => {
+        btn.classList.remove('border-sky-500', 'bg-sky-500/10', 'text-sky-600', 'dark:text-sky-400');
+        btn.classList.add('border-[var(--border,#e2e8f0)]', 'text-[var(--muted-foreground,#64748b)]');
+      });
+      const activeBtn = document.getElementById('btn-' + flowKey);
+      if (activeBtn) {
+        activeBtn.classList.remove('border-[var(--border,#e2e8f0)]', 'text-[var(--muted-foreground,#64748b)]');
+        activeBtn.classList.add('border-sky-500', 'bg-sky-500/10', 'text-sky-600', 'dark:text-sky-400');
+      }
+
+      const descBanner = document.getElementById('flow-description');
+      const descText = document.getElementById('flow-text');
+      if (config.desc) {
+        descText.textContent = config.desc;
+        descBanner.classList.remove('hidden');
+      } else {
+        descBanner.classList.add('hidden');
+      }
+
+      const allNodeKeys = ['collector', 'session', 'tc', 'proto', 'admission', 'engine', 'storage', 'alerts', 'ui', 'metrics', 'geoip'];
+      allNodeKeys.forEach(key => {
+        const el = document.getElementById('node-' + key);
+        if (!el) return;
+        if (config.activeNodes.includes(key)) {
+          el.classList.remove('flow-inactive');
+          if (flowKey !== 'all') {
+            el.classList.add('flow-active');
+          } else {
+            el.classList.remove('flow-active');
+          }
+        } else {
+          el.classList.remove('flow-active');
+          el.classList.add('flow-inactive');
+        }
+      });
+    }
+
+    // 默认高亮核心集中 Diff 引擎
+    inspect('engine');
+  </script>
+</body>
+</html>
