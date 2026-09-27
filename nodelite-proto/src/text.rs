@@ -1,6 +1,6 @@
 //! 共享文本裁剪工具。
 
-/// Return a prefix no longer than `max_bytes`, ending at a UTF-8 character boundary.
+/// 返回长度不超过 `max_bytes` 的字符串前缀，确保严格截断在 UTF-8 字符边界上。
 pub fn truncate_to_byte_boundary(value: &str, max_bytes: usize) -> &str {
     if value.len() <= max_bytes {
         return value;
@@ -13,7 +13,7 @@ pub fn truncate_to_byte_boundary(value: &str, max_bytes: usize) -> &str {
     &value[..end]
 }
 
-/// Truncate a `String` in place to at most `max_bytes`, preserving UTF-8 validity.
+/// 原地截断 `String` 至最多 `max_bytes` 字节，严格保持 UTF-8 有效性。
 pub fn truncate_string_to_byte_boundary(value: &mut String, max_bytes: usize) {
     let cutoff = truncate_to_byte_boundary(value, max_bytes).len();
     value.truncate(cutoff);

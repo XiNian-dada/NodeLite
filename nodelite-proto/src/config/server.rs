@@ -236,7 +236,7 @@ pub fn parse_server_config(input: &str) -> Result<ServerConfig, ConfigError> {
 }
 
 config_section! {
-    /// In-memory Agent diagnostic logs have separate entry and estimated allocation budgets.
+    /// 内存中的 Agent 诊断日志维护独立的条目数量与内存估算配额。
     #[derive(Copy, Serialize, PartialEq, Eq)]
     pub struct AgentLogsConfig {
         pub max_entries: usize = default_agent_logs_max_entries(),

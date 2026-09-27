@@ -1,11 +1,11 @@
-//! TOML edit helpers used when persisting validated config changes.
+//! 持久化经校验配置变更时的 TOML 编辑辅助模块。
 //!
-//! Settings writes should preserve user-authored comments and section layout where possible,
-//! while still replacing stale values that no longer exist in the validated config view.
+//! 在落盘配置更新时，尽量保留用户手写的注释、空行与排版格式（decor），
+//! 同时准确替换已发生变更或被删除的失效字段。
 
 use toml_edit::{ArrayOfTables, Item, Table, Value};
 
-/// Insert or merge a top-level TOML item while preserving existing value decor.
+/// 插入或合并顶层 TOML 配置项，同时保留已有键值对的格式与注释装饰（decor）。
 pub fn upsert_toml_item_preserving_decor(root: &mut Table, key: &str, replacement: Item) {
     if let Some(existing) = root.get_mut(key) {
         merge_item(existing, replacement);

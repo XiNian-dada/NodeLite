@@ -1,4 +1,6 @@
-//! Independent Metrics frames avoid compressing credentials or sharing compression dictionaries.
+//! 独立的 Metrics 帧压缩模块。
+//!
+//! 针对高频指标帧独立压缩，避免跨帧共享字典产生侧信道泄露风险，且不压缩鉴权等敏感凭据。
 
 use std::io::Write;
 
@@ -22,7 +24,7 @@ pub enum CompressionError {
     Json(#[from] serde_json::Error),
 }
 
-/// Includes a format marker; each frame can be decoded without any preceding frame.
+/// 带有格式标记，单帧自包含，可独立解码而无需依赖前序帧上下文。
 pub fn encode_metrics(message: &MetricsMessage) -> Result<Vec<u8>, CompressionError> {
     let json = serde_json::to_vec(message)?;
     if json.len() > MAX_METRICS_JSON_BYTES {
@@ -33,7 +35,7 @@ pub fn encode_metrics(message: &MetricsMessage) -> Result<Vec<u8>, CompressionEr
     Ok(encoder.finish()?)
 }
 
-/// The configured plaintext limit still applies, even to a tiny compressed input.
+/// 解压时严格执行明文上限约束，防范恶意构造的小体积压缩炸弹（Zip Bomb）。
 pub fn decode_metrics(frame: &[u8], limit: usize) -> Result<MetricsMessage, CompressionError> {
     let input = frame
         .strip_prefix(MAGIC)

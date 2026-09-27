@@ -104,7 +104,7 @@ pub struct ServerNoticeMessage {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ServerNoticeCode {
-    /// Authenticated peers may send independently zlib-compressed Metrics frames.
+    /// 认证通过的对端可发送独立经 zlib 压缩的 Metrics 指标帧。
     MetricsZlibV1,
     /// Agent token 已过期,需要运维侧轮换并重装/更新节点配置。
     TokenExpired,
@@ -189,7 +189,7 @@ pub struct NetworkThrottleMessage {
     pub rate_kbps: Option<u64>,
 }
 
-/// Optional telemetry separates policy from execution while remaining compatible with v3 peers.
+/// 可选遥测字段分离了限速策略与执行状态，同时保持与旧版对端的协议兼容。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TrafficControlStatus {
     pub state: TrafficControlState,

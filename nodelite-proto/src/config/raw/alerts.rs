@@ -1,3 +1,7 @@
+//! 告警原始 TOML 配置反序列化与严格校验模块。
+//!
+//! 提供 RawAlertsSection 到强类型 AlertingConfig 的映射、字段合法性检验与默认规则填充。
+
 use serde::Deserialize;
 
 use crate::validation::{normalize_string_list, validate_identifier, validate_non_empty};

@@ -9,7 +9,7 @@ pub mod compression;
 pub mod config;
 pub mod message;
 pub mod model;
-/// URL and host helpers shared by server and agent transport checks.
+/// Server 与 Agent 传输安全检查共用的 URL 与主机名辅助工具。
 pub mod netutil;
 pub mod text;
 pub mod validation;

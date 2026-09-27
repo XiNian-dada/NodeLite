@@ -8,17 +8,16 @@
 
 use std::fmt;
 
-/// Validation failure returned by shared config and registry helpers.
+/// 配置与注册表共享校验工具返回的校验失败错误。
 ///
-/// The message is intentionally human-readable because callers surface it in
-/// configuration or registration error responses.
+/// 错误消息设计为可直接对外展示，方便在配置解析报错或 HTTP 接口中向用户返回具体原因。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationError {
     message: String,
 }
 
 impl ValidationError {
-    /// Create a validation error with a display-ready message.
+    /// 构造包含可读错误信息的校验错误。
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -36,10 +35,9 @@ impl std::error::Error for ValidationError {}
 
 const IDENTIFIER_MAX_CHARS: usize = 128;
 
-/// Reject values that are empty after trimming ASCII or Unicode whitespace.
+/// 拒绝在剔除前后 ASCII 与 Unicode 空白后为空的输入值。
 ///
-/// `field` is included verbatim in the returned error so callers can point to a
-/// TOML key, JSON field, or registry property.
+/// `field` 字段名原样包含在返回的错误中，便于调用方定位具体的 TOML 键、JSON 属性或注册表字段。
 pub fn validate_non_empty(field: &str, value: &str) -> Result<(), ValidationError> {
     if value.trim().is_empty() {
         return Err(ValidationError::new(format!("{field} must not be empty")));
@@ -47,7 +45,7 @@ pub fn validate_non_empty(field: &str, value: &str) -> Result<(), ValidationErro
     Ok(())
 }
 
-/// Validate non-empty UI/protocol text against byte and control-character limits.
+/// 校验非空展示/协议文本，限制最大 UTF-8 字节数并拒绝控制字符。
 pub fn validate_bounded_text(
     field: &str,
     value: &str,
@@ -67,11 +65,10 @@ pub fn validate_bounded_text(
     Ok(())
 }
 
-/// Validate a stable NodeLite identifier.
+/// 校验稳定的 NodeLite 标识符（如节点 ID、组名等）。
 ///
-/// Identifiers must be non-empty, at most 128 bytes long, and limited to ASCII
-/// letters, numbers, dash, underscore, and dot. The same rule is used for node
-/// IDs and other registry keys that need to be safe in logs, paths, and labels.
+/// 标识符必须非空、长度不超过 128 字符，且限定为 ASCII 字母、数字、连字符、下划线与点号。
+/// 确保其在日志输出、文件系统路径与指标 Label 中安全无歧义。
 pub fn validate_identifier(field: &str, value: &str) -> Result<(), ValidationError> {
     validate_non_empty(field, value)?;
     if value.len() > IDENTIFIER_MAX_CHARS {
@@ -90,10 +87,9 @@ pub fn validate_identifier(field: &str, value: &str) -> Result<(), ValidationErr
     Ok(())
 }
 
-/// Trim, sort, and deduplicate a list of operator-provided strings.
+/// 修剪、排序并去重运维人员提供的字符串列表。
 ///
-/// Empty entries are discarded after trimming. The output order is stable and
-/// deterministic, which keeps config round-trips and tests reproducible.
+/// 过滤空白条目，输出结果保持稳定有序，确保配置序列化往返和单元测试的可重现性。
 pub fn normalize_string_list(values: Vec<String>) -> Vec<String> {
     let mut values: Vec<String> = values
         .into_iter()
@@ -105,11 +101,10 @@ pub fn normalize_string_list(values: Vec<String>) -> Vec<String> {
     values
 }
 
-/// Validate normalized node tags against count and byte-size limits.
+/// 校验已归一化的节点标签列表，限制标签数量和单个标签字节上限。
 ///
-/// This function does not trim or deduplicate; call [`normalize_string_list`]
-/// first when values come from free-form user input. `max_tag_bytes` is measured
-/// with `String::len`, so it is a UTF-8 byte limit rather than a character count.
+/// 本函数不负责修剪或去重；针对自由格式输入请先调用 [`normalize_string_list`]。
+/// `max_tag_bytes` 使用 `String::len` 计算，为 UTF-8 字节数限制而非字符数。
 pub fn validate_tag_list(
     field: &str,
     values: &[String],

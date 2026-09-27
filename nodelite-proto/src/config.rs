@@ -139,7 +139,7 @@ pub const DEFAULT_AGENT_INBOUND_TIMEOUT_SECS: u64 = 90;
 /// Agent 最大接收消息字节数。
 pub const DEFAULT_MAX_INCOMING_MESSAGE_BYTES: usize = 64 * 1024;
 
-/// Pseudo filesystems are excluded at collection time to bound wire and Prometheus cardinality.
+/// 采集时排除伪文件系统，以约束传输报文大小和 Prometheus 指标基数。
 pub const DEFAULT_AGENT_IGNORED_FILESYSTEMS: &[&str] = &[
     "autofs",
     "bpf",
@@ -208,7 +208,7 @@ pub struct AgentConfig {
     pub token: String,
     /// Agent 上报指标的间隔秒数。
     pub report_interval_secs: u64,
-    /// Replaces the default pseudo-filesystem filter; an empty list opts into all filesystem types.
+    /// 替换默认的伪文件系统过滤规则；传入空列表则表示保留采集所有类型的文件系统。
     #[serde(default = "default_agent_ignored_filesystems")]
     pub ignored_filesystems: Vec<String>,
     /// 可选 hostname 覆盖值,为空时使用本机 hostname。
