@@ -1,4 +1,4 @@
-//! Linux collector fixtures keep host filesystem state out of metric assertions.
+//! Linux 采集器测试固件（隔离宿主机真实文件系统与指标断言）。
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -140,7 +140,7 @@ fn test_host_collector_with_mock_files() {
     std::fs::create_dir_all(root.join("proc/net")).expect("create mock proc/net");
     std::fs::create_dir_all(root.join("etc")).expect("create mock etc");
 
-    // Write mock files
+    // 写入模拟文件系统数据
     std::fs::write(root.join("proc/uptime"), "3600.50 12345.67\n").expect("write mock proc/uptime");
     std::fs::write(root.join("proc/sys/kernel/hostname"), "mock-host\n")
         .expect("write mock hostname");
@@ -201,7 +201,7 @@ fn test_host_collector_with_mock_files() {
         hostname_override: None,
     };
 
-    // Check identity collection
+    // 验证节点身份采集
     let identity = collector
         .collect_identity(&config, "1.0.0")
         .expect("collect identity from mock root");
@@ -214,7 +214,7 @@ fn test_host_collector_with_mock_files() {
     assert_eq!(identity.agent_version, "1.0.0");
     assert_eq!(identity.tags, vec!["mock-tag".to_string()]);
 
-    // Check snapshot collection (first collection has None rates)
+    // 验证快照采集（首次采集无速率差量）
     let snapshot1 = collector
         .collect_snapshot(&config.ignored_filesystems)
         .expect("collect snapshot from mock root");
@@ -228,15 +228,15 @@ fn test_host_collector_with_mock_files() {
     assert_eq!(snapshot1.memory.swap_total_bytes, 1048576 * 1024);
     assert_eq!(snapshot1.memory.swap_used_bytes, 524288 * 1024);
 
-    // Assert network totals
+    // 验证网络吞吐总量
     assert_eq!(snapshot1.network.total_rx_bytes, 200);
     assert_eq!(snapshot1.network.total_tx_bytes, 100);
     assert_eq!(snapshot1.network.rx_bytes_per_sec, None);
     assert_eq!(snapshot1.network.tx_bytes_per_sec, None);
     assert_eq!(snapshot1.network.packet_loss_percent, None);
 
-    // Disk usage comes entirely from the injected statvfs stub: the ext4 root is
-    // reported, tmpfs is ignored, and the host's real `/` is never queried.
+    // 磁盘使用量完全来自于注入的 statvfs 桩：采集 ext4 根挂载点，忽略 tmpfs，
+    // 且绝不会触碰宿主机真实的 `/` 文件系统。
     assert_eq!(snapshot1.disks.len(), 1);
     let root_disk = &snapshot1.disks[0];
     assert_eq!(root_disk.device, "/dev/vda1");

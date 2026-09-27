@@ -1,4 +1,4 @@
-//! Thin wrappers around macOS libc, Mach, and sysctl calls.
+//! macOS libc、Mach 与 sysctl 底层系统调用封装模块。
 
 use std::ffi::CStr;
 use std::mem::{self, MaybeUninit};
@@ -34,10 +34,9 @@ const IFMIB_IFDATA: libc::c_int = 2;
 const NETLINK_GENERIC: libc::c_int = 0;
 
 pub(super) fn read_uname() -> Result<libc::utsname> {
-    // SAFETY: `utsname` is a plain C output struct; all-zero bytes are a valid
-    // staging value before `uname` overwrites the fields.
+    // SAFETY: utsname 为纯 C 输出结构体；全零字节是 uname 覆盖字段前的安全初始状态。
     let mut uts = unsafe { mem::zeroed::<libc::utsname>() };
-    // SAFETY: `uts` is a live, writable `utsname` value for libc to populate.
+    // SAFETY: uts 是用于供 libc 填充的合法可写内存。
     let result = unsafe { libc::uname(&mut uts) };
     if result != 0 {
         return Err(anyhow!("uname failed"));
@@ -46,8 +45,7 @@ pub(super) fn read_uname() -> Result<libc::utsname> {
 }
 
 pub(super) fn c_chars_to_string(value: &[libc::c_char]) -> Result<String> {
-    // SAFETY: Callers pass fixed-size name fields returned by libc/kernel
-    // structs, which macOS stores as NUL-terminated C strings.
+    // SAFETY: 调用方传入 libc/kernel 返回的定长字段，macOS 保证其为以 NUL 结尾的 C 字符串。
     let text = unsafe { CStr::from_ptr(value.as_ptr()) }
         .to_str()
         .context("invalid utf-8 in C string")?;
@@ -56,8 +54,7 @@ pub(super) fn c_chars_to_string(value: &[libc::c_char]) -> Result<String> {
 
 pub(super) fn read_sysctl_string(name: &[u8]) -> Result<String> {
     let mut size = 0_usize;
-    // SAFETY: `name` is supplied by this module's callers as a NUL-terminated
-    // sysctl name, and the size-query form uses no output buffer.
+    // SAFETY: name 由调用方传入且以 NUL 结尾；长度探测调用无需输出缓冲区。
     let result = unsafe {
         libc::sysctlbyname(
             name.as_ptr().cast(),
@@ -72,8 +69,7 @@ pub(super) fn read_sysctl_string(name: &[u8]) -> Result<String> {
     }
 
     let mut buffer = vec![0_u8; size];
-    // SAFETY: `buffer` is valid for `size` bytes and `name` remains the same
-    // live NUL-terminated sysctl name used for the size query.
+    // SAFETY: buffer 拥有足够容纳 size 字节的空间，name 保持为有效的 NUL 结尾名称。
     let result = unsafe {
         libc::sysctlbyname(
             name.as_ptr().cast(),
@@ -93,8 +89,7 @@ pub(super) fn read_sysctl_string(name: &[u8]) -> Result<String> {
 }
 
 pub(super) fn count_cpu_cores() -> Result<u32> {
-    // SAFETY: `_SC_NPROCESSORS_ONLN` does not use pointers; libc returns the
-    // core count by value or a non-positive error/sentinel value.
+    // SAFETY: _SC_NPROCESSORS_ONLN 无指针操作；libc 直接按值返回 CPU 核心数或非正错误码。
     let cores = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) };
     if cores <= 0 {
         return Err(anyhow!("_SC_NPROCESSORS_ONLN returned {cores}"));
@@ -108,8 +103,7 @@ pub(super) fn read_uptime_secs() -> Result<u64> {
             tv_sec: 0,
             tv_nsec: 0,
         };
-        // SAFETY: `spec` is writable storage for one `timespec`, and each
-        // `clock_id` is a libc constant accepted by `clock_gettime`.
+        // SAFETY: spec 为 timespec 结构体的可写内存，clock_id 为 clock_gettime 接受的常量。
         let result = unsafe { libc::clock_gettime(clock_id, &mut spec) };
         if result == 0 {
             return u64::try_from(spec.tv_sec).context("negative uptime reported by clock_gettime");
@@ -121,15 +115,13 @@ pub(super) fn read_uptime_secs() -> Result<u64> {
 /// 使用 `host_processor_info` 汇总所有逻辑核心的累计 tick。
 pub(super) fn collect_cpu_sample() -> Result<CpuSample> {
     #[allow(deprecated)]
-    // SAFETY: `mach_host_self` has no preconditions and returns the current
-    // task's host port by value.
+    // SAFETY: mach_host_self 无前置条件，按值返回当前任务的 host port。
     let host = unsafe { libc::mach_host_self() };
     let mut cpu_count: libc::natural_t = 0;
     let mut cpu_info: libc::processor_cpu_load_info_t = ptr::null_mut();
     let mut info_count: libc::mach_msg_type_number_t = 0;
 
-    // SAFETY: All output pointers refer to live stack variables, and `cpu_info`
-    // is the kernel-owned buffer pointer that Mach fills on success.
+    // SAFETY: 所有输出指针均指向栈上有效变量，cpu_info 为 Mach 成功时填充的内核缓冲区指针。
     let status = unsafe {
         libc::host_processor_info(
             host,
@@ -143,8 +135,7 @@ pub(super) fn collect_cpu_sample() -> Result<CpuSample> {
         return Err(anyhow!("host_processor_info failed"));
     }
 
-    // SAFETY: A successful `host_processor_info` call returned a non-null
-    // `cpu_info` buffer with one load-info record per reported CPU.
+    // SAFETY: host_processor_info 成功返回非空 cpu_info 缓冲区，每个 CPU 对应一条 load-info 记录。
     let samples = unsafe { slice::from_raw_parts(cpu_info, cpu_count as usize) };
     let mut total = 0_u64;
     let mut idle = 0_u64;
@@ -156,8 +147,7 @@ pub(super) fn collect_cpu_sample() -> Result<CpuSample> {
     }
 
     let deallocate_size = mem::size_of::<libc::integer_t>().saturating_mul(info_count as usize);
-    // SAFETY: `cpu_info` is the Mach-allocated buffer returned above, and the
-    // deallocation size is derived from Mach's returned element count.
+    // SAFETY: cpu_info 为 Mach 分配的缓冲区，释放大小根据 Mach 返回的元素总数准确推导。
     unsafe {
         libc::vm_deallocate(
             #[allow(deprecated)]
@@ -172,7 +162,7 @@ pub(super) fn collect_cpu_sample() -> Result<CpuSample> {
 
 pub(super) fn collect_load_average() -> Result<nodelite_proto::LoadAverage> {
     let mut loads = [0_f64; 3];
-    // SAFETY: `loads` has space for exactly the three samples requested.
+    // SAFETY: loads 具备容纳所需 3 个采样值的固定数组内存。
     let result = unsafe { libc::getloadavg(loads.as_mut_ptr(), 3) };
     if result != 3 {
         return Err(anyhow!("getloadavg returned {result}"));
@@ -185,11 +175,9 @@ pub(super) fn collect_load_average() -> Result<nodelite_proto::LoadAverage> {
 }
 
 pub(super) fn read_memory_statistics() -> Result<MemoryStatistics> {
-    // SAFETY: `_SC_PHYS_PAGES` returns a scalar page count and does not access
-    // caller-provided memory.
+    // SAFETY: _SC_PHYS_PAGES 返回标量物理页数，不涉及调用方内存。
     let total_pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
-    // SAFETY: `_SC_PAGESIZE` returns a scalar page size and does not access
-    // caller-provided memory.
+    // SAFETY: _SC_PAGESIZE 返回标量页大小，不涉及调用方内存。
     let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
     if total_pages <= 0 || page_size <= 0 {
         return Err(anyhow!(
@@ -198,15 +186,12 @@ pub(super) fn read_memory_statistics() -> Result<MemoryStatistics> {
     }
 
     #[allow(deprecated)]
-    // SAFETY: `mach_host_self` has no preconditions and returns the current
-    // task's host port by value.
+    // SAFETY: mach_host_self 无前置条件，按值返回当前任务的 host port。
     let host = unsafe { libc::mach_host_self() };
     let mut count = libc::HOST_VM_INFO64_COUNT;
-    // SAFETY: `vm_statistics64` is a plain C output struct; zeroed bytes are a
-    // valid staging value before `host_statistics64` writes it.
+    // SAFETY: vm_statistics64 为纯 C 输出结构体；全零字节是 host_statistics64 写入前的有效初始值。
     let mut stats = unsafe { mem::zeroed::<libc::vm_statistics64>() };
-    // SAFETY: `stats` and `count` are live writable outputs, and `count` starts
-    // with the kernel-documented element count for `HOST_VM_INFO64`.
+    // SAFETY: stats 和 count 为合法可写输出，count 以内核文档规定的 HOST_VM_INFO64 元素数量初始化。
     let status = unsafe {
         libc::host_statistics64(
             host,
@@ -231,12 +216,10 @@ pub(super) fn read_memory_statistics() -> Result<MemoryStatistics> {
 
 pub(super) fn read_swap_usage() -> Result<(u64, u64)> {
     let mut mib = [libc::CTL_VM, libc::VM_SWAPUSAGE];
-    // SAFETY: `xsw_usage` is a plain C output struct; zeroing creates a valid
-    // staging value before sysctl fills it.
+    // SAFETY: xsw_usage 为纯 C 输出结构体；清零为 sysctl 填充创建了合法初始值。
     let mut swap = unsafe { mem::zeroed::<libc::xsw_usage>() };
     let mut size = mem::size_of::<libc::xsw_usage>();
-    // SAFETY: `mib` names the VM swap sysctl, and `swap`/`size` describe a
-    // writable output buffer of the correct type.
+    // SAFETY: mib 指定 VM swap sysctl，swap/size 指向正确类型的可写输出缓冲区。
     let result = unsafe {
         libc::sysctl(
             mib.as_mut_ptr(),
@@ -255,16 +238,13 @@ pub(super) fn read_swap_usage() -> Result<(u64, u64)> {
 
 pub(super) fn mounted_filesystems() -> Result<Vec<libc::statfs>> {
     let mut mounts: *mut libc::statfs = ptr::null_mut();
-    // SAFETY: `mounts` is a live output pointer slot. macOS returns a pointer
-    // to kernel-managed mount data that remains valid until the next call.
+    // SAFETY: mounts 为合法输出指针槽。macOS 返回指向内核维护的挂载数据指针，该内存在下次调用前保持有效。
     let count = unsafe { libc::getmntinfo(&mut mounts, libc::MNT_NOWAIT) };
     if count <= 0 || mounts.is_null() {
         return Err(anyhow!("getmntinfo returned no mounts"));
     }
 
-    // SAFETY: `getmntinfo` returned `count > 0` and a non-null pointer. The
-    // slice is immediately copied into an owned `Vec` before another call can
-    // invalidate the backing storage.
+    // SAFETY: getmntinfo 返回 count > 0 且指针非空。切片立即深拷贝为拥有所有权的 Vec，避免后续调用使其失效。
     let mounts = unsafe { slice::from_raw_parts(mounts, count as usize) };
     Ok(mounts.to_vec())
 }
@@ -272,8 +252,7 @@ pub(super) fn mounted_filesystems() -> Result<Vec<libc::statfs>> {
 pub(super) fn network_iflist2_len() -> Result<usize> {
     let mut mib = [libc::CTL_NET, libc::PF_ROUTE, 0, 0, libc::NET_RT_IFLIST2, 0];
     let mut len = 0_usize;
-    // SAFETY: The size-query form passes no output buffer; `len` is a live
-    // writable slot for the kernel-reported byte count.
+    // SAFETY: 长度探测调用不传入输出缓冲区；len 为内核回写字节数的合法可写槽。
     let result = unsafe {
         libc::sysctl(
             mib.as_mut_ptr(),
@@ -293,8 +272,7 @@ pub(super) fn network_iflist2_len() -> Result<usize> {
 pub(super) fn read_network_iflist2(mut len: usize) -> Result<Vec<u8>> {
     let mut mib = [libc::CTL_NET, libc::PF_ROUTE, 0, 0, libc::NET_RT_IFLIST2, 0];
     let mut buffer = vec![0_u8; len];
-    // SAFETY: `buffer` is valid for the requested `len` bytes, and `len` is
-    // updated by the kernel to the number of bytes actually written.
+    // SAFETY: buffer 拥有所请求 len 字节的合法空间，内核将 len 更新为实际写入的字节数。
     let result = unsafe {
         libc::sysctl(
             mib.as_mut_ptr(),
@@ -323,8 +301,7 @@ pub(super) fn collect_interface_data(index: u16) -> Result<IfMibData> {
     ];
     let mut if_data = MaybeUninit::<IfMibData>::uninit();
     let mut size = mem::size_of::<IfMibData>();
-    // SAFETY: `if_data` points to writable storage for one `IfMibData`, and
-    // `size` advertises exactly that buffer length to sysctl.
+    // SAFETY: if_data 指向 IfMibData 的可写内存，size 准确向 sysctl 声明该缓冲区的长度。
     let result = unsafe {
         libc::sysctl(
             mib_data.as_mut_ptr(),
@@ -339,15 +316,13 @@ pub(super) fn collect_interface_data(index: u16) -> Result<IfMibData> {
     if result != 0 || size < mem::size_of::<IfMibData>() {
         return Err(anyhow!("sysctl IFMIB_IFDATA failed for interface {index}"));
     }
-    // SAFETY: sysctl succeeded and reported enough bytes to initialize the
-    // entire `IfMibData` value.
+    // SAFETY: sysctl 执行成功且报告足够字节，完整初始化了 IfMibData 结构体。
     Ok(unsafe { if_data.assume_init() })
 }
 
 pub(super) fn get_ifaddrs() -> Result<IfAddrsGuard> {
     let mut addrs: *mut libc::ifaddrs = ptr::null_mut();
-    // SAFETY: `addrs` is a live output pointer slot. On success ownership of
-    // the linked list is transferred to `IfAddrsGuard` for `freeifaddrs`.
+    // SAFETY: addrs 为合法输出指针。成功后该链表所有权转移给 IfAddrsGuard 负责 freeifaddrs 释放。
     let result = unsafe { libc::getifaddrs(&mut addrs) };
     if result != 0 || addrs.is_null() {
         return Err(anyhow!("getifaddrs failed"));
@@ -363,8 +338,7 @@ impl IfAddrsGuard {
 
 impl Drop for IfAddrsGuard {
     fn drop(&mut self) {
-        // SAFETY: `IfAddrsGuard` is only constructed after successful
-        // `getifaddrs`, so `self.0` is the matching list head to free once.
+        // SAFETY: IfAddrsGuard 仅在 getifaddrs 成功后构造，self.0 是需要单次释放的匹配链表头。
         unsafe {
             libc::freeifaddrs(self.0);
         }

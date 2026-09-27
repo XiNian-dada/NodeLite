@@ -1,4 +1,4 @@
-//! macOS metric aggregation built on top of syscall wrappers.
+//! 基于系统调用封装的 macOS 指标聚合模块。
 
 use std::collections::HashSet;
 use std::ffi::CStr;
@@ -224,8 +224,7 @@ pub(super) fn parse_network_totals_and_indices_from_iflist2(
     let mut tx_packets = 0_u64;
     let mut rx_dropped_packets = 0_u64;
     let mut next = buffer.as_ptr();
-    // SAFETY: `next` points at the start of `buffer`; adding exactly
-    // `buffer.len()` yields the one-past-the-end pointer for the same slice.
+    // SAFETY: `next` 指向 `buffer` 的首地址；偏移 `buffer.len()` 得到该切片的合法尾后指针。
     let end = unsafe { next.add(buffer.len()) };
 
     while next < end {
@@ -233,8 +232,8 @@ pub(super) fn parse_network_totals_and_indices_from_iflist2(
         if remaining < mem::size_of::<libc::if_msghdr>() {
             break;
         }
-        // SAFETY: The remaining byte count was checked for a full header.
-        // `NET_RT_IFLIST2` buffers are byte streams, so use unaligned reads.
+        // SAFETY: 剩余字节数已检查足够包含完整消息头。
+        // `NET_RT_IFLIST2` 缓冲区为字节流，使用非对齐读取 `read_unaligned`。
         let ifm = unsafe { ptr::read_unaligned(next.cast::<libc::if_msghdr>()) };
         let message_len = ifm.ifm_msglen as usize;
         if message_len == 0 || message_len > remaining {
@@ -245,8 +244,7 @@ pub(super) fn parse_network_totals_and_indices_from_iflist2(
             if message_len < mem::size_of::<libc::if_msghdr2>() {
                 break;
             }
-            // SAFETY: The message declares enough bytes for `if_msghdr2`, and
-            // the previous check keeps the read inside `buffer`.
+            // SAFETY: 消息长度已验证足够容纳 `if_msghdr2`，且前置检查保证读取边界在 `buffer` 内。
             let ifm2 = unsafe { ptr::read_unaligned(next.cast::<libc::if_msghdr2>()) };
             let flags = ifm2.ifm_flags;
             let index = ifm2.ifm_index;
@@ -264,8 +262,7 @@ pub(super) fn parse_network_totals_and_indices_from_iflist2(
             }
         }
 
-        // SAFETY: `message_len` is non-zero and no larger than the remaining
-        // bytes, so the next cursor stays within the same buffer or at `end`.
+        // SAFETY: `message_len` 非零且不超过剩余字节，步进后的指针始终位于同一 buffer 内或恰好到达 `end`。
         next = unsafe { next.add(message_len) };
     }
 
@@ -334,14 +331,13 @@ fn collect_network_totals_via_ifaddrs() -> Result<NetworkReading> {
     let mut rx_dropped_packets = 0_u64;
     let mut current = addrs.as_ptr();
     while !current.is_null() {
-        // SAFETY: `current` starts at the head returned by `getifaddrs` and is
-        // advanced through `ifa_next` while `addrs` keeps the list alive.
+        // SAFETY: `current` 起始于 `getifaddrs` 返回的链表头，沿着 `ifa_next` 步进，
+        // `addrs` 的生命周期确保整个链表内存有效。
         let iface = unsafe { &*current };
         let address_family = if iface.ifa_addr.is_null() {
             None
         } else {
-            // SAFETY: `ifa_addr` was checked non-null and belongs to the live
-            // `getifaddrs` list guarded by `addrs`.
+            // SAFETY: `ifa_addr` 已校验非空，属于受 `addrs` 保护的有效 `getifaddrs` 节点。
             Some(unsafe { (*iface.ifa_addr).sa_family as i32 })
         };
         if !iface.ifa_addr.is_null()
@@ -350,15 +346,13 @@ fn collect_network_totals_via_ifaddrs() -> Result<NetworkReading> {
             && iface.ifa_flags & libc::IFF_UP as u32 != 0
             && !iface.ifa_data.is_null()
         {
-            // SAFETY: macOS `getifaddrs` entries provide `ifa_name` as a
-            // NUL-terminated interface name for the lifetime of the list.
+            // SAFETY: macOS `getifaddrs` 在链表生命周期内提供以 NUL 结尾的有效 `ifa_name` 接口名。
             let name = unsafe { CStr::from_ptr(iface.ifa_name) }
                 .to_string_lossy()
                 .into_owned();
             if seen_names.insert(name.clone()) {
                 sampled_names.push(name);
-                // SAFETY: For AF_LINK entries with non-null `ifa_data`, macOS
-                // stores a valid `if_data` counter block for this interface.
+                // SAFETY: 针对非空 `ifa_data` 的 AF_LINK 条目，macOS 存储了该接口的有效 `if_data` 计数块。
                 let data = unsafe { &*(iface.ifa_data as *const libc::if_data) };
                 rx_bytes = rx_bytes.saturating_add(u64::from(data.ifi_ibytes));
                 tx_bytes = tx_bytes.saturating_add(u64::from(data.ifi_obytes));

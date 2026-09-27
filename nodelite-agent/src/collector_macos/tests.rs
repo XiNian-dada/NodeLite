@@ -1,3 +1,5 @@
+//! macOS 指标采集与系统属性解析测试模块。
+
 use std::mem;
 use std::ptr;
 use std::time::{Duration, Instant};
@@ -169,13 +171,11 @@ fn iflist2_parser_ignores_truncated_headers() {
 #[test]
 fn iflist2_parser_stops_on_overlong_messages() {
     let mut buffer = vec![0_u8; mem::size_of::<libc::if_msghdr>()];
-    // SAFETY: `if_msghdr` is a plain C header used here only as a byte fixture;
-    // zeroed fields are overwritten as needed before the unaligned write.
+    // SAFETY: if_msghdr 是用于构造测试字节固件的纯 C 结构体，零值后按需填充字段。
     let mut header = unsafe { mem::zeroed::<libc::if_msghdr>() };
     header.ifm_msglen = (buffer.len() + 1) as _;
     header.ifm_type = libc::RTM_IFINFO2 as _;
-    // SAFETY: `buffer` has exactly enough bytes for one header, and
-    // `write_unaligned` matches the parser's byte-stream assumptions.
+    // SAFETY: buffer 拥有足够容纳单个 header 的容量，write_unaligned 符合解析器的字节流假设。
     unsafe {
         ptr::write_unaligned(buffer.as_mut_ptr().cast::<libc::if_msghdr>(), header);
     }
@@ -189,8 +189,7 @@ fn iflist2_parser_stops_on_overlong_messages() {
 
 #[test]
 fn available_memory_does_not_underflow_when_compressor_is_large() {
-    // SAFETY: `vm_statistics64` is a plain C statistics struct; this test
-    // assigns the fields used by `compute_available_memory_bytes`.
+    // SAFETY: vm_statistics64 为纯 C 统计结构体，本测试仅赋值 compute_available_memory_bytes 所需字段。
     let mut stats = unsafe { std::mem::zeroed::<libc::vm_statistics64>() };
     stats.free_count = 5_431;
     stats.inactive_count = 520_105;

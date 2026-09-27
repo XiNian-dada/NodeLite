@@ -1,4 +1,6 @@
-//! Bound every WebSocket send, including the flush hidden inside SinkExt::send.
+//! WebSocket 发送超时封装模块。
+//!
+//! 确保每一次 WebSocket 发送及底层隐式 flush 都受设定的超时约束，防止 TCP 拥塞拖垮 Agent。
 
 use std::time::Duration;
 
@@ -26,7 +28,7 @@ impl<S: Sink<Message, Error = WebSocketError> + Unpin> TimedSender<S> {
     }
 
     pub(super) async fn send(&mut self, message: Message) -> Result<(), SendError> {
-        // A timed-out partial frame is never reused: the caller drops the whole session.
+        // Why: 发送超时的部分帧无法安全复用，必须销毁整个底层会话以重建连接，防止帧错位损坏协议流。
         timeout(self.timeout, self.sink.send(message))
             .await
             .map_err(|_| SendError::TimedOut)??;

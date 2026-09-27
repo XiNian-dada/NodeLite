@@ -1,3 +1,7 @@
+//! Agent 运行循环与 CLI 调度模块。
+//!
+//! 解析命令行参数、加载配置、初始化日志与 TLS Provider，负责驱动一次性采样或长连接生命周期。
+
 use std::path::PathBuf;
 use std::time::Duration;
 

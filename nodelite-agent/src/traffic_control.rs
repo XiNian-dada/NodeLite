@@ -150,7 +150,7 @@ impl TrafficController {
             return Ok(TrafficControlOutcome::Applied);
         }
         if let Err(error) = operation().await {
-            // A partially changed kernel policy no longer matches the last confirmed value.
+            // Why: 部分生效的内核策略不再与最后确认的值匹配，清除缓存迫使下次重试时全量重新下发。
             self.last_applied_rate_kbps = None;
             self.schedule_retry();
             if let Some(status) = &mut self.status {
@@ -227,7 +227,7 @@ async fn replace_police_filter(
     direction: &str,
     rate_kbps: u64,
 ) -> Result<(), TrafficControlError> {
-    // Linux matchall rejects an in-place change with EEXIST even for the same handle.
+    // Why: Linux matchall filter 对同 handle 的就地变更（change）会直接返回 EEXIST，必须先删后加。
     delete_police_filter_if_present(interface, direction).await?;
     tc_success(
         "applying traffic police filter",

@@ -1,4 +1,4 @@
-//! NodeLite Agent Library.
+//! NodeLite 客户端核心库，负责主机指标采集、网络整形与 WebSocket 状态同步。
 
 pub mod collector;
 pub mod config_io;

@@ -28,8 +28,7 @@ mod collector_unsupported;
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub use collector_unsupported::{HostCollector, new_collector};
 
-/// Collect node identity on Tokio's blocking pool so startup does not run filesystem or FFI work
-/// on an async worker.
+/// 在 Tokio 的 blocking 线程池中采集节点标识，避免在异步 worker 线程上执行耗时的文件系统读取或 FFI 调用。
 pub async fn collect_identity_blocking(
     collector: &mut HostCollector,
     config: AgentConfig,
@@ -41,7 +40,7 @@ pub async fn collect_identity_blocking(
     .await
 }
 
-/// Collect a host snapshot on Tokio's blocking pool while preserving collector delta state.
+/// 在 Tokio 的 blocking 线程池中采集主机快照，同时安全维护采集器的差量计算状态。
 pub async fn collect_snapshot_blocking(
     collector: &mut HostCollector,
     ignored_filesystems: &[String],
@@ -58,6 +57,7 @@ where
     T: Send + 'static,
     F: FnOnce(&mut HostCollector) -> Result<T> + Send + 'static,
 {
+    // Why: 通过所有权置换将 collector 移动至 spawn_blocking 线程闭包，并在任务完成后物归原位，避免异步锁开销同时保持 delta 状态连续性。
     let mut owned = std::mem::replace(collector, new_collector());
     let (returned, result) = tokio::task::spawn_blocking(move || {
         let result = operation(&mut owned);

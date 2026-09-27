@@ -22,6 +22,7 @@ async fn real_agent_negotiates_compression_and_falls_back_with_older_servers() -
     for negotiated in [false, true] {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let mut config = test_config(listener.local_addr()?);
+        config.report_interval_secs = 1;
         let task = tokio::spawn(async move {
             let dir = TempDir::new("compression-agent");
             let identity = test_identity(&config);

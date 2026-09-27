@@ -1,4 +1,4 @@
-//! Linux mount filtering and statvfs capacity reads, with injectable syscalls for tests.
+//! Linux 挂载点过滤与 statvfs 磁盘容量采集模块（支持测试注入桩）。
 
 use std::collections::HashSet;
 use std::ffi::CString;
@@ -100,13 +100,12 @@ pub(super) fn real_statvfs(path: &str) -> Result<FilesystemStats> {
     let c_path =
         CString::new(path.as_bytes()).with_context(|| format!("path contains NUL byte: {path}"))?;
     let mut stats = std::mem::MaybeUninit::<libc::statvfs>::uninit();
-    // SAFETY: `c_path` is a live NUL-terminated C string and `stats` points to
-    // writable storage large enough for libc to fill one `statvfs` value.
+    // SAFETY: c_path 是以 NUL 结尾的有效 C 字符串，stats 指向足够容纳 statvfs 结构的可写内存。
     let result = unsafe { libc::statvfs(c_path.as_ptr(), stats.as_mut_ptr()) };
     if result != 0 {
         return Err(anyhow!("statvfs failed for {}", Path::new(path).display()));
     }
-    // SAFETY: `statvfs` returned success, which means libc initialized `stats`.
+    // SAFETY: statvfs 返回成功 (0)，表明 libc 已正确初始化 stats 内存。
     let stats = unsafe { stats.assume_init() };
 
     let block_size = stats.f_frsize;

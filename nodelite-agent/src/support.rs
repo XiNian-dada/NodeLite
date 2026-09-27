@@ -1,3 +1,7 @@
+//! Agent 通用底层支撑模块。
+//!
+//! 提供 Rustls 加密后端初始化、版本号注入、Tracing 日志初始化以及跨平台的优雅停机信号监听。
+
 use anyhow::{Result, anyhow};
 use tracing::warn;
 

@@ -1,3 +1,7 @@
+//! Agent 配置文件加载与原子更新模块。
+//!
+//! 负责配置文件的读取解析、Token 轮换后的原子写入（写临时文件 -> fsync -> rename -> 目录 fsync -> 权限加固）。
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
