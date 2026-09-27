@@ -14,7 +14,7 @@
 
 Designed for **minimal resource footprint** (idle server memory < 15MB, agent < 2MB), **massive throughput & real-time streaming** (110k+ metrics/sec on 200 nodes, 3.75s 1,000-node fleet onboarding, 3.9ms warm reconnection), and **effortless deployment** (single static binary with embedded Vue 3 SPA).
 
-📖 **Official Deployment Docs & Guide**: [https://xinian-dada.github.io/NodeLite/](https://xinian-dada.github.io/NodeLite/)
+**Official Deployment Docs & Guide**: [https://xinian-dada.github.io/NodeLite/](https://xinian-dada.github.io/NodeLite/)
 
 > [!TIP]
 > **Version Recommendation**: Always use the latest official release from [GitHub Releases](https://github.com/XiNian-dada/NodeLite/releases) in production (e.g. `v3.0.x`).
@@ -23,46 +23,46 @@ Designed for **minimal resource footprint** (idle server memory < 15MB, agent < 
 
 ## Table of Contents
 
-- [✨ Features](#-features)
-- [📸 Screenshots](#-screenshots)
-- [⚡ 5-Minute Quickstart](#-5-minute-quickstart)
-- [🏗️ System Architecture & Data Flow](#️-system-architecture--data-flow)
-- [📊 Performance Benchmarks](#-performance-benchmarks)
-- [⚙️ Core Configuration Cheat Sheet](#️-core-configuration-cheat-sheet)
-- [🚨 Alerts & Linux Traffic Control](#-alerts--linux-traffic-control)
-- [🔧 Operations & Upgrades](#-operations--upgrades)
-- [❓ Troubleshooting FAQ](#-troubleshooting-faq)
-- [💻 Developer & Build Guide](#-developer--build-guide)
+- [Features](#features)
+- [Screenshots](#screenshots)
+- [Quickstart](#quickstart)
+- [System Architecture & Data Flow](#system-architecture--data-flow)
+- [Performance Benchmarks](#performance-benchmarks)
+- [Core Configuration Cheat Sheet](#core-configuration-cheat-sheet)
+- [Alerts & Linux Traffic Control](#alerts--linux-traffic-control)
+- [Operations & Upgrades](#operations--upgrades)
+- [Troubleshooting FAQ](#troubleshooting-faq)
+- [Developer & Build Guide](#developer--build-guide)
 
 ---
 
-## ✨ Features
+## Features
 
-* 🚀 **Ultra-low Footprint & Single Binary Delivery**:
+* **Ultra-low Footprint & Single Binary Delivery**:
   * Written in Rust with zero GC pause or hidden memory leakage;
   * Vue 3 + TypeScript single-page app (SPA) embedded directly inside the Rust Server binary;
   * Ready-to-run `musl` static binaries (`x86_64` and `aarch64`) with zero external dynamic runtime dependencies.
-* ⚡ **Lock-Free Centralized Diff Broadcast**:
+* **Lock-Free Centralized Diff Broadcast**:
   * Employs a **Central Diff Engine** (1s debounce) that calculates incremental updates in a single background task and fans out to all browser WebSocket sessions without lock contention;
   * Reduces lock contention and Diff complexity from $O(M \times N)$ to $O(N)$.
-* 🚦 **Native Linux Traffic Control (tc)**:
+* **Native Linux Traffic Control (tc)**:
   * Integrates with the Linux kernel `tc` module. When a node reaches its monthly bandwidth quota, the Agent automatically throttles bandwidth to prevent costly overage fees.
-* 🛡️ **Industrial-grade Security**:
+* **Industrial-grade Security**:
   * Node tokens hashed with Argon2id under bounded concurrency slots (preventing OOM during reconnection storms);
   * Constant-time comparisons (`subtle::ConstantTimeEq`) across all token and credential verifications;
   * Web dashboard supports Basic Auth + **TOTP 2FA**, with Passkeys (Touch ID, Face ID, or device unlock) for routine second-factor verification;
   * Dedicated SQLite audit trail database (`audit.sqlite3`) logging authentication and security events.
-* 🚨 **Comprehensive Alerting & Daily Inspections**:
+* **Comprehensive Alerting & Daily Inspections**:
   * Sliding-window rule evaluations for CPU, memory, latency, node offline, and monthly bandwidth;
   * Immediate dispatch via **SMTP Email** (StartTLS) and **Webhooks** (Telegram / Discord / Slack / Custom);
   * Daily 9:00 AM automated inspection report summarizing 24-hour fleet health.
-* 📈 **Open Observability**:
+* **Open Observability**:
   * Built-in Prometheus `/metrics` exposition endpoint with official Grafana dashboard templates;
   * Physical location inference via online ipwho.is or local MaxMind/DB-IP `.mmdb` files.
 
 ---
 
-## 📸 Screenshots
+## Screenshots
 
 <p align="center">
   <img src="images/en/dark_home_page.png" alt="NodeLite Dashboard Overview (Dark Theme)" width="100%" />
@@ -74,7 +74,7 @@ Designed for **minimal resource footprint** (idle server memory < 15MB, agent < 
 
 ---
 
-## ⚡ 5-Minute Quickstart
+## Quickstart
 
 ### Step 1: Install Server
 
@@ -167,7 +167,7 @@ Copy the generated `curl ... | sh` command and run it on your target node (Linux
 
 ---
 
-## 🏗️ System Architecture & Data Flow
+## System Architecture & Data Flow
 
 ```text
 [ NodeLite Agent ]  ---(WSS: Metrics / Heartbeat)---> [ Nginx / Caddy Proxy ]
@@ -188,7 +188,7 @@ Copy the generated `curl ... | sh` command and run it on your target node (Linux
 
 ---
 
-## 📊 Performance Benchmarks
+## Performance Benchmarks
 
 > Measured on dedicated Linux x86_64 host (Intel Core i5-13600K 12C/12T, 16 GB RAM, Ubuntu 22.04 LTS / Linux 5.15), Rust 1.98 (Profile: `release` with LTO), standard network loopback with full TLS/WSS authentication pipeline.
 
@@ -235,7 +235,7 @@ Simulating 20 concurrent dashboard operators actively refreshing views under a 1
 
 ---
 
-## ⚙️ Core Configuration Cheat Sheet
+## Core Configuration Cheat Sheet
 
 Server configuration file: `/opt/nodelite/config/server.toml`:
 
@@ -260,7 +260,7 @@ Registered public credentials live in `passkeys.json` beside `server.toml` with 
 
 ---
 
-## 🚨 Alerts & Linux Traffic Control
+## Alerts & Linux Traffic Control
 
 ### 1. Alerting (SMTP & Webhooks)
 
@@ -304,7 +304,7 @@ curl -fsSL https://monitor.example.com/install/install-agent.sh | \
 
 ---
 
-## 🔧 Operations & Upgrades
+## Operations & Upgrades
 
 ### Status Checks
 
@@ -345,7 +345,7 @@ sudo systemctl restart nodelite-server.service
 
 ---
 
-## ❓ Troubleshooting FAQ
+## Troubleshooting FAQ
 
 - **Dashboard opens but no nodes appear?**
   - Check agent logs: `sudo journalctl -u nodelite-agent -n 50 --no-pager`;
@@ -359,7 +359,7 @@ sudo systemctl restart nodelite-server.service
 
 ---
 
-## 💻 Developer & Build Guide
+## Developer & Build Guide
 
 ```bash
 # Check and run tests

@@ -14,7 +14,7 @@
 
 专为追求**极低系统资源占用**（空载服务端内存 < 15MB，Agent < 2MB）、**海量高吞吐与毫秒级实时流**（200 节点吞吐超 11 万指标/秒，千台集群 3.7 秒极速接入，Token 热重连仅 3.9ms）与**极简运维交付**（单静态二进制、内嵌 Vue 3 SPA）而设计。
 
-📖 **官方完整部署文档与在线指南**：[https://xinian-dada.github.io/NodeLite/](https://xinian-dada.github.io/NodeLite/)
+**官方完整部署文档与在线指南**：[https://xinian-dada.github.io/NodeLite/](https://xinian-dada.github.io/NodeLite/)
 
 > [!TIP]
 > **版本建议**：生产环境请使用 [GitHub Releases](https://github.com/XiNian-dada/NodeLite/releases) 中的最新正式版本（如 `v3.0.x`），测试环境可按需选用 `-rc` 或 `-beta` 预发布版本。
@@ -23,47 +23,47 @@
 
 ## 目录
 
-- [✨ 核心特性](#-核心特性)
-- [📸 界面预览](#-界面预览)
-- [⚡ 5 分钟快速上手](#-5-分钟快速上手)
-- [🏗️ 系统架构与数据流](#️-系统架构与数据流)
-- [📊 性能基准实测](#-性能基准实测)
-- [⚙️ 核心配置速查](#️-核心配置速查)
-- [🚨 告警通知与 Linux 限速](#-告警通知与-linux-限速)
-- [🔧 升级与日常运维](#-升级与日常运维)
-- [❓ 常见问题与排障](#-常见问题与排障)
-- [💻 开发者与源码构建](#-开发者与源码构建)
+- [核心特性](#核心特性)
+- [界面预览](#界面预览)
+- [快速上手](#快速上手)
+- [系统架构与数据流](#系统架构与数据流)
+- [性能基准实测](#性能基准实测)
+- [核心配置速查](#核心配置速查)
+- [告警通知与 Linux 限速](#告警通知与-linux-限速)
+- [升级与日常运维](#升级与日常运维)
+- [常见问题与排障](#常见问题与排障)
+- [开发者与源码构建](#开发者与源码构建)
 
 ---
 
-## ✨ 核心特性
+## 核心特性
 
-* 🚀 **极低开销 & 单文件交付**：
+* **极低开销与单文件交付**：
   * 基于 Rust 构建，内存占用极其克制（Server 仅需十余 MB，Agent < 2MB），无任何 GC 停顿与隐形泄漏；
   * Vue 3 + TypeScript 前端 SPA 静态构建产物直接嵌入 Rust Server 二进制中，单文件交付，无需额外部署 Nginx 托管静态资源；
   * 提供 `musl` 静态二进制（`x86_64` / `aarch64`），零外部动态库依赖。
-* ⚡ **毫秒级无锁集中广播**：
+* **毫秒级无锁集中广播**：
   * 首创**集中 Diff 广播引擎**，单一后台任务（1 秒去抖）统一计算节点增量差异，通过广播通道无锁扇出给全部浏览器会话；
   * 锁竞争与 Diff 复杂度由 $O(M \times N)$ 降至 $O(N)$，多端同时在看时 CPU 占用近乎平直。
-* 🚦 **独家 Linux 套餐限速 (Traffic Control)**：
+* **Linux 套餐限速 (Traffic Control)**：
   * 深度集成 Linux 原生 `tc` 模块。当 VPS 月度流量达到预设配额时，Agent 可自动触发接口带宽限流，彻底避免公网流量超额扣费。
-* 🛡️ **工业级安全防线**：
+* **高安全防线与审计**：
   * 节点 Token 采用 Argon2id 哈希，并配置有限并发池（防大批重连引发 OOM）；
   * 凭证与 Token 比较全面采用 `subtle::ConstantTimeEq` 防范时序侧信道攻击；
   * 控制台支持 Basic Auth + **TOTP 2FA**，并可用 Passkey（Touch ID / Face ID / 设备解锁）完成日常二次验证；
   * 独立 SQLite 审计日志库（`audit.sqlite3`）记录全部鉴权与安全事件。
-* 🚨 **完备的告警与每日巡检**：
+* **完备告警与每日巡检**：
   * 支持 CPU、内存、延迟、离线、月度流量用量等多维度规则评估；
   * 支持 **SMTP 邮件**（StartTLS）及 **Webhook**（Telegram / Discord / Slack / 自定义 Webhook）即时推送；
   * 每天 9:00 自动汇总结算过去 24 小时的健康度巡检摘要。
-* 📈 **开放可观测性**：
+* **开放可观测性**：
   * 内置标准 Prometheus `/metrics` 抓取端点，并提供官方 Grafana 仪表盘模板；
   * 支持在线 API（ipwho.is）及本地 MaxMind / DB-IP 离线库（`.mmdb`）进行物理地理位置解析；
   * 默认智能过滤容器 `overlay`、`tmpfs` 等虚拟文件系统，有效抑制指标序列基数（Cardinality）膨胀。
 
 ---
 
-## 📸 界面预览
+## 界面预览
 
 <p align="center">
   <img src="images/zh_cn/dark_home_page.png" alt="NodeLite 全球服务器监控大盘（暗色）" width="100%" />
@@ -75,7 +75,7 @@
 
 ---
 
-## ⚡ 5 分钟快速上手
+## 快速上手
 
 ### 步骤 1：一键安装服务端
 
@@ -168,7 +168,7 @@ insecure_allow_http = true
 
 ---
 
-## 🏗️ 系统架构与数据流
+## 系统架构与数据流
 
 ```text
 [ 被控节点 Agent ]  ---(WSS: 指标快照/心跳)---> [ Nginx / Caddy 反向代理 ]
@@ -191,7 +191,7 @@ insecure_allow_http = true
 
 ---
 
-## 📊 性能基准实测
+## 性能基准实测
 
 > 真实测试环境：Intel Core i5-13600K (12 Cores / 12 Threads)，16 GB RAM，Ubuntu 22.04 LTS (Linux 5.15 x86_64)，Rust 1.98（Profile: `release`，开启 LTO），真实网络回环与全链路 TLS/WSS 鉴权。
 
@@ -238,7 +238,7 @@ insecure_allow_http = true
 
 ---
 
-## ⚙️ 核心配置速查
+## 核心配置速查
 
 服务端配置文件位于 `/opt/nodelite/config/server.toml`（完整带注释模板见 [`config/server.example.toml`](config/server.example.toml)）：
 
@@ -263,7 +263,7 @@ insecure_allow_http = true
 
 ---
 
-## 🚨 告警通知与 Linux 限速
+## 告警通知与 Linux 限速
 
 ### 1. 告警配置（SMTP 邮件与 Webhook）
 
@@ -313,7 +313,7 @@ curl -fsSL https://monitor.example.com/install/install-agent.sh | \
 
 ---
 
-## 🔧 升级与日常运维
+## 升级与日常运维
 
 ### 常用状态检查
 
@@ -353,7 +353,7 @@ sudo systemctl restart nodelite-server.service
 
 ---
 
-## ❓ 常见问题与排障
+## 常见问题与排障
 
 - **面板能打开但节点列表为空？**
   - 查看 Agent 日志：`sudo journalctl -u nodelite-agent -n 50 --no-pager`；
@@ -367,7 +367,7 @@ sudo systemctl restart nodelite-server.service
 
 ---
 
-## 💻 开发者与源码构建
+## 开发者与源码构建
 
 ### 本地编译与测试
 
