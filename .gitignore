@@ -21,3 +21,4 @@ PERFORMANCE*.md
 nodelite-server/assets/
 scripts/BENCHMARK_FRONTEND.md
 scripts/benchmark-dom-vue3.mjs
+/output/
