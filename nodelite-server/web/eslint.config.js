@@ -1,5 +1,6 @@
 import pluginVue from 'eslint-plugin-vue';
-import vueTsEslintConfig from '@vue/eslint-config-typescript';
+import tseslint from 'typescript-eslint';
+import vueParser from 'vue-eslint-parser';
 import skipFormatting from '@vue/eslint-config-prettier/skip-formatting';
 
 export default [
@@ -12,7 +13,22 @@ export default [
     ignores: ['**/dist/**', '**/dist-ssr/**', '**/coverage/**', '**/playwright-report/**', '**/test-results/**'],
   },
   ...pluginVue.configs['flat/recommended'],
-  ...vueTsEslintConfig(),
+  ...tseslint.configs.recommended,
+  {
+    files: ['**/*.vue'],
+    languageOptions: {
+      parser: vueParser,
+      parserOptions: {
+        parser: tseslint.parser,
+        ecmaVersion: 2024,
+        extraFileExtensions: ['.vue'],
+      },
+    },
+    rules: {
+      ...tseslint.configs.eslintRecommended.rules,
+      'vue/block-lang': ['error', { script: { lang: ['ts'], allowNoLang: false } }],
+    },
+  },
   skipFormatting,
   {
     rules: {
