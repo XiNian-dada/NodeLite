@@ -13,6 +13,7 @@
   --text-dim: #93918d;
   --accent-blue: #ed4235;
   --accent-blue-soft: #ed423526;
+  --swiss-action-bg: #c52c20;
   --accent-green: #5ccc95;
   --accent-green-soft: #5ccc951a;
   --accent-yellow: #e6b85c;
@@ -83,7 +84,7 @@
 :root[data-appearance='swiss'] .nav-button.active,
 :root[data-appearance='swiss'] .nav-button.active:hover {
   color: #fff;
-  background: var(--accent-blue);
+  background: var(--swiss-action-bg);
   box-shadow: none;
 }
 
@@ -252,8 +253,12 @@
   border-radius: 0;
 }
 
+:root[data-appearance='swiss'] .btn--primary {
+  background: var(--swiss-action-bg);
+}
+
 :root[data-appearance='swiss'] .btn--primary:hover:not(:disabled):not([disabled]) {
-  background: var(--accent-blue);
+  background: var(--swiss-action-bg);
   filter: brightness(0.9);
 }
 
@@ -318,5 +323,15 @@
 
   :root[data-appearance='swiss'] .status-cell .status-dot {
     display: none;
+  }
+
+  :root[data-appearance='swiss'] .rules-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  :root[data-appearance='swiss'] .rules-actions {
+    flex-wrap: wrap;
+    max-width: 100%;
   }
 }
