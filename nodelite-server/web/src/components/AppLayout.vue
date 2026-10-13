@@ -11,7 +11,7 @@ import { useBootstrapStore } from '@/stores/bootstrap';
 // left side is a per-view #title slot and right side holds the global
 // theme + language controls. Body goes in the default slot. Lives in one
 // place so DashboardView / NodeDetailView don't each reimplement it.
-const { theme, toggleTheme } = useTheme();
+const { theme, appearance, toggleTheme, setAppearance } = useTheme();
 const { currentLocale, setLocale } = useLanguage();
 const bootstrapStore = useBootstrapStore();
 
@@ -55,6 +55,18 @@ const localeLabels: Record<SupportedLocale, string> = {
           <slot name="title" />
         </div>
         <div class="page-actions">
+          <label class="appearance-control">
+            <span>{{ $t('common.appearance') }}</span>
+            <select
+              class="appearance-select"
+              data-test="appearance-select"
+              :value="appearance"
+              @change="setAppearance(($event.target as HTMLSelectElement).value)"
+            >
+              <option value="classic">{{ $t('common.appearance_classic') }}</option>
+              <option value="swiss">{{ $t('common.appearance_swiss') }}</option>
+            </select>
+          </label>
           <select
             class="lang-select"
             :aria-label="$t('common.language')"
@@ -169,6 +181,19 @@ const localeLabels: Record<SupportedLocale, string> = {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+}
+.appearance-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.appearance-select {
+  min-width: 112px;
+  height: 40px;
+  background: var(--bg-card);
 }
 .lang-select {
   background: var(--bg-card);

@@ -1,0 +1,322 @@
+/* Keeping every rule under the appearance attribute leaves Classic unchanged. */
+:root[data-appearance='swiss'] {
+  --bg-app: #151515;
+  --bg-sidebar: #111111;
+  --bg-card: #1b1b1b;
+  --bg-card-soft: #242424;
+  --bg-elevated: #303030;
+  --border-soft: #3c3c3c;
+  --border-strong: #a1a1a1;
+  --text-primary: #f5f3ee;
+  --text-secondary: #d5d3ce;
+  --text-muted: #a9a7a2;
+  --text-dim: #93918d;
+  --accent-blue: #ed4235;
+  --accent-blue-soft: #ed423526;
+  --accent-green: #5ccc95;
+  --accent-green-soft: #5ccc951a;
+  --accent-yellow: #e6b85c;
+  --accent-yellow-soft: #e6b85c1a;
+  --accent-red: #f06c60;
+  --accent-red-soft: #f06c601a;
+  --accent-purple: #b6a1d5;
+  --panel-shadow: none;
+  --map-stage-bg: #1b1b1b;
+  --map-stage-border: #3c3c3c;
+  --map-stage-sheen: transparent;
+  --map-land-dot: #a9a7a270;
+  --map-grid-line: #a9a7a212;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --btn-font-weight: 650;
+  font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+:root[data-appearance='swiss'][data-theme='light'] {
+  --bg-app: #f3f2ed;
+  --bg-sidebar: #f3f2ed;
+  --bg-card: #faf9f5;
+  --bg-card-soft: #eeede7;
+  --bg-elevated: #e5e4dd;
+  --border-soft: #d0cfc7;
+  --border-strong: #1b1b1b;
+  --text-primary: #1b1b1b;
+  --text-secondary: #3d3d38;
+  --text-muted: #686861;
+  --text-dim: #73736b;
+  --accent-blue: #c52c20;
+  --accent-blue-soft: #c52c2012;
+  --accent-green: #22734d;
+  --accent-green-soft: #22734d12;
+  --accent-yellow: #946100;
+  --accent-yellow-soft: #94610012;
+  --accent-red: #b22f25;
+  --accent-red-soft: #b22f2512;
+  --accent-purple: #705091;
+  --map-stage-bg: #faf9f5;
+  --map-stage-border: #d0cfc7;
+  --map-land-dot: #53534d70;
+  --map-grid-line: #53534d12;
+}
+
+:root[data-appearance='swiss'] .app {
+  grid-template-columns: 88px minmax(0, 1fr);
+}
+
+:root[data-appearance='swiss'] .main {
+  max-width: 1760px;
+  margin-inline: auto;
+  padding-top: 32px;
+}
+
+:root[data-appearance='swiss'] .sidebar {
+  gap: 24px;
+  padding-top: 28px;
+}
+
+:root[data-appearance='swiss'] :is(.nav-button, .avatar, .theme-toggle, .lang-select) {
+  border-radius: 0;
+}
+
+:root[data-appearance='swiss'] .nav-button.active,
+:root[data-appearance='swiss'] .nav-button.active:hover {
+  color: #fff;
+  background: var(--accent-blue);
+  box-shadow: none;
+}
+
+:root[data-appearance='swiss'] :is(select, .tokens thead) {
+  border-radius: 0;
+}
+
+:root[data-appearance='swiss'] .nav-button.active .avatar {
+  color: inherit;
+  background: transparent;
+}
+
+:root[data-appearance='swiss'] .page-header {
+  padding-top: 24px;
+  padding-bottom: 24px;
+  border-top: 5px solid var(--accent-blue);
+  border-bottom: 1px solid var(--border-strong);
+  margin-bottom: 28px;
+  align-items: center;
+}
+
+:root[data-appearance='swiss'] :is(.dash-title, .page-heading, .node-title__name) {
+  font-size: clamp(28px, 3vw, 44px);
+  font-weight: 750;
+  letter-spacing: -0.04em;
+  line-height: 1.12;
+}
+
+:root[data-appearance='swiss'] :is(.dash-subtitle, .page-subtitle) {
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+:root[data-appearance='swiss'] :is(.overview, .dashboard-grid, .settings, .settings__grid) {
+  gap: 24px;
+}
+
+:root[data-appearance='swiss'] .stats-grid {
+  gap: 0;
+  border: 1px solid var(--border-strong);
+  counter-reset: statistics;
+}
+
+:root[data-appearance='swiss'] .stat-card {
+  border: 0;
+  border-right: 1px solid var(--border-soft);
+  padding: 20px;
+  min-height: 146px;
+  counter-increment: statistics;
+}
+
+:root[data-appearance='swiss'] .stat-card:last-child {
+  border-right: 0;
+}
+
+:root[data-appearance='swiss'] .stat-card .card-top::before {
+  content: counter(statistics, decimal-leading-zero);
+  font:
+    11px ui-monospace,
+    monospace;
+  color: var(--text-muted);
+}
+
+:root[data-appearance='swiss'] .stat-card .label {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+:root[data-appearance='swiss'] .stat-card .value {
+  font-size: clamp(28px, 2.6vw, 40px);
+  font-weight: 650;
+  letter-spacing: -0.05em;
+  color: var(--text-primary);
+}
+
+:root[data-appearance='swiss'] .stat-card.offline .value {
+  color: var(--accent-red);
+}
+
+:root[data-appearance='swiss'] :is(.stat-icon, .clock-bars, .region-dots),
+:root[data-appearance='swiss'] .stat-card::after {
+  display: none;
+}
+
+:root[data-appearance='swiss'] :is(.panel, .stat-card, .node-card, .settings-summary, .logs-panel) {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+:root[data-appearance='swiss'] :is(.panel-title, .card-title, .section-title) {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+:root[data-appearance='swiss'] .panel-head {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+:root[data-appearance='swiss']
+  :is(
+    .map-stage,
+    .map-stage-bg-layer,
+    .map-hover-card,
+    .matrix-cell,
+    .status-cell,
+    .node-metrics,
+    .badge,
+    .meter,
+    .online-bar,
+    .code,
+    .tabs,
+    .tab-button,
+    .logs-status,
+    .mini-badge,
+    .product-badge,
+    .update-console__panel,
+    .update-console__body,
+    .update-console__status,
+    .update-console__button
+  ) {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+:root[data-appearance='swiss'] .node-card {
+  --swiss-spark: var(--accent-green);
+  border-top: 3px solid var(--accent-green);
+}
+
+:root[data-appearance='swiss'] .node-card.latency {
+  --swiss-spark: var(--accent-yellow);
+  border-top-color: var(--accent-yellow);
+}
+
+:root[data-appearance='swiss'] .node-card.offline {
+  --swiss-spark: var(--accent-red);
+  border-top-color: var(--accent-red);
+}
+
+:root[data-appearance='swiss'] .node-spark path:first-child {
+  fill: var(--swiss-spark);
+}
+
+:root[data-appearance='swiss'] .node-spark path:last-child,
+:root[data-appearance='swiss'] .node-spark line {
+  stroke: var(--swiss-spark);
+}
+
+:root[data-appearance='swiss'] .node-card:hover {
+  transform: none;
+  border-color: var(--border-strong);
+}
+
+:root[data-appearance='swiss'] .node-card-title {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+:root[data-appearance='swiss'] .badge::before,
+:root[data-appearance='swiss'] .summary-tile::before,
+:root[data-appearance='swiss'] .legend-swatch {
+  border-radius: 0;
+}
+
+:root[data-appearance='swiss'] .btn--primary:hover:not(:disabled):not([disabled]) {
+  background: var(--accent-blue);
+  filter: brightness(0.9);
+}
+
+:root[data-appearance='swiss'] .app-footer {
+  border-top-color: var(--border-strong);
+}
+
+@media (max-width: 1120px) {
+  :root[data-appearance='swiss'] .stat-card {
+    border-bottom: 1px solid var(--border-soft);
+  }
+}
+
+@media (max-width: 700px) {
+  :root[data-appearance='swiss'] .app {
+    grid-template-columns: 60px minmax(0, 1fr);
+  }
+
+  :root[data-appearance='swiss'] .main {
+    padding: 16px 12px 32px;
+  }
+
+  :root[data-appearance='swiss'] .brand {
+    width: 48px;
+    height: 48px;
+    background-size: 44px;
+  }
+
+  :root[data-appearance='swiss'] .page-header {
+    align-items: flex-start;
+    padding-block: 16px;
+  }
+
+  :root[data-appearance='swiss'] .page-actions {
+    gap: 8px;
+  }
+
+  :root[data-appearance='swiss'] .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  :root[data-appearance='swiss'] .stat-card {
+    min-height: 108px;
+    padding: 14px;
+  }
+
+  :root[data-appearance='swiss'] .stat-card:nth-child(even) {
+    border-right: 0;
+  }
+
+  :root[data-appearance='swiss'] .stat-card .value {
+    font-size: clamp(20px, 6vw, 26px);
+  }
+
+  :root[data-appearance='swiss'] .status-cell {
+    min-width: 0;
+    width: 100%;
+    padding: 4px 2px;
+    font-size: 10px;
+    white-space: normal;
+  }
+
+  :root[data-appearance='swiss'] .status-cell .status-dot {
+    display: none;
+  }
+}

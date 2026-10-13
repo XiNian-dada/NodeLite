@@ -1,8 +1,10 @@
 import { ref, type Ref } from 'vue';
 
 export type Theme = 'light' | 'dark';
+export type Appearance = 'classic' | 'swiss';
 
 export const THEME_STORAGE_KEY = 'nodelite.ui.theme';
+export const APPEARANCE_STORAGE_KEY = 'nodelite.ui.appearance';
 const THEME_SWITCHING_CLASS = 'theme-switching';
 
 function readStoredTheme(): Theme {
@@ -11,6 +13,14 @@ function readStoredTheme(): Theme {
     return stored === 'light' ? 'light' : 'dark';
   } catch {
     return 'dark';
+  }
+}
+
+function readStoredAppearance(): Appearance {
+  try {
+    return window.localStorage.getItem(APPEARANCE_STORAGE_KEY) === 'swiss' ? 'swiss' : 'classic';
+  } catch {
+    return 'classic';
   }
 }
 
@@ -39,6 +49,7 @@ function writeTheme(theme: Theme, suppressTransitions = false): void {
 }
 
 let themeRef: Ref<Theme> | null = null;
+const appearanceRef = ref<Appearance>(readStoredAppearance());
 
 function ensureRef(): Ref<Theme> {
   if (themeRef === null) {
@@ -47,21 +58,23 @@ function ensureRef(): Ref<Theme> {
   return themeRef;
 }
 
-/**
- * Synchronous bootstrap; must run before the first paint to prevent
- * a light-to-dark flash. The legacy IIFE in assets/index.html:12-20
- * does the same thing; here it's exported so it can be called either
- * from the inline shim in index.html or from main.ts.
- */
+/** The inline bootstrap in index.html also restores these values to avoid a first-paint flash. */
 export function setupTheme(): Theme {
   const theme = readStoredTheme();
   document.documentElement.classList.remove(THEME_SWITCHING_CLASS);
   document.documentElement.dataset.theme = theme;
+  appearanceRef.value = readStoredAppearance();
+  document.documentElement.dataset.appearance = appearanceRef.value;
   ensureRef().value = theme;
   return theme;
 }
 
-export function useTheme(): { theme: Ref<Theme>; toggleTheme: () => void } {
+export function useTheme(): {
+  theme: Ref<Theme>;
+  appearance: Ref<Appearance>;
+  toggleTheme: () => void;
+  setAppearance: (value: string) => void;
+} {
   const theme = ensureRef();
 
   function toggleTheme(): void {
@@ -70,5 +83,17 @@ export function useTheme(): { theme: Ref<Theme>; toggleTheme: () => void } {
     writeTheme(next, true);
   }
 
-  return { theme, toggleTheme };
+  function setAppearance(value: string): void {
+    const next: Appearance = value === 'swiss' ? 'swiss' : 'classic';
+    suppressThemeTransitions();
+    appearanceRef.value = next;
+    document.documentElement.dataset.appearance = next;
+    try {
+      window.localStorage.setItem(APPEARANCE_STORAGE_KEY, next);
+    } catch {
+      // The selection still works when browser storage is unavailable.
+    }
+  }
+
+  return { theme, appearance: appearanceRef, toggleTheme, setAppearance };
 }

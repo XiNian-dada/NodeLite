@@ -6,7 +6,7 @@
     <link rel="icon" type="image/svg+xml" href="/assets/brand-icon-light.svg" media="(prefers-color-scheme: light)" />
     <link rel="icon" type="image/svg+xml" href="/assets/brand-icon-dark.svg" media="(prefers-color-scheme: dark)" />
     <title>NodeLite</title>
-    <script>(function(){try{var t=localStorage.getItem('nodelite.ui.theme');document.documentElement.dataset.theme=t==='light'?'light':'dark'}catch(e){document.documentElement.dataset.theme='dark'}try{var k='nodelite.auth.timestamp',r=localStorage.getItem(k),n=Date.now();if(r!==null){var s=parseInt(r,10);if(isFinite(s)&&n-s>86400000){localStorage.removeItem(k);location.assign('/logout-and-reauth');return}}localStorage.setItem(k,n.toString())}catch(e){location.assign('/logout-and-reauth');return}})();</script>
+    <script>(function(){try{var t=localStorage.getItem('nodelite.ui.theme');document.documentElement.dataset.theme=t==='light'?'light':'dark'}catch(e){document.documentElement.dataset.theme='dark'}try{var a=localStorage.getItem('nodelite.ui.appearance');document.documentElement.dataset.appearance=a==='swiss'?'swiss':'classic'}catch(e){document.documentElement.dataset.appearance='classic'}try{var k='nodelite.auth.timestamp',r=localStorage.getItem(k),n=Date.now();if(r!==null){var s=parseInt(r,10);if(isFinite(s)&&n-s>86400000){localStorage.removeItem(k);location.assign('/logout-and-reauth');return}}localStorage.setItem(k,n.toString())}catch(e){location.assign('/logout-and-reauth');return}})();</script>
   </head>
   <body>
     <div id="app"></div>

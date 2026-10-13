@@ -7,8 +7,11 @@ import { createPinia } from 'pinia';
 import App from './App.vue';
 import { router } from './router';
 import { setupI18n } from './i18n';
+import { setupTheme } from './composables/useTheme';
 import './styles/theme.css';
+import './styles/swiss.css';
 
+setupTheme();
 void (async () => {
   const app = createApp(App);
   app.use(createPinia());

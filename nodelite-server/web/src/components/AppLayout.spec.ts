@@ -6,12 +6,16 @@ import { createApp, defineComponent, h } from 'vue';
 
 import AppLayout from './AppLayout.vue';
 import { useBootstrapStore } from '@/stores/bootstrap';
+import { APPEARANCE_STORAGE_KEY, setupTheme } from '@/composables/useTheme';
 import { setupI18n, getI18n, __resetI18nForTest, LANGUAGE_STORAGE_KEY } from '@/i18n';
 
 const FAKE_DICT = {
   en: {
     'common.theme_toggle': 'Toggle theme',
     'common.language': 'Language',
+    'common.appearance': 'Style',
+    'common.appearance_classic': 'Classic',
+    'common.appearance_swiss': 'Swiss flat',
     'index.nav.overview': 'Overview',
     'index.nav.settings': 'Settings',
     'index.nav.alerts': 'Alerts',
@@ -20,6 +24,9 @@ const FAKE_DICT = {
   'zh-CN': {
     'common.theme_toggle': '切换主题',
     'common.language': '语言',
+    'common.appearance': '外观',
+    'common.appearance_classic': '经典',
+    'common.appearance_swiss': '瑞士扁平',
     'index.nav.overview': '概览',
     'index.nav.settings': '设置',
     'index.nav.alerts': '告警',
@@ -58,6 +65,7 @@ describe('AppLayout', () => {
   beforeEach(async () => {
     setActivePinia(createPinia());
     window.localStorage.clear();
+    setupTheme();
     __resetI18nForTest();
     vi.stubGlobal(
       'fetch',
@@ -76,6 +84,7 @@ describe('AppLayout', () => {
     __resetI18nForTest();
     vi.unstubAllGlobals();
     delete document.documentElement.dataset.theme;
+    delete document.documentElement.dataset.appearance;
   });
 
   it('renders sidebar, the title slot, and the body slot', async () => {
@@ -160,5 +169,17 @@ describe('AppLayout', () => {
     const wrapper = await mountLayout();
     await wrapper.find('[data-test="language-select"]').setValue('zh-CN');
     expect(window.localStorage.getItem(LANGUAGE_STORAGE_KEY)).toBe('zh-CN');
+  });
+
+  it('offers Classic by default and switches styles without changing dark mode', async () => {
+    const wrapper = await mountLayout();
+    const select = wrapper.find<HTMLSelectElement>('[data-test="appearance-select"]');
+    expect(select.element.value).toBe('classic');
+    await select.setValue('swiss');
+    expect(document.documentElement.dataset.appearance).toBe('swiss');
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(window.localStorage.getItem(APPEARANCE_STORAGE_KEY)).toBe('swiss');
+    await select.setValue('classic');
+    expect(document.documentElement.dataset.appearance).toBe('classic');
   });
 });
