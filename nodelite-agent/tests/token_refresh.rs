@@ -193,3 +193,30 @@ report_interval_secs = 5
 
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_persistence_does_not_replace_in_memory_credentials() -> Result<()> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let mut config = common::test_config(listener.local_addr()?);
+    config.token = "initial-token".to_string();
+    let identity = common::test_identity(&config);
+    let temp = TempDir::new("nodelite-token-missing-config");
+    let path = temp.path().join("missing.toml");
+    let task = tokio::spawn(run_mock_server(listener, "new-fixture".to_string()));
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        run_session(
+            &mut config,
+            &mut new_collector(),
+            &identity,
+            &path,
+            &mut AgentLogBuffer::default(),
+        ),
+    )
+    .await?;
+    assert!(result.is_err());
+    assert_eq!(config.token, "initial-token");
+    assert!(!path.exists());
+    task.await??;
+    Ok(())
+}

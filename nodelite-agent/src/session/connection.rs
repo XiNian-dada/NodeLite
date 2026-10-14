@@ -273,7 +273,6 @@ impl Session<'_> {
                 response.expires_at
             ),
         );
-        self.config.token = response.new_token.clone();
         if let Err(error) = update_token_in_config(self.config_path, &response.new_token).await {
             warn!("failed to persist new token: {}", error);
             self.logs.push(
@@ -281,6 +280,7 @@ impl Session<'_> {
                 format!("failed to persist refreshed token: {error}"),
             );
         } else {
+            self.config.token = response.new_token;
             info!("successfully persisted new token to config file");
             self.logs.push(
                 NoticeLevel::Info,
