@@ -29,6 +29,9 @@ struct Cli {
     /// 仅采集一次快照并输出 JSON,常用于调试与排障。
     #[arg(long)]
     sample_once: bool,
+    /// Validate saved credentials without displacing the online Agent.
+    #[arg(long, conflicts_with = "sample_once")]
+    check_credentials: bool,
 }
 
 pub async fn run() -> Result<()> {
@@ -44,6 +47,12 @@ pub async fn run() -> Result<()> {
         agent_build_version().to_string(),
     )
     .await?;
+
+    if cli.check_credentials {
+        crate::credential_check::check_credentials(&config, identity).await?;
+        println!("Saved Agent credentials are valid.");
+        return Ok(());
+    }
 
     info!(
         node_id = %identity.node_id,

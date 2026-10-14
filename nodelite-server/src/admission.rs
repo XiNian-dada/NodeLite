@@ -187,6 +187,23 @@ pub enum WsAdmissionError {
 }
 
 impl WsAdmissionController {
+    pub(crate) fn preflight_controller(&self) -> Self {
+        let mut config = self.config.clone();
+        config.max_total_connections = config.max_total_connections.min(16);
+        config.max_connections_per_ip = config.max_connections_per_ip.min(2);
+        Self::new(&config)
+    }
+
+    pub(crate) fn check_auth_block(&self, client_ip: IpAddr) -> Result<(), WsAdmissionError> {
+        self.lock_state()
+            .auth_failures
+            .check(
+                client_ip,
+                Instant::now(),
+                Duration::from_secs(self.config.auth_fail_window_secs),
+            )
+            .map_err(|retry_after_secs| WsAdmissionError::Blocked { retry_after_secs })
+    }
     pub fn new(config: &WsConfig) -> Self {
         Self {
             config: config.clone(),

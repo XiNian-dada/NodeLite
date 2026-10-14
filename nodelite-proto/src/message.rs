@@ -41,6 +41,8 @@ pub enum WireMessage {
     RefreshTokenRequest(RefreshTokenRequestMessage),
     /// Server 响应 Token 刷新请求,返回新 Token 和过期时间。
     RefreshTokenResponse(RefreshTokenResponseMessage),
+    /// Agent confirms whether a staged credential reached durable storage.
+    RefreshTokenAck(RefreshTokenAckMessage),
     /// Agent 批量上报自身运行日志,供服务端日志页排障使用。
     AgentLogs(AgentLogsMessage),
     /// Server 要求 Agent 应用或撤销双向网络限速。
@@ -52,6 +54,8 @@ pub enum WireMessage {
 /// `token` 由 Server 的节点注册表分发,`identity` 由 Agent 在本地采集后填充。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HelloMessage {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub supports_token_refresh_ack: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub supports_metrics_zlib: bool,
     #[serde(default = "current_protocol_version")]
@@ -153,10 +157,19 @@ pub struct RefreshTokenRequestMessage {
 /// Server 响应 Token 刷新请求。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RefreshTokenResponseMessage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_id: Option<String>,
     /// Server 新签发的节点 token。
     pub new_token: String,
     /// 新 token 的 ISO 8601 过期时间。
     pub expires_at: String,
+}
+
+/// The transaction ID binds confirmation to the authenticated session, not a node supplied by the client.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RefreshTokenAckMessage {
+    pub refresh_id: String,
+    pub persisted: bool,
 }
 
 /// Agent 运行时日志中的单条结构化事件。
@@ -323,8 +336,28 @@ mod tests {
         }"#;
 
         let hello: HelloMessage = serde_json::from_str(payload).expect("valid legacy hello");
+        assert!(!hello.supports_token_refresh_ack);
         assert!(!hello.supports_metrics_zlib);
         assert_eq!(hello.protocol_version, WIRE_PROTOCOL_VERSION);
+    }
+
+    #[test]
+    fn token_refresh_confirmation_is_additive_and_roundtrips() {
+        let legacy: super::RefreshTokenResponseMessage =
+            serde_json::from_str(r#"{"new_token":"fixture","expires_at":"2026-10-14T00:00:00Z"}"#)
+                .expect("legacy refresh response");
+        assert!(legacy.refresh_id.is_none());
+        for persisted in [true, false] {
+            let ack = WireMessage::RefreshTokenAck(super::RefreshTokenAckMessage {
+                refresh_id: "a".repeat(64),
+                persisted,
+            });
+            assert_eq!(
+                serde_json::from_str::<WireMessage>(&serde_json::to_string(&ack).expect("encode"))
+                    .expect("decode"),
+                ack
+            );
+        }
     }
 
     #[test]
@@ -388,6 +421,7 @@ mod tests {
         };
         let hello = WireMessage::Hello(HelloMessage {
             supports_metrics_zlib: false,
+            supports_token_refresh_ack: false,
             protocol_version: WIRE_PROTOCOL_VERSION,
             token: "token".to_string(),
             identity: identity.clone(),

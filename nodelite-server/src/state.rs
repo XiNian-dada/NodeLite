@@ -31,7 +31,8 @@ use tokio_util::sync::CancellationToken;
 
 use self::registry::Registry;
 pub(crate) use self::session_control::{
-    SessionCommand, SessionCommandError, SessionControlHandle, SessionRefreshReply,
+    SessionCommand, SessionCommandError, SessionControlHandle, SessionRefreshPermit,
+    SessionRefreshReply,
 };
 use self::sqlite_wal::SqliteWalCheckpointObserver;
 use self::view_cache::{JsonViewSlot, MetricsViewSlot, ReadinessSnapshot};

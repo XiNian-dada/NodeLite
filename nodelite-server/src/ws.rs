@@ -45,6 +45,9 @@ struct ActiveSession {
     node_label: String,
     agent_protocol_version: u16,
     metrics_zlib: bool,
+    supports_token_refresh_ack: bool,
+    pending_refresh: Option<refresh::PendingRefresh>,
+    refresh_retry_at: tokio::time::Instant,
     session_id: u64,
     session_token: String,
     session_generation: u64,
@@ -62,12 +65,23 @@ pub async fn ws_handler(
     State(state): State<AppState>,
     ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
+    uri: axum::http::Uri,
     ws: WebSocketUpgrade,
 ) -> Response {
     let max_message_bytes = state.shared.config().max_message_bytes;
+    let preflight = uri.path() == "/ws/preflight";
     let client_ip = resolve_client_ip(&state.shared.config().trusted_proxies, peer_addr, &headers);
     let audit_user_agent = header_user_agent(&headers);
-    let connection_permit = match state.ws_admission.try_acquire(client_ip) {
+    let controller = if preflight {
+        &state.preflight_ws_admission
+    } else {
+        &state.ws_admission
+    };
+    let admission = state
+        .ws_admission
+        .check_auth_block(client_ip)
+        .and_then(|()| controller.try_acquire(client_ip));
+    let connection_permit = match admission {
         Ok(permit) => permit,
         Err(error) => {
             maybe_record_ws_block(&state, &error, client_ip, audit_user_agent.clone()).await;
@@ -76,15 +90,26 @@ pub async fn ws_handler(
     };
     configure_upgrade(ws, WebSocketPeer::Agent, max_message_bytes)
         .on_upgrade(move |socket| async move {
-            if let Err(error) = handle_socket(
-                state,
-                client_ip,
-                audit_user_agent,
-                connection_permit,
-                socket,
-            )
-            .await
-            {
+            let result = if preflight {
+                self::handshake::handle_preflight_socket(
+                    state,
+                    client_ip,
+                    audit_user_agent,
+                    connection_permit,
+                    socket,
+                )
+                .await
+            } else {
+                handle_socket(
+                    state,
+                    client_ip,
+                    audit_user_agent,
+                    connection_permit,
+                    socket,
+                )
+                .await
+            };
+            if let Err(error) = result {
                 match error {
                     ProtocolError::Client(message) => {
                         warn!(reason = %message, "websocket client disconnected");
@@ -151,6 +176,7 @@ mod tests {
     fn hello_text_frame() -> Message {
         let hello = WireMessage::Hello(HelloMessage {
             supports_metrics_zlib: false,
+            supports_token_refresh_ack: false,
             protocol_version: WIRE_PROTOCOL_VERSION,
             identity: NodeIdentity {
                 node_id: "hk-01".to_string(),
@@ -235,6 +261,46 @@ mod tests {
         let _ = tokio::fs::remove_dir_all(temp_dir).await;
     }
 
+    #[tokio::test]
+    async fn operator_rotation_between_commit_and_session_cache_update_is_not_bypassed() {
+        let (state, mut session, dir) =
+            session_fixture("ack-operator-race").await.expect("fixture");
+        let candidate = state
+            .registry
+            .prepare_token_refresh(&session.node_id, session.session_generation)
+            .await
+            .expect("prepare");
+        let (generation, expires_at) = state
+            .registry
+            .commit_token_refresh(&session.node_id, &candidate.refresh_id)
+            .await
+            .expect("commit");
+        issue_node(
+            state.registry.path(),
+            IssueNodeRequest {
+                node_id: session.node_id.clone(),
+                node_label: None,
+                tags: Vec::new(),
+            },
+        )
+        .await
+        .expect("concurrent operator reissue");
+        state
+            .registry
+            .reload()
+            .await
+            .expect("operator revision published");
+        super::refresh::apply_committed_refresh(
+            &mut session,
+            candidate.token,
+            generation,
+            expires_at,
+        );
+        assert_eq!(session.registry_revision, 0);
+        assert!(!ensure_current_token(&state, &mut session, "operator credential must win").await);
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
     async fn session_fixture(
         test_name: &str,
     ) -> anyhow::Result<(crate::AppState, ActiveSession, PathBuf)> {
@@ -286,6 +352,9 @@ mod tests {
             node_label: authorized.identity.node_label.clone(),
             agent_protocol_version: WIRE_PROTOCOL_VERSION,
             metrics_zlib: false,
+            supports_token_refresh_ack: true,
+            pending_refresh: None,
+            refresh_retry_at: tokio::time::Instant::now(),
             session_id: state
                 .shared
                 .register_node(

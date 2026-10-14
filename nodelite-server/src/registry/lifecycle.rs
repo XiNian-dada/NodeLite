@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use chrono::Utc;
 use lru::LruCache;
 use nodelite_proto::{validate_identifier, validate_non_empty};
 use parking_lot::Mutex as ParkingLotMutex;
@@ -18,12 +18,11 @@ use super::storage::{
     load_registry_state, load_registry_state_with_fingerprint, mutate_registry_file,
     registry_file_fingerprint,
 };
-use super::token::{constant_time_eq, generate_token, hash_token, prune_expired_install_sessions};
+use super::token::{constant_time_eq, prune_expired_install_sessions};
 use super::{
-    ConsumedInstall, DEFAULT_TOKEN_VALIDITY_DAYS, MAX_TRAFFIC_THROTTLE_KBPS, NodeRegistry,
-    NodeServiceMetadata, RegisteredNode, RegistryError, RegistryFile, RegistryReloadCheckpoint,
-    RegistryResult, TOKEN_CACHE_CAPACITY, TOKEN_REFRESH_GRACE_MINUTES, TrafficQuota,
-    coordinate_to_microdegrees,
+    ConsumedInstall, MAX_TRAFFIC_THROTTLE_KBPS, NodeRegistry, NodeServiceMetadata, RegisteredNode,
+    RegistryError, RegistryFile, RegistryReloadCheckpoint, RegistryResult, TOKEN_CACHE_CAPACITY,
+    TrafficQuota, coordinate_to_microdegrees,
 };
 
 impl NodeRegistry {
@@ -78,63 +77,6 @@ impl NodeRegistry {
     /// 当前注册表状态版本。任一注册表 reload / 写入导致的内存状态变化都会递增。
     pub fn registry_revision(&self) -> u64 {
         self.registry_revision.load(Ordering::Acquire)
-    }
-
-    /// 刷新节点的 Token:生成新明文 token, 哈希入库,代次 +1, 延长过期时间。
-    /// 若调用方仍持有 grace generation，则保留该旧 hash 与原始截止时间。
-    /// 返回 (new_plaintext_token, expires_at, new_generation)。明文只在
-    /// 进程内存里短暂存在,从这里被传递给 WS 端发送给 agent。
-    pub async fn refresh_token(
-        &self,
-        node_id: &str,
-        session_generation: u64,
-    ) -> RegistryResult<(String, DateTime<Utc>, u64)> {
-        let path = Arc::clone(&self.path);
-        let node_id = node_id.to_string();
-        let ((new_token, expires_at, generation), _) =
-            mutate_registry_file(path.as_ref(), move |file| {
-                let now = Utc::now();
-                let Some(node) = file.nodes.iter_mut().find(|n| n.node_id == node_id) else {
-                    return Err(RegistryError::NodeNotFound(node_id.clone()));
-                };
-                let refreshing_previous = node.previous_token_generation
-                    == Some(session_generation)
-                    && node
-                        .previous_token_valid_until
-                        .is_some_and(|valid_until| now < valid_until)
-                    && !node.previous_token_hash.is_empty();
-                if session_generation != node.token_generation && !refreshing_previous {
-                    return Err(RegistryError::Unauthorized);
-                }
-
-                let new_token = generate_token()?;
-                let expires_at = now + ChronoDuration::days(DEFAULT_TOKEN_VALIDITY_DAYS);
-                let new_token_hash = hash_token(&new_token).map_err(|error| {
-                    RegistryError::internal("failed to hash refreshed token", error.into())
-                })?;
-                if refreshing_previous {
-                    node.token_hash = new_token_hash;
-                } else {
-                    node.previous_token_hash =
-                        std::mem::replace(&mut node.token_hash, new_token_hash);
-                    node.previous_token_generation = Some(node.token_generation);
-                    node.previous_token_valid_until =
-                        Some(now + ChronoDuration::minutes(TOKEN_REFRESH_GRACE_MINUTES));
-                }
-                node.token_generation = node.token_generation.saturating_add(1);
-                node.token_expires_at = Some(expires_at);
-                // 升级路径残留的明文也在这里清空,确保从此刻起 disk 上彻底无明文。
-                node.token.clear();
-
-                Ok(((new_token, expires_at, node.token_generation), true))
-            })
-            .await?;
-
-        self.reload().await?;
-        // Token 轮换后清空整个缓存,避免旧 token 验证缓存残留。
-        self.token_cache.lock().clear();
-
-        Ok((new_token, expires_at, generation))
     }
 
     /// 从磁盘重新加载注册表。返回 `Ok(true)` 表示发现了变化。

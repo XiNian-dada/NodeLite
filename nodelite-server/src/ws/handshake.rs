@@ -29,8 +29,27 @@ pub(super) async fn handle_socket(
 ) -> Result<(), super::ProtocolError> {
     let shared = state.shared.clone();
     let hello = wait_for_hello_message(&state, client_ip, &mut socket).await?;
-    let authorized =
-        authorize_hello(&state, client_ip, &mut socket, &hello, audit_user_agent).await?;
+    let mut authorized = authorize_hello(
+        &state,
+        client_ip,
+        &mut socket,
+        &hello,
+        audit_user_agent,
+        true,
+    )
+    .await?;
+    if hello.supports_token_refresh_ack {
+        state
+            .registry
+            .activate_saved_token(&hello.identity.node_id, authorized.generation)
+            .await
+            .map_err(anyhow::Error::from)?;
+        authorized = state
+            .registry
+            .authorize(&hello.identity, &hello.token)
+            .await
+            .map_err(anyhow::Error::from)?;
+    }
     let AuthorizedNode {
         identity,
         generation,
@@ -44,6 +63,9 @@ pub(super) async fn handle_socket(
         node_label: identity.node_label.clone(),
         agent_protocol_version: hello.protocol_version,
         metrics_zlib: hello.supports_metrics_zlib,
+        supports_token_refresh_ack: hello.supports_token_refresh_ack,
+        pending_refresh: None,
+        refresh_retry_at: tokio::time::Instant::now(),
         session_id: shared
             .register_node(
                 identity,
@@ -119,6 +141,7 @@ async fn authorize_hello(
     socket: &mut WebSocket,
     hello: &HelloMessage,
     audit_user_agent: Option<String>,
+    record_connection: bool,
 ) -> Result<AuthorizedNode, super::ProtocolError> {
     if let Some(rejection) = protocol_version_rejection(hello.protocol_version) {
         state.ws_admission.record_auth_failure(client_ip);
@@ -145,7 +168,9 @@ async fn authorize_hello(
             event.details = json!({
                 "protocol_version": hello.protocol_version,
             });
-            state.audit_log.record_best_effort(event).await;
+            if record_connection {
+                state.audit_log.record_best_effort(event).await;
+            }
             Ok(authorized)
         }
         Err(error) => {
@@ -176,6 +201,41 @@ async fn authorize_hello(
             ))
         }
     }
+}
+
+pub(super) async fn handle_preflight_socket(
+    state: AppState,
+    client_ip: IpAddr,
+    audit_user_agent: Option<String>,
+    _permit: crate::admission::WsConnectionPermit,
+    mut socket: WebSocket,
+) -> Result<(), super::ProtocolError> {
+    let hello = wait_for_hello_message(&state, client_ip, &mut socket).await?;
+    authorize_hello(
+        &state,
+        client_ip,
+        &mut socket,
+        &hello,
+        audit_user_agent,
+        false,
+    )
+    .await?;
+    send_wire_message(
+        &mut socket,
+        &WireMessage::ServerNotice(ServerNoticeMessage {
+            level: nodelite_proto::NoticeLevel::Info,
+            code: None,
+            message: "credentials valid".to_string(),
+        }),
+    )
+    .await?;
+    send_close_frame(
+        &mut socket,
+        axum::extract::ws::close_code::NORMAL,
+        "credential check complete",
+    )
+    .await?;
+    Ok(())
 }
 
 #[derive(Debug, PartialEq, Eq)]

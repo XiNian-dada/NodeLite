@@ -13,6 +13,7 @@ async fn connect(server: &TestServer, node: &TestNode, compressed: bool) -> Resu
         &mut socket,
         &WireMessage::Hello(HelloMessage {
             supports_metrics_zlib: compressed,
+            supports_token_refresh_ack: false,
             protocol_version: WIRE_PROTOCOL_VERSION,
             token: node.token.clone(),
             identity: synthetic_identity(

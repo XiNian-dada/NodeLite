@@ -57,11 +57,21 @@ pub struct TestNode {
     pub token: String,
 }
 
+pub(crate) fn agent_binary_path() -> Result<PathBuf> {
+    let mut path = std::env::current_exe()?;
+    path.pop();
+    if path.file_name().and_then(|s| s.to_str()) == Some("deps") {
+        path.pop();
+    }
+    path.push("nodelite-agent");
+    Ok(path)
+}
+
 pub struct TestServer {
     /// 绑定的本地地址。集成测试(如 e2e)需要据此拼出 Agent 连接用的 `ws://` URL,
     /// 因此放开到 crate 可见;`test_support` 整体受 `#[cfg(test)]` 门控,不进入公开 API。
     pub(crate) addr: SocketAddr,
-    registry: NodeRegistry,
+    pub(crate) registry: NodeRegistry,
     registry_path: PathBuf,
     shared: SharedState,
     shutdown: tokio_util::sync::CancellationToken,
@@ -124,6 +134,7 @@ impl TestServer {
             .route_layer(from_fn_with_state(state.clone(), require_readonly_auth));
         let app = Router::new()
             .route("/ws", get(ws_handler))
+            .route("/ws/preflight", get(ws_handler))
             .merge(protected_routes)
             .with_state(state)
             .layer(TraceLayer::new_for_http());
@@ -354,6 +365,14 @@ pub struct TestAgent {
 
 impl TestAgent {
     pub async fn connect(server: &TestServer, node: &TestNode) -> Result<Self> {
+        Self::connect_with_confirmation(server, node, true).await
+    }
+
+    pub async fn connect_with_confirmation(
+        server: &TestServer,
+        node: &TestNode,
+        confirmation: bool,
+    ) -> Result<Self> {
         let url = format!("ws://{}/ws", server.addr);
         let (mut socket, _response) = connect_async(url)
             .await
@@ -361,6 +380,7 @@ impl TestAgent {
 
         let hello = WireMessage::Hello(HelloMessage {
             supports_metrics_zlib: false,
+            supports_token_refresh_ack: confirmation,
             protocol_version: nodelite_proto::WIRE_PROTOCOL_VERSION,
             token: node.token.clone(),
             identity: fake_identity(node),
@@ -400,11 +420,47 @@ impl TestAgent {
         &mut self,
         timeout_duration: Duration,
     ) -> Result<RefreshTokenResponseMessage> {
-        let message = self.next_business_message(timeout_duration).await?;
-        match message {
-            WireMessage::RefreshTokenResponse(response) => Ok(response),
-            other => bail!("expected refresh token response, got {other:?}"),
+        let response = self.receive_refresh_response(timeout_duration).await?;
+        self.acknowledge_refresh(&response, true).await?;
+        Ok(response)
+    }
+
+    pub async fn receive_refresh_response(
+        &mut self,
+        timeout_duration: Duration,
+    ) -> Result<RefreshTokenResponseMessage> {
+        let deadline = tokio::time::Instant::now() + timeout_duration;
+        loop {
+            let message = self
+                .next_business_message(
+                    deadline.saturating_duration_since(tokio::time::Instant::now()),
+                )
+                .await?;
+            match message {
+                WireMessage::RefreshTokenResponse(response) => return Ok(response),
+                WireMessage::NetworkThrottle(_) => {}
+                other => bail!("expected refresh token response, got {other:?}"),
+            }
         }
+    }
+
+    pub async fn acknowledge_refresh(
+        &mut self,
+        refresh: &RefreshTokenResponseMessage,
+        persisted: bool,
+    ) -> Result<()> {
+        let refresh_id = refresh
+            .refresh_id
+            .clone()
+            .ok_or_else(|| anyhow!("missing refresh transaction"))?;
+        send_wire_message(
+            &mut self.socket,
+            &WireMessage::RefreshTokenAck(nodelite_proto::RefreshTokenAckMessage {
+                refresh_id,
+                persisted,
+            }),
+        )
+        .await
     }
 
     pub async fn disconnect(mut self) -> Result<()> {

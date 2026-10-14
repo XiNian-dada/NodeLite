@@ -199,6 +199,7 @@ async fn initialize_server_runtime(
         registry,
         shared,
         ws_admission: WsAdmissionController::new(&config.ws),
+        preflight_ws_admission: WsAdmissionController::new(&config.ws).preflight_controller(),
         browser_ws_admission: WsAdmissionController::new(&config.ws),
         readonly_auth: Arc::new(RwLock::new(readonly_route_auth)),
         alerting: Arc::new(RwLock::new(Arc::new(config.alerting.clone()))),
@@ -378,6 +379,7 @@ pub(crate) fn build_router(state: AppState) -> Router {
         .route("/install/install-agent.sh", get(install_agent_script))
         .route("/install/bootstrap", get(install_bootstrap))
         .route("/ws", get(ws_handler))
+        .route("/ws/preflight", get(ws_handler))
         .route_layer(from_fn(set_protected_response_headers));
     let protected_json_routes = Router::new()
         .route(

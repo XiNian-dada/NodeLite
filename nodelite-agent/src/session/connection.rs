@@ -17,7 +17,7 @@ use nodelite_proto::{
 };
 
 use crate::collector::HostCollector;
-use crate::config_io::update_token_in_config;
+use crate::config_io::{load_agent_config, update_token_in_config};
 use crate::traffic_control::TrafficController;
 
 use super::transport::TimedSender;
@@ -54,6 +54,12 @@ pub async fn run_session(
     config_path: &Path,
     log_buffer: &mut AgentLogBuffer,
 ) -> Result<(), SessionError> {
+    if let Ok(saved) = load_agent_config(config_path).await
+        && saved.node_id == config.node_id
+        && saved.server == config.server
+    {
+        config.token = saved.token;
+    }
     log_buffer.push(
         NoticeLevel::Info,
         format!("connecting to {}", config.server),
@@ -87,6 +93,7 @@ pub async fn run_session(
     let deadline = Instant::now() + Duration::from_secs(session.config.auth_timeout_secs);
     let hello = WireMessage::Hello(HelloMessage {
         supports_metrics_zlib: true,
+        supports_token_refresh_ack: true,
         protocol_version: WIRE_PROTOCOL_VERSION,
         token: session.config.token.clone(),
         identity: identity.clone(),
@@ -265,6 +272,9 @@ impl Session<'_> {
     }
 
     async fn refresh_token(&mut self, response: RefreshTokenResponseMessage) -> Result<()> {
+        if !self.authenticated {
+            anyhow::bail!("token refresh received before authentication");
+        }
         info!("received new token, expires at {}", response.expires_at);
         self.logs.push(
             NoticeLevel::Info,
@@ -273,12 +283,15 @@ impl Session<'_> {
                 response.expires_at
             ),
         );
-        if let Err(error) = update_token_in_config(self.config_path, &response.new_token).await {
+        let persisted = if let Err(error) =
+            update_token_in_config(self.config_path, &response.new_token).await
+        {
             warn!("failed to persist new token: {}", error);
             self.logs.push(
                 NoticeLevel::Warn,
                 format!("failed to persist refreshed token: {error}"),
             );
+            false
         } else {
             self.config.token = response.new_token;
             info!("successfully persisted new token to config file");
@@ -286,6 +299,17 @@ impl Session<'_> {
                 NoticeLevel::Info,
                 "persisted refreshed token to local config",
             );
+            true
+        };
+        if let Some(refresh_id) = response.refresh_id {
+            send_wire_message(
+                &mut self.sender,
+                &WireMessage::RefreshTokenAck(nodelite_proto::RefreshTokenAckMessage {
+                    refresh_id,
+                    persisted,
+                }),
+            )
+            .await?;
         }
         flush_agent_logs(&mut self.sender, self.logs).await
     }

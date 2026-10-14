@@ -180,6 +180,7 @@ fn token_is_expired_at_exact_expiry_moment() {
         previous_token_hash: String::new(),
         previous_token_generation: None,
         previous_token_valid_until: None,
+        pending_tokens: Vec::new(),
         token: "secret".to_string(),
         tags: Vec::new(),
         created_at: expires_at - ChronoDuration::minutes(5),

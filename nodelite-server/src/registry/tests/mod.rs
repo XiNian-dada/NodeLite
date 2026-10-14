@@ -21,6 +21,7 @@ mod cache_tests;
 mod error_tests;
 mod migrate_tests;
 mod reload_tests;
+mod renewal_tests;
 mod store_tests;
 mod token_tests;
 mod validate_tests;
@@ -39,6 +40,7 @@ fn legacy_node(
         previous_token_hash: String::new(),
         previous_token_generation: None,
         previous_token_valid_until: None,
+        pending_tokens: Vec::new(),
         token: token.to_string(),
         tags: Vec::new(),
         created_at: Utc::now(),
