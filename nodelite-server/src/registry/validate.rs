@@ -66,6 +66,7 @@ pub(super) fn validate_registered_node(node: &RegisteredNode) -> RegistryResult<
         return Err(RegistryError::validation("node.token_hash is empty"));
     }
     validate_previous_token(node)?;
+    validate_pending_tokens(node)?;
     validate_tag_list("node.tags", &node.tags, MAX_NODE_TAGS, MAX_NODE_TAG_BYTES)
         .map_err(RegistryError::validation)?;
     if let Some(price) = node.renewal_price.as_deref() {
@@ -102,6 +103,28 @@ fn validate_previous_token(node: &RegisteredNode) -> RegistryResult<()> {
     Err(RegistryError::validation(
         "node previous token grace fields must be set or cleared together",
     ))
+}
+
+fn validate_pending_tokens(node: &RegisteredNode) -> RegistryResult<()> {
+    if node.pending_tokens.len() > super::renewal::MAX_PENDING_TOKENS {
+        return Err(RegistryError::validation("too many pending credentials"));
+    }
+    let mut ids = std::collections::HashSet::new();
+    let mut generations = std::collections::HashSet::new();
+    for pending in &node.pending_tokens {
+        crate::sanitize::validate_refresh_id(&pending.refresh_id)
+            .map_err(RegistryError::validation)?;
+        if pending.generation <= node.token_generation
+            || !ids.insert(&pending.refresh_id)
+            || !generations.insert(pending.generation)
+            || argon2::password_hash::PasswordHash::new(&pending.token_hash).is_err()
+        {
+            return Err(RegistryError::validation(
+                "invalid pending credential metadata",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_location_override_fields(node: &RegisteredNode) -> RegistryResult<()> {

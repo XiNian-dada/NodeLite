@@ -16,8 +16,14 @@ use tokio_tungstenite::tungstenite::Message;
 mod common;
 use common::TempDir;
 
+const REFRESH_TEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 // A simple mock WebSocket server that completes the handshake and issues a token refresh
-async fn run_mock_server(listener: TcpListener, new_token: String) -> Result<()> {
+async fn run_mock_server(
+    listener: TcpListener,
+    new_token: String,
+    confirmation: Option<(std::path::PathBuf, bool)>,
+) -> Result<()> {
     let (stream, _) = listener.accept().await?;
     let mut ws_stream = accept_async(stream)
         .await
@@ -52,7 +58,8 @@ async fn run_mock_server(listener: TcpListener, new_token: String) -> Result<()>
 
     // 3. Send RefreshTokenResponse
     let refresh_response = WireMessage::RefreshTokenResponse(RefreshTokenResponseMessage {
-        new_token,
+        refresh_id: confirmation.as_ref().map(|_| "a".repeat(64)),
+        new_token: new_token.clone(),
         expires_at: "2026-06-02T00:00:00Z".to_string(),
     });
     let refresh_payload = serde_json::to_string(&refresh_response)?;
@@ -72,10 +79,20 @@ async fn run_mock_server(listener: TcpListener, new_token: String) -> Result<()>
             .next()
             .await
             .ok_or_else(|| anyhow!("agent closed before acknowledging token refresh"))??;
-        if let Message::Text(text) = frame
-            && text.contains("received refreshed token")
-        {
-            break;
+        if let Message::Text(text) = frame {
+            if let Some((path, expected)) = &confirmation {
+                if let WireMessage::RefreshTokenAck(ack) = serde_json::from_str(&text)? {
+                    assert_eq!(ack.refresh_id, "a".repeat(64));
+                    assert_eq!(ack.persisted, *expected);
+                    if *expected {
+                        let saved = nodelite_agent::config_io::load_agent_config(path).await?;
+                        assert_eq!(saved.token, new_token);
+                    }
+                    break;
+                }
+            } else if text.contains("received refreshed token") {
+                break;
+            }
         }
     }
 
@@ -129,7 +146,8 @@ report_interval_secs = 5
 
     // Spawn mock server in the background
     let server_token = expected_new_token.clone();
-    let server_task = tokio::spawn(async move { run_mock_server(listener, server_token).await });
+    let server_task =
+        tokio::spawn(async move { run_mock_server(listener, server_token, None).await });
 
     let mut collector = new_collector();
     let identity = nodelite_proto::NodeIdentity {
@@ -149,7 +167,7 @@ report_interval_secs = 5
 
     // Run a single agent session - it should connect, authenticate, get token, persist it, and exit when server closes socket.
     let result = tokio::time::timeout(
-        Duration::from_secs(5),
+        REFRESH_TEST_TIMEOUT,
         run_session(
             &mut config,
             &mut collector,
@@ -191,5 +209,73 @@ report_interval_secs = 5
         .expect("mock server task panicked")
         .expect("mock server should complete successfully");
 
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_persistence_does_not_replace_in_memory_credentials() -> Result<()> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let mut config = common::test_config(listener.local_addr()?);
+    config.token = "initial-token".to_string();
+    let identity = common::test_identity(&config);
+    let temp = TempDir::new("nodelite-token-missing-config");
+    let path = temp.path().join("missing.toml");
+    let task = tokio::spawn(run_mock_server(
+        listener,
+        "new-fixture".to_string(),
+        Some((path.clone(), false)),
+    ));
+    let result = tokio::time::timeout(
+        REFRESH_TEST_TIMEOUT,
+        run_session(
+            &mut config,
+            &mut new_collector(),
+            &identity,
+            &path,
+            &mut AgentLogBuffer::default(),
+        ),
+    )
+    .await?;
+    assert!(result.is_err());
+    assert_eq!(config.token, "initial-token");
+    assert!(!path.exists());
+    task.await??;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn acknowledges_only_after_the_new_token_is_durably_readable() -> Result<()> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let mut config = common::test_config(listener.local_addr()?);
+    config.token = "initial-token".to_string();
+    let identity = common::test_identity(&config);
+    let temp = TempDir::new("nodelite-token-ack");
+    let path = temp.path().join("agent.toml");
+    fs::write(
+        &path,
+        format!(
+            "[agent]\nnode_id = {:?}\nnode_label = {:?}\nserver = {:?}\ntoken = {:?}\n",
+            config.node_id, config.node_label, config.server, config.token
+        ),
+    )?;
+    let task = tokio::spawn(run_mock_server(
+        listener,
+        "new-fixture".to_string(),
+        Some((path.clone(), true)),
+    ));
+    let result = tokio::time::timeout(
+        REFRESH_TEST_TIMEOUT,
+        run_session(
+            &mut config,
+            &mut new_collector(),
+            &identity,
+            &path,
+            &mut AgentLogBuffer::default(),
+        ),
+    )
+    .await?;
+    assert!(result.is_err());
+    assert_eq!(config.token, "new-fixture");
+    task.await??;
     Ok(())
 }

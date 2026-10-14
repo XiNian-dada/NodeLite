@@ -352,6 +352,18 @@ install_agent_config() {
   chmod 0600 "$CONFIG_PATH"
 }
 
+check_saved_credentials() {
+  check_config="$CONFIG_PATH"
+  if [ "$config_refreshed" -eq 1 ]; then
+    check_config="$BOOTSTRAP_TMP"
+  elif [ ! -f "$check_config" ]; then
+    check_config="$LEGACY_CONFIG_PATH"
+  fi
+  chmod 0700 "$TMP_PATH"
+  "$TMP_PATH" --config "$check_config" --check-credentials ||
+    fail "saved Agent credentials could not be verified; old binary and running service were preserved. Upgrade the server first; if credentials are stale, reissue a bootstrap configuration."
+}
+
 # 自动更新支持已移除。升级时顺手清理旧版本曾经写入的 timer / service,
 # 避免无人值守任务继续从 latest 通道自我替换 agent。
 cleanup_legacy_auto_update() {
@@ -735,10 +747,11 @@ curl -fsSL "$DOWNLOAD_URL" -o "$TMP_PATH" || fail "failed to download agent bina
 ACTUAL_SHA256="$(calculate_sha256 "$TMP_PATH")"
 [ "$ACTUAL_SHA256" = "$EXPECTED_SHA256" ] || fail "downloaded agent checksum mismatch"
 
-install -o root -g root -m 0755 "$TMP_PATH" "$BIN_PATH"
+check_saved_credentials
 if [ "$SERVICE_KIND" = "systemd" ] && systemctl is-active --quiet nodelite-agent.service; then
   systemctl stop nodelite-agent.service
 fi
+install -o root -g root -m 0755 "$TMP_PATH" "$BIN_PATH"
 install_agent_config
 write_service_definition
 restart_service

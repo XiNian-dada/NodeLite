@@ -264,7 +264,7 @@ fn token_expired_error(source: anyhow::Error) -> SessionError {
 }
 
 /// 构造接收侧的 WebSocket 配置。
-fn incoming_ws_config(max_incoming_message_bytes: usize) -> WebSocketConfig {
+pub(crate) fn incoming_ws_config(max_incoming_message_bytes: usize) -> WebSocketConfig {
     WebSocketConfig::default()
         .max_frame_size(Some(max_incoming_message_bytes))
         .max_message_size(Some(max_incoming_message_bytes))

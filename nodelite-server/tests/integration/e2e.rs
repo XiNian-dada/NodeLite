@@ -40,12 +40,7 @@ impl Drop for TempDir {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_e2e_agent_server_handshake() -> Result<()> {
     // 1. Locate the nodelite-agent binary target
-    let mut agent_bin = std::env::current_exe()?;
-    agent_bin.pop(); // pop executable name
-    if agent_bin.file_name().and_then(|s| s.to_str()) == Some("deps") {
-        agent_bin.pop(); // pop "deps"
-    }
-    agent_bin.push("nodelite-agent");
+    let agent_bin = crate::test_support::agent_binary_path()?;
     #[cfg(windows)]
     agent_bin.set_extension("exe");
 

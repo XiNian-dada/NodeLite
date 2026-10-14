@@ -4,7 +4,8 @@
 set -eu
 [ "$(id -u)" -eq 0 ] || { echo 'Run as root on Linux with systemd' >&2; exit 1; }
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-TEST_DIR=$(mktemp -d /run/nodelite-tc-test.XXXXXX)
+# /run can be noexec, and PrivateTmp hides /tmp and /var/tmp from the service.
+TEST_DIR=$(mktemp -d /usr/local/lib/nodelite-tc-test.XXXXXX)
 TEST_NS="nodelite-tc-$$"
 UNIT_NAME="nodelite-tc-test-$$.service"
 UNIT_PATH="/run/systemd/system/$UNIT_NAME"

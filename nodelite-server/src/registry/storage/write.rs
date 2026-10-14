@@ -27,7 +27,7 @@ pub(super) fn save_registry_file_sync(path: &Path, file: &RegistryFile) -> Regis
     harden_registry_permissions(&tmp_path)?;
     std::fs::rename(&tmp_path, path)
         .map_err(|error| RegistryError::io("replacing", path, error))?;
-    sync_parent_dir(path);
+    sync_parent_dir(path)?;
     verify_registry_permissions(path)?;
     Ok(())
 }
@@ -91,6 +91,15 @@ fn commit_prepared_registry_write(
     expected_version: u64,
     tmp_path: &Path,
 ) -> RegistryResult<()> {
+    commit_prepared_registry_write_with_sync(path, expected_version, tmp_path, sync_parent_dir)
+}
+
+fn commit_prepared_registry_write_with_sync(
+    path: &Path,
+    expected_version: u64,
+    tmp_path: &Path,
+    sync: impl FnOnce(&Path) -> RegistryResult<()>,
+) -> RegistryResult<()> {
     let _lock = acquire_registry_lock(path)?;
     let current = load_registry_file_sync(path)?;
     if current.version != expected_version {
@@ -100,7 +109,7 @@ fn commit_prepared_registry_write(
         ));
     }
     std::fs::rename(tmp_path, path).map_err(|error| RegistryError::io("replacing", path, error))?;
-    sync_parent_dir(path);
+    sync(path)?;
     verify_registry_permissions(path)?;
     Ok(())
 }
@@ -148,15 +157,14 @@ fn write_registry_payload(path: &Path, payload: &str) -> RegistryResult<()> {
 }
 
 /// rename 之后 fsync 父目录,使新目录项随之持久化。
-/// 打不开父目录(权限等)时静默退出 —— 数据已经 fsync,目录项丢失只意味着回退到上一份注册表。
-fn sync_parent_dir(path: &Path) {
-    let Some(parent) = path.parent() else {
-        return;
-    };
-    if parent.as_os_str().is_empty() {
-        return;
-    }
-    let _ = std::fs::File::open(parent).and_then(|dir| dir.sync_all());
+fn sync_parent_dir(path: &Path) -> RegistryResult<()> {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::File::open(parent)
+        .and_then(|dir| dir.sync_all())
+        .map_err(|error| RegistryError::io("fsyncing parent directory", parent, error))
 }
 
 fn registry_lock_path(path: &Path) -> PathBuf {
@@ -302,6 +310,40 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn parent_sync_failure_is_not_reported_as_a_successful_registry_commit() {
+        let dir = super::temporary_registry_path(
+            &std::env::temp_dir().join("nodelite-sync-registry-dir"),
+        )
+        .expect("random private directory");
+        super::create_private_dir_all(&dir).expect("private fixture directory");
+        let path = dir.join("server.json");
+        let tmp = super::temporary_registry_path(&path).expect("random staging path");
+        super::write_registry_payload(&tmp, r#"{"version":1,"nodes":[],"install_sessions":[]}"#)
+            .expect("fixture");
+        let version = super::load_registry_file_sync(&path)
+            .expect("empty fixture registry")
+            .version;
+        let result =
+            super::commit_prepared_registry_write_with_sync(&path, version, &tmp, |path| {
+                Err(crate::registry::RegistryError::io(
+                    "injected parent fsync",
+                    path,
+                    std::io::Error::other("fixture failure"),
+                ))
+            });
+        assert!(
+            result.is_err(),
+            "candidate must not be sent after failed durability"
+        );
+        assert!(
+            path.exists(),
+            "rename may already have published the candidate"
+        );
+        std::fs::remove_file(&path).expect("remove fixture");
+        std::fs::remove_file(super::registry_lock_path(&path)).expect("remove fixture lock");
+        std::fs::remove_dir(dir).expect("remove fixture directory");
+    }
     #[cfg(unix)]
     #[test]
     fn flock_fd_reports_bad_file_descriptors() {

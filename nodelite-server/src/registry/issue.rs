@@ -58,9 +58,17 @@ pub async fn issue_node(path: &Path, request: IssueNodeRequest) -> RegistryResul
                 file.nodes[index].token_hash = hash_token(&new_token).map_err(|error| {
                     RegistryError::internal("failed to hash token", error.into())
                 })?;
-                file.nodes[index].token_generation =
-                    file.nodes[index].token_generation.saturating_add(1);
+                file.nodes[index].token_generation = file.nodes[index]
+                    .pending_tokens
+                    .iter()
+                    .map(|p| p.generation)
+                    .chain(std::iter::once(file.nodes[index].token_generation))
+                    .max()
+                    .unwrap_or(file.nodes[index].token_generation)
+                    .checked_add(1)
+                    .ok_or_else(|| RegistryError::validation("token generation exhausted"))?;
                 file.nodes[index].previous_token_hash.clear();
+                file.nodes[index].pending_tokens.clear();
                 file.nodes[index].previous_token_generation = None;
                 file.nodes[index].previous_token_valid_until = None;
                 file.nodes[index].token_expires_at =
@@ -105,6 +113,7 @@ pub async fn issue_node(path: &Path, request: IssueNodeRequest) -> RegistryResul
             previous_token_hash: String::new(),
             previous_token_generation: None,
             previous_token_valid_until: None,
+            pending_tokens: Vec::new(),
             token: String::new(),
             tags: normalized_tags.clone(),
             created_at: now,

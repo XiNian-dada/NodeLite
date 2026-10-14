@@ -24,7 +24,7 @@ use crate::sanitize::{
     METRIC_ANOMALY_WINDOW_SECS, sanitize_snapshot, should_disconnect_for_metric_anomalies,
     update_metric_anomaly_window,
 };
-use crate::state::{SessionCommand, SessionRefreshReply};
+use crate::state::SessionCommand;
 
 pub(crate) struct SessionLoopState {
     ping_ticker: tokio::time::Interval,
@@ -168,6 +168,12 @@ async fn handle_wire_message(
     loop_state: &mut SessionLoopState,
     message: WireMessage,
 ) -> Result<LoopAction, super::ProtocolError> {
+    if !shared
+        .is_current_session(&session.node_id, session.session_id)
+        .await
+    {
+        return Ok(LoopAction::Break);
+    }
     match classify_agent_wire_message(message) {
         AgentWireAction::Metrics(snapshot) => {
             shared.record_ws_metrics_message();
@@ -185,6 +191,9 @@ async fn handle_wire_message(
             shared.record_ws_refresh_token_request_message();
             handle_refresh_request(state, session, sender, request).await
         }
+        AgentWireAction::RefreshTokenAck(ack) => {
+            super::refresh::handle_refresh_ack(state, session, ack).await
+        }
         AgentWireAction::Reject(message) => Err(super::ProtocolError::Client(message.to_string())),
     }
 }
@@ -195,6 +204,7 @@ enum AgentWireAction {
     AgentLogs(AgentLogsMessage),
     Pong(u64),
     RefreshTokenRequest(RefreshTokenRequestMessage),
+    RefreshTokenAck(nodelite_proto::RefreshTokenAckMessage),
     Reject(&'static str),
 }
 
@@ -204,6 +214,7 @@ fn classify_agent_wire_message(message: WireMessage) -> AgentWireAction {
         WireMessage::AgentLogs(message) => AgentWireAction::AgentLogs(message),
         WireMessage::Pong(PongMessage { nonce }) => AgentWireAction::Pong(nonce),
         WireMessage::RefreshTokenRequest(request) => AgentWireAction::RefreshTokenRequest(request),
+        WireMessage::RefreshTokenAck(ack) => AgentWireAction::RefreshTokenAck(ack),
         WireMessage::Hello(_) => AgentWireAction::Reject("duplicate hello message"),
         WireMessage::Ping(_) => AgentWireAction::Reject("agent must not send ping messages"),
         WireMessage::ServerNotice(_) => {
@@ -462,18 +473,18 @@ async fn handle_session_command(
     match command {
         SessionCommand::RefreshToken {
             response,
-            refresh_permit: _refresh_permit,
+            refresh_permit,
         } => match refresh_session_token(sender, &state.registry, session, "manual").await {
-            Ok(expires_at) => {
-                let _ = response.send(Ok(SessionRefreshReply {
-                    token_expires_at: expires_at,
-                }));
+            Ok(_) => {
+                if let Some(pending) = &mut session.pending_refresh {
+                    pending.reply = Some((refresh_permit, response));
+                }
                 Ok(LoopAction::Continue)
             }
             Err(error) => {
                 let message = error.to_string();
-                let _ = response.send(Err(message));
-                Err(super::ProtocolError::Server(error))
+                refresh_permit.complete(response, Err(message));
+                Ok(LoopAction::Continue)
             }
         },
     }
@@ -506,8 +517,11 @@ async fn handle_ping_tick(
     {
         return Ok(LoopAction::Break);
     }
-    if should_refresh_agent_token(&state.registry, session).await? {
-        refresh_session_token(sender, &state.registry, session, "pre-expiry").await?;
+    if should_refresh_agent_token(&state.registry, session).await?
+        && let Err(error) =
+            refresh_session_token(sender, &state.registry, session, "pre-expiry").await
+    {
+        warn!(node_id = %session.node_id, error = %error, "automatic token renewal failed; current credential retained; operator action may be required");
     }
 
     prune_outstanding_pings(
@@ -555,6 +569,7 @@ mod tests {
     fn hello_message() -> HelloMessage {
         HelloMessage {
             supports_metrics_zlib: false,
+            supports_token_refresh_ack: false,
             protocol_version: WIRE_PROTOCOL_VERSION,
             identity: identity(),
             token: "secret".to_string(),
@@ -600,6 +615,7 @@ mod tests {
             (
                 WireMessage::RefreshTokenResponse(RefreshTokenResponseMessage {
                     new_token: "new-token".to_string(),
+                    refresh_id: None,
                     expires_at: "2026-01-01T00:00:00Z".to_string(),
                 }),
                 "agent must not send refresh_token_response messages",

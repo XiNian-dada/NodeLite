@@ -46,16 +46,31 @@ impl NodeRegistry {
     ) -> RegistryResult<AuthorizedNode> {
         validate_runtime_identity(identity)?;
         validate_non_empty("hello.token", token).map_err(RegistryError::validation)?;
+        let (entry, revision, matched) = self
+            .match_registered_token(&identity.node_id, token)
+            .await?;
+        authorized_node_from_entry(
+            identity,
+            &entry,
+            revision,
+            matched.generation,
+            matched.expires_at,
+        )
+    }
 
+    async fn match_registered_token(
+        &self,
+        node_id: &str,
+        token: &str,
+    ) -> RegistryResult<(RegisteredNode, u64, MatchedToken)> {
         for _ in 0..2 {
-            let Some(entry) = self.registered_node(identity.node_id.as_str()).await else {
+            let Some(entry) = self.registered_node(node_id).await else {
                 return Err(RegistryError::Unauthorized);
             };
 
             let token_matched = self.token_matches_entry(token, &entry).await?;
-            let Some((current_entry, registry_revision)) = self
-                .registered_node_snapshot(identity.node_id.as_str())
-                .await
+            let Some((current_entry, registry_revision)) =
+                self.registered_node_snapshot(node_id).await
             else {
                 return Err(RegistryError::Unauthorized);
             };
@@ -66,20 +81,36 @@ impl NodeRegistry {
             let Some(token_matched) = token_matched else {
                 return Err(RegistryError::Unauthorized);
             };
-            return authorized_node_from_entry(
-                identity,
-                &current_entry,
-                registry_revision,
-                token_matched.generation,
-                token_matched.expires_at,
-            );
+            return Ok((current_entry, registry_revision, token_matched));
         }
 
         warn!(
-            node_id = %identity.node_id,
+            node_id,
             "registry entry changed repeatedly during token verify; rejecting authorization"
         );
         Err(RegistryError::Unauthorized)
+    }
+
+    /// Revalidates the credential itself on revision changes, including delete/recreate generation reuse.
+    pub(crate) async fn session_token_status(
+        &self,
+        node_id: &str,
+        token: &str,
+        generation: u64,
+    ) -> RegistryResult<RegistryTokenStatus> {
+        let (_, revision, matched) = self.match_registered_token(node_id, token).await?;
+        if matched.generation != generation
+            || matched
+                .expires_at
+                .is_some_and(|expiry| Utc::now() >= expiry)
+        {
+            return Err(RegistryError::Unauthorized);
+        }
+        Ok(RegistryTokenStatus {
+            generation,
+            token_expires_at: matched.expires_at,
+            registry_revision: revision,
+        })
     }
 
     #[cfg(test)]
@@ -141,6 +172,17 @@ impl NodeRegistry {
                 generation: entry.token_generation,
                 expires_at: entry.token_expires_at,
             }));
+        }
+
+        for pending in &entry.pending_tokens {
+            if Utc::now() < pending.expires_at
+                && self.verify_hashed_token(input, &pending.token_hash).await?
+            {
+                return Ok(Some(MatchedToken {
+                    generation: pending.generation,
+                    expires_at: Some(pending.expires_at),
+                }));
+            }
         }
 
         let Some(valid_until) = entry.previous_token_valid_until else {
@@ -304,6 +346,17 @@ pub(super) fn token_status_for_node(
             registry_revision,
         });
     }
+    if let Some(pending) = node
+        .pending_tokens
+        .iter()
+        .find(|p| p.generation == session_generation && now < p.expires_at)
+    {
+        return Some(RegistryTokenStatus {
+            generation: session_generation,
+            token_expires_at: Some(pending.expires_at),
+            registry_revision,
+        });
+    }
 
     match (
         node.previous_token_generation,
@@ -327,9 +380,11 @@ pub(super) fn token_status_for_node(
 fn token_material_matches(left: &RegisteredNode, right: &RegisteredNode) -> bool {
     left.token_generation == right.token_generation
         && left.token_hash == right.token_hash
+        && left.token_expires_at == right.token_expires_at
         && left.previous_token_hash == right.previous_token_hash
         && left.previous_token_generation == right.previous_token_generation
         && left.previous_token_valid_until == right.previous_token_valid_until
+        && left.pending_tokens == right.pending_tokens
         && constant_time_eq(&left.token, &right.token)
 }
 

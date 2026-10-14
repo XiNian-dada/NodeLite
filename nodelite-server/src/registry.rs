@@ -15,6 +15,7 @@ mod lifecycle;
 mod metrics;
 mod migration;
 mod render;
+pub(crate) mod renewal;
 mod storage;
 #[cfg(test)]
 mod tests;
@@ -152,6 +153,8 @@ pub struct RegisteredNode {
     pub previous_token_generation: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous_token_valid_until: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_tokens: Vec<PendingToken>,
     /// Legacy: 旧版本的明文 token 字段。新版本启动后会一次性把它哈希到
     /// `token_hash` 并清空, 之后磁盘上不再出现。保留 #[serde(default)]
     /// 与 skip_serializing_if 是为了让升级与降级都能干净通过。
@@ -190,6 +193,15 @@ pub struct RegisteredNode {
     pub location_override_latitude_microdegrees: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location_override_longitude_microdegrees: Option<i32>,
+}
+
+/// Candidate hashes survive a lost acknowledgement without retiring the current credential.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PendingToken {
+    pub refresh_id: String,
+    pub token_hash: String,
+    pub generation: u64,
+    pub expires_at: DateTime<Utc>,
 }
 
 fn is_false(value: &bool) -> bool {

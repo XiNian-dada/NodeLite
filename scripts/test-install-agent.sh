@@ -72,7 +72,36 @@ config_refreshed=1
 install_agent_config
 cmp "$BOOTSTRAP_TMP" "$CONFIG_PATH"
 
+fail() { printf '%s\n' "$*" >&2; return 1; }
+TMP_PATH="$TEMP_DIR/candidate-agent"
+install -m 0600 "$SCRIPT_DIR/fixtures/preflight-agent.sh" "$TMP_PATH"
+PREFLIGHT_EXPECTED_CONFIG="$CONFIG_PATH"
+PREFLIGHT_TEST_REJECT=0
+export PREFLIGHT_EXPECTED_CONFIG PREFLIGHT_TEST_REJECT
+config_refreshed=0
+check_saved_credentials
+[ -x "$TMP_PATH" ]
+mv "$CONFIG_PATH" "$TEMP_DIR/saved-active.toml"
+PREFLIGHT_EXPECTED_CONFIG="$LEGACY_CONFIG_PATH"
+check_saved_credentials
+mv "$TEMP_DIR/saved-active.toml" "$CONFIG_PATH"
+config_refreshed=1
+PREFLIGHT_EXPECTED_CONFIG="$BOOTSTRAP_TMP"
+check_saved_credentials
+PREFLIGHT_TEST_REJECT=1
+if check_saved_credentials >/dev/null 2>&1; then
+  printf '%s\n' 'Invalid credentials must abort the upgrade' >&2
+  exit 1
+fi
+cmp "$BOOTSTRAP_TMP" "$CONFIG_PATH"
+awk '
+  /^check_saved_credentials$/ { checked=1 }
+  /systemctl stop nodelite-agent.service/ || /^install .*\$TMP_PATH.*\$BIN_PATH/ {
+    if (!checked) exit 1
+  }
+' "$INSTALLER"
+
 SERVICE_KIND=launchd
 configure_agent_config_paths
 [ "$CONFIG_PATH" = "$CONFIG_DIR/agent.toml" ]
-printf '%s\n' 'Agent config migration and permissions: ok'
+printf '%s\n' 'Agent config migration, permissions and upgrade preflight: ok'

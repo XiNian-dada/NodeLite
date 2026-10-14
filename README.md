@@ -338,6 +338,8 @@ sudo journalctl -u nodelite-agent.service -f
 
 ### 服务端与 Agent 平滑升级
 
+先升级服务端，再升级所有 Agent。Agent 升级会先验证磁盘凭证，失败时保留旧服务；续期须待 Agent 原子落盘确认后才生效。旧 Agent 仍可上报，但应在 token 过期前升级。[凭证续期、权限与恢复说明](docs/agent-credential-upgrades.md)。
+
 * **服务端升级**（自动备份配置与 SQLite 数据，版本验证通过后生效）：
   ```bash
   curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/install-server.sh | \

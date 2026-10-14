@@ -23,6 +23,14 @@ pub const MAX_LOCATION_OVERRIDE_TEXT_BYTES: usize = 64;
 /// 计算 anomaly 触发阈值时使用的滑动窗口(秒),默认 5 分钟。
 pub const METRIC_ANOMALY_WINDOW_SECS: u64 = 300;
 
+pub(crate) fn validate_refresh_id(value: &str) -> Result<(), &'static str> {
+    if value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Ok(())
+    } else {
+        Err("invalid token refresh transaction ID")
+    }
+}
+
 pub(crate) fn valid_test_release_tag(tag: &str) -> bool {
     if tag.len() > 64 || !tag.is_ascii() {
         return false;

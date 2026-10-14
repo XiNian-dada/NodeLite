@@ -108,6 +108,7 @@ async fn rejects_message_above_64_kib_boundary() -> Result<()> {
 fn padded_hello_payload(node: &crate::test_support::TestNode) -> String {
     let hello = WireMessage::Hello(HelloMessage {
         supports_metrics_zlib: false,
+        supports_token_refresh_ack: false,
         protocol_version: WIRE_PROTOCOL_VERSION,
         token: node.token.clone(),
         identity: NodeIdentity {

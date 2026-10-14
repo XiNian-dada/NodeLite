@@ -8,7 +8,19 @@ use tracing::{info, warn};
 use super::ActiveSession;
 use super::transport::send_message;
 use crate::AppState;
+use crate::registry::renewal::PreparedToken;
 use crate::registry::{NodeRegistry, RegistryTokenStatus};
+use crate::state::{SessionRefreshPermit, SessionRefreshReply};
+
+pub(super) struct PendingRefresh {
+    candidate: PreparedToken,
+    retry_at: tokio::time::Instant,
+    pub(super) reply: Option<(
+        // Dropping an unfinished reply must release the permit before its sender.
+        SessionRefreshPermit,
+        tokio::sync::oneshot::Sender<Result<SessionRefreshReply, String>>,
+    )>,
+}
 
 /// Token 距离过期不足该天数时,服务端在已认证会话内主动续期并下发新 token。
 pub(crate) const AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS: i64 = 7;
@@ -35,32 +47,8 @@ pub(crate) async fn handle_refresh_request(
             "ignoring client-supplied node_id in refresh_token_request",
         );
     }
-    match state
-        .registry
-        .refresh_token(&session.node_id, session.session_generation)
-        .await
-    {
-        Ok((new_token, expires_at, new_generation)) => {
-            let response = nodelite_proto::WireMessage::RefreshTokenResponse(
-                nodelite_proto::RefreshTokenResponseMessage {
-                    new_token: new_token.clone(),
-                    expires_at: expires_at.to_rfc3339(),
-                },
-            );
-            let payload = serde_json::to_string(&response)
-                .map_err(|error| anyhow!("failed to serialize refresh response: {error}"))?;
-            send_message(
-                sender,
-                Message::Text(payload.into()),
-                "failed to send refresh response",
-            )
-            .await?;
-            session.session_token = new_token;
-            session.session_generation = new_generation;
-            session.token_expires_at = Some(expires_at);
-            session.registry_revision = state.registry.registry_revision();
-            info!(node_id = %session.node_id, "token refreshed successfully");
-        }
+    match refresh_session_token(sender, &state.registry, session, "agent-request").await {
+        Ok(_) => {}
         Err(error) => {
             warn!(node_id = %session.node_id, error = ?error, "failed to refresh token");
             let notice =
@@ -96,9 +84,13 @@ pub(crate) async fn ensure_current_token(
         return true;
     }
 
-    let Some(status) = state
+    let Ok(status) = state
         .registry
-        .token_status(&session.node_id, session.session_generation)
+        .session_token_status(
+            &session.node_id,
+            &session.session_token,
+            session.session_generation,
+        )
         .await
     else {
         warn!(node_id = %session.node_id, "{log_message}");
@@ -115,6 +107,22 @@ pub(crate) async fn should_refresh_agent_token(
     registry: &NodeRegistry,
     session: &mut ActiveSession,
 ) -> Result<bool> {
+    if !session.supports_token_refresh_ack || tokio::time::Instant::now() < session.refresh_retry_at
+    {
+        return Ok(false);
+    }
+    if let Some(pending) = &mut session.pending_refresh {
+        if tokio::time::Instant::now() < pending.retry_at {
+            return Ok(false);
+        }
+        if let Some((permit, reply)) = pending.reply.take() {
+            permit.complete(
+                reply,
+                Err("Agent did not confirm durable token storage".to_string()),
+            );
+        }
+        return Ok(true);
+    }
     let refresh_after = Utc::now() + ChronoDuration::days(AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS);
     if session.registry_revision == registry.registry_revision() {
         return Ok(token_needs_refresh(session.token_expires_at, refresh_after));
@@ -151,34 +159,43 @@ fn token_needs_refresh(
         .unwrap_or(true)
 }
 
-/// 通过当前在线会话把新 token 下发给 Agent。
-///
-/// 关键顺序:
-/// 1. registry 先刷新并持久化新 token;
-/// 2. 只有成功把 `refresh_token_response` 推到 TCP 缓冲区后,才更新本地
-///    `session_token`;
-///    这样 send 失败时当前 session 会立刻结束,避免 server 内存和 agent 视图
-///    长时间不一致。
+/// Staging is not activation: the current token remains valid until a durable acknowledgement.
 pub(crate) async fn refresh_session_token(
     sender: &mut futures::stream::SplitSink<WebSocket, Message>,
     registry: &NodeRegistry,
     session: &mut ActiveSession,
     trigger: &str,
 ) -> Result<DateTime<Utc>> {
-    let node_id = session.node_id.clone();
-    let (new_token, expires_at, new_generation) = registry
-        .refresh_token(&node_id, session.session_generation)
-        .await?;
+    if !session.supports_token_refresh_ack {
+        anyhow::bail!("Agent upgrade required for durable token renewal");
+    }
+    session.refresh_retry_at = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+    if session.pending_refresh.is_none() {
+        let candidate = registry
+            .prepare_token_refresh(&session.node_id, session.session_generation)
+            .await?;
+        session.pending_refresh = Some(PendingRefresh {
+            candidate,
+            retry_at: tokio::time::Instant::now(),
+            reply: None,
+        });
+    }
+    let pending = session
+        .pending_refresh
+        .as_mut()
+        .ok_or_else(|| anyhow!("missing staged refresh"))?;
+    let expires_at = pending.candidate.expires_at;
     info!(
         node_id = %session.node_id,
         trigger,
         expires_at = %expires_at.to_rfc3339(),
-        generation = new_generation,
-        "refreshed agent token",
+        generation = pending.candidate.generation,
+        "staged agent token awaiting durable confirmation",
     );
     let response = nodelite_proto::WireMessage::RefreshTokenResponse(
         nodelite_proto::RefreshTokenResponseMessage {
-            new_token: new_token.clone(),
+            new_token: pending.candidate.token.clone(),
+            refresh_id: Some(pending.candidate.refresh_id.clone()),
             expires_at: expires_at.to_rfc3339(),
         },
     );
@@ -190,11 +207,78 @@ pub(crate) async fn refresh_session_token(
         "failed to send token refresh response",
     )
     .await?;
-    session.session_token = new_token;
-    session.session_generation = new_generation;
-    session.token_expires_at = Some(expires_at);
-    session.registry_revision = registry.registry_revision();
+    pending.retry_at = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
     Ok(expires_at)
+}
+
+pub(super) async fn handle_refresh_ack(
+    state: &AppState,
+    session: &mut ActiveSession,
+    ack: nodelite_proto::RefreshTokenAckMessage,
+) -> Result<super::LoopAction, super::ProtocolError> {
+    crate::sanitize::validate_refresh_id(&ack.refresh_id)
+        .map_err(|e| super::ProtocolError::Client(e.to_string()))?;
+    if !state
+        .shared
+        .is_current_session(&session.node_id, session.session_id)
+        .await
+        || !ensure_current_token(state, session, "rejecting stale refresh acknowledgement").await
+    {
+        return Ok(super::LoopAction::Break);
+    }
+    let Some(pending) = session.pending_refresh.as_ref() else {
+        return Ok(super::LoopAction::Continue);
+    };
+    if pending.candidate.refresh_id != ack.refresh_id {
+        return Ok(super::LoopAction::Continue);
+    }
+    let Some(mut pending) = session.pending_refresh.take() else {
+        return Ok(super::LoopAction::Continue);
+    };
+    if !ack.persisted {
+        let reply = pending.reply.take();
+        warn!(node_id = %session.node_id, "Agent could not persist token; current credential retained");
+        session.pending_refresh = Some(pending);
+        if let Some((permit, reply)) = reply {
+            permit.complete(
+                reply,
+                Err(
+                    "Agent could not persist the token; current credential was retained"
+                        .to_string(),
+                ),
+            );
+        }
+        return Ok(super::LoopAction::Continue);
+    }
+    let (generation, expires_at) = state
+        .registry
+        .commit_token_refresh(&session.node_id, &ack.refresh_id)
+        .await
+        .map_err(anyhow::Error::from)?;
+    apply_committed_refresh(session, pending.candidate.token, generation, expires_at);
+    if let Some((permit, reply)) = pending.reply.take() {
+        permit.complete(
+            reply,
+            Ok(SessionRefreshReply {
+                token_expires_at: expires_at,
+            }),
+        );
+    }
+    info!(node_id = %session.node_id, "activated durably persisted Agent token");
+    Ok(super::LoopAction::Continue)
+}
+
+pub(super) fn apply_committed_refresh(
+    session: &mut ActiveSession,
+    token: String,
+    generation: u64,
+    expires_at: DateTime<Utc>,
+) {
+    session.session_generation = generation;
+    session.session_token = token;
+    session.token_expires_at = Some(expires_at);
+    // An operator rotation may have advanced the registry after this commit.
+    session.registry_revision = 0;
 }
 
 #[cfg(test)]
@@ -216,6 +300,9 @@ mod tests {
     fn session() -> ActiveSession {
         ActiveSession {
             metrics_zlib: false,
+            supports_token_refresh_ack: true,
+            pending_refresh: None,
+            refresh_retry_at: tokio::time::Instant::now(),
             node_id: "hk-01".to_string(),
             node_label: "Hong Kong 01".to_string(),
             agent_protocol_version: nodelite_proto::WIRE_PROTOCOL_VERSION,
@@ -325,31 +412,29 @@ mod tests {
             .expect("registry should load");
         let identity = identity_for("timeout-01");
         let mut session_generation = 1;
-        let mut original_grace_deadline = None;
 
         for expected_generation in 2..=4 {
-            let (new_token, expires_at, new_generation) = registry
-                .refresh_token("timeout-01", session_generation)
+            let candidate = registry
+                .prepare_token_refresh("timeout-01", session_generation)
                 .await
                 .expect("token should be persisted before send");
-            assert_eq!(new_generation, expected_generation);
+            assert_eq!(candidate.generation, expected_generation);
             let node = registry
                 .list_registered_nodes()
                 .await
                 .into_iter()
                 .next()
                 .expect("registered node should exist");
-            let grace_deadline = node
-                .previous_token_valid_until
-                .expect("previous token should have a grace deadline");
-            match original_grace_deadline {
-                Some(original) => assert_eq!(grace_deadline, original),
-                None => original_grace_deadline = Some(grace_deadline),
-            }
+            assert!(
+                node.previous_token_valid_until.is_none(),
+                "unconfirmed sends must not retire the current token"
+            );
+            assert_eq!(node.token_expires_at, issued.node.token_expires_at);
             let response = nodelite_proto::WireMessage::RefreshTokenResponse(
                 nodelite_proto::RefreshTokenResponseMessage {
-                    new_token,
-                    expires_at: expires_at.to_rfc3339(),
+                    new_token: candidate.token,
+                    refresh_id: Some(candidate.refresh_id),
+                    expires_at: candidate.expires_at.to_rfc3339(),
                 },
             );
             let payload =

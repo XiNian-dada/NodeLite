@@ -2,6 +2,7 @@
 
 pub mod collector;
 pub mod config_io;
+pub mod credential_check;
 pub mod runtime;
 pub mod session;
 pub(crate) mod traffic_control;

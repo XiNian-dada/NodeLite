@@ -91,7 +91,7 @@ jobs:
         run: cargo test --workspace --locked
 
       - name: Shellcheck installers
-        run: shellcheck scripts/install-server.sh scripts/install-server-config.sh scripts/install-server-upgrade.sh scripts/install-agent.sh scripts/server-web-update.sh scripts/merge-release-checksums.sh scripts/test-install-server-summary.sh scripts/test-install-server-modules.sh scripts/test-install-server-config.sh scripts/test-server-web-update.sh scripts/test-release-checksums.sh scripts/check-demo-credentials.sh scripts/check-actions-pinned.sh
+        run: shellcheck scripts/install-server.sh scripts/install-server-config.sh scripts/install-server-upgrade.sh scripts/install-agent.sh scripts/test-install-agent.sh scripts/fixtures/preflight-agent.sh scripts/server-web-update.sh scripts/merge-release-checksums.sh scripts/test-install-server-summary.sh scripts/test-install-server-modules.sh scripts/test-install-server-config.sh scripts/test-server-web-update.sh scripts/test-release-checksums.sh scripts/check-demo-credentials.sh scripts/check-actions-pinned.sh
 
       - name: Test installer summaries
         run: sh scripts/test-install-server-summary.sh
