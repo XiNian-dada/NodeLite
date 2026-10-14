@@ -24,7 +24,7 @@ pub enum CliError {
     },
     #[error("server command failed")]
     Registry {
-        #[from]
+        #[source]
         source: crate::registry::RegistryError,
     },
     #[error("server startup failed")]
@@ -32,6 +32,12 @@ pub enum CliError {
         #[source]
         source: anyhow::Error,
     },
+}
+
+impl From<crate::registry::RegistryError> for CliError {
+    fn from(source: crate::registry::RegistryError) -> Self {
+        Self::Registry { source }
+    }
 }
 
 /// 顶层命令行参数。
@@ -183,7 +189,18 @@ mod tests {
     use clap::Parser;
     use nodelite_proto::parse_server_config;
 
-    use super::{Cli, Command, NodeCommandArgs, issue_node_bundle};
+    use super::{Cli, CliError, Command, NodeCommandArgs, issue_node_bundle};
+
+    #[test]
+    fn registry_error_conversion_preserves_its_source() {
+        let error = CliError::from(crate::registry::RegistryError::Unauthorized);
+        assert_eq!(error.to_string(), "server command failed");
+        let source = std::error::Error::source(&error).expect("registry error retains its source");
+        assert!(matches!(
+            source.downcast_ref::<crate::registry::RegistryError>(),
+            Some(crate::registry::RegistryError::Unauthorized)
+        ));
+    }
 
     fn unique_temp_dir(prefix: &str) -> std::path::PathBuf {
         let unique = SystemTime::now()

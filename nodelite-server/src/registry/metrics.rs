@@ -55,11 +55,18 @@ impl TokenVerifyMetricsState {
 
     fn record_wait(&self, waited: Duration) {
         let nanos = u64::try_from(waited.as_nanos()).unwrap_or(u64::MAX);
-        let _ =
-            self.wait_nanos_total
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                    Some(current.saturating_add(nanos))
-                });
+        let mut current = self.wait_nanos_total.load(Ordering::Relaxed);
+        loop {
+            match self.wait_nanos_total.compare_exchange_weak(
+                current,
+                current.saturating_add(nanos),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(actual) => current = actual,
+            }
+        }
     }
 }
 
@@ -117,6 +124,48 @@ impl Drop for TokenVerifyActiveGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wait_time_accumulates_and_saturates_without_overflow() {
+        let state = TokenVerifyMetricsState::default();
+        state.record_wait(Duration::ZERO);
+        state.record_wait(Duration::from_nanos(2));
+        state.record_wait(Duration::from_nanos(3));
+        assert_eq!(state.wait_nanos_total.load(Ordering::Relaxed), 5);
+
+        state
+            .wait_nanos_total
+            .store(u64::MAX - 1, Ordering::Relaxed);
+        state.record_wait(Duration::from_nanos(2));
+        assert_eq!(state.wait_nanos_total.load(Ordering::Relaxed), u64::MAX);
+
+        state.wait_nanos_total.store(0, Ordering::Relaxed);
+        state.record_wait(Duration::MAX);
+        state.record_wait(Duration::from_nanos(1));
+        assert_eq!(state.wait_nanos_total.load(Ordering::Relaxed), u64::MAX);
+    }
+
+    #[test]
+    fn concurrent_wait_times_do_not_lose_updates() {
+        let state = Arc::new(TokenVerifyMetricsState::default());
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let workers: Vec<_> = (0..8)
+            .map(|_| {
+                let state = Arc::clone(&state);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    for _ in 0..1_000 {
+                        state.record_wait(Duration::from_nanos(1));
+                    }
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().expect("metric worker should finish");
+        }
+        assert_eq!(state.wait_nanos_total.load(Ordering::Relaxed), 8_000);
+    }
 
     #[test]
     fn guards_restore_gauges_when_work_is_cancelled_or_completed() {
