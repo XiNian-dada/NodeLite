@@ -12,8 +12,9 @@ pub(crate) const SESSION_CONTROL_CHANNEL_CAPACITY: usize = 8;
 /// 运行中的 WebSocket 会话可接收的控制命令。
 pub(crate) enum SessionCommand {
     RefreshToken {
-        response: oneshot::Sender<Result<SessionRefreshReply, String>>,
+        // Field drop order must release the permit before cancellation wakes callers.
         refresh_permit: SessionRefreshPermit,
+        response: oneshot::Sender<Result<SessionRefreshReply, String>>,
     },
 }
 
@@ -65,6 +66,16 @@ impl SessionRefreshPermit {
             .map_err(|_| SessionCommandError::CommandInFlight)?;
         Ok(Self { refresh_pending })
     }
+
+    pub(crate) fn complete(
+        self,
+        response: oneshot::Sender<Result<SessionRefreshReply, String>>,
+        result: Result<SessionRefreshReply, String>,
+    ) {
+        // Sending wakes callers that may immediately enqueue the next refresh.
+        drop(self);
+        let _ = response.send(result);
+    }
 }
 
 impl Drop for SessionRefreshPermit {
@@ -103,11 +114,121 @@ impl std::error::Error for SessionCommandError {}
 
 #[cfg(test)]
 mod tests {
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::task::{Context, Wake, Waker};
+
+    use chrono::Utc;
     use tokio::sync::{mpsc, oneshot};
 
     use super::{
-        SESSION_CONTROL_CHANNEL_CAPACITY, SessionCommand, SessionCommandError, SessionControlHandle,
+        SESSION_CONTROL_CHANNEL_CAPACITY, SessionCommand, SessionCommandError,
+        SessionControlHandle, SessionRefreshReply,
     };
+
+    struct CheckReleasedOnWake {
+        pending: Arc<AtomicBool>,
+        calls: AtomicUsize,
+    }
+
+    impl Wake for CheckReleasedOnWake {
+        fn wake(self: Arc<Self>) {
+            assert!(
+                !self.pending.load(Ordering::Acquire),
+                "notified callers must be able to enqueue the next refresh"
+            );
+            self.calls.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn refresh_reply_wakes_callers_only_after_releasing_permit() {
+        for result in [
+            Ok(SessionRefreshReply {
+                token_expires_at: Utc::now(),
+            }),
+            Err("durable storage failed".to_string()),
+        ] {
+            let (control, mut commands) = SessionControlHandle::channel();
+            let (response, mut received) = oneshot::channel();
+            control.try_enqueue_refresh(response).expect("enqueue");
+            let SessionCommand::RefreshToken {
+                response,
+                refresh_permit,
+            } = commands.try_recv().expect("queued refresh");
+            let wake = Arc::new(CheckReleasedOnWake {
+                pending: Arc::clone(&control.refresh_pending),
+                calls: AtomicUsize::new(0),
+            });
+            let waker = Waker::from(Arc::clone(&wake));
+            let mut context = Context::from_waker(&waker);
+            assert!(Pin::new(&mut received).poll(&mut context).is_pending());
+
+            refresh_permit.complete(response, result);
+
+            assert_eq!(wake.calls.load(Ordering::Relaxed), 1);
+            assert!(received.try_recv().is_ok());
+            let (next, _next_reply) = oneshot::channel();
+            control
+                .try_enqueue_refresh(next)
+                .expect("completed refresh must permit an immediate retry");
+        }
+    }
+
+    #[test]
+    fn closed_reply_receiver_does_not_leave_refresh_pending() {
+        let (control, mut commands) = SessionControlHandle::channel();
+        let (response, received) = oneshot::channel();
+        control.try_enqueue_refresh(response).expect("enqueue");
+        let SessionCommand::RefreshToken {
+            response,
+            refresh_permit,
+        } = commands.try_recv().expect("queued refresh");
+        drop(received);
+
+        refresh_permit.complete(response, Err("request cancelled".to_string()));
+
+        let (next, _next_reply) = oneshot::channel();
+        control
+            .try_enqueue_refresh(next)
+            .expect("cancelled caller must not leave refresh pending");
+    }
+
+    #[test]
+    fn dropped_command_or_pending_reply_releases_permit_before_waking_callers() {
+        for queued in [true, false] {
+            let (control, mut commands) = SessionControlHandle::channel();
+            let (response, mut received) = oneshot::channel();
+            control.try_enqueue_refresh(response).expect("enqueue");
+            let command = commands.try_recv().expect("queued refresh");
+            let wake = Arc::new(CheckReleasedOnWake {
+                pending: Arc::clone(&control.refresh_pending),
+                calls: AtomicUsize::new(0),
+            });
+            let waker = Waker::from(Arc::clone(&wake));
+            let mut context = Context::from_waker(&waker);
+            assert!(Pin::new(&mut received).poll(&mut context).is_pending());
+
+            if queued {
+                drop(command);
+            } else {
+                let SessionCommand::RefreshToken {
+                    refresh_permit,
+                    response,
+                } = command;
+                drop((refresh_permit, response));
+            }
+
+            assert_eq!(wake.calls.load(Ordering::Relaxed), 1);
+            assert!(received.try_recv().is_err());
+            let (next, _next_reply) = oneshot::channel();
+            control
+                .try_enqueue_refresh(next)
+                .expect("cancelled refresh must permit an immediate retry");
+        }
+    }
 
     #[test]
     fn refresh_command_is_rejected_while_one_is_pending() {

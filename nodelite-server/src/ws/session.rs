@@ -477,13 +477,13 @@ async fn handle_session_command(
         } => match refresh_session_token(sender, &state.registry, session, "manual").await {
             Ok(_) => {
                 if let Some(pending) = &mut session.pending_refresh {
-                    pending.reply = Some((response, refresh_permit));
+                    pending.reply = Some((refresh_permit, response));
                 }
                 Ok(LoopAction::Continue)
             }
             Err(error) => {
                 let message = error.to_string();
-                let _ = response.send(Err(message));
+                refresh_permit.complete(response, Err(message));
                 Ok(LoopAction::Continue)
             }
         },

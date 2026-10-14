@@ -16,8 +16,9 @@ pub(super) struct PendingRefresh {
     candidate: PreparedToken,
     retry_at: tokio::time::Instant,
     pub(super) reply: Option<(
-        tokio::sync::oneshot::Sender<Result<SessionRefreshReply, String>>,
+        // Dropping an unfinished reply must release the permit before its sender.
         SessionRefreshPermit,
+        tokio::sync::oneshot::Sender<Result<SessionRefreshReply, String>>,
     )>,
 }
 
@@ -114,10 +115,11 @@ pub(crate) async fn should_refresh_agent_token(
         if tokio::time::Instant::now() < pending.retry_at {
             return Ok(false);
         }
-        if let Some((reply, _permit)) = pending.reply.take() {
-            let _ = reply.send(Err(
-                "Agent did not confirm durable token storage".to_string()
-            ));
+        if let Some((permit, reply)) = pending.reply.take() {
+            permit.complete(
+                reply,
+                Err("Agent did not confirm durable token storage".to_string()),
+            );
         }
         return Ok(true);
     }
@@ -234,13 +236,18 @@ pub(super) async fn handle_refresh_ack(
         return Ok(super::LoopAction::Continue);
     };
     if !ack.persisted {
-        if let Some((reply, _permit)) = pending.reply.take() {
-            let _ = reply.send(Err(
-                "Agent could not persist the token; current credential was retained".to_string(),
-            ));
-        }
+        let reply = pending.reply.take();
         warn!(node_id = %session.node_id, "Agent could not persist token; current credential retained");
         session.pending_refresh = Some(pending);
+        if let Some((permit, reply)) = reply {
+            permit.complete(
+                reply,
+                Err(
+                    "Agent could not persist the token; current credential was retained"
+                        .to_string(),
+                ),
+            );
+        }
         return Ok(super::LoopAction::Continue);
     }
     let (generation, expires_at) = state
@@ -249,10 +256,13 @@ pub(super) async fn handle_refresh_ack(
         .await
         .map_err(anyhow::Error::from)?;
     apply_committed_refresh(session, pending.candidate.token, generation, expires_at);
-    if let Some((reply, _permit)) = pending.reply.take() {
-        let _ = reply.send(Ok(SessionRefreshReply {
-            token_expires_at: expires_at,
-        }));
+    if let Some((permit, reply)) = pending.reply.take() {
+        permit.complete(
+            reply,
+            Ok(SessionRefreshReply {
+                token_expires_at: expires_at,
+            }),
+        );
     }
     info!(node_id = %session.node_id, "activated durably persisted Agent token");
     Ok(super::LoopAction::Continue)
