@@ -127,6 +127,13 @@ describe('AccountView', () => {
     expect(assignSpy).toHaveBeenCalledWith('/logout-and-reauth');
   });
 
+  it('groups password and 2FA alongside a full-width passkey section', async () => {
+    const wrapper = await mountView();
+    expect(wrapper.find('.account__stack > .account__password').exists()).toBe(true);
+    expect(wrapper.find('.account__stack > .account__two-factor').exists()).toBe(true);
+    expect(wrapper.find('.account__stack > .account__passkeys').exists()).toBe(true);
+  });
+
   it('shows an error message (not an infinite spinner) when the load fails', async () => {
     const { ApiError } = await import('@/api/client');
     mockSettings.mockReset();

@@ -116,9 +116,9 @@ function logout(): void {
             </aside>
 
             <div class="account__stack">
-              <ChangePasswordCard />
-              <TwoFactorPanel :auth="auth" @changed="store.load()" />
-              <PasskeyPanel :auth="auth" @changed="store.load()" />
+              <ChangePasswordCard class="account__password" />
+              <TwoFactorPanel class="account__two-factor" :auth="auth" @changed="store.load()" />
+              <PasskeyPanel class="account__passkeys" :auth="auth" @changed="store.load()" />
             </div>
           </div>
         </template>
@@ -141,27 +141,34 @@ function logout(): void {
 .account-container {
   width: 100%;
   display: flex;
-  justify-content: flex-start;
+  justify-content: center;
 }
 .account {
   width: 100%;
-  max-width: 1020px;
+  max-width: 1600px;
 }
 .account__grid {
   display: grid;
-  grid-template-columns: 310px minmax(0, 1fr);
-  gap: 20px;
-  align-items: start;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: stretch;
 }
 .account__sidebar {
   position: sticky;
   top: 16px;
 }
 .account__stack {
-  display: flex;
+  display: grid;
   min-width: 0;
-  flex-direction: column;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   gap: 16px;
+}
+.account__stack > * {
+  min-width: 0;
+}
+.account__passkeys {
+  grid-column: 1 / -1;
 }
 .panel {
   background: var(--bg-card);
@@ -321,6 +328,11 @@ function logout(): void {
 .placeholder {
   color: var(--text-muted);
   font-size: 13px;
+}
+@media (max-width: 1200px) {
+  .account__stack {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 @media (max-width: 880px) {
   .account {
