@@ -124,6 +124,7 @@ const FAKE_DICT = {
     'node.clip.off_short': 'Clip: Off',
     'node.waiting_history': 'Waiting…',
     'node.preset.last_3h': '3h',
+    'node.preset.last_1h': '1h',
     'node.preset.last_24h': '24h',
     'node.preset.last_3d': '3d',
     'node.preset.last_7d': '7d',
@@ -291,7 +292,7 @@ describe('NodeDetailView', () => {
     expect(wrapper.find('[data-test="node-combined-overview"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="overview-summary-cards"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="overview-monitor-charts"]').exists()).toBe(true);
-    expect(mockHistory).toHaveBeenCalledWith('srv-1', { windowHours: 24, maxPoints: 720 });
+    expect(mockHistory).toHaveBeenCalledWith('srv-1', { windowHours: 1, maxPoints: 720 });
   });
 
   it('shows the network pane on the network tab', async () => {
