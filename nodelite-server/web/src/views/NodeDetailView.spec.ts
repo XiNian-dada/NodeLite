@@ -124,6 +124,7 @@ const FAKE_DICT = {
     'node.clip.off_short': 'Clip: Off',
     'node.waiting_history': 'Waiting…',
     'node.preset.last_3h': '3h',
+    'node.preset.last_1h': '1h',
     'node.preset.last_24h': '24h',
     'node.preset.last_3d': '3d',
     'node.preset.last_7d': '7d',
@@ -291,7 +292,7 @@ describe('NodeDetailView', () => {
     expect(wrapper.find('[data-test="node-combined-overview"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="overview-summary-cards"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="overview-monitor-charts"]').exists()).toBe(true);
-    expect(mockHistory).toHaveBeenCalledWith('srv-1', { windowHours: 24, maxPoints: 720 });
+    expect(mockHistory).toHaveBeenCalledWith('srv-1', { windowHours: 1, maxPoints: 720 });
   });
 
   it('shows the network pane on the network tab', async () => {
@@ -315,6 +316,22 @@ describe('NodeDetailView', () => {
     expect(wrapper.find('[data-test="node-disks"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="hardware-health-card"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="node-info-panel"]').exists()).toBe(false);
+  });
+
+  it('loads precise network selections and preserves them across tab switches', async () => {
+    const { wrapper, router } = await mountDetail('srv-1');
+    await router.replace({ hash: '#network' });
+    await flushPromises();
+    const range = { start: 1792100000, end: 1792103600 };
+    wrapper.findComponent({ name: 'NodeNetworkPanel' }).vm.$emit('rangeChange', range);
+    await flushPromises();
+    expect(mockHistory).toHaveBeenLastCalledWith('srv-1', { ...range, maxPoints: 720 });
+    await router.replace({ hash: '#overview' });
+    await flushPromises();
+    await router.replace({ hash: '#network' });
+    await flushPromises();
+    expect(wrapper.findComponent({ name: 'NodeNetworkPanel' }).props('selectedRange')).toEqual(range);
+    expect(mockHistory).toHaveBeenLastCalledWith('srv-1', { ...range, maxPoints: 720 });
   });
 
   it('loads a new high-res history window when an overview preset is selected', async () => {

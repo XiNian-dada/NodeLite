@@ -7,13 +7,15 @@ import { ApiAbortError } from '@/api/client';
 export const MONITOR_MAX_POINTS = 720;
 export const MONITOR_REFRESH_MS = 15 * 1000;
 
-function keyOf(id: string, windowHours: number): string {
-  return `${id}:${windowHours}`;
+export type HistoryWindow = number | { start: number; end: number };
+
+function keyOf(id: string, window: HistoryWindow): string {
+  return typeof window === 'number' ? `${id}:${window}` : `${id}:${window.start}:${window.end}`;
 }
 
 /**
- * Monitor-tab history for the active (node, window) pair. The selected
- * preset changes windowHours, which is part of the cache key — switching
+ * High-res history for the active node and live window or explicit range.
+ * The complete query is part of the cache key — switching
  * window or node clears stale points and refetches; same key only refetches
  * once >=15s stale. id/key-aware in-flight guard (the #182 lesson).
  */
@@ -25,13 +27,14 @@ export const useMonitorHistoryStore = defineStore('monitorHistory', () => {
   const fetchedAt = ref(0);
   const inFlightKey = ref<string | null>(null);
 
-  async function fetchFor(id: string, windowHours: number, key: string): Promise<void> {
+  async function fetchFor(id: string, window: HistoryWindow, key: string): Promise<void> {
     if (inFlightKey.value === key) return;
     inFlightKey.value = key;
     loading.value = true;
     error.value = null;
     try {
-      const result = await apiClient.nodeHistory(id, { windowHours, maxPoints: MONITOR_MAX_POINTS });
+      const query = typeof window === 'number' ? { windowHours: window } : window;
+      const result = await apiClient.nodeHistory(id, { ...query, maxPoints: MONITOR_MAX_POINTS });
       if (currentKey.value === key) {
         points.value = result;
         fetchedAt.value = Date.now();
@@ -60,25 +63,25 @@ export const useMonitorHistoryStore = defineStore('monitorHistory', () => {
   }
 
   /** Load for (node, window); a new pair always fetches, same pair throttles. */
-  async function loadIfStale(id: string, windowHours: number): Promise<void> {
-    const key = keyOf(id, windowHours);
+  async function loadIfStale(id: string, window: HistoryWindow): Promise<void> {
+    const key = keyOf(id, window);
     if (switchTo(key)) {
-      await fetchFor(id, windowHours, key);
+      await fetchFor(id, window, key);
       return;
     }
     if (fetchedAt.value > 0 && Date.now() - fetchedAt.value < MONITOR_REFRESH_MS) return;
-    await fetchFor(id, windowHours, key);
+    await fetchFor(id, window, key);
   }
 
   /** Poll the current pair, throttled to >=15s. */
-  async function refresh(id: string, windowHours: number): Promise<void> {
-    const key = keyOf(id, windowHours);
+  async function refresh(id: string, window: HistoryWindow): Promise<void> {
+    const key = keyOf(id, window);
     if (currentKey.value !== key) {
-      await loadIfStale(id, windowHours);
+      await loadIfStale(id, window);
       return;
     }
     if (fetchedAt.value > 0 && Date.now() - fetchedAt.value < MONITOR_REFRESH_MS) return;
-    await fetchFor(id, windowHours, key);
+    await fetchFor(id, window, key);
   }
 
   return { currentKey, points, loading, error, loadIfStale, refresh };

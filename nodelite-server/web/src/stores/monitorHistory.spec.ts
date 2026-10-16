@@ -25,7 +25,10 @@ describe('useMonitorHistoryStore', () => {
     mockHistory.mockResolvedValueOnce([]);
     const store = useMonitorHistoryStore();
     await store.loadIfStale('a', 24);
-    expect(mockHistory).toHaveBeenCalledWith('a', { windowHours: 24, maxPoints: MONITOR_MAX_POINTS });
+    expect(mockHistory).toHaveBeenCalledWith('a', {
+      windowHours: 24,
+      maxPoints: MONITOR_MAX_POINTS,
+    });
   });
 
   it('refetches when the window changes, clearing stale points', async () => {
@@ -35,7 +38,10 @@ describe('useMonitorHistoryStore', () => {
     expect(mockHistory).toHaveBeenCalledTimes(1);
     await store.loadIfStale('a', 72); // window change → new key → fetch
     expect(mockHistory).toHaveBeenCalledTimes(2);
-    expect(mockHistory).toHaveBeenLastCalledWith('a', { windowHours: 72, maxPoints: MONITOR_MAX_POINTS });
+    expect(mockHistory).toHaveBeenLastCalledWith('a', {
+      windowHours: 72,
+      maxPoints: MONITOR_MAX_POINTS,
+    });
   });
 
   it('throttles same-pair re-entry within the window', async () => {
@@ -57,5 +63,22 @@ describe('useMonitorHistoryStore', () => {
     const store = useMonitorHistoryStore();
     await store.refresh('a', 24);
     expect(mockHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it('loads precise navigator ranges without mixing them with live hourly queries', async () => {
+    mockHistory.mockResolvedValue([]);
+    const store = useMonitorHistoryStore();
+    await store.loadIfStale('a', 1);
+    await store.loadIfStale('a', { start: 1000, end: 2000 });
+    expect(mockHistory).toHaveBeenLastCalledWith('a', {
+      start: 1000,
+      end: 2000,
+      maxPoints: MONITOR_MAX_POINTS,
+    });
+    await store.loadIfStale('a', 1);
+    expect(mockHistory).toHaveBeenLastCalledWith('a', {
+      windowHours: 1,
+      maxPoints: MONITOR_MAX_POINTS,
+    });
   });
 });

@@ -174,21 +174,20 @@ const rows = computed(() =>
         <tr>
           <th>{{ t('settings.tokens.node') }}</th>
           <th>{{ t('settings.tokens.status') }}</th>
-          <th>{{ t('settings.tokens.agent') }}</th>
-          <th>{{ t('settings.tokens.ip') }}</th>
           <th>{{ t('settings.tokens.expires_at') }}</th>
-          <th class="numeric">{{ t('settings.tokens.remaining') }}</th>
           <th>{{ t('settings.tokens.service_expires_at') }}</th>
-          <th>{{ t('settings.tokens.service_unlimited') }}</th>
           <th>{{ t('settings.tokens.renewal_price') }}</th>
-          <th class="actions">{{ t('settings.tokens.actions') }}</th>
+          <th class="token-actions">{{ t('settings.tokens.actions') }}</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="row in rows" :key="row.id" data-test="token-row">
-          <td :data-label="t('settings.tokens.node')">
-            {{ row.label }}
-            <div class="subnote">{{ row.nodeId }}</div>
+          <td :data-label="t('settings.tokens.node')" class="node-cell">
+            <div class="node-identity">
+              <strong>{{ row.label }}</strong>
+              <span class="subnote">{{ row.nodeId }} · Agent {{ row.agent }}</span>
+              <span class="node-ip" :title="t('settings.tokens.ip')">{{ row.ip }}</span>
+            </div>
           </td>
           <td :data-label="t('settings.tokens.status')">
             <span class="status-pill" :class="row.online ? 'online' : 'offline'">
@@ -196,13 +195,18 @@ const rows = computed(() =>
             </span>
             <TrafficControlStatus
               :status="row.online ? (row.agentToken.traffic_control ?? null) : null"
+              compact
             />
           </td>
-          <td :data-label="t('settings.tokens.agent')">{{ row.agent }}</td>
-          <td :data-label="t('settings.tokens.ip')">{{ row.ip }}</td>
-          <td :data-label="t('settings.tokens.expires_at')">{{ row.expiresAt }}</td>
-          <td :data-label="t('settings.tokens.remaining')" class="numeric" :class="row.severity">
-            {{ row.remaining }}
+          <td :data-label="t('settings.tokens.expires_at')">
+            <div class="token-validity">
+              <time :datetime="row.agentToken.token_expires_at ?? undefined">{{
+                row.expiresAt
+              }}</time>
+              <span class="token-remaining" :class="row.severity">
+                {{ t('settings.tokens.remaining') }} · {{ row.remaining }}
+              </span>
+            </div>
           </td>
           <td :data-label="t('settings.tokens.service_expires_at')">
             <input
@@ -210,10 +214,9 @@ const rows = computed(() =>
               class="meta-input"
               type="date"
               :disabled="row.draft.serviceUnlimited"
+              :aria-label="`${row.label} · ${t('settings.tokens.service_expires_at')}`"
               data-test="service-expiry-input"
             />
-          </td>
-          <td :data-label="t('settings.tokens.service_unlimited')">
             <label class="meta-check">
               <input
                 v-model="row.draft.serviceUnlimited"
@@ -229,33 +232,36 @@ const rows = computed(() =>
               class="meta-input"
               type="text"
               maxlength="64"
+              :aria-label="`${row.label} · ${t('settings.tokens.renewal_price')}`"
               :placeholder="t('settings.tokens.renewal_price_placeholder')"
               data-test="renewal-price-input"
             />
           </td>
-          <td :data-label="t('settings.tokens.actions')" class="actions">
-            <button
-              class="meta-save"
-              type="button"
-              :disabled="row.draft.saving"
-              data-test="service-meta-save"
-              @click="saveServiceMetadata(row.nodeId)"
-            >
-              {{
-                row.draft.saving
-                  ? t('settings.tokens.service_meta_saving')
-                  : t('settings.tokens.service_meta_save')
-              }}
-            </button>
-            <button
-              class="agent-delete"
-              type="button"
-              :disabled="!authEnabled"
-              data-test="delete-agent"
-              @click="openDelete(row.agentToken)"
-            >
-              {{ t('settings.tokens.delete') }}
-            </button>
+          <td :data-label="t('settings.tokens.actions')" class="token-actions">
+            <div class="row-actions">
+              <button
+                class="meta-save"
+                type="button"
+                :disabled="row.draft.saving"
+                data-test="service-meta-save"
+                @click="saveServiceMetadata(row.nodeId)"
+              >
+                {{
+                  row.draft.saving
+                    ? t('settings.tokens.service_meta_saving')
+                    : t('settings.tokens.service_meta_save')
+                }}
+              </button>
+              <button
+                class="agent-delete"
+                type="button"
+                :disabled="!authEnabled"
+                data-test="delete-agent"
+                @click="openDelete(row.agentToken)"
+              >
+                {{ t('settings.tokens.delete') }}
+              </button>
+            </div>
             <div
               v-if="row.draft.message"
               class="meta-message"
@@ -285,6 +291,8 @@ const rows = computed(() =>
   border: 1px solid var(--border-soft);
   border-radius: 8px;
   padding: 16px;
+  container-type: inline-size;
+  container-name: agent-table;
 }
 .card-head {
   display: flex;
@@ -322,11 +330,12 @@ const rows = computed(() =>
   border-radius: 8px;
   border-collapse: collapse;
   font-size: 13px;
+  table-layout: fixed;
 }
 .tokens th,
 .tokens td {
   text-align: left;
-  padding: 8px 10px;
+  padding: 14px 12px;
   border-bottom: 1px solid var(--border-soft);
   vertical-align: top;
 }
@@ -335,12 +344,55 @@ const rows = computed(() =>
   font-weight: 500;
   background: var(--bg-card-soft);
 }
-.tokens .numeric {
+.tokens th:nth-child(1),
+.tokens th:nth-child(2),
+.tokens th:nth-child(3) {
+  width: 20%;
+}
+.tokens th:nth-child(4) {
+  width: 17%;
+}
+.tokens th:nth-child(5) {
+  width: 13%;
+}
+.tokens .token-actions {
   text-align: right;
+}
+.row-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.node-identity,
+.token-validity {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  overflow-wrap: anywhere;
+}
+.node-identity strong {
+  font-size: 14px;
+  color: var(--text-primary);
+}
+.node-ip {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.token-validity time {
+  line-height: 1.6;
   font-variant-numeric: tabular-nums;
 }
-.tokens .actions {
-  text-align: right;
+.token-remaining {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-card-soft);
+  font-size: 12px;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
 }
 .subnote {
   color: var(--text-muted);
@@ -376,8 +428,8 @@ const rows = computed(() =>
 }
 .meta-input {
   width: 100%;
-  min-width: 112px;
-  height: 32px;
+  min-width: 0;
+  height: 36px;
   color: var(--text-primary);
   background: var(--bg-card);
   border: 1px solid var(--border-soft);
@@ -402,6 +454,7 @@ const rows = computed(() =>
   color: var(--text-secondary);
   font-size: 12px;
   white-space: nowrap;
+  margin-top: 10px;
 }
 .meta-check input {
   width: 14px;
@@ -435,7 +488,6 @@ const rows = computed(() =>
 .agent-delete {
   min-width: 64px;
   height: 32px;
-  margin-top: 6px;
   color: var(--accent-red);
   background: transparent;
   border: 1px solid var(--border-soft);
@@ -467,45 +519,67 @@ const rows = computed(() =>
 .meta-message.ok {
   color: var(--accent-green);
 }
-@media (max-width: 640px) {
+@container agent-table (max-width: 1080px) {
   .tokens,
-  .tokens thead,
-  .tokens tbody,
-  .tokens tr,
-  .tokens th,
-  .tokens td {
+  .tokens tbody {
     display: block;
+    border: 0;
+    overflow: visible;
   }
   .tokens thead {
     display: none;
   }
   .tokens tr {
-    border-bottom: 1px solid var(--border-soft);
-    padding: 10px 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px 24px;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-md);
+    padding: 18px;
+    margin-bottom: 14px;
   }
   .tokens tr:last-child {
-    border-bottom: 0;
+    margin-bottom: 0;
   }
   .tokens td {
     border-bottom: 0;
-    display: grid;
-    grid-template-columns: minmax(86px, 0.42fr) minmax(0, 1fr);
-    gap: 10px;
-    padding: 5px 0;
+    display: block;
+    min-width: 0;
+    padding: 0;
     overflow-wrap: anywhere;
   }
   .tokens td::before {
     content: attr(data-label);
+    display: block;
+    margin-bottom: 8px;
     color: var(--text-muted);
+    font-size: 12px;
   }
-  .tokens .numeric {
+  .tokens .token-actions {
     text-align: left;
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--border-soft);
+    padding-top: 14px;
   }
-  .tokens .actions {
-    text-align: left;
+  .row-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .row-actions button {
+    min-width: 90px;
   }
   .meta-input {
-    max-width: 220px;
+    max-width: 260px;
+  }
+}
+@container agent-table (max-width: 430px) {
+  .tokens tr {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+    padding: 14px;
+  }
+  .meta-input {
+    max-width: none;
   }
 }
 </style>

@@ -298,6 +298,7 @@ async function save(): Promise<void> {
 }
 .alerts__grid--channels {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
 }
 .panel {
   background: var(--bg-card);

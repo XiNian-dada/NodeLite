@@ -2,6 +2,7 @@ import { computed, ref, type ComputedRef, type Ref } from 'vue';
 
 /** Monitor-tab window presets, from node.html:1421-1427. */
 export const PRESET_WINDOWS = [
+  { key: 'last_1h', hours: 1 },
   { key: 'last_3h', hours: 3 },
   { key: 'last_24h', hours: 24 },
   { key: 'last_3d', hours: 72 },
@@ -11,7 +12,7 @@ export const PRESET_WINDOWS = [
 
 export type PresetKey = (typeof PRESET_WINDOWS)[number]['key'];
 
-const DEFAULT_PRESET: PresetKey = 'last_24h';
+const DEFAULT_PRESET: PresetKey = 'last_1h';
 
 export interface ChartSelection {
   presets: typeof PRESET_WINDOWS;
@@ -28,7 +29,7 @@ export interface ChartSelection {
 export function useChartSelection(): ChartSelection {
   const activeKey = ref<PresetKey>(DEFAULT_PRESET);
   const windowHours = computed(
-    () => PRESET_WINDOWS.find((p) => p.key === activeKey.value)?.hours ?? 24,
+    () => PRESET_WINDOWS.find((p) => p.key === activeKey.value)?.hours ?? 1,
   );
   function selectPreset(key: PresetKey): void {
     activeKey.value = key;

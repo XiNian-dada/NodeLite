@@ -22,6 +22,13 @@ describe('chartY', () => {
     const flat = { displayMin: 5, displayMax: 5 };
     expect(Number.isFinite(chartY(5, flat, 120, 12, 20))).toBe(true);
   });
+
+  it.each([0.13, 0.001, 0.000001])('uses the entire plot for a fractional range of %s', (maximum) => {
+    const fractional = { displayMin: 0, displayMax: maximum };
+    expect(chartY(maximum, fractional, 220, 12, 32)).toBeCloseTo(12);
+    expect(chartY(maximum / 2, fractional, 220, 12, 32)).toBeCloseTo(100);
+    expect(chartY(0, fractional, 220, 12, 32)).toBeCloseTo(188);
+  });
 });
 
 describe('chartPadLeft', () => {

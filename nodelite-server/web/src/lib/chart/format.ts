@@ -20,6 +20,9 @@ export function formatChartValue(value: number | null | undefined, kind: ChartVa
   if (kind === 'latency') {
     return `${numeric.toFixed(numeric >= 10 ? 0 : 1)} ms`;
   }
+  if (numeric !== 0 && Math.abs(numeric) < 1) {
+    return numeric.toFixed(Math.min(4, Math.max(2, Math.ceil(-Math.log10(Math.abs(numeric))) + 1)));
+  }
   return numeric >= 100 ? numeric.toFixed(0) : numeric.toFixed(1);
 }
 

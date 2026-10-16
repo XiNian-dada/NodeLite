@@ -18,6 +18,7 @@ const FAKE_DICT = {
     'node.clip.on_short': 'Clip: On',
     'node.clip.off_short': 'Clip: Off',
     'node.preset.last_3h': '3h',
+    'node.preset.last_1h': '1h',
     'node.preset.last_24h': '24h',
     'node.preset.last_3d': '3d',
     'node.preset.last_7d': '7d',
@@ -79,9 +80,10 @@ describe('MonitorCharts', () => {
     vi.unstubAllGlobals();
   });
 
-  it('renders five preset buttons with the active one marked', () => {
+  it('renders six preset buttons including the new hourly window', () => {
     const wrapper = mountMonitor();
-    expect(wrapper.findAll('.preset-button')).toHaveLength(5);
+    expect(wrapper.findAll('.preset-button')).toHaveLength(6);
+    expect(wrapper.find('[data-test="preset-last_1h"]').text()).toBe('1h');
     expect(wrapper.find('[data-test="preset-last_24h"]').classes()).toContain('active');
   });
 

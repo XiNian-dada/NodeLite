@@ -31,4 +31,9 @@ describe('formatChartValue', () => {
     expect(formatChartValue(150, 'number')).toBe('150');
     expect(formatChartValue(1.5, 'number')).toBe('1.5');
   });
+
+  it('retains useful precision for tiny load values and their averages', () => {
+    expect(formatChartValue(0.02, 'number')).toBe('0.020');
+    expect(formatChartValue(0.005, 'number')).toBe('0.0050');
+  });
 });

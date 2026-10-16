@@ -138,7 +138,7 @@ watch(
   padding: 16px;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: flex-start;
 }
 .card-head {
   display: flex;
@@ -193,6 +193,7 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 12px;
+  flex: 1;
 }
 .summary-details {
   display: flex;
@@ -222,7 +223,8 @@ watch(
 .card-actions {
   display: flex;
   justify-content: flex-end;
-  margin-top: 4px;
+  margin-top: auto;
+  padding-top: 4px;
 }
 
 /* Modal layout styles */
