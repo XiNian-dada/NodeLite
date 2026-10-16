@@ -15,8 +15,16 @@ AGENTS.md
 passkeys.json
 
 .claude/
+
+# Local analysis reports and implementation notes
 NodeLite_DIFFERENTIAL_REVIEW*.md
 PERFORMANCE*.md
+/PERF_OPTIMIZATION*.md
+/PHASE3_NODELISTITEMVIEW_DESIGN.md
+/RECONNECT_STORM_*.md
+/audit-report-NodeLite-*.html
+/docs/pr-review-[0-9]*.md
+
 .playwright-cli/
 nodelite-server/assets/
 scripts/BENCHMARK_FRONTEND.md

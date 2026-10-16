@@ -32,6 +32,7 @@ const FAKE_DICT = {
     'node.clip.on': 'Clip Spikes: On',
     'node.clip.off': 'Clip Spikes: Off',
     'node.preset.last_3h': '3h',
+    'node.preset.last_1h': '1h',
     'node.preset.last_24h': '24h',
     'node.preset.last_3d': '3d',
     'node.preset.last_7d': '7d',
@@ -127,7 +128,7 @@ describe('NodeOverviewMonitor', () => {
 
   it('renders preset buttons with the active one marked', () => {
     const wrapper = mountOverview();
-    expect(wrapper.findAll('.preset-button')).toHaveLength(5);
+    expect(wrapper.findAll('.preset-button')).toHaveLength(6);
     expect(wrapper.find('[data-test="preset-last_24h"]').classes()).toContain('active');
   });
 

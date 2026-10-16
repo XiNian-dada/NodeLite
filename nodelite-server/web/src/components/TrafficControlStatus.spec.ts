@@ -4,6 +4,25 @@ import { createI18n } from 'vue-i18n';
 import TrafficControlStatus from './TrafficControlStatus.vue';
 
 describe('Agent traffic control status', () => {
+  it('keeps installation guidance in a keyboard-accessible disclosure in compact tables', () => {
+    const wrapper = mount(TrafficControlStatus, {
+      props: {
+        compact: true,
+        status: {
+          state: 'unavailable',
+          reason: 'disabled',
+          desired_rate_kbps: null,
+          applied_rate_kbps: null,
+        },
+      },
+      global: { plugins: [createI18n({ legacy: false, locale: 'en' })] },
+    });
+    expect(wrapper.find('.traffic-status__heading').text()).toContain('Unavailable');
+    expect(wrapper.find('details').attributes('open')).toBeUndefined();
+    expect(wrapper.find('summary').text()).toBe('Details');
+    expect(wrapper.find('details p').text()).toContain('installing the Agent');
+  });
+
   it('shows missing capability separately from the requested rate', () => {
     const wrapper = mount(TrafficControlStatus, {
       props: {

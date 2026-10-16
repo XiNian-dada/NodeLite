@@ -263,6 +263,27 @@ textarea {
     box-shadow 0.15s ease;
 }
 
+/* Reserve the same arrow gutter even when component styles override field padding. */
+:root select:not([multiple]):not([size]) {
+  appearance: none;
+  padding-inline-end: 36px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position:
+    right 19px center,
+    right 14px center;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}
+
+@media (forced-colors: active) {
+  :root select:not([multiple]):not([size]) {
+    appearance: auto;
+    background-image: none;
+  }
+}
+
 input[type='text']:focus,
 input[type='password']:focus,
 input[type='number']:focus,
@@ -281,4 +302,3 @@ textarea:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
-

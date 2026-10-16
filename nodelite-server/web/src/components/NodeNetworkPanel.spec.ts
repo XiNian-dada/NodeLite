@@ -58,7 +58,10 @@ function hp(recorded_at: string, over: Partial<HistoryPoint> = {}): HistoryPoint
   };
 }
 
-function mountPanel(node = makeNodeStatus(), history: HistoryPoint[] = [hp('2026-05-29T00:00:00Z')]) {
+function mountPanel(
+  node = makeNodeStatus(),
+  history: HistoryPoint[] = [hp('2026-05-29T00:00:00Z')],
+) {
   return mount(NodeNetworkPanel, {
     props: { node, history },
     global: { plugins: [getI18n()] },
@@ -121,5 +124,12 @@ describe('NodeNetworkPanel', () => {
     expect(wrapper.find('[data-test="network-stat-download"]').text()).toContain('—');
     expect(wrapper.find('[data-test="network-stat-loss"]').text()).toContain('—');
     expect(wrapper.find('[data-test="network-loss-card"]').exists()).toBe(true);
+  });
+
+  it('exposes a time navigator and emits the selected range separately from live metrics', async () => {
+    const wrapper = mountPanel();
+    expect(wrapper.find('[data-test="chart-range-selector"]').exists()).toBe(true);
+    await wrapper.find('[data-test="range-live"]').trigger('click');
+    expect(wrapper.emitted('rangeChange')?.[0]).toEqual([null]);
   });
 });

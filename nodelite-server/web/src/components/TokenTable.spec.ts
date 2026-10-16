@@ -169,6 +169,21 @@ describe('TokenTable', () => {
     expect(wrapper.find('[data-test="service-meta-message"]').text()).toBe('Saved');
   });
 
+  it('groups identity and token lifetime without applying global flex styles to table cells', () => {
+    const wrapper = mountTable([agent({ node_label: 'Hong Kong', remote_ip: '2001:db8::1' })]);
+    const row = wrapper.find('[data-test="token-row"]');
+    expect(row.findAll('td')).toHaveLength(6);
+    expect(row.find('.node-identity').text()).toContain('Agent 1.0');
+    expect(row.find('.node-ip').text()).toBe('2001:db8::1');
+    expect(row.find('.token-validity time').attributes('datetime')).toBe('2026-12-01T00:00:00Z');
+    expect(row.find('.token-remaining').text()).toContain('Remaining');
+    expect(row.find('td.actions').exists()).toBe(false);
+    expect(row.find('.token-actions .row-actions').findAll('button')).toHaveLength(2);
+    expect(row.find('[data-test="service-expiry-input"]').attributes('aria-label')).toContain(
+      'Hong Kong',
+    );
+  });
+
   it('can save an unlimited service term', async () => {
     const wrapper = mountTable([agent({ node_id: 'a' })]);
 

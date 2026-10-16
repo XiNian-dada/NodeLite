@@ -9,10 +9,10 @@ function run() {
 }
 
 describe('useChartSelection', () => {
-  it('defaults to the 24h preset', () => {
+  it('defaults to the 1h preset', () => {
     const { sel, scope } = run();
-    expect(sel.activeKey.value).toBe('last_24h');
-    expect(sel.windowHours.value).toBe(24);
+    expect(sel.activeKey.value).toBe('last_1h');
+    expect(sel.windowHours.value).toBe(1);
     scope.stop();
   });
 

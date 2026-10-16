@@ -18,7 +18,8 @@ export function chartY(
   padTop: number,
   padBottom: number,
 ): number {
-  const span = Math.max(bounds.displayMax - bounds.displayMin, 1);
+  const range = bounds.displayMax - bounds.displayMin;
+  const span = range > 0 ? range : 1;
   const v = Math.min(Math.max(Number(value), bounds.displayMin), bounds.displayMax);
   return height - padBottom - ((v - bounds.displayMin) / span) * (height - padTop - padBottom);
 }

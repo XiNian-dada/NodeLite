@@ -3,12 +3,19 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { TrafficControlStatus } from '@/api/types';
 
-const props = defineProps<{ status?: TrafficControlStatus | null }>();
+const props = withDefaults(
+  defineProps<{ status?: TrafficControlStatus | null; compact?: boolean }>(),
+  {
+    status: null,
+    compact: false,
+  },
+);
 const { t } = useI18n({
   useScope: 'local',
   messages: {
     en: {
       label: 'Traffic control',
+      details: 'Details',
       unknown: 'Not reported',
       ready: 'Available',
       applied: 'Applied: {rate} kbit/s',
@@ -24,6 +31,7 @@ const { t } = useI18n({
     },
     'zh-CN': {
       label: '限速能力',
+      details: '查看原因',
       unknown: '尚未上报',
       ready: '可用',
       applied: '已应用：{rate} kbit/s',
@@ -57,22 +65,62 @@ const summary = computed(() => {
     data-test="traffic-control-status"
     :data-state="status?.state ?? 'unknown'"
   >
-    <div>{{ t('label') }}: {{ summary }}</div>
-    <div v-if="status?.reason">{{ t(status.reason) }}</div>
-    <div v-if="status?.desired_rate_kbps != null">
-      {{ t('desired', { rate: status.desired_rate_kbps }) }}
+    <div class="traffic-status__heading">
+      <span>{{ t('label') }}</span>
+      <strong>{{ summary }}</strong>
     </div>
+    <details v-if="compact && (status?.reason || status?.desired_rate_kbps != null)">
+      <summary>{{ t('details') }}</summary>
+      <p v-if="status?.reason">{{ t(status.reason) }}</p>
+      <p v-if="status?.desired_rate_kbps != null">
+        {{ t('desired', { rate: status.desired_rate_kbps }) }}
+      </p>
+    </details>
+    <template v-else>
+      <p v-if="status?.reason">{{ t(status.reason) }}</p>
+      <p v-if="status?.desired_rate_kbps != null">
+        {{ t('desired', { rate: status.desired_rate_kbps }) }}
+      </p>
+    </template>
   </div>
 </template>
 
 <style scoped>
 .traffic-status {
   margin-top: 6px;
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.6;
   color: var(--text-muted);
 }
-.traffic-status[data-state='unavailable'],
-.traffic-status[data-state='failed'] {
+.traffic-status__heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.traffic-status strong {
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+.traffic-status p {
+  margin: 5px 0 0;
+  overflow-wrap: anywhere;
+}
+.traffic-status summary {
+  cursor: pointer;
+  width: fit-content;
+  margin-top: 5px;
+  color: var(--text-secondary);
+}
+.traffic-status[data-state='ready'] strong,
+.traffic-status[data-state='applied'] strong {
+  color: var(--accent-green);
+}
+.traffic-status[data-state='unavailable'] strong,
+.traffic-status[data-state='retrying'] strong {
+  color: var(--accent-yellow);
+}
+.traffic-status[data-state='failed'] strong {
   color: var(--accent-red);
 }
 </style>
