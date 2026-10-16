@@ -4,8 +4,19 @@ import { useI18n } from 'vue-i18n';
 import type { HistoryPoint, NodeStatus } from '@/api';
 import { buildNodeNetworkModel } from '@/lib/nodeNetworkModel';
 import MetricChart from './MetricChart.vue';
+import ChartRangeSelector, { type TimeRange } from './ChartRangeSelector.vue';
 
-const props = defineProps<{ node: NodeStatus | null; history: HistoryPoint[] }>();
+const props = defineProps<{
+  node: NodeStatus | null;
+  history: HistoryPoint[];
+  contextHistory?: HistoryPoint[];
+  selectedRange?: TimeRange | null;
+}>();
+const emit = defineEmits<{ rangeChange: [range: TimeRange | null] }>();
+
+function changeRange(value: TimeRange | null): void {
+  emit('rangeChange', value);
+}
 
 const { t } = useI18n();
 
@@ -41,6 +52,11 @@ const model = computed(() => buildNodeNetworkModel(props.node, props.history, t)
           </div>
         </header>
         <MetricChart :series="model.trafficSeries" value-kind="rate" :min-value="0" :height="260" />
+        <ChartRangeSelector
+          :history="contextHistory ?? history"
+          :model-value="selectedRange ?? null"
+          @update:model-value="changeRange"
+        />
       </article>
 
       <article class="network-card quality-card" data-test="network-quality-card">

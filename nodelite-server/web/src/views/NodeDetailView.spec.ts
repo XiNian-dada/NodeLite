@@ -318,6 +318,22 @@ describe('NodeDetailView', () => {
     expect(wrapper.find('[data-test="node-info-panel"]').exists()).toBe(false);
   });
 
+  it('loads precise network selections and preserves them across tab switches', async () => {
+    const { wrapper, router } = await mountDetail('srv-1');
+    await router.replace({ hash: '#network' });
+    await flushPromises();
+    const range = { start: 1792100000, end: 1792103600 };
+    wrapper.findComponent({ name: 'NodeNetworkPanel' }).vm.$emit('rangeChange', range);
+    await flushPromises();
+    expect(mockHistory).toHaveBeenLastCalledWith('srv-1', { ...range, maxPoints: 720 });
+    await router.replace({ hash: '#overview' });
+    await flushPromises();
+    await router.replace({ hash: '#network' });
+    await flushPromises();
+    expect(wrapper.findComponent({ name: 'NodeNetworkPanel' }).props('selectedRange')).toEqual(range);
+    expect(mockHistory).toHaveBeenLastCalledWith('srv-1', { ...range, maxPoints: 720 });
+  });
+
   it('loads a new high-res history window when an overview preset is selected', async () => {
     const { wrapper } = await mountDetail('srv-1');
     mockHistory.mockClear();

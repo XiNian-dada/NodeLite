@@ -20,7 +20,7 @@ import { loadSeries, networkSeries } from '@/lib/chart/svgModel';
 import { useI18n } from 'vue-i18n';
 import { useNodeStatusStore } from '@/stores/nodeStatus';
 import { useDetailHistoryStore } from '@/stores/detailHistory';
-import { useMonitorHistoryStore } from '@/stores/monitorHistory';
+import { useMonitorHistoryStore, type HistoryWindow } from '@/stores/monitorHistory';
 import { useNodeLogsStore } from '@/stores/nodeLogs';
 import { useNodesStore } from '@/stores/nodes';
 import { ApiError } from '@/api/client';
@@ -43,6 +43,7 @@ const monitorStore = useMonitorHistoryStore();
 const logsStore = useNodeLogsStore();
 const nodesStore = useNodesStore();
 const selection = useChartSelection();
+const networkWindow = ref<HistoryWindow>(1);
 
 const nodeId = computed(() => String(route.params.id ?? ''));
 const node = computed(() => store.data);
@@ -89,9 +90,14 @@ const notFound = computed(
 // Generic error state for non-404 failures (network, 500, etc).
 const loadError = computed(() => store.error !== null && store.data === null && !notFound.value);
 
-// Network keeps the long history window; overview uses high-res monitor history.
+// The low-res history feeds only the navigator; both tabs use high-res chart samples.
 const historyNeeded = computed(() => activeTab.value === 'network');
-const monitorNeeded = computed(() => activeTab.value === 'overview');
+const monitorNeeded = computed(
+  () => activeTab.value === 'overview' || activeTab.value === 'network',
+);
+const activeHistoryWindow = computed(() =>
+  activeTab.value === 'network' ? networkWindow.value : selection.windowHours.value,
+);
 const logsNeeded = computed(() => activeTab.value === 'logs');
 
 // loadIfStale (not load) so re-entering a tab within the throttle window
@@ -100,7 +106,7 @@ function ensureTabData(): void {
   const id = nodeId.value;
   if (!id) return;
   if (historyNeeded.value) void historyStore.loadIfStale(id);
-  if (monitorNeeded.value) void monitorStore.loadIfStale(id, selection.windowHours.value);
+  if (monitorNeeded.value) void monitorStore.loadIfStale(id, activeHistoryWindow.value);
   if (logsNeeded.value) void logsStore.loadIfStale(id);
 }
 
@@ -127,12 +133,13 @@ onMounted(() => {
 // Navigating between nodes (same component, new :id) reloads.
 watch(nodeId, (id) => {
   closeZoom();
+  networkWindow.value = 1;
   if (id) void loadNode(id);
   ensureTabData();
 });
 
 // Switching tabs / changing the monitor window lazily loads that data.
-watch([activeTab, selection.windowHours], ([tab]) => {
+watch([activeTab, activeHistoryWindow], ([tab]) => {
   if (tab !== 'overview') closeZoom();
   ensureTabData();
 });
@@ -140,7 +147,7 @@ watch([activeTab, selection.windowHours], ([tab]) => {
 usePolling(() => {
   if (historyNeeded.value) void historyStore.refresh();
   if (monitorNeeded.value && nodeId.value) {
-    void monitorStore.refresh(nodeId.value, selection.windowHours.value);
+    void monitorStore.refresh(nodeId.value, activeHistoryWindow.value);
   }
   if (logsNeeded.value) void logsStore.refresh();
 }, NODE_DETAIL_AUX_REFRESH_MS);
@@ -302,7 +309,14 @@ const modalConfig = computed(() => {
           </template>
 
           <template v-else-if="activeTab === 'network'">
-            <NodeNetworkPanel :node="node" :history="historyStore.points" />
+            <NodeNetworkPanel
+              :key="nodeId"
+              :node="node"
+              :history="monitorStore.points"
+              :context-history="historyStore.points"
+              :selected-range="typeof networkWindow === 'number' ? null : networkWindow"
+              @range-change="networkWindow = $event ?? 1"
+            />
           </template>
 
           <template v-else-if="activeTab === 'hardware'">
