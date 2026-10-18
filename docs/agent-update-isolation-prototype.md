@@ -19,7 +19,7 @@
 | `/var/lib/nlup-lab/private/` | updater，0700；记录 0600 | 不可访问 | 事务、锁、恢复状态 |
 | `/var/lib/nlup-lab/agent/` | Agent，0700；配置 0600 | 读写 | 无直接访问权限 |
 | `/var/lib/nlup-lab/inbox/` | Agent，组允许 updater 读取/消费 | 不可信请求 | 有界导入 |
-| `/var/lib/nlup-lab/bridge/` | root:updater，0730 | 不可访问 | 仅创建固定动作标志 |
+| `/var/lib/nlup-lab/bridge/` | root:updater，0770 | 不可访问 | 创建固定动作标志并同步目录 |
 
 这些目录的父目录由 root 管理，普通用户不得替换祖先目录。对象区和私有状态区分开。
 updater 属于可信计算基：如果它已被完全控制，可通过控制 Agent 程序间接获取 token，
