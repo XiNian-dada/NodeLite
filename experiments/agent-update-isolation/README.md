@@ -19,7 +19,7 @@ The permission/unit/transaction contract is in
   `lab-old` / `lab-new` labels. The optional released-binary suite uses fixed official
   v3.0.3/v3.0.4 assets; neither suite uses a production installation or credentials.
 - A disposable SSH key stays under the private output directory; only its public key
-  enters cloud-init. Signing keys and random fixture config are generated inside the VM.
+  enters cloud-init. Guest fixture signing keys and config are generated inside the VM.
 - Guest SSH explicitly disables agent forwarding and configured SSH tunnels.
 - `setup_guest.py` refuses to run without the guest marker and QEMU/KVM detection.
 - Every guest user, service and installed path uses the `nlup-lab` namespace.
@@ -202,3 +202,42 @@ production signing service, durable TUF cache, trusted-clock repair, or integrat
 downloader. Notably, a truncated stream raises urllib3 `ProtocolError` in this
 library combination; callers must fail closed on transport errors as well as TUF
 verification errors. There is no activation on any rejected download.
+
+## Full CLI server and real-token cold boots
+
+With the official release and Python dependencies prepared, the marked VM running,
+and the official real-Agent suite passed, run on the compiler:
+
+```sh
+python3 experiments/agent-update-isolation/coldcuts.py
+```
+
+The driver uses the actual v3.0.4 Agent as its baseline and builds this checkout's
+Agent as `lab-next` (not a future official release). It runs released v3.0.3/v3.0.4
+**Server CLI executables**, under a separate capability-free `nlup-server` UID,
+with durable registry/history files in the guest. A loopback-only WS gate controls
+token delivery/ACK windows without logging frames. Random administration passwords
+and node credentials stay in private guest files, never output evidence.
+
+The nine-case matrix contains Server v3.0.3 → v3.0.4 migration, Server restart after
+durable rotation, and seven QEMU power cuts: before token delivery, persisted token
+before ACK, prepared, stopping, trial journal, active pointer, and token rotation
+in the running candidate before commit. Server and Agent lose power together.
+v3.0.3 Server does not wait for durable ACK, so migration tests rotate only after
+v3.0.4 is running. The v3.0.4 restart case rotates both before and after restart.
+
+After each boot, the suite checks a new boot ID, the expected transaction state,
+fresh authenticated reports from the baseline executable, byte-identical saved
+config, and a successful v3.0.4 `--check-credentials`. It waits another three seconds
+and checks online health again to catch delayed replayed service actions.
+
+The lab's root observer needs `CAP_SYS_PTRACE` and `CAP_DAC_OVERRIDE`
+to independently inspect another UID's executable and write its test heartbeat.
+It is **trusted test instrumentation**, not a proposed production health service;
+Agent/updater capability sets are unchanged. The observer uses primary group
+`nlup-read` and publishes mode 0640 before rename, rather than a fallible chown/chmod
+after publication. `test_cold.py` covers that boundary and Python 3.10's nine-digit
+timestamp parsing. Results are incomplete until
+`official-cold-evidence.json` has `complete: true`, exactly nine cases, installed
+code/unit/binary hashes, and successful lab-service cleanup. `vm.py stop` then stops
+only QEMU. No production host is rebooted or updated.

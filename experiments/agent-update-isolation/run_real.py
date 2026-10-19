@@ -84,11 +84,14 @@ def main():
               TEST, "--nocapture")
         command(["python3", HERE / "vm.py", "pull", "/home/lab/real-agent-results.json",
                  WORK / "real-agent-results.json"])
+        scenarios = json.loads((WORK / "real-agent-results.json").read_text())
+        if len(scenarios) != (8 if args.official else 11) or not all(item.get("passed") for item in scenarios):
+            raise RuntimeError("incomplete real Agent evidence")
         evidence = {"official_release_versions": list(versions) if args.official else None,
                     "installed_worker_hashes": hashes,
-                    "binaries": {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-                                 for path in directory.iterdir()},
-                    "scenarios": json.loads((WORK / "real-agent-results.json").read_text())}
+                    "binaries": {name: hashlib.sha256((directory / name).read_bytes()).hexdigest()
+                                 for name in ("agent-old", "agent-new", "real-test-runner")},
+                    "scenarios": scenarios}
         (WORK / name).write_text(json.dumps(evidence, indent=2) + "\n")
     finally:
         guest("sudo", "python3", "/home/lab/agent-update-isolation/real_guest.py", "halt")
