@@ -199,8 +199,8 @@ hashes go to `tuf-network-evidence.json`. Root requires 2-of-3 keys; targets req
 by independent release custodians. The mirror is HTTP intentionally: authenticity
 comes from the bootstrapped root, not from trusting the mirror's transport.
 
-This validates reference-library behavior and a fixed-scope release floor, not a
-production signing service, durable TUF cache, trusted-clock repair, or integrated
+This initial experiment validates reference-library behavior and a fixed-scope
+release floor, not a production signing service, durable cache, clock repair or integrated
 downloader. Notably, a truncated stream raises urllib3 `ProtocolError` in this
 library combination; callers must fail closed on transport errors as well as TUF
 verification errors. There is no activation on any rejected download.
@@ -211,6 +211,60 @@ The CLI experiment combines a one-second socket timeout with a five-second total
 network deadline. POSIX alarms are lab-only, single-main-thread tooling, not the
 proposed production Rust cancellation mechanism. Results are recorded in
 `network-resilience-evidence.json`; `test_network_deadline.py` checks timer cleanup.
+
+## Durable cache, power loss and storage exhaustion
+
+The separate `durable_client.py` experiment uses reference TUF verification with
+immutable metadata generations and one fsync-backed journal. It saves accepted
+metadata/release floors **before downloading an artifact**, retains validated root
+rotations even if a later role fails, and never silently resets a missing/corrupt
+cache. The previous artifact is independent of the newer metadata floor. A whole
+transaction flock prevents concurrent writers. Credentials are not in this cache.
+Provisioning is explicit and refuses a nonempty directory; corruption requires
+explicit recovery rather than deleting the cache and forgetting revocations.
+
+With the existing marked VM and optional Python environment prepared, run from
+`compiler`'s `~/NodeLite`, in order:
+
+```sh
+output/agent-update-prototype/python-env/bin/python experiments/agent-update-isolation/durable_network.py
+output/agent-update-prototype/python-env/bin/python experiments/agent-update-isolation/resilience_vm.py
+output/agent-update-prototype/python-env/bin/python experiments/agent-update-isolation/storage_vm.py
+```
+
+The six durable HTTP cases cover a target failure followed by a signed downgrade,
+revoked keys after a partial refresh, and missing/corrupt journal, metadata and
+artifact files. The VM driver prepares only signed public repositories on the
+guest; signing private keys remain in compiler process memory. Its five abrupt
+QEMU cuts bracket staging, journal rename before directory fsync, committed
+metadata, durable artifact bytes and committed artifact. Notifications use tmpfs
+to avoid accidentally flushing the test transaction. Test sources, units and
+mirror files are explicitly synced **before** arming each cut; an initial run
+without that baseline flush lost the test script itself and is not counted.
+Retries archive existing test caches instead of overwriting previous evidence.
+
+The same VM tests guest-clock rollback by two hours and forward skew by two days,
+then restores the original clock plus monotonic elapsed time and retries. This
+is a local accepted-time floor and expiry check, **not trusted-clock recovery**.
+It neither changes the compiler clock nor claims safety against malicious root
+or a VM snapshot rollback. POSIX deadline tooling is not a Rust implementation.
+
+Storage tests use separate 64 MiB ext4 images mounted with nosuid/nodev/noexec
+**inside the guest**. They exhaust real blocks or inodes (errno 28), including a
+partially full target-download case. Two additional cases run official v3.0.4
+Server/Agent and exhaust the filesystem containing the Agent's configuration:
+the server must not acknowledge a token that was not saved, the process and old
+credentials remain healthy, and freeing space permits durable rotation and a
+successful official `--check-credentials`. Cleanup copies the latest token back
+before exposing the underlying configuration, never the stale original. Loop
+backing files are checked before unmounting. No host mount or production node is
+used; private test images remain in the private guest disk.
+
+Evidence files are `durable-network-evidence.json`, `cache-powercut-evidence.json`
+and `storage-resilience-evidence.json`, each requiring `complete: true` and exact
+case counts. This extends selected-point coverage, not exhaustive syscall crash
+testing, production activation, release-key custody, independent review or a
+multi-OS/platform compatibility matrix. Stop the lab with `vm.py stop` afterward.
 
 ## Full CLI server and real-token cold boots
 
