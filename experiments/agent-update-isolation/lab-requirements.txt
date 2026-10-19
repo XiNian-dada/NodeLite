@@ -1,0 +1,9 @@
+# Optional cloud-only experiments; never a production updater dependency.
+tuf==7.0.1
+securesystemslib[crypto]==1.5.1
+urllib3==2.8.0
+websockets==16.1.1
+cryptography==50.0.2
+cffi==2.1.1
+pycparser==3.11
+typing-extensions==4.16.0

@@ -159,8 +159,9 @@ the real-suite drop-ins.
   restart that window. The real observer uses collection time, not polling time.
 - The lab timer polls once per second for deterministic tests. It is not a measured
   production resource budget or final event/deadline implementation.
-- No full TUF, key rotation, trusted-clock recovery, real network download path,
-  cross-release protocol compatibility or production health IPC has been implemented.
+- The installed coordinator still uses the lab packet format, not TUF. A separate
+  reference-TUF HTTP experiment is described below; it is not wired to activation.
+  Trusted-clock recovery and production health IPC remain unimplemented.
 - The full stop barrier avoids concurrent old/new formal Agent writers. These
   selected credential windows are not proof of host-wide intrusion recovery.
 - Power cuts are SIGKILL of QEMU at selected durable checkpoints, not arbitrary
@@ -169,3 +170,35 @@ the real-suite drop-ins.
 The update UID remains trusted. Compromising it can affect Agent code/config
 indirectly, although no custom updater code runs as root. Productionization requires
 an independent security review and integration tests beyond this experiment.
+
+## Signed HTTP download experiment
+
+`tuf_network.py` runs **unprivileged on compiler loopback**, in a private temporary
+directory. It uses the [reference python-tuf client](https://theupdateframework.readthedocs.io/en/latest/api/tuf.ngclient.updater.html)
+and metadata API, rather than claiming the coordinator's custom signature packet
+is full TUF. Optional, test-only dependency versions are pinned in
+`lab-requirements.txt`. No dependency is added to the Rust workspace or installers.
+On this compiler without pip/ensurepip, an official `pip.pyz` downloaded from
+`https://bootstrap.pypa.io/pip/pip.pyz` bootstraps a `--without-pip` venv under
+`output/agent-update-prototype/python-env`; no host package is installed. Install
+the requirements with `--only-binary=:all:` in that venv, then run:
+
+```sh
+output/agent-update-prototype/python-env/bin/python experiments/agent-update-isolation/tuf_network.py
+```
+
+Sixteen real HTTP cases use the official Agent assets as payloads: successful
+download, hash corruption, truncation, oversized payload/metadata, insufficient
+targets signatures, expiry, scope mismatch, timestamp replay, signed application
+downgrade, same-release equivocation, mixed metadata, successful root rotation,
+insufficient old/new root signatures, and revoked targets keys. Results and code
+hashes go to `tuf-network-evidence.json`. Root requires 2-of-3 keys; targets requires
+2-of-2. All test keys are generated in memory in **one test process**, not operated
+by independent release custodians. The mirror is HTTP intentionally: authenticity
+comes from the bootstrapped root, not from trusting the mirror's transport.
+
+This validates reference-library behavior and a fixed-scope release floor, not a
+production signing service, durable TUF cache, trusted-clock repair, or integrated
+downloader. Notably, a truncated stream raises urllib3 `ProtocolError` in this
+library combination; callers must fail closed on transport errors as well as TUF
+verification errors. There is no activation on any rejected download.
