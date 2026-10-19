@@ -205,6 +205,13 @@ downloader. Notably, a truncated stream raises urllib3 `ProtocolError` in this
 library combination; callers must fail closed on transport errors as well as TUF
 verification errors. There is no activation on any rejected download.
 
+`resilience_network.py` adds seven real HTTP fault cases: resets, 503, simulated
+proxy 407, 404, redirect loops, silent response headers and a slow continuous body.
+The CLI experiment combines a one-second socket timeout with a five-second total
+network deadline. POSIX alarms are lab-only, single-main-thread tooling, not the
+proposed production Rust cancellation mechanism. Results are recorded in
+`network-resilience-evidence.json`; `test_network_deadline.py` checks timer cleanup.
+
 ## Full CLI server and real-token cold boots
 
 With the official release and Python dependencies prepared, the marked VM running,
