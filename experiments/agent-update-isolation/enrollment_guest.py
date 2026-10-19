@@ -125,7 +125,7 @@ WantedBy=multi-user.target
 
 
 def select(name):
-    if name not in {"base", "refresh", "rotated", "rotated-recovery", "revoked"}:
+    if name not in {"base", "refresh", "rotated", "rotated-recovery", "revoked", "root-gap"}:
         raise ValueError("unknown fixed mirror")
     (PUBLIC / ".selected").symlink_to(name + "/current")
     os.replace(PUBLIC / ".selected", PUBLIC / "selected")
@@ -165,8 +165,12 @@ def main():
     elif args.action == "normal":
         result = normal()
     elif args.action in {"case", "arm", "after"}:
-        import enrollment_checks
-        result = getattr(enrollment_checks, args.action)(args.argument)
+        if args.argument.startswith("security_"):
+            import security_guest
+            result = getattr(security_guest, args.action)(args.argument)
+        else:
+            import enrollment_checks
+            result = getattr(enrollment_checks, args.action)(args.argument)
     elif args.action == "plan":
         common = production()
         pid, config = common.properties()["MainPID"], CONFIG.read_bytes()

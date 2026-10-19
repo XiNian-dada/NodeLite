@@ -35,8 +35,11 @@ def guest(*args):
 def source_hashes():
     paths = list((PROJECT / "tools").rglob("*.py"))
     paths += list(HERE.glob("enrollment*.py")) + list((PROJECT / "nodelite-updater/src").glob("*.rs"))
+    paths += list(HERE.glob("security_*.py"))
+    paths += [HERE / "vm.py"]
     paths += list((PROJECT / "nodelite-updater/systemd").glob("*"))
     paths += [PROJECT / "Cargo.toml", PROJECT / "Cargo.lock", PROJECT / "tools/nodelite_release/requirements.txt"]
+    paths += [PROJECT / "scripts/install-agent.sh"]
     for component in ("nodelite-agent", "nodelite-proto"):
         paths += list((PROJECT / component / "src").rglob("*.rs"))
         paths += [PROJECT / component / "Cargo.toml"]
@@ -57,6 +60,13 @@ def prepare():
     push(output, "/home/lab/")
     push(PROJECT / "tools", "/home/lab/enrollment-tools/")
     push(HERE, "/home/lab/")
+    # Extract only the real guard; executing the legacy installer would fetch unrelated releases.
+    installer = (PROJECT / "scripts/install-agent.sh").read_text()
+    guard = installer[installer.index("refuse_signed_updater_override() {"):installer.index("# 自动更新支持已移除")]
+    fixture = WORK / "installer-guard.fixture.sh"
+    fixture.write_text("#!/bin/sh\nset -eu\nSERVICE_KIND=systemd\nUNIT_PATH=/etc/systemd/system/nodelite-agent.service\nfail() { exit 7; }\n"
+                       + guard + "\nrefuse_signed_updater_override\n")
+    push(fixture, "/home/lab/agent-update-isolation/")
     command(ssh_args(VM) + ["sudo mkdir -p /root/nlup-enrollment-operator && sudo cp -r /home/lab/enrollment-tools/tools /root/nlup-enrollment-operator/ && sudo chmod -R go-w /root/nlup-enrollment-operator"])
     assert source_hashes() == source
     (WORK / "enrollment-build.json").write_text(json.dumps({"source_sha256": source,

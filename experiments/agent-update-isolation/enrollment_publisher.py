@@ -124,6 +124,9 @@ def build(output):
         base, paths = ceremony.release("base", 1, 1, WORK / "rust-binaries/agent-old")
         info = ceremony.pack(base, output / "bundle")
         ceremony.refresh(base, paths)
+        from security_publisher import operations, root_gap
+        info["operations"] = operations(ceremony)
+        root_gap(ceremony)
         old_root, old_targets, old_keys = ceremony.root, ceremony.roles["targets"], ceremony.roles["root"]
         for role, count in (("root", 3), ("targets", 2)):
             ceremony.roles[role] = ceremony.keyset("rotated-" + role, count)
