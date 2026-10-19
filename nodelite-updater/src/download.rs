@@ -130,7 +130,9 @@ async fn repository(
         max_timestamp_size: 16384,
         max_snapshot_size: 262144,
         max_targets_size: 2 * 1024 * 1024,
-        max_root_updates: 8,
+        // Replaying durable intermediate roots must not exhaust a smaller per-run budget.
+        // The private history is bounded at 128; transport still has a total 45-second deadline.
+        max_root_updates: 128,
     })
     .load()
     .await?;
