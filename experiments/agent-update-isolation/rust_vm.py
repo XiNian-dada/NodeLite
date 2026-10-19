@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 
 from rust_repository import prepare as prepare_repository
-from vm import WORK, command, ssh_args
+from vm import WORK, command, current_vm, ssh_args
 
 HERE = WORK.parents[1] / "experiments/agent-update-isolation"
 
@@ -24,14 +24,14 @@ def sources():
         paths.append(project / name / "Cargo.toml")
     paths.extend((project / "nodelite-updater/systemd").glob("*"))
     paths.extend(HERE.glob("rust*.py"))
-    paths.extend([HERE / "tuf_repo.py", HERE / "fixture/src/main.rs"])
+    paths.extend([HERE / "tuf_repo.py", HERE / "vm.py", HERE / "fixture/src/main.rs"])
     return {str(path.relative_to(project)): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
 
 
 def guest(*args):
     arguments = ("sudo", "env", "PYTHONPATH=/usr/local/lib/nlup-lab/python-libs", "python3",
                  "/home/lab/agent-update-isolation/rust_guest.py", *args)
-    result = subprocess.run([str(arg) for arg in ssh_args(WORK / "vm-v1")] + [
+    result = subprocess.run([str(arg) for arg in ssh_args(current_vm())] + [
         " ".join(shlex.quote(arg) for arg in arguments)], capture_output=True, text=True, timeout=180)
     if result.returncode:
         raise RuntimeError(result.stderr[-4000:])

@@ -16,6 +16,13 @@ SNAP = Path("/snap/lxd/current")
 IMAGE = WORK / "jammy-server-cloudimg-amd64.img"
 
 
+def current_vm():
+    selector = os.environ.get("NODELITE_LAB_VM", "legacy")
+    if selector not in {"legacy", "enrollment"}:
+        raise RuntimeError("only the two fixed disposable lab VMs are supported")
+    return WORK / ("vm-enrollment-v1" if selector == "enrollment" else "vm-v1")
+
+
 def command(args, **kwargs):
     return subprocess.run([str(value) for value in args], check=True, **kwargs)
 
@@ -135,7 +142,7 @@ def main():
     parser.add_argument("action", choices=["start", "stop", "powercut", "exec", "push", "pull"])
     parser.add_argument("arguments", nargs=argparse.REMAINDER)
     args = parser.parse_args()
-    directory = WORK / "vm-v1"
+    directory = current_vm()
     if args.action == "start":
         prepare(directory)
         boot(directory)

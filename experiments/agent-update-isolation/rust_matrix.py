@@ -8,7 +8,7 @@ from pathlib import Path
 
 from rust_checks import POINTS
 from rust_vm import HERE, guest, prepare, sources
-from vm import WORK, boot, stop
+from vm import WORK, boot, current_vm, stop
 
 
 def main():
@@ -33,8 +33,8 @@ def main():
             record(guest("case", name))
         for point in POINTS:
             armed = guest("arm", point)
-            stop(WORK / "vm-v1")
-            boot(WORK / "vm-v1")
+            stop(current_vm())
+            boot(current_vm())
             record({"armed": armed, **guest("after", point)})
     except Exception:
         print(json.dumps(guest("diagnose")), flush=True)
