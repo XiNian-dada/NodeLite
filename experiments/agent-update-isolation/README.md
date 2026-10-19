@@ -96,6 +96,8 @@ to `output/agent-update-prototype/official-real-evidence.json`.
 The runner builds two release Agent binaries and a server test executable, then
 checks that the exact ignored test exists and copies them into the guest. Prior
 guest result output is cleared so a zero-test run cannot reuse old evidence.
+The exported matrix must contain exactly 8 official or 11 checkout cases;
+`test_runner.py` also guards the output filename against worker-loop variable reuse.
 The test refuses to provision anything outside the
 explicitly marked root/KVM/cgroup-v2 guest. Do not run its ignored Rust test on the host.
 The compiler needs an existing `web/dist/index.html` for backend-only compilation;

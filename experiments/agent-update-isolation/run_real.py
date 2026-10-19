@@ -63,8 +63,8 @@ def main():
     if pwd.getpwuid(os.geteuid()).pw_name != "compiler" or Path.cwd().resolve() != PROJECT.resolve() \
             or 'name = "nodelite-agent"' not in (PROJECT / "nodelite-agent/Cargo.toml").read_text():
         raise RuntimeError("run from the verified compiler ~/NodeLite checkout only")
-    name = "official-real-evidence.json" if args.official else "real-evidence.json"
-    (WORK / name).unlink(missing_ok=True)
+    evidence_name = "official-real-evidence.json" if args.official else "real-evidence.json"
+    (WORK / evidence_name).unlink(missing_ok=True)
     directory = build(args.official)
     command(["python3", HERE / "vm.py", "push", HERE, "/home/lab/"])
     command(["python3", HERE / "vm.py", "push", directory, "/home/lab/"])
@@ -92,7 +92,7 @@ def main():
                     "binaries": {name: hashlib.sha256((directory / name).read_bytes()).hexdigest()
                                  for name in ("agent-old", "agent-new", "real-test-runner")},
                     "scenarios": scenarios}
-        (WORK / name).write_text(json.dumps(evidence, indent=2) + "\n")
+        (WORK / evidence_name).write_text(json.dumps(evidence, indent=2) + "\n")
     finally:
         guest("sudo", "python3", "/home/lab/agent-update-isolation/real_guest.py", "halt")
 
