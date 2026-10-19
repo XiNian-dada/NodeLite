@@ -110,6 +110,7 @@ def prepare(state, job):
                   "to_sequence": release["release_sequence"], "manifest": release["manifest_digest"],
                   "metadata_high": release["metadata_sequence"], "rollback_consumed": False,
                   "recovery_requested": False, "stable_invocation": None,
+                  "stable_sample": None,
                   "boot_id": boot_id(), "deadline": time.monotonic() + 8,
                   "old_invocation": old.get("InvocationID"),
                   "probe_exit": probe.get("ExecMainExitTimestampMonotonic", "0"),
@@ -246,13 +247,15 @@ def reconcile(state):
             and str(health.get("pid")) == current.get("MainPID") \
             and health.get("digest") == state["to"] \
             and health.get("sequence") == state["to_sequence"] \
-            and time.time() - health.get("time", 0) < 2
+            and 0 <= time.time() - health.get("time", 0) < 2
         if healthy:
             if state["stable_since"] is None or state.get("stable_invocation") != current.get("InvocationID"):
                 state["stable_since"] = time.monotonic()
+                state["stable_sample"] = health["time"]
                 state["stable_invocation"] = current.get("InvocationID")
                 save(state)
-            elif time.monotonic() - state["stable_since"] > 2:
+            elif time.monotonic() - state["stable_since"] > 2 \
+                    and health["time"] - state["stable_sample"] > 2:
                 state.update(current=state["to"], sequence=state["to_sequence"])
                 save(state, "committed", "healthy")
         elif state["stable_since"] is not None:

@@ -62,6 +62,8 @@ rollback_consumed、boot ID、试运行单调时钟期限和非敏感结果码�
    只有 systemd 确认 inactive、MainPID=0、cgroup 无进程后才允许切换。
 3. **先同步 TRIAL，再原子替换 active，最后同步 active 父目录。**
 4. 正式 unit 启动新版，核对 unit 的启动身份/实际执行映像、稳定运行及功能证据。
+   稳定窗口必须同时有持续推进的采样时间；不能反复读取同一份近期心跳就提交。
+   未来/陈旧采样或进程 invocation 改变时重新计时。测试 observer 使用采集时间，而非轮询时间。
 5. 成功后同步 COMMITTED；之后才清理非必要对象。
 6. 回退前先持久化 ROLLBACK_INTENT 并消费一次逻辑回退额度；幂等恢复唯一 from。
 
