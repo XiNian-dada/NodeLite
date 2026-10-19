@@ -1,6 +1,8 @@
 //! Reference TUF verification feeds the durable trust journal before code activation.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use futures::TryStreamExt;
 use serde::Deserialize;
@@ -49,8 +51,7 @@ impl Release {
 }
 
 fn stage(store: &Store, state: &Journal) -> Result<PathBuf> {
-    let working = store.generation(&fs::nonce()?)?;
-    fs::directory(&working, 0o700)?;
+    let working = store.new_generation()?;
     if let Some(identity) = &state.cache {
         let previous = store.generation(identity)?;
         for name in state.inventory.keys() {
@@ -64,10 +65,8 @@ fn stage(store: &Store, state: &Journal) -> Result<PathBuf> {
     Ok(working)
 }
 
-fn publish_cache(store: &Store, state: &mut Journal, working: &Path) -> Result<()> {
-    let identity = fs::nonce()?;
-    let snapshot = store.generation(&identity)?;
-    fs::directory(&snapshot, 0o700)?;
+pub(crate) fn publish_cache(store: &Store, state: &mut Journal, working: &Path) -> Result<()> {
+    let mut files = BTreeMap::new();
     for name in [
         "root.json",
         "timestamp.json",
@@ -77,11 +76,22 @@ fn publish_cache(store: &Store, state: &mut Journal, working: &Path) -> Result<(
         if working.join(name).try_exists()? {
             let bytes = fs::read(&working.join(name), 2 * 1024 * 1024)?;
             let _: serde_json::Value = serde_json::from_slice(&bytes)?;
-            fs::atomic(&snapshot.join(name), &bytes, 0o600)?;
+            files.insert(name, bytes);
         }
     }
-    if !snapshot.join("root.json").exists() {
+    if !files.contains_key("root.json") {
         return Err(UpdateError::Recovery("trusted root was not persisted"));
+    }
+    let hashes: BTreeMap<String, String> = files
+        .iter()
+        .map(|(name, bytes)| (name.to_string(), fs::digest(bytes)))
+        .collect();
+    if state.cache.is_some() && hashes == state.inventory {
+        return store.save(state);
+    }
+    let snapshot = store.new_generation()?;
+    for (name, bytes) in files {
+        fs::atomic(&snapshot.join(name), &bytes, 0o600)?;
     }
     fs::sync_dir(&snapshot)?;
     fs::sync_dir(
@@ -90,7 +100,10 @@ fn publish_cache(store: &Store, state: &mut Journal, working: &Path) -> Result<(
             .ok_or(UpdateError::Recovery("missing generation parent"))?,
     )?;
     state.inventory = inventory(&snapshot)?;
-    state.cache = Some(identity);
+    state.cache = snapshot
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_owned);
     store.save(state)
 }
 
@@ -185,12 +198,18 @@ pub(crate) async fn fetch(
         ));
     }
     let working = stage(store, state)?;
-    let http = Http::new(policy)?;
-    let repository = match repository(policy, &working, bootstrap, http).await {
+    let progress = Arc::new(crate::trust::Progress::new(
+        store,
+        state,
+        working.clone(),
+        bootstrap,
+    )?);
+    let http = Http::new(policy, progress.clone())?;
+    let loaded = repository(policy, &working, bootstrap, http).await;
+    *state = progress.finish()?;
+    let repository = match loaded {
         Ok(repository) => repository,
         Err(error) => {
-            // Persist verified root revocations even if a later role cannot be loaded.
-            publish_cache(store, state, &working)?;
             return Err(error);
         }
     };

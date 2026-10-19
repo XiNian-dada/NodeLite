@@ -69,6 +69,7 @@ pub(crate) struct Journal {
     pub time_high: u64,
     pub cache: Option<String>,
     pub inventory: BTreeMap<String, String>,
+    pub roots: BTreeMap<u64, String>,
     pub failed: Vec<String>,
     pub transaction: Option<Transaction>,
 }
@@ -117,6 +118,7 @@ impl Store {
             ));
         }
         fs::directory(&self.private().join("generations"), 0o700)?;
+        fs::directory(&self.private().join("roots"), 0o700)?;
         fs::atomic(&self.object(&policy.baseline_sha256)?, &payload, 0o550)?;
         fs::pointer(&self.code(), "active", &policy.baseline_sha256)?;
         fs::pointer(&self.code(), "candidate", &policy.baseline_sha256)?;
@@ -136,6 +138,7 @@ impl Store {
             time_high: epoch()?,
             cache: None,
             inventory: BTreeMap::new(),
+            roots: BTreeMap::new(),
             failed: Vec::new(),
             transaction: None,
         };
@@ -147,6 +150,12 @@ impl Store {
         let state: Journal =
             serde_json::from_slice(&fs::read(&self.private().join("journal.json"), 65536)?)?;
         state.validate(policy, anchor)?;
+        for (version, hash) in &state.roots {
+            let bytes = self.root_bytes(hash)?;
+            if crate::trust::root_version(&bytes)? != *version {
+                return Err(UpdateError::Recovery("cached root history changed"));
+            }
+        }
         if let Some(generation) = &state.cache {
             if inventory(&self.generation(generation)?)? != state.inventory {
                 return Err(UpdateError::Recovery("committed trust cache changed"));
@@ -177,11 +186,44 @@ impl Store {
         Ok(path)
     }
 
+    pub(crate) fn new_generation(&self) -> Result<PathBuf> {
+        if std::fs::read_dir(self.private().join("generations"))?
+            .take(128)
+            .count()
+            >= 128
+        {
+            return Err(UpdateError::Policy(
+                "trust cache quota reached; explicit maintenance required",
+            ));
+        }
+        let path = self.generation(&fs::nonce()?)?;
+        fs::directory(&path, 0o700)?;
+        Ok(path)
+    }
+
     pub(crate) fn verify_object(&self, hash: &str) -> Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = self.object(hash)?.symlink_metadata()?;
+        // The updater owns fresh immutable inodes; Agent-writable code is never eligible.
+        let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+        if metadata.uid() != uid || metadata.gid() != gid || metadata.mode() & 0o7777 != 0o550 {
+            return Err(UpdateError::Recovery(
+                "unsafe executable ownership or permissions",
+            ));
+        }
         if fs::digest(&fs::read(&self.object(hash)?, PAYLOAD_LIMIT)?) != hash {
             return Err(UpdateError::Recovery("committed executable changed"));
         }
         Ok(())
+    }
+
+    pub(crate) fn root_bytes(&self, hash: &str) -> Result<Vec<u8>> {
+        sanitize_digest(hash)?;
+        let bytes = fs::read(&self.private().join("roots").join(hash), 262144)?;
+        if fs::digest(&bytes) != hash {
+            return Err(UpdateError::Recovery("cached root history changed"));
+        }
+        Ok(bytes)
     }
 
     pub(crate) fn active(&self) -> Result<String> {
@@ -204,6 +246,8 @@ impl Journal {
             || self.channel != policy.channel
             || self.target != policy.target
             || self.failed.len() > 64
+            || self.roots.len() > 128
+            || self.roots.contains_key(&0)
             || self.time_high == 0
         {
             return Err(UpdateError::Recovery("journal scope or schema rejected"));
@@ -237,7 +281,7 @@ impl Journal {
             if tx.to.sequence <= tx.from.sequence
                 || tx.from != self.installed && self.phase != Phase::Committed
                 || tx.to.sequence > self.seen_sequence
-                || tx.from.sequence < self.hard_floor
+                || tx.from.sequence < self.hard_floor && self.phase != Phase::Committed
             {
                 return Err(UpdateError::Recovery(
                     "inconsistent transaction authorization",

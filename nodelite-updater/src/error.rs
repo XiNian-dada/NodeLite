@@ -24,6 +24,7 @@ pub enum UpdateError {
     Timeout,
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) type Result<T> = std::result::Result<T, UpdateError>;
 
 impl From<tough::error::Error> for UpdateError {

@@ -43,6 +43,10 @@ enum Action {
 
 /// Runs only as the dedicated updater UID after explicit local provisioning.
 pub async fn run() -> Result<()> {
+    // The reference library's working files must remain private even for manual CLI runs.
+    unsafe {
+        libc::umask(0o077);
+    }
     let cli = Cli::parse();
     let _ = rustls::crypto::ring::default_provider().install_default();
     let policy = Policy::load()?;
@@ -83,17 +87,30 @@ async fn dispatch(action: Action, store: &Store, policy: &Policy, bootstrap: &[u
             if !state.phase.terminal() {
                 return Err(UpdateError::Busy);
             }
+            crate::maintenance::collect(store, &state)?;
             let candidate = download::fetch(store, &mut state, policy, bootstrap).await?;
             if matches!(action, Action::Apply) && candidate != state.installed {
-                activate::prepare(store, &mut state, policy, candidate).await?;
+                activate::prepare(store, &mut state, policy, candidate).await
+            } else {
+                Ok(())
             }
-            Ok(())
         }
         Action::Initialize { .. } => Err(UpdateError::Recovery("initialization dispatch failed")),
     };
     if let Err(error) = result {
-        let _ = system::manual(store, "activation could not be safely reconciled");
+        if !state.phase.terminal() || matches!(error, UpdateError::Recovery(_)) {
+            state.phase = crate::state::Phase::ManualRecovery;
+            let _ = store.save(&state);
+            let _ = system::manual(store, "activation could not be safely reconciled");
+        }
         return Err(error);
+    }
+    if state.phase.terminal() {
+        match std::fs::remove_file(store.private().join("pending")) {
+            Ok(()) => crate::fs::sync_dir(&store.private())?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
     }
     println!(
         "{}",

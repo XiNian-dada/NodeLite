@@ -38,6 +38,7 @@ pub(crate) async fn prepare(
         ));
     }
     fs::pointer(&store.code(), "candidate", &to.digest)?;
+    fs::atomic(&store.private().join("pending"), b"pending\n", 0o600)?;
     let old = system::properties(AGENT).await?;
     let probe = system::properties(PREFLIGHT).await?;
     state.transaction = Some(Transaction {

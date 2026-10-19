@@ -2,6 +2,7 @@
 Description=NodeLite bounded update transaction recovery
 After=nodelite-updater-boot.service
 Requires=nodelite-updater-boot.service
+ConditionPathExists=/var/lib/nodelite-updater/private/pending
 StartLimitIntervalSec=30
 StartLimitBurst=50
 

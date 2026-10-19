@@ -23,6 +23,7 @@ pub(crate) struct Http {
     targets: Url,
     deadline: Instant,
     pub failed: Arc<AtomicBool>,
+    progress: Arc<crate::trust::Progress>,
 }
 
 impl fmt::Debug for Http {
@@ -32,7 +33,7 @@ impl fmt::Debug for Http {
 }
 
 impl Http {
-    pub(crate) fn new(policy: &Policy) -> Result<Self> {
+    pub(crate) fn new(policy: &Policy, progress: Arc<crate::trust::Progress>) -> Result<Self> {
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(10))
@@ -44,11 +45,23 @@ impl Http {
             targets: policy.targets_url.clone(),
             deadline: Instant::now() + Duration::from_secs(45),
             failed: Arc::new(AtomicBool::new(false)),
+            progress,
         })
     }
 
     async fn bytes(&self, url: &Url) -> std::result::Result<Vec<u8>, TransportError> {
         let limit = if contained(&self.metadata, url) {
+            let name = url
+                .path()
+                .strip_prefix(self.metadata.path())
+                .ok_or_else(|| TransportError::new(TransportErrorKind::Other, url))?;
+            if let Some(bytes) = self
+                .progress
+                .before(name)
+                .map_err(|_| TransportError::new(TransportErrorKind::Other, url))?
+            {
+                return Ok(bytes);
+            }
             2 * 1024 * 1024
         } else if contained(&self.targets, url) {
             PAYLOAD_LIMIT

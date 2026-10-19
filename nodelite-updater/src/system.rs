@@ -172,6 +172,9 @@ pub(crate) fn manual(store: &Store, reason: &'static str) -> Result<()> {
 
 pub(crate) fn paths_safe(store: &Store) -> Result<()> {
     use std::os::unix::fs::MetadataExt;
+    // Disk ownership must match the kernel identity, not an environment variable.
+    let uid = unsafe { libc::geteuid() };
+    let gid = unsafe { libc::getegid() };
     for path in [
         Path::new("/var"),
         Path::new("/var/lib"),
@@ -181,9 +184,38 @@ pub(crate) fn paths_safe(store: &Store) -> Result<()> {
         &store.code().join("objects"),
     ] {
         let metadata = std::fs::symlink_metadata(path)?;
-        if !metadata.is_dir() || metadata.mode() & 0o022 != 0 {
+        let private = path == store.private();
+        let mutable = private || path.starts_with(store.code());
+        let expected_mode = if private {
+            0o700
+        } else if mutable {
+            0o750
+        } else {
+            0o755
+        };
+        if !metadata.is_dir()
+            || metadata.mode() & 0o777 != expected_mode
+            || metadata.uid() != if mutable { uid } else { 0 }
+            || mutable && !private && metadata.gid() != gid
+        {
             return Err(UpdateError::Recovery("unsafe updater directory"));
         }
+    }
+    for name in ["generations", "roots"] {
+        let path = store.private().join(name);
+        if let Ok(metadata) = path.symlink_metadata()
+            && (!metadata.is_dir() || metadata.uid() != uid || metadata.mode() & 0o777 != 0o700)
+        {
+            return Err(UpdateError::Recovery("unsafe trust cache directory"));
+        }
+    }
+    let bridge = Path::new(BRIDGE).symlink_metadata()?;
+    if !bridge.is_dir()
+        || bridge.uid() != 0
+        || bridge.gid() != store.private().metadata()?.gid()
+        || bridge.mode() & 0o777 != 0o770
+    {
+        return Err(UpdateError::Recovery("unsafe fixed-action bridge"));
     }
     Ok(())
 }
