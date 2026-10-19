@@ -87,8 +87,9 @@ bridge path 在 boot 恢复之后才启用；boot 持锁清除三个固定动作
 正式 Trial 才验证新版真实配置解析和鉴权兼容性；不同时运行两个正式节点会话。
 只读 mount 防常规误写，不作为恶意同 UID 进程的完整隔离。
 
-客机夹具用随机测试配置和可观测心跳模拟进程/凭证持久化，不声称已证明真实 WebSocket
-轮换正确。须额外集成实际 Agent/Server 测试后才能生产化。任何回退都不恢复配置/token。
+默认客机夹具用随机测试配置和心跳模拟行为；额外的实际 Agent/Server 处理链验证见
+[第二阶段记录](agent-update-real-credential-validation.md)。所选消息/进程窗口不替代
+跨版本兼容与任意存储故障验证，仍不能直接生产化。任何回退都不恢复配置/token。
 远端不回执至多触发本事务允许的一次有限回退，不代表确定是坏程序。
 
 ## 签名与安全底线
@@ -110,7 +111,7 @@ bridge path 在 boot 恢复之后才启用；boot 持锁清除三个固定动作
 - 试运行/回退后配置字节保持最新值，不输出测试凭证明文。
 
 PASS 仅表示已记录场景在指定 guest/kernel/systemd 下通过，不等于生产可发布。
-未验证的完整 TUF、真实 token 并发、资源故障和发行版兼容性必须保留为未完成项。
+未验证的完整 TUF、更多凭证/存储故障、资源预算和发行版兼容性必须保留为未完成项。
 
 参考：[systemd.path](https://www.freedesktop.org/software/systemd/man/systemd.path.html)、
 [fsync](https://man7.org/linux/man-pages/man2/fsync.2.html)、

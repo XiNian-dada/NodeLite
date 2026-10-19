@@ -6,6 +6,9 @@
 
 结论：本阶段权限、固定 systemd 编排与选定故障恢复场景通过；**不是生产更新功能的交付或安全认证**。
 
+后续真实凭证与强化冷启动验证见[第二阶段记录](agent-update-real-credential-validation.md)；
+本文件保留第一阶段的历史测试范围与结果。
+
 ## 已定下的草案
 
 - [目录权限、固定单元和事务契约](agent-update-isolation-prototype.md)。

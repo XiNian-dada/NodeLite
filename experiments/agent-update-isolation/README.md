@@ -27,8 +27,10 @@ The permission/unit/transaction contract is in
 
 ## Reproduce on the configured compiler
 
-First verify that `~/NodeLite` belongs to this project. Sync this directory only;
-do not upload keys, `.env`, databases, `output/`, or unrelated local files.
+First verify that `~/NodeLite` belongs to this project. Fixture-only runs need this
+directory; real-credential runs also need the matching tracked Rust workspace,
+including `nodelite-server/tests/integration/mod.rs`. Do not upload keys, `.env`,
+databases, `output/`, or unrelated local files.
 
 The validated compiler has Ubuntu 22.04, unified cgroup v2, a readable/writable `/dev/kvm`, LXD snap
 runtime libraries, and Python 3.10. QEMU's snap build lacks user networking, so this
@@ -75,7 +77,9 @@ python3 experiments/agent-update-isolation/vm.py stop
 ```
 
 The runner builds two release Agent binaries and a server test executable, then
-copies them into the guest. The test refuses to provision anything outside the
+checks that the exact ignored test exists and copies them into the guest. Prior
+guest result output is cleared so a zero-test run cannot reuse old evidence.
+The test refuses to provision anything outside the
 explicitly marked root/KVM/cgroup-v2 guest. Do not run its ignored Rust test on the host.
 The compiler needs an existing `web/dist/index.html` for backend-only compilation;
 the suite does not build or test the UI.
@@ -86,6 +90,9 @@ preflight uses existing `--check-credentials`, not an authenticated formal sessi
 `STOPPING` waits for systemd inactivity, MainPID zero and an empty cgroup before
 the active object changes; `KillMode=control-group` also covers children. The
 import bound is 32 MiB to accommodate ordinary release binaries.
+The fixed root stop action must also finish and consume its request. Cold boot
+clears old action markers before the late-start bridge paths activate; setup
+verifies the unit graph before enabling units.
 
 The server executable uses production WebSocket, registry, persistence and refresh
 handlers via existing `TestServer`; it is not the full production CLI/background-task
@@ -113,8 +120,9 @@ fake config on the private VM disk. To return to fixtures, run the guarded actio
 python3 experiments/agent-update-isolation/vm.py exec sudo python3 /home/lab/agent-update-isolation/real_guest.py restore-fixture
 ```
 
-This stops lab units, removes only their two `real.conf` drop-ins and reruns base
-setup. Never run fixture reset against the real-suite drop-ins.
+This stops lab units, removes their two `real.conf` drop-ins and the lab's temporary
+power-cut delay override, then reruns base setup. Never run fixture reset against
+the real-suite drop-ins.
 
 ## Evidence and limits
 
@@ -127,8 +135,9 @@ setup. Never run fixture reset against the real-suite drop-ins.
   the real suite supplies the trusted test observer described above.
 - The nine offline I/O checks cover hostile file types, retained writable source FDs,
   explicit object modes under umask, JSON ambiguity and injected fsync failures.
-- Five offline coordinator regressions cover retained cgroup children and health
-  progress. A cached recent heartbeat is insufficient: both elapsed stability and
+- Eight offline coordinator regressions cover retained cgroup children, root stop
+  completion, boot marker cleanup and health progress. A cached recent heartbeat
+  is insufficient: both elapsed stability and
   advancing evidence must span the window; future/stale samples or a new invocation
   restart that window. The real observer uses collection time, not polling time.
 - The lab timer polls once per second for deterministic tests. It is not a measured
