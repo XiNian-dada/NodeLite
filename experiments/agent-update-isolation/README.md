@@ -343,3 +343,49 @@ ELF are not production components. Existing v3.0.4 Agents lack this new health I
 production opt-in would first require an explicit manual migration and independently
 bootstrapped signing keys/feed. See the
 [fifth-stage results and limits](../../docs/agent-update-rust-validation.md).
+
+## Operator signing ceremonies and first migration
+
+The sixth-stage suite uses the actual `tools.nodelite_release` CLI, encrypted
+disposable keys and detached approvals; it does not bypass production signature
+verification when publishing valid repositories. A deliberately hostile fixture
+signed with revoked targets keys is first rejected by the publisher, then served
+by test-only mirror code so the Rust client must independently reject it too.
+Private keys/passphrases never enter the guest or returned evidence.
+
+It requires the previous real-release binaries, musl Agent build provenance and
+optional compiler Python environment. Use a distinct marked, pre-provisioned VM
+at `output/agent-update-prototype/vm-enrollment-v1`, with enough space; the validated
+instance is a standalone 24 GiB qcow2 cloned from the stopped earlier VM. Keep the
+original VM stopped, and never run both guests against port 22239. This suite is
+not a general cloud provisioning script and must not be pointed at a real node.
+
+After an administrator has prepared the **disposable** VM and its loopback SSH
+credentials, boot that exact path, not the `vm.py` CLI's default `vm-v1`:
+
+```sh
+python3 -c 'import sys; sys.path.insert(0, "experiments/agent-update-isolation"); from vm import WORK, boot; boot(WORK / "vm-enrollment-v1")'
+PYTHONDONTWRITEBYTECODE=1 output/agent-update-prototype/python-env/bin/python experiments/agent-update-isolation/enrollment_matrix.py --prepare
+python3 -c 'import sys; sys.path.insert(0, "experiments/agent-update-isolation"); from vm import WORK, stop; stop(WORK / "vm-enrollment-v1")'
+```
+
+The marked guest runs a real default v3.0.4 Agent and loopback Server. Migration
+executes the production local-root operator, stdlib-only on the node, which invokes
+the production unprivileged Rust verifier. It installs the twelve static updater
+units plus a separate root-owned first-migration recovery unit. No web handler or
+production signing source is enabled.
+
+Exactly 17 cases cover normal/dry-run migration, online-only metadata refresh,
+root/release-key rotation and revocation, bad fingerprints, capabilities, stale
+credentials, corrupt payload, token-preserving rollback/resume, outdated bundle
+rejection with durable trust continuity, and four real QEMU power cuts. A corrupt
+recovery backup must fail closed rather than guess an executable. Existing lab
+paths are archived inside the disposable guest, never used to reset production
+trust. `--prepare` generates fresh one-use keys/public inputs and checks that reused
+Agent sources still match their previous build hashes.
+
+Results remain incomplete unless `enrollment-evidence.json` has complete=true,
+all seventeen cases, and unchanged source hashes. The driver stops guest services;
+the explicit final stop above is still required to close QEMU. Final audit also
+checks installed binaries/units and that no host services were installed. See
+[the sixth-stage report and production limits](../../docs/agent-update-signing-migration-validation.md).

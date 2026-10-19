@@ -114,6 +114,8 @@ inode，旧 PID 与配置不变，释放资源后 Rust 下载重试成功。拆�
 [实验说明](../experiments/agent-update-isolation/README.md#actual-rust-updater-signed-download-through-activation)。
 
 这已是连接完整流程的 Rust 实现，但不表示本轮发布或启用了生产自动更新。
-生产签名仓库、离线 root 保管/轮换/吊销发布流程、首次迁移工具和独立安全审查仍需单独完成。
+签名操作工具、换钥/吊销发布规程与首次迁移工具已在后续
+[第六阶段](agent-update-signing-migration-validation.md)补齐并隔离验证；真实生产仓库/保管与
+独立安全审查仍需上线前单独完成。
 未验证真实外部代理、可信时钟恢复、硬件存储控制器故障、任意 syscall 崩溃或发行版/架构矩阵。
 控制面和 Agent UID 失陷不应获得主机 root；updater UID 与发布签名基础设施仍属于可信计算基。

@@ -1,0 +1,123 @@
+# 离线签名与静态发布仓库
+
+本工具供发布管理员使用，不在 Agent、Server 或网页内运行。尚未配置生产密钥、生产更新源
+或官方发布自动化；实验密钥不得转为生产密钥。首次迁移见
+[迁移说明](../nodelite_migrate/README.md)。
+
+## 密钥分工
+
+| TUF 角色 | 最低阈值 | 建议保管 | 默认有效期 |
+| --- | --- | --- | --- |
+| root | 2（推荐 2-of-3） | 三位独立保管人、离线 | 365 天 |
+| targets | 2（推荐 2-of-2） | 两位独立发布审批人、离线 | 90 天 |
+| snapshot | 1 | 与 timestamp 分离的受限签名环境 | 7 天 |
+| timestamp | 1 | 可定期唤醒的受限在线签名环境 | 12 小时 |
+
+角色之间禁止复用密钥。工具使用 python-tuf 生成标准 TUF metadata，使用 Ed25519；没有另造
+签名格式。两份 detached approval 必须来自不同 key ID，且绑定同一角色的规范化签名载荷摘要。
+输入 JSON 的缩进不是签名对象；签名前必须审查解析后的内容和 approval 中的 payload SHA256。
+
+私钥是加密 PKCS8，父目录 0700、文件 0600，不覆盖已有文件。口令至少 12 字节，交互生成时
+二次确认；非交互只允许显式传入已打开的 `--password-fd`。不要将口令放在命令参数、环境变量、
+脚本、Git、CI 日志或公开仓库中。本实现不承诺 Python 内存清零、HSM 或抗已失陷签名机。
+
+每位保管人应独立备份自己的加密私钥，口令另存；在隔离环境演练解密和审批恢复。不要把满足
+整个阈值的生产密钥放在同一 CI job。实验中一个进程管理多把一次性密钥，仅证明协议和程序
+互操作，不证明生产的多方保管成立。
+
+## 安装与初始 root
+
+仅在可信发布机、仓库根目录运行：
+
+```sh
+python3 -m venv /trusted/operator-venv
+/trusted/operator-venv/bin/pip install --only-binary=:all: -r tools/nodelite_release/requirements.txt
+```
+
+以下用 `python` 代指该 venv 的 Python。示例路径为占位符，须由管理员预先创建相应受保护目录。
+每位保管人在自己的 0700 目录内独立生成一把密钥，再只交换 `.pub.json`：
+
+```sh
+python -m tools.nodelite_release keygen --private /offline/custodian/key.pem --public /offline/custodian/key.pub.json
+```
+
+汇总公开 key 文件，建立 policy（路径相对于 policy 文件）：
+
+```json
+{
+  "roles": {
+    "root": {"threshold": 2, "keys": ["root-a.pub.json", "root-b.pub.json", "root-c.pub.json"]},
+    "targets": {"threshold": 2, "keys": ["release-a.pub.json", "release-b.pub.json"]},
+    "snapshot": {"threshold": 1, "keys": ["snapshot.pub.json"]},
+    "timestamp": {"threshold": 1, "keys": ["timestamp.pub.json"]}
+  }
+}
+```
+
+```sh
+python -m tools.nodelite_release root-draft --policy /ceremony/policy.json --out /ceremony/root.unsigned
+```
+
+各保管人检查 key ID、角色、阈值、版本、有效期及完整载荷后，分别生成 approval：
+
+```sh
+python -m tools.nodelite_release approve --metadata /ceremony/root.unsigned --private /offline/custodian/key.pem --out /ceremony/root-a.approval
+python -m tools.nodelite_release assemble --unsigned /ceremony/root.unsigned --approval /ceremony/root-a.approval --approval /ceremony/root-b.approval --out /ceremony/roots/1.root.json
+```
+
+`roots/` 保留连续的 `1.root.json` 到当前版本，最多 128 份；不能删除历史并从 1 重建。
+通过独立可信渠道记录初始 root 的 SHA256，不能从同一不可信下载源取得 root 和其“可信摘要”。
+
+## 发布与续签
+
+产物必须来自已审查、已测试的构建；两位发布审批人分别核对目标摘要、架构、渠道、版本及
+单调序号。显示版本不用于防降级。一个仓库只服务一个 channel/architecture，stable/testing
+使用不同仓库，生产建议分离密钥。目标不超过 32 MiB、平面名称固定。
+
+```sh
+python -m tools.nodelite_release targets-draft --artifact /build/nodelite-agent --channel stable --target x86_64-unknown-linux-musl --version 3.0.5 --sequence 2 --floor 1 --metadata-version 2 --out /ceremony/targets.unsigned
+```
+
+对 targets 收集两份 approval，用 `assemble --root /ceremony/roots/1.root.json` 合并。
+然后分别生成、审批、合并 snapshot 与 timestamp：
+
+```sh
+python -m tools.nodelite_release role-draft --role snapshot --child /ceremony/targets.json --root /ceremony/roots/1.root.json --metadata-version 2 --out /ceremony/snapshot.unsigned
+python -m tools.nodelite_release role-draft --role timestamp --child /ceremony/snapshot.json --root /ceremony/roots/1.root.json --metadata-version 2 --out /ceremony/timestamp.unsigned
+python -m tools.nodelite_release publish --roots /ceremony/roots --targets /ceremony/targets.json --snapshot /ceremony/snapshot.json --timestamp /ceremony/timestamp.json --artifact /build/nodelite-agent --destination /srv/nodelite-repository
+```
+
+`role-draft` 的 child 必须是已签名文件，不能使用 unsigned 草稿。上述命令之间的审批/合并步骤
+不能跳过。重新生成草稿意味着新的签名载荷，不能沿用旧 approval。
+
+各角色版本独立递增：timestamp 可以引用未改变的 snapshot，仅用 timestamp 密钥续签；
+snapshot 可引用未改变的 targets，随后生成新 timestamp。不需要为短期 timestamp 重签 targets。
+建议 timestamp 不晚于每 6 小时刷新，snapshot 在 7 天到期前刷新，targets/root 在各自到期前
+完成离线审批。此处只是运行规程，本轮未安装生产定时任务。过期、缺失或网络失败会拒绝更新，
+不停止健康的旧 Agent。
+
+发布器在进程锁内校验完整根链、签名阈值、有效期、子元数据长度/摘要、产物字节及防降级下限。
+所有校验通过后生成不可变 `generations/<id>/`，fsync 后原子替换相对 `current` 链接。
+它保留历史公开元数据和目标，以容忍刷新期间的混合 HTTP 请求；相同版本不同内容被拒绝。
+私钥、approval 工作区和口令均不属于 web root。HTTP 服务用户只读，发布用户不能复用 Agent UID。
+
+生产只暴露 `current/metadata/`、`current/targets/` 的只读 HTTPS 内容，不暴露发布工作区。
+首次包和 root 摘要应另走可信渠道。远端明文 HTTP、重定向或带凭证/参数的 URL 不被节点接受。
+默认保留最多 64 个发布代次，达到上限拒绝发布而不自动删数据；生产长期运行前仍须补齐并审查
+保留策略/维护流程。不能通过删除 current 或整个仓库“修复”版本冲突。
+
+## 换钥、吊销与恢复
+
+修改公开 policy 后，使用 `root-draft --previous N.root.json` 生成 N+1。审批必须同时满足旧 root
+阈值和新 root 阈值，合并也必须传 `--previous`；旧角色密钥只保留在被替换的历史 root 中。
+用新角色密钥重新签署 targets/snapshot/timestamp，再发布连续根链。节点持久化新 root 后，
+镜像隐藏新文件也不能恢复被吊销的旧密钥。
+
+丢失一把 2-of-3 root 密钥时，由剩余两位保管人完成换钥。targets 密钥丢失/泄露时，经 root
+审批替换该角色，然后重新发布。若攻击者已掌握 root 阈值，或保管人无法再满足旧 root 阈值，
+不能声称能在线自救：需要事件响应、独立分发新的信任锚及本地管理员重新确认。
+
+正常的新节点 enrollment 包使用当前最新已验证 root，避免多年根链轮换超过单轮刷新上限。
+失败迁移重试必须保留原 anchor，可显式 `pack-enrollment --bootstrap-version N`；这不是允许已
+运行的 updater 降级信任根。首次迁移包同时含 root 管理的 updater 和固定单元，管理员必须审查
+完整包 SHA256，不能仅凭签名 Agent 的摘要信任其中的 root 程序。

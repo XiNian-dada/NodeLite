@@ -2,10 +2,11 @@
 
 独立的 Linux/systemd CLI，连接 TUF 签名下载、只读预检、停止屏障、试运行与单次回滚。
 默认关闭，不接收 Server 下发的 URL、命令、服务名或安装路径，不包含网页接口。
-现有安装脚本和手动 `upgrade-agent` 流程保持不变，不会自动迁移任何节点。
+不会自动迁移任何节点；原手动安装流程仅新增防止覆盖已启用签名更新器的检查。
 
-当前已在隔离 KVM 客机验证。尚未发布生产签名仓库、发布密钥保管流程或一键迁移安装器；
-不要把 `experiments/` 中的 root 测试脚本安装到现网。
+当前已在隔离 KVM 客机验证。[签名仓库与密钥工具](../tools/nodelite_release/README.md)及
+[显式首次迁移工具](../tools/nodelite_migrate/README.md)已补齐，但尚未部署生产签名源、
+建立真实多方密钥保管或启用官方发布流程。不要把 `experiments/` 的 root 测试脚本安装到现网。
 
 ## 边界与目录
 
@@ -111,20 +112,22 @@ cargo test -p nodelite-updater --all-features --locked
 正常二进制没有故障注入能力。`lab-faults` 仅供带专用标记的隔离客机使用，必须单独构建，
 不得作为发布二进制。验证脚本会记录两者不同的摘要。
 
-启用前由管理员审查并完成：备份原 unit、确认配置/用户/组、先手动升级到支持新健康证据的
-Agent、通过独立渠道取得可信 root、登记基线摘要和序号、创建上述精确权限目录，再安装
-`systemd/` 内固定单元。此操作会改变现有 Agent 的启动路径，不能把复制单元视为无风险操作。
-旧版 v3.0.4 没有本地健康证据，不能直接当作此更新器的健康基线。
+首次启用优先使用上述显式迁移工具：审查完整包和独立 root 指纹，先检查再 `--apply`。
+工具支持默认手动安装的 v3.0.4，先验签、只读预检，再切换到支持健康证据的签名 Agent；
+迁移阶段另有 root 管理的冷启动恢复，提交后不授权自动降级原程序。
+旧版 v3.0.4 本身没有本地健康证据，不能直接当作日常 updater 的健康基线。
 
-以下由本地管理员调用，不是给更新用户授予 sudo 权限：
+以下是完成迁移后由本地管理员调用的日常检查，不是给更新用户授予 sudo 权限：
 
 ```sh
-sudo -u nodelite-updater -g nodelite-read /usr/local/bin/nodelite-updater initialize --baseline /usr/local/bin/nodelite-agent
 sudo -u nodelite-updater -g nodelite-read /usr/local/bin/nodelite-updater status
 sudo -u nodelite-updater -g nodelite-read /usr/local/bin/nodelite-updater download
 sudo systemctl start nodelite-updater-apply.service
 ```
 
 初始化拒绝已有状态；下载命令不停止服务；apply 仅请求最新的本地策略授权目标。
+`verify-enrollment` 仅供迁移时核对仓库当前授权基线，固定旧 unit 的身份检查阻止已迁移节点
+再次调用它改变 active 指针。失败重试保留根链和版本下限，不重新 initialize。
 本次没有自动启用安装器或网页按钮，实际隔离验证记录见
-[Rust 更新器验证报告](../docs/agent-update-rust-validation.md)。
+[Rust 更新器验证报告](../docs/agent-update-rust-validation.md)和
+[签名与迁移验证报告](../docs/agent-update-signing-migration-validation.md)。
