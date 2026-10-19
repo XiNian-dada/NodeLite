@@ -54,6 +54,12 @@ def marker(name):
     atomic_bytes(BRIDGE / name, b"request\n", 0o600)
 
 
+def clear_bridge_requests():
+    for name in ("stop", "restart", "preflight"):
+        (BRIDGE / name).unlink(missing_ok=True)
+    sync_dir(BRIDGE)
+
+
 def verify_packet(job):
     directory = os.open(INBOX / job, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
@@ -184,6 +190,7 @@ def prepared(state):
         return
     if done:
         state["deadline"] = time.monotonic() + 10
+        state["stop_exit"] = properties("nlup-lab-stop-bridge.service").get("ExecMainExitTimestampMonotonic", "0")
         save(state, "stopping", "waiting for old process exit")
         fault("stopping")
         marker("stop")
@@ -201,10 +208,14 @@ def stopping(state):
         save(state, "rolled_back", "stopping cancelled after reboot")
         return
     current = properties("nlup-lab-agent.service")
+    stopped = properties("nlup-lab-stop-bridge.service")
+    acknowledged = stopped.get("ExecMainExitTimestampMonotonic", "0") not in {"0", state.get("stop_exit", "0")} \
+        and stopped.get("ActiveState") == "inactive" and stopped.get("Result") == "success"
     group = current.get("ControlGroup", "")
     processes = Path("/sys/fs/cgroup") / group.lstrip("/") / "cgroup.procs"
     empty = not group or not processes.exists() or not processes.read_text().strip()
-    if current.get("ActiveState") == "inactive" and current.get("MainPID") == "0" and empty:
+    if acknowledged and not (BRIDGE / "stop").exists() \
+            and current.get("ActiveState") == "inactive" and current.get("MainPID") == "0" and empty:
         state["deadline"] = time.monotonic() + 10
         save(state, "trial", "old service stopped")
         fault("trial_journal")
@@ -212,8 +223,10 @@ def stopping(state):
         fault("active_pointer")
         marker("restart")
     elif time.monotonic() > state["deadline"]:
-        rollback(state, "old service did not stop")
-    else:
+        (BRIDGE / "stop").unlink(missing_ok=True)
+        manual("old service stop was not confirmed")
+    elif stopped.get("ActiveState") not in {"active", "activating", "deactivating"} \
+            and not (BRIDGE / "stop").exists():
         marker("stop")
 
 
@@ -275,6 +288,8 @@ def main():
             fcntl.flock(lock, fcntl.LOCK_EX | (0 if is_boot else fcntl.LOCK_NB))
         except BlockingIOError:
             return
+        if is_boot:
+            clear_bridge_requests()
         if (PRIVATE / "manual.json").exists():
             if is_boot:
                 raise SystemExit(1)

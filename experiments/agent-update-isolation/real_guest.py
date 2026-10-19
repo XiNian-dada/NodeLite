@@ -11,7 +11,7 @@ import time
 from lab_io import (BRIDGE, CODE, INBOX, JOURNAL, PRIVATE, ROOT, atomic_bytes,
                     atomic_json, digest, object_path, pointer)
 from setup_guest import guard
-from test_guest import ACTIVE_UNITS, own, permissions, run, systemctl
+from test_guest import ACTIVE_UNITS, STOP_DELAY, own, permissions, run, systemctl
 
 BINARIES = Path("/home/lab/real-binaries")
 CONFIG = ROOT / "agent/agent.toml"
@@ -115,6 +115,7 @@ def main():
         halt()
     elif action == "restore-fixture":
         halt()
+        STOP_DELAY.unlink(missing_ok=True)
         for name in ("agent", "preflight"):
             Path(f"/etc/systemd/system/nlup-lab-{name}.service.d/real.conf").unlink(missing_ok=True)
         from setup_guest import main as setup

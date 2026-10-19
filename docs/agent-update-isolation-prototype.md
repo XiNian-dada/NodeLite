@@ -59,7 +59,8 @@ rollback_consumed、boot ID、试运行单调时钟期限和非敏感结果码�
 
 1. 完整写入目标对象并同步文件、对象目录和父目录。
 2. 同步 PREPARED，完成预检；同步 STOPPING 后经固定 bridge 停止旧服务。
-   只有 systemd 确认 inactive、MainPID=0、cgroup 无进程后才允许切换。
+   只有固定 root stop 动作已完成、请求已消费，且 systemd 确认 inactive、MainPID=0、
+   cgroup 无进程后才允许切换。单凭恰好没有主进程不够，避免迟到的 stop 停掉新版。
 3. **先同步 TRIAL，再原子替换 active，最后同步 active 父目录。**
 4. 正式 unit 启动新版，核对 unit 的启动身份/实际执行映像、稳定运行及功能证据。
    稳定窗口必须同时有持续推进的采样时间；不能反复读取同一份近期心跳就提交。
@@ -71,6 +72,10 @@ rollback_consumed、boot ID、试运行单调时钟期限和非敏感结果码�
 不承诺物理 `systemctl` 恰好调用一次。已提交事务永不再授权降级。
 PREPARED/STOPPING 在重启后确认原指针后取消；TRIAL 根据 active/from/to 摘要恢复；无法匹配时转人工。
 旧 boot 的单调时钟不能跨重启使用。失败目标不能自动重新发起同一次升级。
+bridge path 在 boot 恢复之后才启用；boot 持锁清除三个固定动作标记并同步目录，
+再从 journal 重建需要的动作。不能把上次 boot 的临时停止/启动请求直接重放。
+这些晚启动 path 关闭默认的 `Before=paths.target`，显式保留 shutdown 依赖，
+避免与需要 basic/system bus 的 boot 恢复服务形成依赖环；启用前检查整个 unit 图。
 
 ## 预检、健康与 token
 

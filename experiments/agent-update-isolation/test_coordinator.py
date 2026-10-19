@@ -1,5 +1,7 @@
 """Offline state-machine regressions; no system units, users or protected paths are touched."""
 
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -59,11 +61,13 @@ class HealthProgressTests(unittest.TestCase):
 
 class StopBarrierTests(unittest.TestCase):
     def test_inactive_main_process_is_not_enough_if_cgroup_has_children(self):
-        state = {"boot_id": "boot", "deadline": 100, "phase": "stopping"}
+        state = {"boot_id": "boot", "deadline": 100, "phase": "stopping", "stop_exit": "1"}
+        process = {"ActiveState": "inactive", "MainPID": "0",
+                   "ControlGroup": "/system.slice/nlup-lab-agent.service"}
+        stopped = {"ActiveState": "inactive", "Result": "success", "ExecMainExitTimestampMonotonic": "2"}
         with patch.object(updater, "boot_id", return_value="boot"), \
                 patch.object(updater.time, "monotonic", return_value=10), \
-                patch.object(updater, "properties", return_value={"ActiveState": "inactive",
-                    "MainPID": "0", "ControlGroup": "/system.slice/nlup-lab-agent.service"}), \
+                patch.object(updater, "properties", side_effect=lambda unit: stopped if "bridge" in unit else process), \
                 patch.object(updater, "Path") as path, patch.object(updater, "marker") as marker:
             processes = path.return_value.__truediv__.return_value.__truediv__.return_value
             processes.exists.return_value = True
@@ -71,6 +75,48 @@ class StopBarrierTests(unittest.TestCase):
             updater.stopping(state)
             self.assertEqual(state["phase"], "stopping")
             marker.assert_called_once_with("stop")
+
+    def test_no_switch_until_the_fixed_root_stop_action_has_completed(self):
+        state = {"boot_id": "boot", "deadline": 100, "phase": "stopping", "stop_exit": "1"}
+        with patch.object(updater, "boot_id", return_value="boot"), \
+                patch.object(updater.time, "monotonic", return_value=10), \
+                patch.object(updater, "properties", return_value={"ActiveState": "inactive",
+                    "MainPID": "0", "ControlGroup": "", "Result": "success",
+                    "ExecMainExitTimestampMonotonic": "1"}), \
+                patch.object(updater, "marker") as marker, patch.object(updater, "pointer") as pointer:
+            updater.stopping(state)
+            self.assertEqual(state["phase"], "stopping")
+            marker.assert_called_once_with("stop")
+            pointer.assert_not_called()
+
+    def test_unconfirmed_stop_timeout_requires_manual_recovery_without_switching(self):
+        state = {"boot_id": "boot", "deadline": 10, "phase": "stopping", "stop_exit": "1"}
+        with patch.object(updater, "boot_id", return_value="boot"), \
+                patch.object(updater.time, "monotonic", return_value=11), \
+                patch.object(updater, "properties", return_value={"ActiveState": "activating",
+                    "MainPID": "0", "ControlGroup": "", "ExecMainExitTimestampMonotonic": "1"}), \
+                patch.object(updater, "BRIDGE") as bridge, \
+                patch.object(updater, "manual") as manual, patch.object(updater, "pointer") as pointer:
+            updater.stopping(state)
+            manual.assert_called_once_with("old service stop was not confirmed")
+            bridge.__truediv__.return_value.unlink.assert_called_once_with(missing_ok=True)
+            pointer.assert_not_called()
+
+
+class BootBridgeTests(unittest.TestCase):
+    def test_cold_boot_discards_only_fixed_action_markers_without_following_links(self):
+        parent = Path(__file__).resolve().parent / ".io-tests"
+        parent.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            bridge = Path(directory)
+            (bridge / "unrelated").write_bytes(b"retained")
+            (bridge / "stop").symlink_to(bridge / "unrelated")
+            for name in ("restart", "preflight"):
+                (bridge / name).write_bytes(b"stale request")
+            with patch.object(updater, "BRIDGE", bridge):
+                updater.clear_bridge_requests()
+            self.assertEqual(list(bridge.iterdir()), [bridge / "unrelated"])
+            self.assertEqual((bridge / "unrelated").read_bytes(), b"retained")
 
 
 if __name__ == "__main__":

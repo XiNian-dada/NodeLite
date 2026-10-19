@@ -115,6 +115,7 @@ WantedBy=timers.target
 def bridge_units():
     for name, target in (("restart", "agent"), ("preflight", "preflight"), ("stop", "agent")):
         action = "stop" if name == "stop" else "restart"
+        asynchronous = "" if name == "stop" else "--no-block "
         # These root actions never execute or source code from the updater's directories.
         unit(f"{name}-bridge.service", f"""[Unit]
 StartLimitIntervalSec=30
@@ -123,14 +124,22 @@ StartLimitBurst=10
 Type=oneshot
 ExecStart=/usr/bin/rm -f -- {ROOT}/bridge/{name}
 ExecStart=-/usr/bin/systemctl reset-failed nlup-lab-{target}.service
-ExecStart=/usr/bin/systemctl --no-block {action} nlup-lab-{target}.service
+ExecStart=/usr/bin/systemctl {asynchronous}{action} nlup-lab-{target}.service
+TimeoutStartSec=20
 NoNewPrivileges=yes
 ProtectSystem=strict
 ReadWritePaths={ROOT}/bridge
 ProtectHome=yes
 PrivateTmp=yes
 """)
-        unit(f"{name}-bridge.path", f"""[Path]
+        # Path defaults precede basic.target, but recovery needs the system bus.
+        unit(f"{name}-bridge.path", f"""[Unit]
+DefaultDependencies=no
+After=nlup-lab-boot.service
+Requires=nlup-lab-boot.service
+Before=shutdown.target
+Conflicts=shutdown.target
+[Path]
 PathExists={ROOT}/bridge/{name}
 [Install]
 WantedBy=multi-user.target
@@ -203,6 +212,8 @@ RestrictNamespaces=yes
     worker_units(common)
     bridge_units()
     run("systemctl", "daemon-reload")
+    units = sorted(str(path) for path in Path("/etc/systemd/system").glob("nlup-lab-*") if path.is_file())
+    run("systemd-analyze", "verify", *units)
     run("systemctl", "enable", "--now", "nlup-lab-agent.service", "nlup-lab-request.path",
         "nlup-lab-reconcile.timer", "nlup-lab-restart-bridge.path", "nlup-lab-preflight-bridge.path",
         "nlup-lab-stop-bridge.path")

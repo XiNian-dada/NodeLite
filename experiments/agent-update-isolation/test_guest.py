@@ -17,6 +17,7 @@ from setup_guest import guard
 
 HERE = Path(__file__).resolve().parent
 RESULTS = Path("/home/lab/results.json")
+STOP_DELAY = Path("/etc/systemd/system/nlup-lab-stop-bridge.service.d/powercut.conf")
 ACTIVE_UNITS = ["nlup-lab-request.path", "nlup-lab-reconcile.timer",
                 "nlup-lab-stop-bridge.path", "nlup-lab-stop-bridge.service",
                 "nlup-lab-preflight-bridge.path", "nlup-lab-restart-bridge.path",
@@ -63,6 +64,8 @@ def healthy(identity):
 
 def reset():
     systemctl("stop", *ACTIVE_UNITS, check=False)
+    STOP_DELAY.unlink(missing_ok=True)
+    systemctl("daemon-reload")
     for marker in (Path("/etc/nlup-lab/fault"), PRIVATE / "manual.json", PRIVATE / "rejection.json",
                    PRIVATE / "checkpoint.json",
                    CODE / "quiesce", INBOX / "request.json", BRIDGE / "restart", BRIDGE / "preflight",
@@ -281,16 +284,25 @@ def scenario(name):
 
 
 def arm_powercut(point):
-    if point not in {"prepared", "stopping", "trial_journal", "active_pointer"}:
+    if point not in {"prepared", "stopping", "stop_pending", "trial_journal", "active_pointer"}:
         raise ValueError("unknown power-cut checkpoint")
     reset()
-    Path("/etc/nlup-lab/fault").write_text(point)
+    checkpoint = "stopping" if point == "stop_pending" else point
+    if point == "stop_pending":
+        systemctl("stop", "nlup-lab-stop-bridge.path")
+        STOP_DELAY.parent.mkdir(mode=0o755, exist_ok=True)
+        atomic_bytes(STOP_DELAY, b"[Service]\nExecStartPre=/usr/bin/sleep 2\n", 0o644)
+        systemctl("daemon-reload")
+    Path("/etc/nlup-lab/fault").write_text(checkpoint)
     job, _ = package()
     request(job)
     wait(lambda: (PRIVATE / "checkpoint.json").exists()
-         and decode((PRIVATE / "checkpoint.json").read_bytes())["point"] == point)
+         and decode((PRIVATE / "checkpoint.json").read_bytes())["point"] == checkpoint)
     systemctl("stop", "nlup-lab-reconcile.timer", "nlup-lab-request.path")
     Path("/etc/nlup-lab/fault").unlink()
+    if point == "stop_pending":
+        atomic_bytes(BRIDGE / "stop", b"request\n")
+        own(BRIDGE / "stop")
     from lab_io import sync_dir
     sync_dir(Path("/etc/nlup-lab"))
     atomic_bytes(Path("/home/lab/power-config-digest"), digest((ROOT / "agent/config").read_bytes()).encode())
@@ -302,6 +314,9 @@ def after_powercut():
     wait(lambda: state()["phase"] == "rolled_back", timeout=25)
     assert state()["current"] == decode((PRIVATE / "baseline.json").read_bytes())["current"]
     wait(lambda: healthy(state()["current"]))
+    for _ in range(20):
+        assert healthy(state()["current"]), "late root stop request displaced the recovered baseline"
+        time.sleep(0.15)
     assert digest((ROOT / "agent/config").read_bytes()) == Path("/home/lab/power-config-digest").read_text()
     print(json.dumps({"powercut_recovery": "passed", "phase": state()["phase"]}))
 
