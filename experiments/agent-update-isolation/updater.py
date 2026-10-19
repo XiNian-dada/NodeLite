@@ -16,12 +16,12 @@ from lab_io import (BRIDGE, CODE, INBOX, JOURNAL, LIMIT, PRIVATE, ROOT, active_d
                     pointer, read_file, sync_dir)
 
 TERMINAL = {"stable", "committed", "rolled_back"}
-PHASES = TERMINAL | {"prepared", "trial", "rollback_intent", "manual_recovery"}
+PHASES = TERMINAL | {"prepared", "stopping", "trial", "rollback_intent", "manual_recovery"}
 
 
 def properties(unit):
     result = subprocess.run(["/usr/bin/systemctl", "show", unit, "--property=MainPID,InvocationID,"
-                             "ActiveState,Result,ExecMainStatus,NRestarts,ExecMainExitTimestampMonotonic"], capture_output=True,
+                             "ActiveState,ControlGroup,Result,ExecMainStatus,NRestarts,ExecMainExitTimestampMonotonic"], capture_output=True,
                             text=True, check=True, timeout=3)
     return dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
 
@@ -182,22 +182,38 @@ def prepared(state):
         save(state, "rolled_back", "preflight rejected")
         return
     if done:
-        atomic_bytes(CODE / "quiesce", b"request\n", 0o640)
-        health = heartbeat()
-        current = properties("nlup-lab-agent.service")
-        if health.get("quiesced") and str(health.get("pid")) == current.get("MainPID") \
-                and health.get("digest") == state["from"] and time.time() - health.get("time", 0) < 2:
-            state["deadline"] = time.monotonic() + 10
-            save(state, "trial", "trial")
-            fault("trial_journal")
-            pointer("active", state["to"])
-            fault("active_pointer")
-            (CODE / "quiesce").unlink(missing_ok=True)
-            marker("restart")
-            return
+        state["deadline"] = time.monotonic() + 10
+        save(state, "stopping", "waiting for old process exit")
+        fault("stopping")
+        marker("stop")
+        return
     if time.monotonic() > state["deadline"]:
         (CODE / "quiesce").unlink(missing_ok=True)
         save(state, "rolled_back", "preflight timeout")
+
+
+def stopping(state):
+    if state["boot_id"] != boot_id():
+        if active_digest() != state["from"]:
+            manual("stopping pointer mismatch")
+            return
+        save(state, "rolled_back", "stopping cancelled after reboot")
+        return
+    current = properties("nlup-lab-agent.service")
+    group = current.get("ControlGroup", "")
+    processes = Path("/sys/fs/cgroup") / group.lstrip("/") / "cgroup.procs"
+    empty = not group or not processes.exists() or not processes.read_text().strip()
+    if current.get("ActiveState") == "inactive" and current.get("MainPID") == "0" and empty:
+        state["deadline"] = time.monotonic() + 10
+        save(state, "trial", "old service stopped")
+        fault("trial_journal")
+        pointer("active", state["to"])
+        fault("active_pointer")
+        marker("restart")
+    elif time.monotonic() > state["deadline"]:
+        rollback(state, "old service did not stop")
+    else:
+        marker("stop")
 
 
 def reconcile(state):
@@ -215,6 +231,8 @@ def reconcile(state):
         return
     if phase == "prepared":
         prepared(state)
+    elif phase == "stopping":
+        stopping(state)
     elif phase == "rollback_intent":
         rollback(state, state["result"])
     elif phase == "trial":

@@ -19,7 +19,7 @@ def guest(directory, *arguments):
 def main():
     directory = WORK / "vm-v1"
     results = []
-    for point in ("prepared", "trial_journal", "active_pointer"):
+    for point in ("prepared", "stopping", "trial_journal", "active_pointer"):
         before = guest(directory, "arm", point)
         stop(directory)
         boot(directory)

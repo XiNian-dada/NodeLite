@@ -11,13 +11,14 @@ import subprocess
 import sys
 import time
 
-from lab_io import (BRIDGE, CODE, INBOX, JOURNAL, PRIVATE, ROOT, active_digest,
+from lab_io import (BRIDGE, CODE, INBOX, JOURNAL, LIMIT, PRIVATE, ROOT, active_digest,
                     atomic_bytes, atomic_json, decode, digest, object_path, pointer)
 from setup_guest import guard
 
 HERE = Path(__file__).resolve().parent
 RESULTS = Path("/home/lab/results.json")
 ACTIVE_UNITS = ["nlup-lab-request.path", "nlup-lab-reconcile.timer",
+                "nlup-lab-stop-bridge.path", "nlup-lab-stop-bridge.service",
                 "nlup-lab-preflight-bridge.path", "nlup-lab-restart-bridge.path",
                 "nlup-lab-preflight-bridge.service", "nlup-lab-restart-bridge.service",
                 "nlup-lab-reconcile.service", "nlup-lab-request.service",
@@ -64,7 +65,8 @@ def reset():
     systemctl("stop", *ACTIVE_UNITS, check=False)
     for marker in (Path("/etc/nlup-lab/fault"), PRIVATE / "manual.json", PRIVATE / "rejection.json",
                    PRIVATE / "checkpoint.json",
-                   CODE / "quiesce", INBOX / "request.json", BRIDGE / "restart", BRIDGE / "preflight"):
+                   CODE / "quiesce", INBOX / "request.json", BRIDGE / "restart", BRIDGE / "preflight",
+                   BRIDGE / "stop"):
         marker.unlink(missing_ok=True)
     baseline = decode((PRIVATE / "baseline.json").read_bytes())
     atomic_json(JOURNAL, baseline)
@@ -72,7 +74,7 @@ def reset():
     pointer("active", baseline["current"])
     systemctl("reset-failed", *ACTIVE_UNITS, "nlup-lab-boot.service", check=False)
     systemctl("start", "nlup-lab-agent.service", "nlup-lab-request.path", "nlup-lab-reconcile.timer",
-              "nlup-lab-preflight-bridge.path", "nlup-lab-restart-bridge.path")
+              "nlup-lab-preflight-bridge.path", "nlup-lab-restart-bridge.path", "nlup-lab-stop-bridge.path")
     wait(lambda: healthy(baseline["current"]))
     return baseline
 
@@ -116,7 +118,7 @@ def package(mode="healthy", sequence=2, mutation=None):
         os.link(target, directory / "extra-link")
     elif mutation == "oversize":
         with target.open("wb") as stream:
-            stream.truncate(3 * 1024 * 1024)
+            stream.truncate(LIMIT + 1)
     return job, manifest["sha256"]
 
 
@@ -182,12 +184,35 @@ def invalid_object(name, baseline):
     return {"name": name, "passed": True, "phase": "manual_recovery"}
 
 
+def stop_children():
+    group = systemctl("show", "nlup-lab-agent.service", "--property=ControlGroup", "--value").stdout.strip()
+    assert group.startswith("/system.slice/nlup-lab-agent.service")
+    child = subprocess.Popen(["/usr/bin/sleep", "300"])
+    try:
+        (Path("/sys/fs/cgroup") / group.lstrip("/") / "cgroup.procs").write_text(str(child.pid))
+        Path("/etc/nlup-lab/fault").write_text("trial_journal")
+        job, _ = package()
+        request(job)
+        wait(lambda: (PRIVATE / "checkpoint.json").exists())
+        assert child.poll() is not None, "old service child survived the switch barrier"
+        assert systemctl("show", "nlup-lab-agent.service", "--property=MainPID", "--value").stdout.strip() == "0"
+        Path("/etc/nlup-lab/fault").unlink()
+        wait(lambda: state()["phase"] == "rolled_back", timeout=25)
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.wait()
+    return {"name": "stop_children", "passed": True, "phase": state()["phase"]}
+
+
 def scenario(name):
     baseline = reset()
     original_config = (ROOT / "agent/config").read_bytes()
     original_pid = systemctl("show", "nlup-lab-agent.service", "--property=MainPID", "--value").stdout.strip()
     if name == "sequential":
         return sequential()
+    if name == "stop_children":
+        return stop_children()
     if name in {"missing_object", "unexpected_active"}:
         return invalid_object(name, baseline)
     if name == "permissions":
@@ -204,7 +229,7 @@ def scenario(name):
     mode = "hang" if name == "config_advanced" else name if name in {"crash", "hang", "preflight_fail"} else "healthy"
     job, target = package(mode=mode, sequence=1 if name == "downgrade" else 2,
                           mutation=name if name in reject | {"bad_executable"} else None)
-    fault_names = {"kill_prepared": "prepared", "kill_trial": "trial_journal",
+    fault_names = {"kill_prepared": "prepared", "kill_stopping": "stopping", "kill_trial": "trial_journal",
                    "kill_pointer": "active_pointer", "kill_rollback": "rollback_intent"}
     if name in fault_names:
         Path("/etc/nlup-lab/fault").write_text(fault_names[name])
@@ -218,7 +243,7 @@ def scenario(name):
         assert state()["phase"] == "stable"
         assert systemctl("show", "nlup-lab-agent.service", "--property=MainPID", "--value").stdout.strip() == original_pid
     elif name.startswith("kill_"):
-        expected = {"kill_prepared": "prepared", "kill_trial": "trial", "kill_pointer": "trial",
+        expected = {"kill_prepared": "prepared", "kill_stopping": "stopping", "kill_trial": "trial", "kill_pointer": "trial",
                     "kill_rollback": "rollback_intent"}[name]
         wait(lambda: (PRIVATE / "checkpoint.json").exists()
              and decode((PRIVATE / "checkpoint.json").read_bytes())["point"] == fault_names[name])
@@ -256,7 +281,7 @@ def scenario(name):
 
 
 def arm_powercut(point):
-    if point not in {"prepared", "trial_journal", "active_pointer"}:
+    if point not in {"prepared", "stopping", "trial_journal", "active_pointer"}:
         raise ValueError("unknown power-cut checkpoint")
     reset()
     Path("/etc/nlup-lab/fault").write_text(point)
@@ -307,7 +332,7 @@ def main():
     names = sys.argv[1:] or ["permissions", "success", "preflight_fail", "bad_executable", "crash", "hang",
                              "bad_signature", "bad_digest", "symlink", "fifo", "hardlink", "oversize",
                              "expired", "wrong_component", "downgrade", "replay", "config_advanced",
-                             "kill_prepared", "kill_trial", "kill_pointer", "kill_rollback",
+                             "kill_prepared", "kill_stopping", "stop_children", "kill_trial", "kill_pointer", "kill_rollback",
                              "concurrent", "sequential", "missing_object", "unexpected_active", "manual_recovery"]
     results = []
     for name in names:

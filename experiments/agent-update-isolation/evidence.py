@@ -22,7 +22,8 @@ def main():
              "/etc/nlup-lab/release.pub", "/etc/systemd/system/nlup-lab-agent.service"]
     units = ["agent.service", "preflight.service", "request.service", "request.path",
              "reconcile.service", "reconcile.timer", "boot.service", "restart-bridge.service",
-             "restart-bridge.path", "preflight-bridge.service", "preflight-bridge.path"]
+             "restart-bridge.path", "preflight-bridge.service", "preflight-bridge.path",
+             "stop-bridge.service", "stop-bridge.path"]
     host_units = subprocess.run(["systemctl", "list-unit-files", "nlup-lab-*", "--no-legend"],
                                 capture_output=True, text=True)
     if host_units.returncode not in {0, 1} or host_units.stderr.strip():

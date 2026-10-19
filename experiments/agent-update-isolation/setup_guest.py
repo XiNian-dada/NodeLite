@@ -25,6 +25,7 @@ def guard():
     marker = Path("/etc/nlup-lab-guest")
     if os.geteuid() != 0 or not marker.exists() \
             or marker.read_text().strip() != "isolated-prototype-v1" \
+            or not Path("/sys/fs/cgroup/cgroup.controllers").exists() \
             or run("systemd-detect-virt", "--vm").stdout.strip() not in {"kvm", "qemu"}:
         raise RuntimeError("refusing installation outside the marked disposable VM")
 
@@ -57,6 +58,7 @@ ExecStart={CODE}/active
 Restart=always
 RestartSec=300ms
 TimeoutStopSec=2
+KillMode=control-group
 UMask=0027
 ReadWritePaths={ROOT}/agent {ROOT}/status {ROOT}/inbox
 {common}
@@ -111,7 +113,8 @@ WantedBy=timers.target
 
 
 def bridge_units():
-    for name, target in (("restart", "agent"), ("preflight", "preflight")):
+    for name, target in (("restart", "agent"), ("preflight", "preflight"), ("stop", "agent")):
+        action = "stop" if name == "stop" else "restart"
         # These root actions never execute or source code from the updater's directories.
         unit(f"{name}-bridge.service", f"""[Unit]
 StartLimitIntervalSec=30
@@ -120,7 +123,7 @@ StartLimitBurst=10
 Type=oneshot
 ExecStart=/usr/bin/rm -f -- {ROOT}/bridge/{name}
 ExecStart=-/usr/bin/systemctl reset-failed nlup-lab-{target}.service
-ExecStart=/usr/bin/systemctl --no-block restart nlup-lab-{target}.service
+ExecStart=/usr/bin/systemctl --no-block {action} nlup-lab-{target}.service
 NoNewPrivileges=yes
 ProtectSystem=strict
 ReadWritePaths={ROOT}/bridge
@@ -201,7 +204,8 @@ RestrictNamespaces=yes
     bridge_units()
     run("systemctl", "daemon-reload")
     run("systemctl", "enable", "--now", "nlup-lab-agent.service", "nlup-lab-request.path",
-        "nlup-lab-reconcile.timer", "nlup-lab-restart-bridge.path", "nlup-lab-preflight-bridge.path")
+        "nlup-lab-reconcile.timer", "nlup-lab-restart-bridge.path", "nlup-lab-preflight-bridge.path",
+        "nlup-lab-stop-bridge.path")
     print(json.dumps({"installed": True, "scope": "disposable VM only"}))
 
 

@@ -49,8 +49,8 @@ root 单元只执行系统自带的固定命令；不运行 updater 可写的程
 复制到 updater 新建的私有 inode 后验签，不直接 rename/chown Agent 提供的 inode。
 
 ```text
-STABLE -> PREPARED -> TRIAL -> COMMITTED
-                         -> ROLLBACK_INTENT -> ROLLED_BACK
+STABLE -> PREPARED -> STOPPING -> TRIAL -> COMMITTED
+                             -> ROLLBACK_INTENT -> ROLLED_BACK
 不一致或无法安全恢复 -> MANUAL_RECOVERY
 ```
 
@@ -58,7 +58,8 @@ journal 包含 schema、代次、job ID、from/to 摘要、发布清单摘要/�
 rollback_consumed、boot ID、试运行单调时钟期限和非敏感结果码；不含 token/配置副本。
 
 1. 完整写入目标对象并同步文件、对象目录和父目录。
-2. 同步 PREPARED；旧 Agent 完成凭证检查及持久化交接屏障后，才允许切换。
+2. 同步 PREPARED，完成预检；同步 STOPPING 后经固定 bridge 停止旧服务。
+   只有 systemd 确认 inactive、MainPID=0、cgroup 无进程后才允许切换。
 3. **先同步 TRIAL，再原子替换 active，最后同步 active 父目录。**
 4. 正式 unit 启动新版，核对 unit 的启动身份/实际执行映像、稳定运行及功能证据。
 5. 成功后同步 COMMITTED；之后才清理非必要对象。
@@ -66,13 +67,16 @@ rollback_consumed、boot ID、试运行单调时钟期限和非敏感结果码�
 
 文件系统与 systemd 无共同事务，因此允许同一恢复动作的有界幂等重做，
 不承诺物理 `systemctl` 恰好调用一次。已提交事务永不再授权降级。
-PREPARED 取消；TRIAL 在重启后根据 active/from/to 摘要恢复；无法匹配时转人工。
+PREPARED/STOPPING 在重启后确认原指针后取消；TRIAL 根据 active/from/to 摘要恢复；无法匹配时转人工。
 旧 boot 的单调时钟不能跨重启使用。失败目标不能自动重新发起同一次升级。
 
 ## 预检、健康与 token
 
-候选只执行无真实 token 的离线测试。当前 Agent 负责验证当前磁盘凭证、停止接收新的
-轮换并等待已有写盘/ACK 边界；进程内 CONFIG_IO_LOCK 不视为跨进程锁。
+默认夹具候选只执行无真实 token 的离线测试。真实 Agent 测试可使用现有
+`--check-credentials` 在监控 UID/只读沙箱中验证磁盘凭证，不登记正式会话或轮换。
+首版以完整停止旧服务作为交接屏障，不增加生产 IPC；进程内 CONFIG_IO_LOCK 不视为跨进程锁。
+正常 SIGTERM 时等待运行时阻塞写盘结束；即使被 SIGKILL，接任者也必须重新同步磁盘
+配置后握手。写盘后的 ACK 丢失由 Server 的持久候选凭证恢复路径处理，不恢复旧 token。
 正式 Trial 才验证新版真实配置解析和鉴权兼容性；不同时运行两个正式节点会话。
 只读 mount 防常规误写，不作为恶意同 UID 进程的完整隔离。
 

@@ -13,7 +13,7 @@ PRIVATE = ROOT / "private"
 INBOX = ROOT / "inbox"
 BRIDGE = ROOT / "bridge"
 JOURNAL = PRIVATE / "journal.json"
-LIMIT = 2 * 1024 * 1024
+LIMIT = 32 * 1024 * 1024
 
 
 def digest(data):
