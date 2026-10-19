@@ -131,3 +131,4 @@ sudo systemctl start nodelite-updater-apply.service
 本次没有自动启用安装器或网页按钮，实际隔离验证记录见
 [Rust 更新器验证报告](../docs/agent-update-rust-validation.md)和
 [签名与迁移验证报告](../docs/agent-update-signing-migration-validation.md)。
+生产 canary 的必要前提与停止条件见[受控部署准入](../docs/agent-update-deployment-gate.md)。

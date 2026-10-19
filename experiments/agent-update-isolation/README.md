@@ -389,3 +389,35 @@ all seventeen cases, and unchanged source hashes. The driver stops guest service
 the explicit final stop above is still required to close QEMU. Final audit also
 checks installed binaries/units and that no host services were installed. See
 [the sixth-stage report and production limits](../../docs/agent-update-signing-migration-validation.md).
+
+## Security acceptance and deployment admission
+
+After preparing the same disposable 24 GiB enrollment VM, the original Rust
+matrix can run there without starting the old full disk:
+
+```sh
+NODELITE_LAB_VM=enrollment PYTHONDONTWRITEBYTECODE=1 output/agent-update-prototype/python-env/bin/python experiments/agent-update-isolation/rust_matrix.py
+PYTHONDONTWRITEBYTECODE=1 output/agent-update-prototype/python-env/bin/python experiments/agent-update-isolation/enrollment_matrix.py --prepare
+PYTHONDONTWRITEBYTECODE=1 output/agent-update-prototype/python-env/bin/python experiments/agent-update-isolation/security_matrix.py
+python3 -c 'import sys; sys.path.insert(0, "experiments/agent-update-isolation"); from vm import WORK, stop; stop(WORK / "vm-enrollment-v1")'
+```
+
+The security matrix adds ten acceptance cases: eleven sequential roots across
+offline updates; real signed publication/readiness/recoverable archival; changed
+resume policy and missing trust rejection; updater locking and root-UID rejection;
+the extracted legacy-installer guard; node admission and unit-tampering rejection;
+and two cold boots at the exact unit-publication boundary and after commit.
+The unit-boundary wrapper is root-only lab interposition, not a production hook.
+No test prints or exports credentials. `security-evidence.json` must be complete,
+contain ten passing cases and match the frozen enrollment build inputs.
+
+`--probe` is diagnostic only: it writes separate `security-probe.json`, always
+marks complete=false, and explicitly records build/source mismatch. It must never
+substitute for final acceptance. Source changes invalidate a final run. The driver
+stops services but still requires the explicit QEMU stop above.
+
+The review and production prerequisites are in the
+[security report](../../docs/agent-update-security-validation.md) and
+[deployment gate](../../docs/agent-update-deployment-gate.md). Passing isolated
+tests is not permission to deploy production keys, enable Web control or migrate
+arbitrary nodes.
