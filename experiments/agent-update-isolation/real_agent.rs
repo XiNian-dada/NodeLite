@@ -21,6 +21,15 @@ const SCRIPT: &str = "/home/lab/agent-update-isolation/real_guest.py";
 const CONFIG: &str = "/var/lib/nlup-lab/agent/agent.toml";
 const CHECKPOINT: &str = "/var/lib/nlup-lab/private/checkpoint.json";
 
+fn version(sequence: u8) -> String {
+    let (key, fallback) = if sequence == 1 {
+        ("NODELITE_LAB_OLD_VERSION", "lab-old")
+    } else {
+        ("NODELITE_LAB_NEW_VERSION", "lab-new")
+    };
+    std::env::var(key).unwrap_or_else(|_| fallback.to_string())
+}
+
 async fn lab(args: &[&str], input: Option<&str>) -> Result<Value> {
     let mut child = tokio::process::Command::new("python3")
         .arg(SCRIPT)
@@ -95,7 +104,7 @@ async fn observe(
             } else {
                 2
             };
-            let version = if sequence == 1 { "lab-old" } else { "lab-new" };
+            let version = version(sequence);
             let actual_digest = process["digest"]
                 .as_str()
                 .is_some_and(|value| identities["old"] == value || identities["new"] == value);
@@ -169,7 +178,7 @@ async fn interrupted_refresh(
         );
         lab(&["signal", "SIGKILL"], None).await?;
         proxy.gate.release.notify_one();
-        online(server, node, "lab-old").await
+        online(server, node, &version(1)).await
     };
     let (refresh, recovery) = tokio::join!(
         server.request_live_token_refresh(&node.node_id),
@@ -182,7 +191,7 @@ async fn interrupted_refresh(
     );
     lab(&["request"], None).await?;
     terminal("committed").await?;
-    online(server, node, "lab-new").await?;
+    online(server, node, &version(2)).await?;
     credential_survives(server, node).await
 }
 
@@ -259,7 +268,7 @@ async fn stale_disk(server: &TestServer, node: &TestNode) -> Result<()> {
             lab(&["probe"], None).await?["pid"] == process["pid"],
             "healthy RAM session was replaced"
         );
-        online(server, node, "lab-old").await?;
+        online(server, node, &version(1)).await?;
         ensure!(
             !server
                 .is_token_current(&node.node_id, &saved_token()?)
@@ -279,7 +288,7 @@ async fn rotate_update(server: &TestServer, node: &TestNode, rollback: bool) -> 
     ensure!(saved_token()? != before, "rotation did not reach disk");
     lab(&["request"], None).await?;
     if rollback {
-        online(server, node, "lab-new").await?;
+        online(server, node, &version(2)).await?;
         server.request_live_token_refresh(&node.node_id).await?;
         let latest = std::fs::read(CONFIG)?;
         lab(&["signal", "SIGSTOP"], None).await?;
@@ -291,6 +300,27 @@ async fn rotate_update(server: &TestServer, node: &TestNode, rollback: bool) -> 
     } else {
         terminal("committed").await?;
     }
+    Ok(())
+}
+
+async fn released_upgrade(server: &TestServer, node: &TestNode, rollback: bool) -> Result<()> {
+    lab(&["request"], None).await?;
+    online(server, node, &version(2)).await?;
+    let original = saved_token()?;
+    server.request_live_token_refresh(&node.node_id).await?;
+    ensure!(
+        saved_token()? != original,
+        "released candidate did not save token"
+    );
+    let latest = std::fs::read(CONFIG)?;
+    if rollback {
+        lab(&["signal", "SIGSTOP"], None).await?;
+    }
+    terminal(if rollback { "rolled_back" } else { "committed" }).await?;
+    ensure!(
+        std::fs::read(CONFIG)? == latest,
+        "handoff reverted credentials"
+    );
     Ok(())
 }
 
@@ -318,7 +348,7 @@ async fn exercise(
     node: &TestNode,
     proxy: &proxy::Proxy,
 ) -> Result<()> {
-    online(server, node, "lab-old").await?;
+    online(server, node, &version(1)).await?;
     match name {
         "permissions" => {
             lab(&["permissions"], None).await?;
@@ -345,17 +375,33 @@ async fn exercise(
         "rotate_upgrade" | "rotate_rollback" => {
             rotate_update(server, node, name == "rotate_rollback").await?;
         }
+        "upgrade_then_rotate" | "rotate_candidate_rollback" => {
+            released_upgrade(server, node, name == "rotate_candidate_rollback").await?;
+        }
+        "legacy_refresh_rejected" => {
+            let original = std::fs::read(CONFIG)?;
+            let process = lab(&["probe"], None).await?;
+            ensure!(
+                server
+                    .request_live_token_refresh(&node.node_id)
+                    .await
+                    .is_err()
+            );
+            ensure!(
+                std::fs::read(CONFIG)? == original,
+                "legacy refresh altered credentials"
+            );
+            ensure!(lab(&["probe"], None).await?["pid"] == process["pid"]);
+            lab(&["request"], None).await?;
+            terminal("committed").await?;
+        }
         _ => bail!("unknown real Agent scenario"),
     }
     let state = lab(&["state"], None).await?;
     online(
         server,
         node,
-        if state["phase"] == "committed" {
-            "lab-new"
-        } else {
-            "lab-old"
-        },
+        &version(if state["phase"] == "committed" { 2 } else { 1 }),
     )
     .await?;
     credential_survives(server, node).await
@@ -401,7 +447,7 @@ async fn scenario(name: &str) -> Result<Value> {
 async fn real_agent_token_handoff_in_disposable_vm() -> Result<()> {
     lab(&["halt"], None).await?;
     let mut evidence = Vec::new();
-    for name in [
+    let current_cases = [
         "permissions",
         "stale_disk",
         "rotate_upgrade",
@@ -413,7 +459,23 @@ async fn real_agent_token_handoff_in_disposable_vm() -> Result<()> {
         "stopping_crash",
         "trial_journal_crash",
         "pointer_crash",
-    ] {
+    ];
+    let released_cases = [
+        "permissions",
+        "stale_disk",
+        "legacy_refresh_rejected",
+        "upgrade_then_rotate",
+        "rotate_candidate_rollback",
+        "stopping_crash",
+        "trial_journal_crash",
+        "pointer_crash",
+    ];
+    let cases = if version(1) == "3.0.3" {
+        &released_cases[..]
+    } else {
+        &current_cases[..]
+    };
+    for name in cases {
         let result = scenario(name).await?;
         println!("{result}");
         evidence.push(result);

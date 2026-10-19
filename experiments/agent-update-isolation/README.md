@@ -15,8 +15,9 @@ The permission/unit/transaction contract is in
 - QEMU uses KVM, 2 vCPUs, 1 GiB RAM, an 8 GiB sparse overlay, no shared host directory,
   and restricted user networking. Only SSH is forwarded to host `127.0.0.1:22239`.
 - No production server URL, SSH key, credential, database or deployed binary enters the guest.
-  The real-credential suite builds ordinary Agent ELF files from this checkout with
-  `lab-old` / `lab-new` version labels; both have the same application source.
+  The default real-credential suite builds Agent ELF files from this checkout with
+  `lab-old` / `lab-new` labels. The optional released-binary suite uses fixed official
+  v3.0.3/v3.0.4 assets; neither suite uses a production installation or credentials.
 - A disposable SSH key stays under the private output directory; only its public key
   enters cloud-init. Signing keys and random fixture config are generated inside the VM.
 - Guest SSH explicitly disables agent forwarding and configured SSH tunnels.
@@ -75,6 +76,22 @@ After provisioning the base experiment and starting the VM, run on the compiler:
 python3 experiments/agent-update-isolation/run_real.py
 python3 experiments/agent-update-isolation/vm.py stop
 ```
+
+For actual release compatibility, run `releases.py` on the compiler, then
+`run_real.py --official` while the provisioned VM is running. Downloads are fixed
+to GitHub tags v3.0.3/v3.0.4, bounded by curl timeouts, and checked against each
+release's SHA256SUMS.txt (including its directory-prefixed filenames). This is
+HTTPS/checksum bootstrap, **not independent publisher-signature verification**.
+The authenticated Agent's reported version and executable digest are checked.
+
+The released-binary matrix has eight cases. v3.0.3 cannot acknowledge durable token
+renewal, so online renewal must be rejected without changing its file or process.
+Upgrade to v3.0.4 first; only then rotate credentials. The matrix also tests
+rolling the program back to v3.0.3 after v3.0.4 saved a new token, retaining that
+new configuration. Remaining cases cover permissions, stale disk credentials,
+and three interrupted coordinator checkpoints. Its server remains the production
+WS/registry test harness, not the full CLI server. Results are written separately
+to `output/agent-update-prototype/official-real-evidence.json`.
 
 The runner builds two release Agent binaries and a server test executable, then
 checks that the exact ignored test exists and copies them into the guest. Prior
