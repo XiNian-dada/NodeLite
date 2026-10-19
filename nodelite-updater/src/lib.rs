@@ -6,6 +6,8 @@ mod activate;
 mod defaults;
 #[cfg(target_os = "linux")]
 mod download;
+#[cfg(target_os = "linux")]
+mod enrollment;
 mod error;
 #[cfg(target_os = "linux")]
 mod fault;

@@ -38,7 +38,7 @@ pub(crate) fn value<'a>(properties: &'a BTreeMap<String, String>, name: &str) ->
     properties.get(name).map(String::as_str).unwrap_or("")
 }
 
-pub(crate) async fn guard() -> Result<()> {
+pub(crate) async fn guard(require_agent: bool) -> Result<()> {
     if !Path::new("/sys/fs/cgroup/cgroup.controllers").is_file()
         || Path::new("/.dockerenv").exists()
         || Path::new("/run/systemd/container").exists()
@@ -60,8 +60,13 @@ pub(crate) async fn guard() -> Result<()> {
         ));
     }
     let service = properties(AGENT).await?;
+    let expected_group = if require_agent {
+        "nodelite-read"
+    } else {
+        "nodelite-agent"
+    };
     if value(&service, "User") != "nodelite-agent"
-        || value(&service, "Group") != "nodelite-read"
+        || value(&service, "Group") != expected_group
         || !value(&service, "AmbientCapabilities").is_empty()
         || !value(&service, "CapabilityBoundingSet").is_empty()
     {

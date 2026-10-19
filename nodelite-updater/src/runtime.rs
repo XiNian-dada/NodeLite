@@ -29,6 +29,11 @@ enum Action {
         #[arg(long)]
         baseline: PathBuf,
     },
+    /// Verify a first enrollment against signed metadata without changing any service.
+    VerifyEnrollment {
+        #[arg(long)]
+        baseline: PathBuf,
+    },
     /// Verify and download from the fixed repository without stopping the Agent.
     Download,
     /// Download and request a journaled activation through fixed systemd units.
@@ -51,10 +56,15 @@ pub async fn run() -> Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let policy = Policy::load()?;
     let bootstrap = trusted_file(Path::new(ROOT), 262144)?;
-    system::guard().await?;
+    system::guard(!matches!(&cli.action, Action::VerifyEnrollment { .. })).await?;
     let store = Store::system();
     system::paths_safe(&store)?;
     let _lock = Lock::acquire(&store.private().join("lock"))?;
+    if let Action::VerifyEnrollment { baseline } = &cli.action {
+        crate::enrollment::verify(&store, &policy, &bootstrap, baseline).await?;
+        println!("signed enrollment verified without starting or changing any service");
+        return Ok(());
+    }
     if let Action::Initialize { baseline } = cli.action {
         store.initialize(&policy, &bootstrap, &baseline)?;
         println!("enrolled baseline without starting or changing any service");
@@ -95,7 +105,9 @@ async fn dispatch(action: Action, store: &Store, policy: &Policy, bootstrap: &[u
                 Ok(())
             }
         }
-        Action::Initialize { .. } => Err(UpdateError::Recovery("initialization dispatch failed")),
+        Action::Initialize { .. } | Action::VerifyEnrollment { .. } => {
+            Err(UpdateError::Recovery("initialization dispatch failed"))
+        }
     };
     if let Err(error) = result {
         if !state.phase.terminal() || matches!(error, UpdateError::Recovery(_)) {
