@@ -2,6 +2,9 @@
 
 日期：2026-10-19（Asia/Singapore）。
 
+后续正式产物、完整 Server/真实 token 断电及参考 TUF 网络测试见
+[第三阶段验证](agent-update-release-network-validation.md)。本页保留第二阶段的原始范围和结果。
+
 实现检查点：`7886da1` 停止屏障，`0e980c1` 健康证据推进，`d5e5a8e` 真实凭证测试，
 `80aebd2` 停止完成确认与冷启动动作恢复，`b0132ef` 复现入口和运行证据约束。
 
