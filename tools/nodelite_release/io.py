@@ -10,11 +10,11 @@ import stat
 LIMIT = 32 * 1024 * 1024
 
 
-def read(path, limit=2 * 1024 * 1024):
+def read(path, limit=2 * 1024 * 1024, *, allow_aliased=False):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as stream:
         info = os.fstat(stream.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > limit:
+        if not stat.S_ISREG(info.st_mode) or (not allow_aliased and info.st_nlink != 1) or info.st_size > limit:
             raise ValueError("unsafe input inode or size")
         data = stream.read(limit + 1)
         if len(data) > limit:

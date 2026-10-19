@@ -5,6 +5,7 @@ from pathlib import Path
 import secrets
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from cryptography.hazmat.primitives import serialization
 from . import keys, metadata, repository
@@ -173,6 +174,52 @@ class Ceremony(unittest.TestCase):
             metadata.target_draft(link, "stable", "x86_64-unknown-linux-musl", "3.0.5", 1, 1, 1, self.path / "bad")
         with self.assertRaises(ValueError):
             metadata.target_draft(self.artifact, "../stable", "x86_64-unknown-linux-musl", "3.0.5", 1, 1, 1, self.path / "bad")
+
+    def test_cargo_aliased_artifact_is_copied_but_private_key_aliases_are_rejected(self):
+        os.link(self.artifact, self.path / "artifact-alias")
+        metadata.target_draft(self.artifact, "stable", "x86_64-unknown-linux-musl", "3.0.5", 1, 1, 1, self.path / "draft")
+        private = self.roles["root"][0][0]
+        os.link(private, self.path / "private-alias")
+        with self.assertRaises(ValueError):
+            keys.approve(self.root_unsigned, private, self.path / "approval", self.secret)
+
+    def test_private_material_in_public_key_document_is_rejected(self):
+        root = metadata.load(self.root).signed
+        key = root.keys[root.roles["root"].keyids[0]]
+        key.keyval["private"] = "not public metadata"
+        with self.assertRaises(ValueError):
+            metadata.root_safe(root)
+
+    def test_online_roles_can_refresh_without_new_targets_approvals(self):
+        targets, snapshot, timestamp = self.release()
+        mirror = self.path / "mirror"
+        repository.publish(self.roots, targets, snapshot, timestamp, self.artifact, mirror)
+        for role, child, version in (("timestamp", snapshot, 2), ("snapshot", targets, 2), ("timestamp", None, 3)):
+            draft, output = self.path / f"{role}-{version}.unsigned", self.path / f"{role}-{version}.json"
+            metadata.role_draft(role, child or snapshot, self.root, draft, version)
+            self.assemble(draft, self.roles[role], output)
+            if role == "snapshot":
+                snapshot = output
+                continue
+            timestamp = output
+            repository.publish(self.roots, targets, snapshot, timestamp, self.artifact, mirror)
+        _, _, docs, _, _ = repository.current(mirror)
+        self.assertEqual([doc.signed.version for doc in docs], [1, 2, 3])
+        with self.assertRaises(ValueError):
+            repository.publish(self.roots, targets, snapshot, timestamp, self.artifact, mirror)
+
+    def test_publisher_uses_the_verified_snapshot_not_reopened_input(self):
+        paths = self.release()
+        original = repository.release
+
+        def mutate_after_verification(*args, **kwargs):
+            result = original(*args, **kwargs)
+            paths[0].write_bytes(b"untrusted later replacement")
+            return result
+
+        with patch.object(repository, "release", side_effect=mutate_after_verification):
+            repository.publish(self.roots, *paths, self.artifact, self.path / "mirror")
+        self.assertEqual(repository.current(self.path / "mirror")[3]["release_sequence"], 1)
 
 
 if __name__ == "__main__":

@@ -6,14 +6,16 @@ from pathlib import Path
 import re
 import secrets
 
-from .io import LIMIT, create, digest, directory, owned_directory, read, sync
+from tuf.api.metadata import Metadata
+
+from .io import LIMIT, create, decode, digest, directory, owned_directory, read, sync
 from .metadata import load, now, release_scope, root_safe
 
 META_NAME = re.compile(r"(?:[1-9][0-9]*\.(?:root|targets|snapshot)\.json|timestamp\.json)")
 TARGET_NAME = re.compile(r"[0-9a-f]{64}\.nodelite-agent-(?:stable|testing)-(?:x86_64|aarch64)-unknown-linux-musl")
 
 
-def roots(path):
+def roots(path, with_bytes=False):
     entries = {}
     for item in Path(path).iterdir():
         match = re.fullmatch(r"([1-9][0-9]*)\.root\.json", item.name)
@@ -21,9 +23,11 @@ def roots(path):
             entries[int(match[1])] = item
     if not 1 <= len(entries) <= 128 or set(entries) != set(range(1, len(entries) + 1)):
         raise ValueError("root history must start at 1 and have no gaps")
-    chain = []
+    chain, snapshots = [], {}
     for version in sorted(entries):
-        document = load(entries[version])
+        raw = read(entries[version])
+        decode(raw)
+        document = Metadata.from_bytes(raw)
         root_safe(document.signed)
         if document.signed.version != version:
             raise ValueError("root filename/version mismatch")
@@ -31,11 +35,15 @@ def roots(path):
         if chain:
             chain[-1].verify_delegate("root", document)
         chain.append(document)
-    return chain
+        snapshots[version] = raw
+    return (chain, snapshots) if with_bytes else chain
 
 
 def release(root, targets_path, snapshot_path, timestamp_path, artifact=None, fresh=True):
-    documents = [load(path) for path in (targets_path, snapshot_path, timestamp_path)]
+    raw = [read(path) for path in (targets_path, snapshot_path, timestamp_path)]
+    for value in raw:
+        decode(value)
+    documents = [Metadata.from_bytes(value) for value in raw]
     for document, role in zip(documents, ("targets", "snapshot", "timestamp")):
         if document.signed.type != role:
             raise ValueError("wrong metadata role")
@@ -43,12 +51,10 @@ def release(root, targets_path, snapshot_path, timestamp_path, artifact=None, fr
         if fresh and document.signed.expires <= now():
             raise ValueError("published metadata expired")
     targets, snapshot, timestamp = documents
-    versions = {item.signed.version for item in documents}
-    if len(versions) != 1 or len(targets.signed.targets) != 1 \
-            or set(snapshot.signed.meta) != {"targets.json"}:
-        raise ValueError("single-scope repository version contract rejected")
-    snapshot.signed.meta["targets.json"].verify_length_and_hashes(read(targets_path))
-    timestamp.signed.snapshot_meta.verify_length_and_hashes(read(snapshot_path))
+    if len(targets.signed.targets) != 1 or set(snapshot.signed.meta) != {"targets.json"}:
+        raise ValueError("single-scope repository contract rejected")
+    snapshot.signed.meta["targets.json"].verify_length_and_hashes(raw[0])
+    timestamp.signed.snapshot_meta.verify_length_and_hashes(raw[1])
     if snapshot.signed.meta["targets.json"].version != targets.signed.version \
             or timestamp.signed.snapshot_meta.version != snapshot.signed.version:
         raise ValueError("metadata child version mismatch")
@@ -58,8 +64,8 @@ def release(root, targets_path, snapshot_path, timestamp_path, artifact=None, fr
             or set(info.hashes) != {"sha256"}:
         raise ValueError("target name, size or hash contract rejected")
     if artifact is not None:
-        info.verify_length_and_hashes(read(artifact, LIMIT))
-    return documents, custom, info
+        info.verify_length_and_hashes(read(artifact, LIMIT, allow_aliased=True))
+    return documents, custom, info, raw
 
 
 def current(destination, fresh=False):
@@ -71,20 +77,21 @@ def current(destination, fresh=False):
     owned_directory(generation)
     chain = roots(generation / "metadata")
     timestamp = load(generation / "metadata/timestamp.json")
-    version = timestamp.signed.version
-    paths = [generation / "metadata" / f"{version}.{role}.json" for role in ("targets", "snapshot")]
-    documents, custom, info = release(chain[-1], *paths, generation / "metadata/timestamp.json", fresh=fresh)
+    snapshot_path = generation / "metadata" / f"{timestamp.signed.snapshot_meta.version}.snapshot.json"
+    snapshot = load(snapshot_path)
+    targets_path = generation / "metadata" / f"{snapshot.signed.meta['targets.json'].version}.targets.json"
+    documents, custom, info, _ = release(chain[-1], targets_path, snapshot_path, generation / "metadata/timestamp.json", fresh=fresh)
     artifact = generation / "targets" / (info.hashes["sha256"] + "." + release_scope(custom))
     info.verify_length_and_hashes(read(artifact, LIMIT))
     return generation, chain, documents, custom, info
 
 
 def publish(roots_path, targets, snapshot, timestamp, artifact, destination):
-    chain = roots(roots_path)
+    chain, root_bytes = roots(roots_path, with_bytes=True)
     if chain[-1].signed.expires <= now():
         raise ValueError("current root expired")
-    documents, custom, info = release(chain[-1], targets, snapshot, timestamp, artifact)
-    payload = read(artifact, LIMIT)
+    documents, custom, info, metadata_bytes = release(chain[-1], targets, snapshot, timestamp, artifact)
+    payload = read(artifact, LIMIT, allow_aliased=True)
     info.verify_length_and_hashes(payload)
     destination = Path(destination)
     if not destination.exists():
@@ -95,23 +102,26 @@ def publish(roots_path, targets, snapshot, timestamp, artifact, destination):
     lock = os.open(destination / ".lock", os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return publish_locked(destination, chain, documents, custom, info, payload, roots_path,
-                              (targets, snapshot, timestamp))
+        return publish_locked(destination, chain, documents, custom, info, payload, root_bytes, metadata_bytes)
     finally:
         os.close(lock)
 
 
-def publish_locked(destination, chain, documents, custom, info, payload, roots_path, metadata_paths):
+def publish_locked(destination, chain, documents, custom, info, payload, root_bytes, metadata_bytes):
     previous = None
     if (destination / "current").is_symlink() or (destination / "current").exists():
         previous, old_chain, old_documents, old_custom, old_info = current(destination)
         if len(chain) < len(old_chain) or any(new.to_bytes() != old.to_bytes() for new, old in zip(chain, old_chain)):
             raise ValueError("root history downgrade or equivocation")
         if (custom["channel"], custom["target"]) != (old_custom["channel"], old_custom["target"]) \
-                or documents[0].signed.version <= old_documents[0].signed.version \
                 or custom["release_sequence"] < old_custom["release_sequence"] \
                 or custom["min_rollback_sequence"] < old_custom["min_rollback_sequence"]:
             raise ValueError("publication scope, version or floor rollback rejected")
+        for new, old in zip(documents, old_documents):
+            if new.signed.version < old.signed.version or new.signed.version == old.signed.version and new.to_bytes() != old.to_bytes():
+                raise ValueError("metadata version rollback or equivocation")
+        if all(new.signed.version == old.signed.version for new, old in zip(documents, old_documents)):
+            raise ValueError("publication must advance a metadata version")
         if custom["release_sequence"] == old_custom["release_sequence"] \
                 and (custom != old_custom or info.hashes != old_info.hashes):
             raise ValueError("same-release equivocation rejected")
@@ -129,13 +139,13 @@ def publish_locked(destination, chain, documents, custom, info, payload, roots_p
                     raise ValueError("unexpected public repository file")
                 create(output / item.name, read(item, limit), 0o444)
     for version in range(1, len(chain) + 1):
-        put_immutable(generation / "metadata" / f"{version}.root.json", read(Path(roots_path) / f"{version}.root.json"))
-    for document, path in zip(documents, metadata_paths):
+        put_immutable(generation / "metadata" / f"{version}.root.json", root_bytes[version])
+    for document, value in zip(documents, metadata_bytes):
         name = "timestamp.json" if document.signed.type == "timestamp" else f"{document.signed.version}.{document.signed.type}.json"
         target = generation / "metadata" / name
         if name == "timestamp.json" and target.exists():
             target.unlink()
-        put_immutable(target, read(path))
+        put_immutable(target, value)
     put_immutable(generation / "targets" / (info.hashes["sha256"] + "." + release_scope(custom)), payload)
     for path in (generation / "metadata", generation / "targets", generation):
         path.chmod(0o555)
@@ -146,7 +156,7 @@ def publish_locked(destination, chain, documents, custom, info, payload, roots_p
     os.replace(pointer, destination / "current")
     sync(destination)
     return {"generation": identity, "sequence": custom["release_sequence"], "sha256": info.hashes["sha256"],
-            "root_version": len(chain), "bootstrap_sha256": digest(read(Path(roots_path) / "1.root.json"))}
+            "root_version": len(chain), "bootstrap_sha256": digest(root_bytes[1])}
 
 
 def put_immutable(path, data):

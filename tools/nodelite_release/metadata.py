@@ -36,7 +36,8 @@ def root_safe(root):
             raise ValueError("root threshold, duplicate or cross-role key reuse rejected")
         for keyid in entry.keyids:
             key = root.keys[keyid]
-            if key.keytype != "ed25519" or key.scheme != "ed25519":
+            if key.keytype != "ed25519" or key.scheme != "ed25519" or set(key.keyval) != {"public"} \
+                    or set(key.to_dict()) != {"keytype", "scheme", "keyval"}:
                 raise ValueError("root requires Ed25519 keys")
             canonical = SSlibKey.from_crypto(Ed25519PublicKey.from_public_bytes(bytes.fromhex(key.keyval["public"])))
             if canonical.keyid != keyid:
@@ -113,25 +114,31 @@ def target_draft(artifact, channel, target, version, sequence, floor, metadata_v
     custom = dict(product="nodelite", component="agent", channel=channel, target=target,
                   version=version, release_sequence=sequence, min_rollback_sequence=floor)
     name = release_scope(custom)
-    payload = read(artifact, LIMIT)
+    # Cargo aliases release/deps outputs; only the copied bytes are signed, never that inode.
+    payload = read(artifact, LIMIT, allow_aliased=True)
     if not payload or payload[:4] != b"\x7fELF":
         raise ValueError("Agent artifact must be a nonempty ELF image")
     info = TargetFile.from_data(name, payload)
     info.unrecognized_fields["custom"] = custom
-    if not 0 < metadata_version < 2**53:
+    if type(metadata_version) is not int or not 0 < metadata_version < 2**53:
         raise ValueError("invalid metadata version")
-    create(output, Metadata(Targets(version=metadata_version, expires=now() + timedelta(days=14),
+    create(output, Metadata(Targets(version=metadata_version, expires=now() + timedelta(days=90),
                                    targets={name: info})).to_bytes())
 
 
-def role_draft(role, child_path, authority, output):
-    child = load(child_path)
+def role_draft(role, child_path, authority, output, metadata_version=None):
+    raw = read(child_path)
+    decode(raw)
+    child = Metadata.from_bytes(raw)
     verified(child, load(authority))
     if (role, child.signed.type) not in {("snapshot", "targets"), ("timestamp", "snapshot")}:
         raise ValueError("invalid metadata dependency")
-    info = MetaFile.from_data(child.signed.version, read(child_path), ["sha256"])
+    info = MetaFile.from_data(child.signed.version, raw, ["sha256"])
+    version = child.signed.version if metadata_version is None else metadata_version
+    if type(version) is not int or not 0 < version < 2**53:
+        raise ValueError("invalid metadata version")
     if role == "snapshot":
-        value = Snapshot(version=child.signed.version, expires=now() + timedelta(days=7), meta={"targets.json": info})
+        value = Snapshot(version=version, expires=now() + timedelta(days=7), meta={"targets.json": info})
     else:
-        value = Timestamp(version=child.signed.version, expires=now() + timedelta(hours=12), snapshot_meta=info)
+        value = Timestamp(version=version, expires=now() + timedelta(hours=12), snapshot_meta=info)
     create(output, Metadata(value).to_bytes())

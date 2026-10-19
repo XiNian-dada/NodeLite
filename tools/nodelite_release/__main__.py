@@ -39,12 +39,14 @@ def parser():
         target.add_argument("--" + name, type=int, required=True)
     role = sub.add_parser("role-draft")
     role.add_argument("--role", choices=("snapshot", "timestamp"), required=True)
+    role.add_argument("--metadata-version", type=int)
     for name in ("child", "root", "out"):
         role.add_argument("--" + name, type=Path, required=True)
     publish = sub.add_parser("publish")
     for name in ("roots", "targets", "snapshot", "timestamp", "artifact", "destination"):
         publish.add_argument("--" + name, type=Path, required=True)
     pack = sub.add_parser("pack-enrollment")
+    pack.add_argument("--bootstrap-version", type=int)
     for name in ("repository", "updater", "units", "out"):
         pack.add_argument("--" + name, type=Path, required=True)
     return command
@@ -54,7 +56,7 @@ def main():
     args = parser().parse_args()
     result = None
     if args.action == "keygen":
-        result = keys.generate(args.private, args.public, keys.password(args.password_fd))
+        result = keys.generate(args.private, args.public, keys.password(args.password_fd, confirm=True))
     elif args.action == "root-draft":
         metadata.root_draft(args.policy, args.out, args.previous)
     elif args.action == "approve":
@@ -65,11 +67,11 @@ def main():
         metadata.target_draft(args.artifact, args.channel, args.target, args.version, args.sequence,
                               args.floor, args.metadata_version, args.out)
     elif args.action == "role-draft":
-        metadata.role_draft(args.role, args.child, args.root, args.out)
+        metadata.role_draft(args.role, args.child, args.root, args.out, args.metadata_version)
     elif args.action == "publish":
         result = repository.publish(args.roots, args.targets, args.snapshot, args.timestamp, args.artifact, args.destination)
     elif args.action == "pack-enrollment":
-        result = bundle.pack(args.repository, args.updater, args.units, args.out)
+        result = bundle.pack(args.repository, args.updater, args.units, args.out, args.bootstrap_version)
     print(json.dumps(result or {"created": str(args.out)}))
 
 

@@ -7,16 +7,20 @@ from .metadata import now, release_scope
 from .repository import current
 
 
-def pack(repository, updater, units, output):
+def pack(repository, updater, units, output, bootstrap_version=None):
     generation, chain, _, custom, info = current(repository, fresh=True)
     if chain[-1].signed.expires <= now():
         raise ValueError("root expired")
+    bootstrap_version = bootstrap_version if bootstrap_version is not None else len(chain)
+    if type(bootstrap_version) is not int or not 1 <= bootstrap_version <= len(chain):
+        raise ValueError("bootstrap root must be part of the verified history")
     output = directory(output)
-    files = {"root.json": read(generation / "metadata/1.root.json"),
-             "nodelite-updater": read(updater, LIMIT),
+    files = {"root.json": read(generation / "metadata" / f"{bootstrap_version}.root.json"),
+             "nodelite-updater": read(updater, LIMIT, allow_aliased=True),
              "nodelite-agent": read(generation / "targets" / (info.hashes["sha256"] + "." + release_scope(custom)), LIMIT)}
     if files["nodelite-updater"][:4] != b"\x7fELF" or b"/etc/nlup-lab-guest" in files["nodelite-updater"]:
         raise ValueError("updater must be a normal ELF without lab fault hooks")
+    info.verify_length_and_hashes(files["nodelite-agent"])
     expected = {"nodelite-agent.service", "nodelite-agent-preflight.service"}
     expected.update("nodelite-updater-" + name for name in ("apply.service", "boot.service", "reconcile.service", "reconcile.timer",
         "preflight.service", "preflight.path", "stop.service", "stop.path", "restart.service", "restart.path"))

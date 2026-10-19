@@ -13,9 +13,13 @@ from tuf.api.metadata import Metadata
 from .io import create, decode, digest, json_bytes, owned_directory, read
 
 
-def password(fd=None):
+def password(fd=None, confirm=False):
     if fd is None:
+        if not os.isatty(0):
+            raise ValueError("noninteractive signing requires an explicit password FD")
         value = getpass.getpass("Signing key passphrase: ").encode()
+        if confirm and getpass.getpass("Confirm passphrase: ").encode() != value:
+            raise ValueError("passphrases differ")
     else:
         with os.fdopen(os.dup(fd), "rb") as stream:
             value = stream.readline(1026).rstrip(b"\r\n")
@@ -25,6 +29,8 @@ def password(fd=None):
 
 
 def generate(private, public, secret):
+    if not 12 <= len(secret) <= 1024:
+        raise ValueError("passphrase must contain 12..1024 bytes")
     private, public = Path(private), Path(public)
     owned_directory(private.parent, private=True)
     if private.exists() or private.is_symlink() or public.exists() or public.is_symlink():
