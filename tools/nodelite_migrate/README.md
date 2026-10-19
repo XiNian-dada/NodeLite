@@ -48,7 +48,8 @@ sudo python3 -m tools.nodelite_migrate --bundle /root/review/enrollment --bundle
 2. 安装 root 管理的固定恢复程序和开机单元；账户/目录布局见 updater README。
 3. 以 updater UID 验签，要求包中的 baseline 与仓库当前授权的摘要/序号完全一致。
 4. 以 Agent UID、只读配置运行凭证预检；失败时旧 PID 继续运行。
-5. 停止旧进程、确认空 cgroup，fsync 最新配置，然后替换固定 unit；不并行运行两个 Agent。
+5. 停止旧进程、确认空 cgroup，fsync 最新配置；先持久化恢复依赖 drop-in，再替换固定 unit，
+   保证任意切换断电边界都有 fail-closed 恢复依赖；不并行运行两个 Agent。
 6. 新 Agent 鉴权上报并持续推进健康证据后，启用固定 updater path/timer，提交迁移成功。
 
 管理工具属于本地 root 管理边界，与日常非特权 updater 分离。它只在首次迁移时额外读取
@@ -82,6 +83,21 @@ sudo python3 -I /usr/local/lib/nodelite-operator/recover.py --recover
 resume 保留所有既有 TUF 状态；发现“信任处理已开始，但 journal 消失”时拒绝静默重置。
 开机恢复服务必须已处于 active(exited)，否则先检查并启动该固定服务。
 已经切换的正式 Agent 不允许再调用 `verify-enrollment` 改变 active 指针。
+
+## 迁移后准入检查
+
+迁移提交后，以及首次更新/重启后，从同一可信源码目录运行：
+
+```sh
+sudo python3 -m tools.nodelite_migrate --audit
+```
+
+该命令核对首次 receipt、root/updater 指纹、12 个固定单元、恢复依赖、账户/配置权限、启用
+状态、updater 终态及当前实际进程的近期鉴权健康证据。不读取配置或 Token，不改变服务或
+凭证；updater 的 status 可能创建锁、清理终态 pending 或标记坏 journal，不能把 audit 理解
+为零本地状态写入。任何拒绝或非 ready 都暂停推广，保留证据排查，不能自动删除 journal。
+
+本检查不是远程证明：主机 root、updater 身份或 Agent 本身已被攻破不在其保证范围内。
 
 本轮不提供批量自动迁移或生产一键安装，不自动创建生产密钥，不自动重发节点凭证，也不以
 删除 `/var/lib/nodelite-updater/private`、旧 journal 或信任根作为恢复方案。

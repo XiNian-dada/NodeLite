@@ -17,6 +17,7 @@ def main():
     mode.add_argument("--apply", action="store_true")
     mode.add_argument("--resume", action="store_true")
     mode.add_argument("--recover", action="store_true")
+    mode.add_argument("--audit", action="store_true")
     parser.add_argument("--bundle", type=Path)
     parser.add_argument("--bundle-sha256")
     parser.add_argument("--root-sha256")
@@ -31,7 +32,10 @@ def main():
     fd = os.open("/run/nodelite-updater-migration.lock", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        if args.recover:
+        if args.audit:
+            from .audit import check
+            result = check()
+        elif args.recover:
             result = transaction.recover()
         else:
             if any(value is None for value in (args.bundle, args.bundle_sha256, args.root_sha256, args.metadata_url, args.targets_url)):

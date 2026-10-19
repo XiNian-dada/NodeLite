@@ -30,6 +30,14 @@ def accounts():
     except KeyError:
         command("/usr/sbin/useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin",
                 "--gid", "nodelite-updater", "nodelite-updater")
+    for user in validate_accounts():
+        command("/usr/sbin/usermod", "--append", "--groups", "nodelite-read", user)
+
+
+def validate_accounts():
+    account = pwd.getpwnam("nodelite-updater")
+    if account.pw_uid == 0 or account.pw_shell not in {"/usr/sbin/nologin", "/sbin/nologin", "/bin/false"}:
+        raise ValueError("updater account collision")
     if not set(grp.getgrnam("nodelite-read").gr_mem) <= {"nodelite-agent", "nodelite-updater"}:
         raise ValueError("shared read group contains unrelated accounts")
     for user in ("nodelite-agent", "nodelite-updater"):
@@ -46,8 +54,7 @@ def accounts():
     gids = {grp.getgrnam(name).gr_gid for name in (*allowed, "nodelite-read")}
     if 0 in gids or any(entry.pw_gid in gids and entry.pw_name not in allowed for entry in pwd.getpwall()):
         raise ValueError("dedicated groups are shared with another primary account")
-    for user in allowed:
-        command("/usr/sbin/usermod", "--append", "--groups", "nodelite-read", user)
+    return allowed
 
 
 def install_recovery():
@@ -56,7 +63,7 @@ def install_recovery():
     directories(LIB / "tools")
     create(LIB / "tools/__init__.py", read(source / "__init__.py"), 0o555)
     for package, names in (("nodelite_release", ("__init__.py", "io.py")),
-                           ("nodelite_migrate", ("__init__.py", "common.py", "bundle.py", "transaction.py", "__main__.py"))):
+                           ("nodelite_migrate", ("__init__.py", "common.py", "bundle.py", "transaction.py", "audit.py", "__main__.py"))):
         directories(LIB / "tools" / package)
         for name in names:
             create(LIB / "tools" / package / name, read(source / package / name), 0o555)
@@ -221,12 +228,13 @@ def handoff(state, files, policy, timeout, resuming=False):
         config_barrier()
         state["phase"] = "switching"
         save(state)
-        atomic(UNIT, files["systemd/" + AGENT])
         if DROPIN.parent.exists():
             protected(DROPIN.parent, directory=True)
         else:
             directories(DROPIN.parent)
         create(DROPIN, f"[Unit]\nRequires={RECOVERY}\nAfter={RECOVERY}\n".encode())
+        # A new unit must never survive a power cut without its fail-closed recovery dependency.
+        atomic(UNIT, files["systemd/" + AGENT])
         systemctl("daemon-reload")
         command("/usr/bin/systemd-analyze", "verify", *(UNIT.parent / name for name in sorted(UNITS)))
         state["phase"] = "trial"
