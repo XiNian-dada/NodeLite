@@ -1,0 +1,11 @@
+# Opt in only after installing fixed units and manually enrolling a trusted baseline.
+enabled = false
+metadata_url = "https://updates.example.invalid/nodelite/metadata/"
+targets_url = "https://updates.example.invalid/nodelite/targets/"
+channel = "stable"
+target = "x86_64-unknown-linux-musl"
+baseline_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+baseline_sequence = 1
+minimum_sequence = 1
+trial_seconds = 60
+stability_seconds = 10

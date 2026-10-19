@@ -1,0 +1,22 @@
+[Unit]
+Description=NodeLite update recovery before Agent startup
+Before=nodelite-agent.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=nodelite-updater
+Group=nodelite-read
+SupplementaryGroups=nodelite-updater
+ExecStart=/usr/local/bin/nodelite-updater reconcile --boot
+UMask=0077
+TimeoutStartSec=30
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/nodelite-updater
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes

@@ -1,0 +1,39 @@
+[Unit]
+Description=NodeLite Agent (opt-in signed updater)
+After=network-online.target nodelite-updater-boot.service
+Wants=network-online.target
+Requires=nodelite-updater-boot.service
+OnFailure=nodelite-updater-reconcile.service
+StartLimitIntervalSec=30
+StartLimitBurst=3
+
+[Service]
+User=nodelite-agent
+Group=nodelite-read
+SupplementaryGroups=nodelite-agent
+ExecStart=/var/lib/nodelite-updater/code/active --config /var/lib/nodelite-agent/agent.toml
+WorkingDirectory=/var/lib/nodelite-agent
+Environment=NODELITE_AGENT_TRAFFIC_CONTROL=0 NODELITE_UPDATE_HEALTH=1
+RuntimeDirectory=nodelite-agent
+RuntimeDirectoryMode=0750
+UMask=0027
+Restart=always
+RestartSec=1
+TimeoutStopSec=15
+KillMode=control-group
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/nodelite-agent
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

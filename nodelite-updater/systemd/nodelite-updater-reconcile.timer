@@ -1,0 +1,12 @@
+[Unit]
+After=nodelite-updater-boot.service
+Requires=nodelite-updater-boot.service
+
+[Timer]
+OnBootSec=3
+OnUnitInactiveSec=1
+AccuracySec=100ms
+Unit=nodelite-updater-reconcile.service
+
+[Install]
+WantedBy=timers.target
