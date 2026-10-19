@@ -2,6 +2,9 @@
 
 日期：2026-10-19（Asia/Singapore）。
 
+后续缓存断电、时钟偏移、网络限时和真实满盘/inode 测试见
+[第四阶段报告](agent-update-resilience-validation.md)；下列数字保留为本阶段的独立记录。
+
 ## 结论与范围
 
 在云端编译机 `compiler` 的 `~/NodeLite` 和专用 KVM 客机中完成验证。
