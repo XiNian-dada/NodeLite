@@ -66,6 +66,16 @@ grep -Fx 'CapabilityBoundingSet=CAP_NET_ADMIN' "$UNIT_PATH" >/dev/null
 grep -Fx 'AmbientCapabilities=CAP_NET_ADMIN' "$UNIT_PATH" >/dev/null
 grep -Fx 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK' "$UNIT_PATH" >/dev/null
 
+refuse_signed_updater_override
+cp "$UNIT_PATH" "$TEMP_DIR/original-unit"
+printf '%s\n' 'ExecStart=/var/lib/nodelite-updater/code/active --config /var/lib/nodelite-agent/agent.toml' >"$UNIT_PATH"
+fail() { printf '%s\n' "$*" >&2; return 1; }
+if refuse_signed_updater_override >/dev/null 2>&1; then
+  printf '%s\n' 'Legacy installation must not bypass enrolled signature policy' >&2
+  exit 1
+fi
+cp "$TEMP_DIR/original-unit" "$UNIT_PATH"
+
 BOOTSTRAP_TMP="$TEMP_DIR/bootstrap.toml"
 printf '%s\n' 'replacement-test-fixture' >"$BOOTSTRAP_TMP"
 config_refreshed=1

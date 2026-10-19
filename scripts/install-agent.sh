@@ -364,6 +364,13 @@ check_saved_credentials() {
     fail "saved Agent credentials could not be verified; old binary and running service were preserved. Upgrade the server first; if credentials are stale, reissue a bootstrap configuration."
 }
 
+refuse_signed_updater_override() {
+  if [ "$SERVICE_KIND" = systemd ] && [ -f "$UNIT_PATH" ] &&
+     grep -Eq '^ExecStart=/var/lib/nodelite-updater/code/active([[:space:]]|$)' "$UNIT_PATH"; then
+    fail 'This Agent uses the signed updater; use nodelite-updater or the explicit local recovery procedure instead of the legacy installer.'
+  fi
+}
+
 # 自动更新支持已移除。升级时顺手清理旧版本曾经写入的 timer / service,
 # 避免无人值守任务继续从 latest 通道自我替换 agent。
 cleanup_legacy_auto_update() {
@@ -658,6 +665,7 @@ need_cmd sed
 need_cmd chown
 need_cmd chmod
 configure_platform
+refuse_signed_updater_override
 configure_traffic_control
 
 if [ "$SERVICE_KIND" = "systemd" ]; then
