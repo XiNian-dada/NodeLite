@@ -13,6 +13,7 @@ from vm import WORK, command, ssh_args
 
 PROJECT = Path.home() / "NodeLite"
 HERE = PROJECT / "experiments/agent-update-isolation"
+TEST = "integration_tests::updater_handoff::real_agent_token_handoff_in_disposable_vm"
 
 
 def guest(*args):
@@ -38,6 +39,10 @@ def build():
         raise RuntimeError("cannot uniquely identify the freshly built server test binary")
     shutil.copy2(executables[0], directory / "real-test-runner")
     command(["strip", "--strip-debug", directory / "real-test-runner"])
+    listing = command([directory / "real-test-runner", "--list", "--format", "terse"],
+                      capture_output=True, text=True).stdout.splitlines()
+    if TEST + ": test" not in listing:
+        raise RuntimeError("matching Rust workspace/test-module hook was not synced; refusing an empty test run")
     return directory
 
 
@@ -49,15 +54,20 @@ def main():
     command(["python3", HERE / "vm.py", "push", HERE, "/home/lab/"])
     command(["python3", HERE / "vm.py", "push", directory, "/home/lab/"])
     guest("sudo", "python3", "/home/lab/agent-update-isolation/real_guest.py", "halt")
+    guest("rm", "-f", "--", "/home/lab/real-agent-results.json")
     for name in ("updater.py", "lab_io.py"):
         guest("sudo", "install", "-o", "root", "-g", "root", "-m", "0555",
               f"/home/lab/agent-update-isolation/{name}", f"/usr/local/lib/nlup-lab/{name}")
+    hashes = command(ssh_args(WORK / "vm-v1") +
+                     ["sha256sum /usr/local/lib/nlup-lab/updater.py /usr/local/lib/nlup-lab/lab_io.py"],
+                     capture_output=True, text=True).stdout.splitlines()
     try:
         guest("sudo", "/home/lab/real-binaries/real-test-runner", "--ignored", "--exact",
-              "integration_tests::updater_handoff::real_agent_token_handoff_in_disposable_vm", "--nocapture")
+              TEST, "--nocapture")
         command(["python3", HERE / "vm.py", "pull", "/home/lab/real-agent-results.json",
                  WORK / "real-agent-results.json"])
-        evidence = {"binaries": {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        evidence = {"installed_worker_hashes": hashes,
+                    "binaries": {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                                  for path in directory.iterdir()},
                     "scenarios": json.loads((WORK / "real-agent-results.json").read_text())}
         (WORK / "real-evidence.json").write_text(json.dumps(evidence, indent=2) + "\n")
