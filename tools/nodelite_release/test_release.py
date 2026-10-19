@@ -12,7 +12,7 @@ from . import keys, metadata, repository
 from .io import create, decode, directory, json_bytes, read
 
 
-class Ceremony(unittest.TestCase):
+class _CeremonyFixture(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -65,6 +65,8 @@ class Ceremony(unittest.TestCase):
         paths = self.release(sequence, version, channel)
         return repository.publish(self.roots, *paths, self.artifact, self.path / "mirror")
 
+
+class Ceremony(_CeremonyFixture):
     def test_private_keys_are_encrypted_owner_only_and_not_overwritten(self):
         private, public = self.roles["root"][0]
         self.assertIn(b"ENCRYPTED PRIVATE KEY", read(private))

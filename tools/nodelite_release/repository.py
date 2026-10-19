@@ -1,10 +1,12 @@
 """Verify every role before an immutable static generation becomes the current mirror."""
 
+from contextlib import contextmanager
 import fcntl
 import os
 from pathlib import Path
 import re
 import secrets
+import stat
 
 from tuf.api.metadata import Metadata
 
@@ -13,6 +15,24 @@ from .metadata import load, now, release_scope, root_safe
 
 META_NAME = re.compile(r"(?:[1-9][0-9]*\.(?:root|targets|snapshot)\.json|timestamp\.json)")
 TARGET_NAME = re.compile(r"[0-9a-f]{64}\.nodelite-agent-(?:stable|testing)-(?:x86_64|aarch64)-unknown-linux-musl")
+
+
+@contextmanager
+def locked(destination, shared=False):
+    destination = Path(destination)
+    owned_directory(destination)
+    owned_directory(destination / "generations")
+    flags = os.O_RDONLY if shared else os.O_CREAT | os.O_WRONLY
+    fd = os.open(destination / ".lock", flags | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid() \
+                or stat.S_IMODE(info.st_mode) != 0o600:
+            raise ValueError("unsafe repository lock")
+        fcntl.flock(fd, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+        yield destination
+    finally:
+        os.close(fd)
 
 
 def roots(path, with_bytes=False):
@@ -97,14 +117,8 @@ def publish(roots_path, targets, snapshot, timestamp, artifact, destination):
     if not destination.exists():
         directory(destination, 0o755)
         directory(destination / "generations", 0o755)
-    owned_directory(destination)
-    owned_directory(destination / "generations")
-    lock = os.open(destination / ".lock", os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    with locked(destination):
         return publish_locked(destination, chain, documents, custom, info, payload, root_bytes, metadata_bytes)
-    finally:
-        os.close(lock)
 
 
 def publish_locked(destination, chain, documents, custom, info, payload, root_bytes, metadata_bytes):

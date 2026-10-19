@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sys
 
-from . import bundle, keys, metadata, repository
+from . import bundle, keys, maintenance, metadata, repository
 
 
 def parser():
@@ -49,6 +49,15 @@ def parser():
     pack.add_argument("--bootstrap-version", type=int)
     for name in ("repository", "updater", "units", "out"):
         pack.add_argument("--" + name, type=Path, required=True)
+    check = sub.add_parser("check")
+    check.add_argument("--destination", type=Path, required=True)
+    check.add_argument("--root-sha256", required=True)
+    collect = sub.add_parser("collect")
+    for name in ("destination", "archive"):
+        collect.add_argument("--" + name, type=Path, required=True)
+    collect.add_argument("--keep", type=int, default=3)
+    collect.add_argument("--minimum-age", type=int, default=3600)
+    collect.add_argument("--apply", action="store_true")
     return command
 
 
@@ -72,7 +81,13 @@ def main():
         result = repository.publish(args.roots, args.targets, args.snapshot, args.timestamp, args.artifact, args.destination)
     elif args.action == "pack-enrollment":
         result = bundle.pack(args.repository, args.updater, args.units, args.out, args.bootstrap_version)
+    elif args.action == "check":
+        result = maintenance.check(args.destination, args.root_sha256)
+    elif args.action == "collect":
+        result = maintenance.collect(args.destination, args.archive, args.keep, args.minimum_age, args.apply)
     print(json.dumps(result or {"created": str(args.out)}))
+    if args.action == "check" and not result["ready"]:
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

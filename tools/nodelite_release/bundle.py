@@ -4,10 +4,15 @@ from pathlib import Path
 
 from .io import LIMIT, create, digest, directory, json_bytes, read
 from .metadata import now, release_scope
-from .repository import current
+from .repository import current, locked
 
 
 def pack(repository, updater, units, output, bootstrap_version=None):
+    with locked(repository, shared=True):
+        return pack_locked(repository, updater, units, output, bootstrap_version)
+
+
+def pack_locked(repository, updater, units, output, bootstrap_version):
     generation, chain, _, custom, info = current(repository, fresh=True)
     if chain[-1].signed.expires <= now():
         raise ValueError("root expired")
