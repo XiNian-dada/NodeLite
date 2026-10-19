@@ -380,6 +380,9 @@ sudo systemctl restart nodelite-server.service
 
 ## 开发者与源码构建
 
+独立的 Linux/systemd 签名 Agent 更新器见 [nodelite-updater](nodelite-updater/README.md)。
+它默认关闭、需要管理员显式登记可信基线；当前没有生产签名仓库或自动迁移入口，不改变上面的手动升级方式。
+
 ### 本地编译与测试
 
 ```bash

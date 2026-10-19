@@ -2,6 +2,8 @@
 
 日期：2026-10-19（Asia/Singapore）。承接[第三阶段](agent-update-release-network-validation.md)。
 
+后续独立 Rust 更新器、签名下载到激活的连接见[第五阶段报告](agent-update-rust-validation.md)。
+
 ## 范围与结果
 
 仅使用云端 `compiler` 的 `~/NodeLite` 和带专用标记的 KVM 客机。

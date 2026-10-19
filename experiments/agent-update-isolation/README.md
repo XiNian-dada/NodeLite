@@ -1,9 +1,10 @@
 # Disposable Agent updater experiment
 
-This is **not a production updater or installer**. It does not modify NodeLite's
-production Agent, Server, wire protocol, official installers, release workflow or UI.
-The only workspace hook is a Linux `#[cfg(test)]`, explicitly ignored integration test.
-The Python coordinator is an experiment, not production Rust implementation.
+This directory contains **disposable test tooling, not an installer**. The earlier
+Python coordinators remain experiments; the fifth-stage suite exercises the actual
+workspace [`nodelite-updater`](../../nodelite-updater/README.md) and opt-in Agent
+health IPC. No suite deploys to production, adds a Web interface, or changes the
+wire protocol, official installers or release workflow.
 
 The permission/unit/transaction contract is in
 [`docs/agent-update-isolation-prototype.md`](../../docs/agent-update-isolation-prototype.md).
@@ -22,7 +23,8 @@ The permission/unit/transaction contract is in
   enters cloud-init. Guest fixture signing keys and config are generated inside the VM.
 - Guest SSH explicitly disables agent forwarding and configured SSH tunnels.
 - `setup_guest.py` refuses to run without the guest marker and QEMU/KVM detection.
-- Every guest user, service and installed path uses the `nlup-lab` namespace.
+- Earlier suites use the `nlup-lab` namespace. The Rust suite installs the real fixed
+  `nodelite-*` users, paths and units **only inside the marked disposable guest**.
 - `vm.py stop` and `powercut` validate the QEMU PID's command line before SIGKILL;
   they never reboot or stop the compiler host.
 
@@ -163,7 +165,8 @@ the real-suite drop-ins.
   production resource budget or final event/deadline implementation.
 - The installed coordinator still uses the lab packet format, not TUF. A separate
   reference-TUF HTTP experiment is described below; it is not wired to activation.
-  Trusted-clock recovery and production health IPC remain unimplemented.
+  Trusted-clock recovery is unimplemented; the later Rust suite uses opt-in Agent
+  health IPC rather than this earlier coordinator's observer.
 - The full stop barrier avoids concurrent old/new formal Agent writers. These
   selected credential windows are not proof of host-wide intrusion recovery.
 - Power cuts are SIGKILL of QEMU at selected durable checkpoints, not arbitrary
@@ -304,3 +307,39 @@ timestamp parsing. Results are incomplete until
 `official-cold-evidence.json` has `complete: true`, exactly nine cases, installed
 code/unit/binary hashes, and successful lab-service cleanup. `vm.py stop` then stops
 only QEMU. No production host is rebooted or updated.
+
+## Actual Rust updater: signed download through activation
+
+The fifth-stage suite uses the production Rust CLI and its static systemd units,
+not a Python implementation of the state machine. Provision the marked guest and
+the earlier official-release assets/Python dependencies first; its loopback server
+is the actual v3.0.4 CLI. Synchronize only project source inputs into `~/NodeLite`,
+never credentials or another project's files. From the compiler project directory:
+
+```sh
+python3 experiments/agent-update-isolation/vm.py start
+output/agent-update-prototype/python-env/bin/python experiments/agent-update-isolation/rust_matrix.py
+python3 experiments/agent-update-isolation/vm.py stop
+```
+
+The driver builds actual musl Agent binaries (`rust-old`/`rust-new`, not published
+tags), a native GNU updater, and a separate `lab-faults` updater. Only the last
+binary can stop at lab checkpoints; never release or deploy it. All signing keys
+are generated in compiler process memory. Only public signed repositories enter
+the guest. Re-enrollment archives previous **test** state; it is not a production
+recovery procedure. It disables the earlier observer/Agent units to prevent two
+test sessions sharing one node identity during cold boots.
+
+Exactly 27 scenarios must pass: real authenticated activation and token-preserving
+rollback, permissions, signature/root-threshold/expiry/scope/transport rejection,
+persistent version floors and root revocation, corrupt state, three real storage
+exhaustion cases, and seven QEMU power cuts. Results remain incomplete unless the
+source inputs match their pre-build snapshot. `rust-matrix-evidence.json` records
+those hashes, distinct normal/fault binaries and the exact cases. The driver stops
+guest services; the final `vm.py stop` is still required to stop QEMU.
+
+The suite's root provisioning, fault selectors, test drop-ins, mirror and failure
+ELF are not production components. Existing v3.0.4 Agents lack this new health IPC;
+production opt-in would first require an explicit manual migration and independently
+bootstrapped signing keys/feed. See the
+[fifth-stage results and limits](../../docs/agent-update-rust-validation.md).
