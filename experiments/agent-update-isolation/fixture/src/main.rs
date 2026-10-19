@@ -40,6 +40,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("missing fixture identity")?
         + marker.len();
     let identity: Identity = serde_json::from_slice(&executable[offset..])?;
+    if std::env::args().any(|arg| arg == "--check-credentials") {
+        if identity.mode == "preflight_fail" {
+            return Err("deliberate fixture preflight failure".into());
+        }
+        return Ok(());
+    }
     if std::env::args().any(|arg| arg == "--preflight") {
         if OpenOptions::new()
             .write(true)
@@ -56,6 +62,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if identity.mode == "crash" {
         std::process::exit(23);
+    }
+    if identity.mode == "hang" {
+        loop {
+            thread::sleep(Duration::from_millis(150));
+        }
     }
     let digest = format!("{:x}", Sha256::digest(&executable));
     loop {

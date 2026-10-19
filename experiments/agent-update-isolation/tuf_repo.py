@@ -16,10 +16,11 @@ def expiry(seconds=3600):
 
 
 class Repository:
-    def __init__(self, directory):
+    def __init__(self, directory, target=TARGET):
         self.directory = directory
+        self.target = target
         (directory / "metadata").mkdir(parents=True)
-        (directory / Path("targets") / Path(TARGET).parent).mkdir(parents=True)
+        (directory / Path("targets") / Path(target).parent).mkdir(parents=True)
         self.keys = {role: [CryptoSigner.generate_ed25519() for _ in range(count)]
                      for role, count in (("root", 3), ("targets", 2), ("snapshot", 1), ("timestamp", 1))}
         root = Root(expires=expiry(86400), consistent_snapshot=True)
@@ -43,11 +44,11 @@ class Repository:
 
     def publish(self, sequence, payload, *, version=None, target_keys=None, expires=3600, custom=None):
         version = version or sequence
-        info = TargetFile.from_data(TARGET, payload)
+        info = TargetFile.from_data(self.target, payload)
         info.unrecognized_fields["custom"] = custom or {
             "product": "nodelite-lab", "component": "agent", "channel": "stable",
             "target": "x86_64-unknown-linux-musl", "release_sequence": sequence}
-        self.targets = Metadata(Targets(version=version, expires=expiry(expires), targets={TARGET: info}))
+        self.targets = Metadata(Targets(version=version, expires=expiry(expires), targets={self.target: info}))
         self.sign(self.targets, target_keys or self.keys["targets"])
         target_bytes = self.targets.to_bytes()
         snapshot = Metadata(Snapshot(version=version, expires=expiry(expires), meta={
@@ -60,7 +61,8 @@ class Repository:
         self.write(f"{version}.snapshot.json", snapshot)
         self.write("timestamp.json", self.timestamp)
         prefix = hashlib.sha256(payload).hexdigest()
-        path = self.directory / "targets" / Path(TARGET).parent / (prefix + ".agent")
+        target = Path(self.target)
+        path = self.directory / "targets" / target.parent / (prefix + "." + target.name)
         path.write_bytes(payload)
         return "/targets/" + str(path.relative_to(self.directory / "targets"))
 
