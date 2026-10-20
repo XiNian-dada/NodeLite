@@ -28,7 +28,8 @@ NodeLite 是一个轻量级 Rust 监控系统，采用 Server-Agent 架构。
 NodeLite/
 ├── nodelite-proto/    # 共享协议、消息类型、配置解析与校验
 ├── nodelite-agent/    # Agent 端采集、会话、配置读写与上报
-└── nodelite-server/   # Server 端接入、存储、告警、审计、API 与 Web UI
+├── nodelite-server/   # Server 端接入、存储、告警、审计、API 与 Web UI
+└── nodelite-updater/  # 独立、显式启用的 Linux/systemd 签名 Agent 更新器
 ```
 
 ### 数据流

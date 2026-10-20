@@ -1,0 +1,32 @@
+[package]
+name = "nodelite-updater"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+lab-faults = []
+
+[dependencies]
+nodelite-proto = { path = "../nodelite-proto", default-features = false }
+async-trait = "0.1"
+clap.workspace = true
+futures.workspace = true
+getrandom.workspace = true
+hex.workspace = true
+libc.workspace = true
+reqwest = { workspace = true, features = ["stream"] }
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+thiserror.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "time"] }
+toml.workspace = true
+tough = { version = "=0.24.0", default-features = false }
+url = { workspace = true, features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3"

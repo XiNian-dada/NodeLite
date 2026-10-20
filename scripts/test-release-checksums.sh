@@ -16,6 +16,7 @@ cp "$SCRIPT_DIR/install-server.sh" "$ASSETS_DIR/release-scripts/install-server.s
 cp "$SCRIPT_DIR/install-server-config.sh" "$ASSETS_DIR/release-scripts/install-server-config.sh"
 cp "$SCRIPT_DIR/install-server-upgrade.sh" "$ASSETS_DIR/release-scripts/install-server-upgrade.sh"
 cp "$SCRIPT_DIR/install-agent.sh" "$ASSETS_DIR/release-scripts/install-agent.sh"
+cp "$SCRIPT_DIR/install-agent-signed.sh" "$ASSETS_DIR/release-scripts/install-agent-signed.sh"
 printf '%064d  release-assets/release-test/nodelite-server-test\n' 0 \
   >"$ASSETS_DIR/release-test/SHA256SUMS-test.txt"
 cp "$SCRIPT_DIR/../THIRD_PARTY_NOTICES.md" "$ASSETS_DIR/release-sbom/THIRD_PARTY_NOTICES.md"
@@ -39,7 +40,7 @@ grep -Fx "$(printf '%064d' 0)  release-assets/release-test/nodelite-server-test"
 grep -Fx "$notice_sha256  release-assets/release-sbom/THIRD_PARTY_NOTICES.md" \
   "$ASSETS_DIR/SHA256SUMS.txt" >/dev/null
 
-if [ "$(grep -Ec '^[0-9a-f]{64}  release-assets/release-scripts/install-(server|agent|server-config|server-upgrade)\.sh$' "$ASSETS_DIR/SHA256SUMS.txt")" -ne 4 ]; then
+if [ "$(grep -Ec '^[0-9a-f]{64}  release-assets/release-scripts/install-(server|agent|server-config|server-upgrade|agent-signed)\.sh$' "$ASSETS_DIR/SHA256SUMS.txt")" -ne 5 ]; then
   printf '%s\n' "release installer checksum entries used an unexpected path or format" >&2
   exit 1
 fi

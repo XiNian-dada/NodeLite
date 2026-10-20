@@ -23,6 +23,8 @@ getrandom.workspace = true
 libc.workspace = true
 rustls.workspace = true
 serde_json.workspace = true
+serde.workspace = true
+sha2 = "0.10"
 tokio = { workspace = true, features = ["rt", "macros", "net", "time", "sync", "signal", "fs", "process"] }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 toml_edit.workspace = true

@@ -277,12 +277,16 @@ async fn send_metrics(
     compressed: bool,
 ) -> Result<()> {
     let snapshot = collect_snapshot_blocking(collector, &config.ignored_filesystems).await?;
+    let collected_at_ms = snapshot.collected_at.timestamp_millis().max(0) as u64;
     if compressed {
         let frame = nodelite_proto::compression::encode_metrics(&MetricsMessage { snapshot })?;
         sender.send(Message::Binary(frame.into())).await?;
+        crate::update_health::publish(collected_at_ms).await;
         return Ok(());
     }
-    send_wire_message(sender, &WireMessage::Metrics(MetricsMessage { snapshot })).await
+    send_wire_message(sender, &WireMessage::Metrics(MetricsMessage { snapshot })).await?;
+    crate::update_health::publish(collected_at_ms).await;
+    Ok(())
 }
 
 async fn send_wire_message(sender: &mut AgentWsSender, message: &WireMessage) -> Result<()> {

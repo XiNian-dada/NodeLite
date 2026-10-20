@@ -1,0 +1,12 @@
+[Unit]
+DefaultDependencies=no
+After=nodelite-updater-boot.service
+Requires=nodelite-updater-boot.service
+Before=shutdown.target
+Conflicts=shutdown.target
+
+[Path]
+PathExists=/var/lib/nodelite-updater/bridge/restart
+
+[Install]
+WantedBy=multi-user.target

@@ -12,6 +12,7 @@ pub mod model;
 /// Server 与 Agent 传输安全检查共用的 URL 与主机名辅助工具。
 pub mod netutil;
 pub mod text;
+pub mod update_health;
 pub mod validation;
 
 pub use config::{

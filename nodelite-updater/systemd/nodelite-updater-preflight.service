@@ -1,0 +1,16 @@
+[Unit]
+Description=Fixed NodeLite read-only preflight action
+StartLimitIntervalSec=30
+StartLimitBurst=10
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rm -f -- /var/lib/nodelite-updater/bridge/preflight
+ExecStart=-/usr/bin/systemctl reset-failed nodelite-agent-preflight.service
+ExecStart=/usr/bin/systemctl --no-block restart nodelite-agent-preflight.service
+TimeoutStartSec=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/nodelite-updater/bridge
+ProtectHome=yes
+PrivateTmp=yes

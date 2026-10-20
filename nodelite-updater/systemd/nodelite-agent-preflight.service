@@ -1,0 +1,23 @@
+[Unit]
+Description=NodeLite candidate read-only credential preflight
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=nodelite-agent
+Group=nodelite-read
+SupplementaryGroups=nodelite-agent
+ExecStart=/var/lib/nodelite-updater/code/candidate --check-credentials --config /var/lib/nodelite-agent/agent.toml
+Environment=NODELITE_AGENT_TRAFFIC_CONTROL=0 NODELITE_UPDATE_HEALTH=1
+TimeoutStartSec=30
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadOnlyPaths=/var/lib/nodelite-agent
+ProtectHome=yes
+PrivateTmp=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

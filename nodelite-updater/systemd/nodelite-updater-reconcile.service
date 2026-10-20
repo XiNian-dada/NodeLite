@@ -1,0 +1,25 @@
+[Unit]
+Description=NodeLite bounded update transaction recovery
+After=nodelite-updater-boot.service
+Requires=nodelite-updater-boot.service
+ConditionPathExists=/var/lib/nodelite-updater/private/pending
+StartLimitIntervalSec=30
+StartLimitBurst=50
+
+[Service]
+Type=oneshot
+User=nodelite-updater
+Group=nodelite-read
+SupplementaryGroups=nodelite-updater
+ExecStart=/usr/local/bin/nodelite-updater reconcile
+UMask=0077
+TimeoutStartSec=15
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/nodelite-updater
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes

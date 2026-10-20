@@ -40,6 +40,9 @@ pub async fn run() -> Result<()> {
 
     let cli = Cli::parse();
     let config = load_agent_config(&cli.config).await?;
+    if crate::update_health::enabled() {
+        crate::update_health::validate_report_interval(config.report_interval_secs)?;
+    }
     let mut collector = new_collector();
     let identity = collect_identity_blocking(
         &mut collector,

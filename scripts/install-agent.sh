@@ -1,13 +1,6 @@
 #!/bin/sh
+# shellcheck disable=SC2015
 # NodeLite Agent 一键安装 / 升级脚本。
-#
-# 主要流程:
-#   1. 解析命令行参数与环境变量,确认目标架构与下载源。
-#   2. 创建专用服务用户、目录,并按需调用引导接口拉取 agent.toml。
-#   3. 校验二进制 SHA-256,落盘到 /usr/local/bin,并写入 systemd unit /
-#      launchd plist。
-#   4. 启动 / 重启 agent 服务。
-#
 # 该脚本设计为可被 `curl ... | sh` 直接执行,所以全部用 POSIX shell 实现,
 # 不依赖 bash 特性。所有失败都通过 `fail` 输出统一前缀并以非零状态退出。
 
@@ -15,18 +8,15 @@ set -eu
 # 默认 umask:确保新建的临时文件不会泄漏给同主机其它用户。
 umask 077
 
-# 统一的错误输出函数,前缀方便日志检索。
 fail() {
   printf '%s\n' "install-agent: $*" >&2
   exit 1
 }
 
-# 检查依赖命令是否存在,缺失则直接退出。
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
-# 对参数进行 POSIX shell 安全的单引号转义,适合嵌入到 systemd 单元等场景。
 shell_quote() {
   printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\"'\"'/g")"
 }
@@ -40,16 +30,15 @@ xml_escape() {
     -e "s/'/\&apos;/g"
 }
 
-# ---- 命令行 / 环境变量入参 ----
 BOOTSTRAP_URL=""
 INSTALL_TOKEN="${NODELITE_AGENT_INSTALL_TOKEN:-}"
 INSTALL_TOKEN_FILE="${NODELITE_AGENT_INSTALL_TOKEN_FILE:-}"
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/nodelite"
 MODE="${NODELITE_AGENT_MODE:-auto}"
-# VERSION 环境变量:默认只安装正式版本。如需 alpha/beta/RC 等预发布版本,
-# 必须显式设置 VERSION=v2.3.0-alpha.1,否则安装脚本会拒绝。
-# 留空时自动使用 GitHub 最新正式版。
+SIGNED_UPDATES=0
+SIGNED_STAGE=""
+# Pin binaries, helpers and enrollment assets to the same release.
 VERSION="${NODELITE_AGENT_VERSION:-}"
 if [ -n "$VERSION" ]; then
   BASE_URL="${NODELITE_AGENT_BASE_URL:-https://github.com/XiNian-dada/NodeLite/releases/download/${VERSION}}"
@@ -86,10 +75,12 @@ CHECKSUMS_TMP=""
 
 # 退出时清理临时文件,确保不会残留含 token 的内容。
 cleanup() {
+  [ -z "$SIGNED_STAGE" ] || rm -rf -- "$SIGNED_STAGE"
   [ -n "$TMP_PATH" ] && rm -f "$TMP_PATH"
   [ -n "$BOOTSTRAP_TMP" ] && rm -f "$BOOTSTRAP_TMP"
   [ -n "$CURL_AUTH_CONFIG" ] && rm -f "$CURL_AUTH_CONFIG"
   [ -n "$CHECKSUMS_TMP" ] && rm -f "$CHECKSUMS_TMP"
+  return 0
 }
 
 trap cleanup EXIT HUP INT TERM
@@ -107,7 +98,6 @@ calculate_sha256() {
   fail "missing required command: sha256sum or shasum"
 }
 
-# 解析 nologin / false 之类的"禁用登录 shell",供创建服务用户时使用。
 resolve_nologin_shell() {
   if command -v nologin >/dev/null 2>&1; then
     command -v nologin
@@ -132,7 +122,6 @@ resolve_nologin_shell() {
   fail "unable to find a nologin shell for the service user"
 }
 
-# 确保系统中存在用于运行 Agent 的专用账户;不存在则创建。
 ensure_service_account() {
   if id -u "$SERVICE_USER" >/dev/null 2>&1; then
     return 0
@@ -170,7 +159,6 @@ prompt_install_token() {
   printf '\n' >/dev/tty
 }
 
-# 按优先级加载安装令牌:文件 > 环境变量 > 交互输入。
 load_install_token() {
   if [ -n "$INSTALL_TOKEN_FILE" ]; then
     [ -r "$INSTALL_TOKEN_FILE" ] || fail "install token file is not readable: $INSTALL_TOKEN_FILE"
@@ -190,7 +178,6 @@ EOF
   chmod 0600 "$CURL_AUTH_CONFIG"
 }
 
-# 拉取引导接口返回的 agent.toml,并做简单的内容自检。
 fetch_bootstrap_config() {
   [ -n "$BOOTSTRAP_URL" ] || fail "missing --bootstrap-url"
   load_install_token
@@ -223,17 +210,15 @@ fetch_expected_sha256() {
       path = $2
       sub(/^\*/, "", path)
       count = split(path, parts, "/")
-      if (parts[count] == artifact) {
-        print $1
-        exit
-      }
+      if (parts[count] == artifact) { value=$1; matches++ }
     }
+    END { if (matches == 1) print value }
   ' "$CHECKSUMS_TMP")"
 
-  [ -n "$EXPECTED_SHA256" ] || fail "missing checksum entry for $artifact_name"
+  [ "${#EXPECTED_SHA256}" -eq 64 ] && ! printf '%s' "$EXPECTED_SHA256" | grep -q '[^0-9a-f]' ||
+    fail "missing, duplicate or invalid checksum entry for $artifact_name"
 }
 
-# 检查版本号是否是正式版（不含任何 SemVer prerelease 后缀）。
 is_stable_version() {
   version_value="$1"
   version_value="${version_value#v}"
@@ -362,6 +347,13 @@ check_saved_credentials() {
   chmod 0700 "$TMP_PATH"
   "$TMP_PATH" --config "$check_config" --check-credentials ||
     fail "saved Agent credentials could not be verified; old binary and running service were preserved. Upgrade the server first; if credentials are stale, reissue a bootstrap configuration."
+}
+
+refuse_signed_updater_override() {
+  if [ "$SERVICE_KIND" = systemd ] && [ -f "$UNIT_PATH" ] &&
+     grep -Eq '^ExecStart=/var/lib/nodelite-updater/code/active([[:space:]]|$)' "$UNIT_PATH"; then
+    fail 'This Agent uses the signed updater; use nodelite-updater or the explicit local recovery procedure instead of the legacy installer.'
+  fi
 }
 
 # 自动更新支持已移除。升级时顺手清理旧版本曾经写入的 timer / service,
@@ -567,6 +559,10 @@ while [ "$#" -gt 0 ]; do
       TRAFFIC_CONTROL=0
       shift
       ;;
+    --enable-signed-updates)
+      SIGNED_UPDATES=1
+      shift
+      ;;
     --mode)
       [ "$#" -ge 2 ] || fail "--mode requires a value"
       MODE="$2"
@@ -603,12 +599,6 @@ Usage:
   sh install-agent.sh \
     --bootstrap-url https://monitor.example.com/install/bootstrap
 
-Custom binary URL:
-  sh install-agent.sh \
-    --bootstrap-url https://monitor.example.com/install/bootstrap \
-    --binary-url https://your-host/releases/agent-linux-x86_64 \
-    --sha256-x86_64 <64-character-sha256>
-
 Optional:
   --install-token <one-time-token>
   --install-token-file <path>
@@ -617,6 +607,7 @@ Optional:
   --state-dir <dir>
   --enable-traffic-control
   --disable-traffic-control
+  --enable-signed-updates (optional Linux/systemd signed migration)
   --mode <install|upgrade|auto>
   --base-url <release-base-url>
   --checksums-url <release-checksums-url>
@@ -628,9 +619,8 @@ Notes:
   Linux keeps its writable agent.toml in /var/lib/nodelite-agent (0700/0600).
   --state-dir overrides that directory. Existing --config-dir/agent.toml is
   imported once; subsequent upgrades preserve the active state's credentials.
-  This script no longer installs unattended auto-update timers. Use
-  --mode upgrade manually, or trigger an upgrade from the authenticated
-  dashboard after checking the target release.
+  Default: manual upgrades. --enable-signed-updates opts into signed updates.
+  Once enrolled, --mode upgrade uses the local signed updater automatically.
   macOS uses an experimental launchd path and currently keeps the agent
   running as root instead of provisioning a dedicated service account.
 EOF
@@ -658,6 +648,18 @@ need_cmd sed
 need_cmd chown
 need_cmd chmod
 configure_platform
+case "$MODE" in auto|install|upgrade) ;; *) fail '--mode must be install, upgrade or auto' ;; esac
+if [ "$SERVICE_KIND" = systemd ] && [ -e /etc/nodelite-updater/policy.toml ] &&
+    grep -Eq '"phase"[[:space:]]*:[[:space:]]*"committed"' /var/lib/nodelite-updater-migration/journal.json &&
+    grep -Eq '^ExecStart=/var/lib/nodelite-updater/code/active([[:space:]]|$)' "$UNIT_PATH"; then
+  [ "$MODE" != install ] && [ -z "$BOOTSTRAP_URL$BINARY_URL$SHA256_X86_64$SHA256_AARCH64" ] &&
+    [ "$INSTALL_DIR" = /usr/local/bin ] && [ "$STATE_DIR" = /var/lib/nodelite-agent ] &&
+    [ "$CONFIG_DIR" = /etc/nodelite ] && [ "$TRAFFIC_CONTROL" = auto ] || fail 'enrolled Agent uses its fixed local policy; installer overrides are not allowed'
+  /usr/bin/python3 -I /usr/local/lib/nodelite-operator/recover.py --upgrade || fail 'signed update failed; inspect local updater logs'
+  exit 0
+fi
+[ ! -e /etc/nodelite-updater/policy.toml ] || [ "$SIGNED_UPDATES" -eq 1 ] || fail 'migration pending; rerun with --enable-signed-updates to recover/resume'
+[ "$SIGNED_UPDATES" -eq 1 ] || refuse_signed_updater_override
 configure_traffic_control
 
 if [ "$SERVICE_KIND" = "systemd" ]; then
@@ -724,13 +726,35 @@ if [ "$MODE" = "install" ] && [ -z "$BOOTSTRAP_URL" ]; then
   fail "install mode requires --bootstrap-url"
 fi
 
+if [ "$SIGNED_UPDATES" -eq 1 ]; then
+  for source_url in "$BASE_URL" "${CHECKSUMS_URL:-$BASE_URL/SHA256SUMS.txt}"; do
+    printf '%s\n' "$source_url" | grep -Eq '^(https://[^/@[:space:]]+|http://(127[.]0[.]0[.]1|\[::1\]):[0-9]+)(/[^[:space:]]*)?$' ||
+      fail 'signed enrollment requires HTTPS (or loopback for isolated tests)'
+  done
+  CHECKSUMS_TMP="$(mktemp)"
+  TMP_PATH="$(mktemp)"
+  EXPECTED_SHA256=''
+  fetch_expected_sha256 install-agent-signed.sh
+  curl -q -fsSL --proto-redir '=https' --connect-timeout 15 --max-time 60 --max-filesize 1048576 "$BASE_URL/install-agent-signed.sh" -o "$TMP_PATH"
+  [ "$(calculate_sha256 "$TMP_PATH")" = "$EXPECTED_SHA256" ] || fail 'signed installer helper checksum mismatch'
+  # shellcheck source=scripts/install-agent-signed.sh
+  . "$TMP_PATH"
+  rm -f "$TMP_PATH"
+  TMP_PATH=''
+  prepare_signed_update
+  if [ "$existing_install" -eq 1 ]; then
+    finish_signed_update
+    exit 0
+  fi
+fi
+
 prepare_service_account
 prepare_directories
 
 TMP_PATH="$(mktemp "$INSTALL_DIR/nodelite-agent.XXXXXX")"
 BOOTSTRAP_TMP="$(mktemp "$STATE_DIR/agent.toml.XXXXXX")"
 CURL_AUTH_CONFIG="$(mktemp "$STATE_DIR/install-curl.XXXXXX")"
-CHECKSUMS_TMP="$(mktemp "$STATE_DIR/install-sha256.XXXXXX")"
+[ -n "$CHECKSUMS_TMP" ] || CHECKSUMS_TMP="$(mktemp "$STATE_DIR/install-sha256.XXXXXX")"
 
 config_refreshed=0
 if [ "$MODE" = "install" ] || [ -n "$BOOTSTRAP_URL" ]; then
@@ -740,12 +764,15 @@ elif [ ! -f "$CONFIG_PATH" ] && [ ! -f "$LEGACY_CONFIG_PATH" ]; then
   fail "upgrade mode requires an existing $CONFIG_PATH or a bootstrap URL to recreate it"
 fi
 
-fetch_expected_sha256 "$ARTIFACT_NAME"
-
-printf '%s\n' "Downloading $DOWNLOAD_URL"
-curl -fsSL "$DOWNLOAD_URL" -o "$TMP_PATH" || fail "failed to download agent binary"
-ACTUAL_SHA256="$(calculate_sha256 "$TMP_PATH")"
-[ "$ACTUAL_SHA256" = "$EXPECTED_SHA256" ] || fail "downloaded agent checksum mismatch"
+if [ "$SIGNED_UPDATES" -eq 1 ]; then
+  install -m 0700 "$SIGNED_STAGE/nodelite-agent" "$TMP_PATH"
+else
+  fetch_expected_sha256 "$ARTIFACT_NAME"
+  printf '%s\n' "Downloading $DOWNLOAD_URL"
+  curl -fsSL "$DOWNLOAD_URL" -o "$TMP_PATH" || fail "failed to download agent binary"
+  ACTUAL_SHA256="$(calculate_sha256 "$TMP_PATH")"
+  [ "$ACTUAL_SHA256" = "$EXPECTED_SHA256" ] || fail "downloaded agent checksum mismatch"
+fi
 
 check_saved_credentials
 if [ "$SERVICE_KIND" = "systemd" ] && systemctl is-active --quiet nodelite-agent.service; then
@@ -755,6 +782,7 @@ install -o root -g root -m 0755 "$TMP_PATH" "$BIN_PATH"
 install_agent_config
 write_service_definition
 restart_service
+[ "$SIGNED_UPDATES" -eq 0 ] || finish_signed_update
 
 if [ "$MODE" = "upgrade" ]; then
   printf '%s\n' "NodeLite agent upgraded and restarted."
