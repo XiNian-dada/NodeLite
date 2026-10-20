@@ -1,6 +1,7 @@
 //! Configuration coverage runs for standalone Agent builds as well as the server feature.
 
 mod agent;
+mod errors;
 #[cfg(feature = "server-config")]
 mod section_defaults;
 #[cfg(feature = "server-config")]
