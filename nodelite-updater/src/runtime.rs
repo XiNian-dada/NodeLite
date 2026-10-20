@@ -49,6 +49,7 @@ enum Action {
 /// Runs only as the dedicated updater UID after explicit local provisioning.
 pub async fn run() -> Result<()> {
     // The reference library's working files must remain private even for manual CLI runs.
+    // SAFETY: umask takes a scalar; the CLI intentionally sets process-wide creation policy here.
     unsafe {
         libc::umask(0o077);
     }

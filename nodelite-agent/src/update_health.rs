@@ -1,5 +1,9 @@
 //! Evidence is opt-in and published only after durable configuration load and authenticated sampling.
 
+use std::sync::OnceLock;
+
+static ENABLED: OnceLock<bool> = OnceLock::new();
+
 #[derive(Debug, thiserror::Error)]
 #[error(
     "signed updates require agent.report_interval_secs between 1 and 10 seconds; use manual upgrades for longer intervals"
@@ -7,7 +11,10 @@
 pub(crate) struct ReportIntervalError;
 
 pub(crate) fn enabled() -> bool {
-    cfg!(target_os = "linux") && std::env::var("NODELITE_UPDATE_HEALTH").as_deref() == Ok("1")
+    // The fixed systemd environment cannot change during an Agent invocation.
+    *ENABLED.get_or_init(|| {
+        cfg!(target_os = "linux") && std::env::var("NODELITE_UPDATE_HEALTH").as_deref() == Ok("1")
+    })
 }
 
 pub(crate) fn validate_report_interval(seconds: u64) -> Result<(), ReportIntervalError> {
@@ -40,7 +47,7 @@ mod linux {
     }
 
     fn initialize() -> Option<Publisher> {
-        if std::env::var("NODELITE_UPDATE_HEALTH").as_deref() != Ok("1") {
+        if !super::enabled() {
             return None;
         }
         let invocation = std::env::var("INVOCATION_ID").ok()?;
@@ -77,6 +84,7 @@ mod linux {
             tv_nsec: 0,
         };
         // CLOCK_BOOTTIME is shared across these local UIDs and includes suspended time.
+        // SAFETY: value is a live writable timespec and CLOCK_BOOTTIME is a valid clock ID.
         if unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut value) } != 0 {
             return Err(std::io::Error::last_os_error());
         }
@@ -126,8 +134,8 @@ mod linux {
             };
             write(Path::new(STATUS), &serde_json::to_vec(&health)?)
         })();
-        if result.is_err() {
-            tracing::warn!("could not publish local update health evidence");
+        if let Err(error) = result {
+            tracing::warn!(%error, "could not publish local update health evidence");
         }
     }
 

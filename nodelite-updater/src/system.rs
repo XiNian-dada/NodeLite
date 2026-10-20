@@ -89,6 +89,7 @@ pub(crate) fn boottime_ms() -> Result<u64> {
         tv_nsec: 0,
     };
     // Absolute boot time is comparable between updater invocations, unlike Instant values.
+    // SAFETY: time is a live writable timespec and CLOCK_BOOTTIME is a valid clock ID.
     if unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut time) } != 0 {
         return Err(std::io::Error::last_os_error().into());
     }
@@ -178,8 +179,8 @@ pub(crate) fn manual(store: &Store, reason: &'static str) -> Result<()> {
 pub(crate) fn paths_safe(store: &Store) -> Result<()> {
     use std::os::unix::fs::MetadataExt;
     // Disk ownership must match the kernel identity, not an environment variable.
-    let uid = unsafe { libc::geteuid() };
-    let gid = unsafe { libc::getegid() };
+    // SAFETY: both identity queries return scalars without caller-provided memory or preconditions.
+    let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
     for path in [
         Path::new("/var"),
         Path::new("/var/lib"),

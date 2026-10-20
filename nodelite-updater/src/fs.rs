@@ -105,7 +105,7 @@ impl Lock {
         if !info.is_file() || info.nlink() != 1 {
             return Err(UpdateError::Recovery("unsafe transaction lock"));
         }
-        // The owned file descriptor keeps the process-wide transaction lock alive.
+        // SAFETY: file owns a live FD for the call and its lifetime retains the advisory lock.
         if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
             let error = std::io::Error::last_os_error();
             return Err(if error.kind() == std::io::ErrorKind::WouldBlock {
@@ -119,7 +119,7 @@ impl Lock {
 }
 impl Drop for Lock {
     fn drop(&mut self) {
-        // Unlock explicitly before the descriptor closes, including early error paths.
+        // SAFETY: the owned file is still open here; unlock precedes the descriptor's drop.
         unsafe {
             libc::flock(self.0.as_raw_fd(), libc::LOCK_UN);
         }
