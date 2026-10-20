@@ -9,6 +9,7 @@ server_installer="$assets_name/release-scripts/install-server.sh"
 agent_installer="$assets_name/release-scripts/install-agent.sh"
 server_config="$assets_name/release-scripts/install-server-config.sh"
 server_upgrade="$assets_name/release-scripts/install-server-upgrade.sh"
+agent_signed="$assets_name/release-scripts/install-agent-signed.sh"
 script_checksums="$assets_name/SHA256SUMS-scripts.txt"
 merged_checksums="$assets_name/SHA256SUMS.txt"
 
@@ -31,7 +32,8 @@ merged_checksums="$assets_name/SHA256SUMS.txt"
     printf '%s\n' "missing release asset: $server_upgrade" >&2
     exit 1
   }
-  sha256sum "$server_installer" "$agent_installer" "$server_config" "$server_upgrade" >"$script_checksums"
+  [ -f "$agent_signed" ] || { printf '%s\n' "missing release asset: $agent_signed" >&2; exit 1; }
+  sha256sum "$server_installer" "$agent_installer" "$server_config" "$server_upgrade" "$agent_signed" >"$script_checksums"
   find "$assets_name" -type f -name 'SHA256SUMS-*.txt' | sort | while IFS= read -r checksum_file; do
     cat "$checksum_file"
   done >"$merged_checksums"
