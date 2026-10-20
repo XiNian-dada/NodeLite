@@ -1,7 +1,11 @@
 """Fingerprint and path regressions without privileged commands or host installation."""
 
 from pathlib import Path
+import io
 import secrets
+import subprocess
+import sys
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -80,6 +84,21 @@ class Bundles(unittest.TestCase):
         with self.assertRaises(ValueError):
             installer.validate(self.path, self.manifest["target"])
 
+    def test_installer_resume_waits_for_legacy_restart_without_resetting_trust(self):
+        create(self.path / "journal.json", b"{}")
+        with patch.object(installer, "MIGRATION", self.path), \
+                patch.object(installer, "validate", return_value=("verified",)) as validate, \
+                patch.object(installer.transaction, "recover") as recover, \
+                patch.object(installer.transaction, "resume", return_value={"migrated": True}) as resume, \
+                patch.object(installer.transaction, "apply") as apply, \
+                patch.object(installer, "systemctl") as systemctl:
+            self.assertTrue(installer.enroll(self.path, "fixed-target")["migrated"])
+            validate.assert_called_once_with(self.path, "fixed-target")
+            recover.assert_called_once_with()
+            systemctl.assert_called_once_with("start", "nodelite-agent.service")
+            resume.assert_called_once_with("verified")
+            apply.assert_not_called()
+
     def test_installer_waits_for_actual_commit_and_reports_rollback(self):
         self.assertFalse(installer.outcome(None))
         for phase in ("prepared", "stopping", "trial", "rollback_intent"):
@@ -98,6 +117,30 @@ class Bundles(unittest.TestCase):
             self.assertEqual(installer.upgrade()["installed_sequence"], 2)
             command.assert_called_once_with("/usr/bin/systemctl", "start", "nodelite-updater-apply.service", timeout=100)
             self.assertEqual(audit.call_count, 2)
+
+    def test_bootstrap_extractor_rejects_links_duplicates_traversal_and_oversize(self):
+        helper = Path(__file__).resolve().parents[2] / "scripts/install-agent-signed.sh"
+        script = helper.read_text().split('<<\'PY\'\n', 1)[1].split('\nPY\n', 1)[0]
+        for name, kind, size in (("../../escape", tarfile.REGTYPE, 0),
+                                 ("root.json", tarfile.SYMTYPE, 0),
+                                 ("root.json", tarfile.LNKTYPE, 0),
+                                 ("root.json", tarfile.REGTYPE, 262145),
+                                 ("tools/nodelite_release/keys.py", tarfile.REGTYPE, 0)):
+            with tempfile.TemporaryDirectory() as temporary:
+                archive_path = Path(temporary) / "package.tar.gz"
+                with tarfile.open(archive_path, "w:gz") as archive:
+                    entry = tarfile.TarInfo(name)
+                    entry.type, entry.size, entry.linkname = kind, size, "outside"
+                    archive.addfile(entry, io.BytesIO(b"x" * size))
+                result = subprocess.run([sys.executable, "-I", "-c", script, temporary], capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(list(Path(temporary).iterdir()), [archive_path])
+        with tempfile.TemporaryDirectory() as temporary:
+            with tarfile.open(Path(temporary) / "package.tar.gz", "w:gz") as archive:
+                for _ in range(2):
+                    archive.addfile(tarfile.TarInfo("root.json"), io.BytesIO())
+            result = subprocess.run([sys.executable, "-I", "-c", script, temporary], capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
 
     def test_lab_fault_binary_cannot_be_mistaken_for_normal_updater(self):
         path = self.path / "nodelite-updater"

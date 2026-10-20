@@ -5,7 +5,7 @@ import time
 from tools.nodelite_release.io import decode, read
 
 from . import bundle, transaction
-from .common import MIGRATION, UPDATER, command
+from .common import AGENT, MIGRATION, UPDATER, command, systemctl
 
 
 def validate(path, target):
@@ -25,6 +25,7 @@ def enroll(path, target):
     args = validate(path, target)
     if (MIGRATION / "journal.json").exists():
         transaction.recover()
+        systemctl("start", AGENT)
         return transaction.resume(*args)
     return transaction.apply(*args)
 

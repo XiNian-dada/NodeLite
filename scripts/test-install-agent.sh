@@ -4,6 +4,11 @@
 set -eu
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 INSTALLER="$SCRIPT_DIR/install-agent.sh"
+(
+  eval "$(awk '/^cleanup\(\)/ { printing=1 } /^trap cleanup/ { exit } printing { print }' "$INSTALLER")"
+  SIGNED_STAGE='' TMP_PATH='' BOOTSTRAP_TMP='' CURL_AUTH_CONFIG='' CHECKSUMS_TMP=''
+  cleanup
+)
 TEMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TEMP_DIR"' EXIT HUP INT TERM
 
@@ -69,6 +74,7 @@ grep -Fx 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK' "$UNIT_PA
 refuse_signed_updater_override
 cp "$UNIT_PATH" "$TEMP_DIR/original-unit"
 printf '%s\n' 'ExecStart=/var/lib/nodelite-updater/code/active --config /var/lib/nodelite-agent/agent.toml' >"$UNIT_PATH"
+# shellcheck disable=SC2317
 fail() { printf '%s\n' "$*" >&2; return 1; }
 if refuse_signed_updater_override >/dev/null 2>&1; then
   printf '%s\n' 'Legacy installation must not bypass enrolled signature policy' >&2
