@@ -5,8 +5,8 @@ import json
 import unittest
 from unittest.mock import patch
 
-from .audit import health_matches
-from . import transaction
+from tools.nodelite_migrate import transaction
+from tools.nodelite_migrate.audit import health_matches
 
 
 class Health(unittest.TestCase):

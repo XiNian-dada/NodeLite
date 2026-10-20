@@ -12,8 +12,8 @@ from unittest.mock import patch
 
 from tools.nodelite_release.io import create, digest, directory, json_bytes
 
-from . import bundle, installer
-from .common import UNITS
+from tools.nodelite_migrate import bundle, installer
+from tools.nodelite_migrate.common import UNITS
 
 
 class Bundles(unittest.TestCase):
