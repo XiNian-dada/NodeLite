@@ -4,7 +4,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use axum::http::StatusCode;
 use axum::response::Response;
 use nodelite_proto::{
-    AlertingConfig, ReadonlyAuthConfig, parse_server_config, upsert_toml_item_preserving_decor,
+    AlertingConfig, ConfigError, ReadonlyAuthConfig, parse_server_config,
+    upsert_toml_item_preserving_decor,
 };
 use serde::Serialize;
 use tokio::fs;
@@ -119,9 +120,10 @@ fn update_alerting_settings(content: &str, alerting: &AlertingConfig) -> Result<
 }
 
 fn parse_document(content: &str) -> Result<DocumentMut> {
-    content
-        .parse::<DocumentMut>()
-        .map_err(|error| anyhow!("failed to parse server.toml as TOML document: {error}"))
+    content.parse::<DocumentMut>().map_err(|error| {
+        let safe = ConfigError::from_toml_diagnostic(content, error.message(), error.span());
+        anyhow!("failed to parse server.toml as TOML document: {safe}")
+    })
 }
 
 fn auth_table_mut(document: &mut DocumentMut) -> Result<&mut Table> {

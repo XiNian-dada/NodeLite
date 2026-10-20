@@ -35,6 +35,7 @@ use support::*;
 
 mod browser_auth;
 mod concurrency;
+mod config_redaction;
 mod snapshot_concurrency;
 mod traffic_cleanup;
 
