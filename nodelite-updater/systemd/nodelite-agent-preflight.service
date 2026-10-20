@@ -8,7 +8,7 @@ User=nodelite-agent
 Group=nodelite-read
 SupplementaryGroups=nodelite-agent
 ExecStart=/var/lib/nodelite-updater/code/candidate --check-credentials --config /var/lib/nodelite-agent/agent.toml
-Environment=NODELITE_AGENT_TRAFFIC_CONTROL=0
+Environment=NODELITE_AGENT_TRAFFIC_CONTROL=0 NODELITE_UPDATE_HEALTH=1
 TimeoutStartSec=30
 UMask=0077
 NoNewPrivileges=yes

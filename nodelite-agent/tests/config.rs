@@ -1,4 +1,6 @@
 use std::fs;
+#[cfg(target_os = "linux")]
+use std::process::Command;
 
 use anyhow::Result;
 use nodelite_agent::config_io::{load_agent_config, update_token_in_config};
@@ -39,5 +41,40 @@ report_interval_secs = 5
     assert_eq!(updated_config.node_id, "test-node-01"); // Other fields remain unchanged
 
     // 清理由 `TempDir` 的 Drop 负责。
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn signed_update_preflight_rejects_slow_reports_without_touching_credentials() -> Result<()> {
+    let dir = TempDir::new("nodelite-signed-interval");
+    let path = dir.path().join("agent.toml");
+    let preflight = include_str!("../../nodelite-updater/systemd/nodelite-agent-preflight.service");
+    assert!(preflight.contains("NODELITE_UPDATE_HEALTH=1"));
+    for seconds in [1, 5, 10, 15, 20, 30] {
+        let config = format!(
+            "[agent]\nnode_id = 'interval-test'\nnode_label = 'Interval'\nserver = 'ws://127.0.0.1:1/ws'\ntoken = 'private-test-credential'\nreport_interval_secs = {seconds}\n"
+        );
+        fs::write(&path, &config)?;
+        let run = |signed, action| {
+            Command::new(env!("CARGO_BIN_EXE_nodelite-agent"))
+                .args([action, "--config"])
+                .arg(&path)
+                .env("NODELITE_UPDATE_HEALTH", signed)
+                .env("RUST_LOG", "off")
+                .output()
+        };
+        let sample = run("1", "--sample-once")?;
+        assert_eq!(sample.status.success(), seconds <= 10);
+        if seconds > 10 {
+            let probe = run("1", "--check-credentials")?;
+            assert!(!probe.status.success());
+            let error = String::from_utf8_lossy(&probe.stderr);
+            assert!(error.contains("report_interval_secs between 1 and 10"));
+            assert!(!error.contains("private-test-credential"));
+        }
+        assert!(run("0", "--sample-once")?.status.success());
+        assert_eq!(fs::read_to_string(&path)?, config);
+    }
     Ok(())
 }

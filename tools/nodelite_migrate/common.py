@@ -29,6 +29,12 @@ UNITS.update("nodelite-updater-" + name for name in ("apply.service", "boot.serv
 ENABLED = ("nodelite-updater-reconcile.timer", "nodelite-updater-preflight.path", "nodelite-updater-stop.path", "nodelite-updater-restart.path")
 
 
+class PreflightError(RuntimeError):
+    def __init__(self):
+        super().__init__("Agent preflight rejected before stopping the running Agent; signed updates require "
+                         "report_interval_secs within 1..10; check journalctl -u nodelite-agent-preflight.service")
+
+
 def command(*args, check=True, timeout=40):
     result = subprocess.run([str(arg) for arg in args], capture_output=True, text=True, timeout=timeout,
                             env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"})

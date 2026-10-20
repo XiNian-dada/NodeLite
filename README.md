@@ -372,7 +372,8 @@ curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/inst
 
 签名模式不从网页接收命令、不无人值守拉取新版。迁移中断或失败可修复原因后重跑开启命令，
 恢复过程不回滚配置或 Token；损坏的信任状态会拒绝操作，要求人工检查，不会重置信任。
-仅支持默认路径、cgroup v2、无流量控制/capabilities 的非容器 Linux；其他环境继续用手动升级。
+仅支持默认路径、cgroup v2、无流量控制/capabilities 的非容器 Linux，且上报间隔为 1–10 秒；
+不兼容配置会在停止旧 Agent 前由只读预检拒绝。其他环境或更长上报间隔继续用手动升级。
 缺少迁移包或校验失败时不会降级到无签名更新。当前尚未配置生产签名源，以上可选入口须随
 迁移包发布后才可使用；[维护者说明](tools/nodelite_migrate/README.md)。
 

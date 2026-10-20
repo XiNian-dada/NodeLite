@@ -29,6 +29,7 @@
 - 原程序 `/usr/local/bin/nodelite-agent`、原 unit 位于 `/etc/systemd/system/nodelite-agent.service`；
 - 专属 `nodelite-agent` 用户和同名主组，配置 `/var/lib/nodelite-agent/agent.toml` 为 0600，目录 0700；
 - 原 Agent 至少 v3.0.4（包含凭证持久化修复），无文件/ambient capabilities、流量控制或自定义 drop-in；
+- `report_interval_secs` 为 1–10 秒；候选只读预检在停止原 Agent 前拒绝不兼容配置，不自动改值；
 - root 保护程序、迁移源代码和所有祖先目录，专属账户没有额外组或共享 UID；
 - 新包包含健康证据功能的已签名 Agent，**旧 v3.0.4 本身不具备该证据**。
 

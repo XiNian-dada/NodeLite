@@ -99,6 +99,26 @@ class Bundles(unittest.TestCase):
             resume.assert_called_once_with("verified")
             apply.assert_not_called()
 
+    def test_rejected_preflight_never_reaches_stop_or_switch(self):
+        from tools.nodelite_migrate import transaction
+        from tools.nodelite_migrate.common import PreflightError
+
+        with patch.object(transaction, "MIGRATION", self.path), \
+                patch.object(transaction, "accounts"), patch.object(transaction, "ensure_layout"), \
+                patch.object(transaction, "stage_programs"), patch.object(transaction, "create"), \
+                patch.object(transaction, "command"), \
+                patch.object(transaction, "systemctl", return_value=subprocess.CompletedProcess([], 1)) as systemctl, \
+                patch.object(transaction, "stop_barrier") as stop, \
+                patch.object(transaction, "config_barrier") as credentials, \
+                patch.object(transaction, "atomic") as switch, patch.object(transaction, "recover") as recover:
+            with self.assertRaisesRegex(PreflightError, "before stopping.*1..10"):
+                transaction.handoff({}, self.files, b"policy", 60)
+            systemctl.assert_called_with("restart", "nodelite-agent-preflight.service", check=False)
+            stop.assert_not_called()
+            credentials.assert_not_called()
+            switch.assert_not_called()
+            recover.assert_called_once_with()
+
     def test_installer_waits_for_actual_commit_and_reports_rollback(self):
         self.assertFalse(installer.outcome(None))
         for phase in ("prepared", "stopping", "trial", "rollback_intent"):

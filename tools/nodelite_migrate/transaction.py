@@ -13,7 +13,7 @@ from tools.nodelite_release.io import LIMIT, atomic, create, decode, digest, jso
 
 from . import bundle
 from .common import (AGENT, BASELINE, CONFIG, DROPIN, ENABLED, HOME, LEGACY, LIB, MIGRATION, POLICY,
-                     RECOVERY, UNIT, UNITS, UPDATER, command, config_barrier, directories, inspect_legacy,
+                     RECOVERY, UNIT, UNITS, UPDATER, PreflightError, command, config_barrier, directories, inspect_legacy,
                      properties, protected, root_guard, save, stop_barrier, systemctl)
 
 
@@ -140,7 +140,8 @@ def provision(files, policy, resuming=False):
             create(path, value)
     systemctl("daemon-reload")
     systemctl("reset-failed", "nodelite-agent-preflight.service", check=False)
-    systemctl("start", "nodelite-agent-preflight.service")
+    if systemctl("restart", "nodelite-agent-preflight.service", check=False).returncode:
+        raise PreflightError()
 
 
 def healthy(expected, timeout):

@@ -1,5 +1,23 @@
 //! Evidence is opt-in and published only after durable configuration load and authenticated sampling.
 
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "signed updates require agent.report_interval_secs between 1 and 10 seconds; use manual upgrades for longer intervals"
+)]
+pub(crate) struct ReportIntervalError;
+
+pub(crate) fn enabled() -> bool {
+    cfg!(target_os = "linux") && std::env::var("NODELITE_UPDATE_HEALTH").as_deref() == Ok("1")
+}
+
+pub(crate) fn validate_report_interval(seconds: u64) -> Result<(), ReportIntervalError> {
+    // Leave time for scheduling jitter inside the unchanged 15-second freshness bound.
+    if !(1..=10).contains(&seconds) {
+        return Err(ReportIntervalError);
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 mod linux {
     use std::fs::{File, OpenOptions};
@@ -126,7 +144,7 @@ mod linux {
 }
 
 pub(crate) async fn publish(collected_at_ms: u64) {
-    if std::env::var("NODELITE_UPDATE_HEALTH").as_deref() != Ok("1") {
+    if !enabled() {
         return;
     }
     #[cfg(target_os = "linux")]
@@ -135,4 +153,17 @@ pub(crate) async fn publish(collected_at_ms: u64) {
     }
     #[cfg(not(target_os = "linux"))]
     let _ = collected_at_ms;
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn signed_update_interval_leaves_a_freshness_margin() {
+        for seconds in [1, 5, 10] {
+            assert!(super::validate_report_interval(seconds).is_ok());
+        }
+        for seconds in [0, 11, 15, 20, 30, u64::MAX] {
+            assert!(super::validate_report_interval(seconds).is_err());
+        }
+    }
 }

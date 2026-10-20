@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 
 from . import bundle, transaction
-from .common import MIGRATION, inspect_legacy, root_guard
+from .common import MIGRATION, PreflightError, inspect_legacy, root_guard
 
 
 def main():
@@ -72,5 +72,6 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as error:
-        print("migration rejected: " + type(error).__name__ + "; inspect protected local state before retrying", file=sys.stderr)
+        detail = str(error) if isinstance(error, PreflightError) else type(error).__name__
+        print("migration rejected: " + detail + "; inspect protected local state before retrying", file=sys.stderr)
         sys.exit(1)

@@ -356,6 +356,8 @@ do not install Python packages, handle signing keys or enter fingerprints. Subse
 the usual `--mode upgrade` command, which automatically dispatches to the locally pinned signed updater.
 It does not accept dashboard commands or fetch new versions unattended. Default manual installations
 remain unchanged; containers, traffic control/capabilities and non-default layouts remain manual.
+Signed mode requires a reporting interval of 1–10 seconds. Read-only preflight rejects incompatible
+configurations before stopping the old Agent; longer intervals remain supported in manual mode.
 Retry an interrupted enrollment with the same opt-in command after resolving its cause. Credentials
 and trust history are never rolled back or reset; damaged trust requires operator intervention.
 Missing or invalid enrollment assets never fall back to unsigned updates. A production signing feed
