@@ -33,6 +33,7 @@ Designed for **minimal resource footprint** (idle server memory < 15MB, agent < 
 - [Operations & Upgrades](#operations--upgrades)
 - [Troubleshooting FAQ](#troubleshooting-faq)
 - [Developer & Build Guide](#developer--build-guide)
+  - [Repository Layout](#repository-layout)
 
 ---
 
@@ -370,6 +371,38 @@ sudo systemctl restart nodelite-server.service
 
 ## Developer & Build Guide
 
+The standalone [signed Agent updater](nodelite-updater/README.md) is disabled by default and requires
+explicit administrator enrollment. It does not replace the manual upgrade instructions above.
+
+### Repository Layout
+
+| Directory | Contents and purpose |
+| --- | --- |
+| `.cargo/` | Cargo target and linker configuration. |
+| `.github/` | `workflows/` contains CI, coverage, release and documentation deployment; `ISSUE_TEMPLATE/` contains issue templates. |
+| `nodelite-proto/` | Shared Rust types, WebSocket messages and configuration validation; implementation in `src/`, integration tests in `tests/`. |
+| `nodelite-agent/` | Node collectors, reporting sessions and credential persistence; implementation in `src/`, integration tests in `tests/`. |
+| `nodelite-server/` | Backend HTTP/WebSocket APIs, registry, history, authentication and alerts in `src/`; integration tests in `tests/`, load benchmarks in `benches/`. |
+| `nodelite-server/web/` | Vue 3 frontend: pages, components and stores in `src/`, static files in `public/`, browser tests in `e2e/`. See the [frontend guide](nodelite-server/web/README.md). |
+| `nodelite-updater/` | Standalone Rust signature verification, download, activation and rollback in `src/`; fixed sandbox units in `systemd/`, local policy example in `policy.example.toml`. |
+| `tools/` | Maintained Python administration tools, not disposable experiments: `nodelite_release/` manages signing and publication, `nodelite_migrate/` handles first migration and recovery. |
+| `scripts/` | Installation, upgrades, CI checks and their tests; `fixtures/` and `tests/` contain script test support. |
+| `config/` | Public Server, Agent and traffic-control configuration examples; no real credentials. |
+| `ops/` | External monitoring examples: scrape configuration in `prometheus/`, dashboard templates in `grafana/`. |
+| `docs/` | Deployment, architecture, development and operations documentation; `index.html` is the online guide, `assets/` contains site resources. |
+| `fuzz/` | Standalone protocol fuzzing crate: entry points in `src/`, input corpus in `corpus/`. |
+| `images/` | README banners and screenshots in `zh_cn/` and `en/`. |
+| `logo/` | Project branding assets, with SVG files and usage notes in `vector/`. |
+
+Normal Server/Agent operation does not require Python. The [release tools](tools/nodelite_release/README.md)
+are for release administrators; the [migration tools](tools/nodelite_migrate/README.md) are for node
+administrators enrolling signed updates. Their `test_*.py` files are security regressions run in CI.
+Rust unit tests live alongside implementation; integration tests live in each crate's `tests/`.
+
+`target/`, `output/`, `.venv/`, `node_modules/` and `web/dist/` are local environments or generated output,
+not versioned source. One-off experiments and phase/deployment reports stay local. Never commit private
+keys, passwords, live configuration or databases.
+
 ```bash
 # Check and run tests
 cargo check
@@ -391,6 +424,14 @@ cargo build --release --target aarch64-unknown-linux-musl -p nodelite-server -p 
 # Fuzzing
 cargo test --manifest-path fuzz/Cargo.toml
 cargo run --manifest-path fuzz/Cargo.toml --bin protocol_messages -- 10000
+```
+
+For signing/migration tool changes, run from the repository root:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install --only-binary=:all: -r tools/nodelite_release/requirements.txt
+.venv/bin/python -m unittest discover -s tools -t . -p 'test_*.py' -v
 ```
 
 ---

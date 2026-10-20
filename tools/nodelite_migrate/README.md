@@ -4,6 +4,20 @@
 `--apply`。不接收网页/Server 的迁移指令，不赋予 updater sudo，不修改现网。操作密钥和仓库见
 [签名说明](../nodelite_release/README.md)。
 
+## 目录与代码职责
+
+| 文件 | 职责 |
+| --- | --- |
+| `__main__.py`、`__init__.py` | Python 包入口，分发检查、apply、resume、recover 和 audit。 |
+| `bundle.py` | 在特权写入前验证迁移包清单、独立指纹和本地策略。 |
+| `common.py` | 固定安装路径、root/权限检查、受限 systemd 调用和停机/凭证持久化屏障。 |
+| `transaction.py` | 建立账户与目录，持久化迁移状态，编排切换、试运行和恢复。 |
+| `audit.py` | 迁移后检查固定单元、身份、安装摘要和近期健康证据，不读取 Token。 |
+| `test_*.py` | 迁移包与准入边界回归；测试命令见[根 README](../../README.md#本地编译与测试)。 |
+
+这些模块是实际迁移和开机恢复所需源码，不是实验夹具。节点只需 Python 标准库；文件安全
+操作复用 `tools/nodelite_release/io.py`，不加载其签名库。迁移时安装的恢复副本由 root 保护。
+
 ## 支持边界
 
 仅支持非容器 Linux、systemd、cgroup v2，默认启用且在线的 Agent 安装：

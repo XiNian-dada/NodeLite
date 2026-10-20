@@ -9,6 +9,14 @@
 建立真实多方密钥保管或启用官方发布流程。运行时程序为 Rust 二进制，Python 工具仅供发布
 管理员和首次迁移使用，不属于日常采集链路。
 
+## 源码目录
+
+- `src/`：Rust CLI。`policy.rs`/`fs.rs` 约束信任与文件访问，`download.rs`/`transport.rs`/
+  `trust.rs` 负责签名下载与信任缓存，`state.rs`/`activate.rs`/`system.rs` 负责状态和激活恢复；
+  测试与实现放在同一模块内。
+- `systemd/`：12 个固定 Agent、预检、更新及桥接单元，不能用来自面板的服务名或命令替换。
+- `policy.example.toml`：不含凭证、默认关闭的节点本地策略模板。
+
 ## 边界与目录
 
 首版仅支持非容器的 Linux/systemd、cgroup v2、无 capabilities 的 Agent。

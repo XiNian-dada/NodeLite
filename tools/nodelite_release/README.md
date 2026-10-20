@@ -4,6 +4,22 @@
 或官方发布自动化；实验密钥不得转为生产密钥。首次迁移见
 [迁移说明](../nodelite_migrate/README.md)。
 
+## 目录与代码职责
+
+| 文件 | 职责 |
+| --- | --- |
+| `__main__.py`、`__init__.py` | Python 包入口，通过 `python -m tools.nodelite_release` 调用。 |
+| `keys.py` | 生成加密 Ed25519 私钥，解锁并生成绑定载荷的独立审批签名。 |
+| `metadata.py` | 生成和校验 root、targets、snapshot、timestamp，合并阈值签名。 |
+| `repository.py` | 验证完整发布链，在锁内发布不可变代次并切换 current。 |
+| `bundle.py` | 将公开信任锚、Agent、updater 和固定单元组装为首次迁移包。 |
+| `maintenance.py` | 独立指纹检查、到期告警和旧代次的可恢复归档。 |
+| `io.py` | 有界文件读取、inode/权限检查和持久化写入；迁移工具也复用它。 |
+| `test_*.py`、`requirements.txt` | 安全回归测试及锁定的发布工具依赖；测试命令见[根 README](../../README.md#本地编译与测试)。 |
+
+此目录只放程序、测试和说明。私钥、审批工作区、公开仓库及归档均放在仓库外的受保护路径，
+不要将真实数据添加到此目录。节点日常运行 Rust updater，不需要安装这里的 Python 依赖。
+
 ## 密钥分工
 
 | TUF 角色 | 最低阈值 | 建议保管 | 默认有效期 |

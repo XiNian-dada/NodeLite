@@ -33,6 +33,7 @@
 - [升级与日常运维](#升级与日常运维)
 - [常见问题与排障](#常见问题与排障)
 - [开发者与源码构建](#开发者与源码构建)
+  - [源码目录说明](#源码目录说明)
 
 ---
 
@@ -383,6 +384,34 @@ sudo systemctl restart nodelite-server.service
 独立的 Linux/systemd 签名 Agent 更新器见 [nodelite-updater](nodelite-updater/README.md)。
 它默认关闭、需要管理员显式登记可信基线；当前没有生产签名仓库或自动迁移入口，不改变上面的手动升级方式。
 
+### 源码目录说明
+
+| 目录 | 内容与用途 |
+| --- | --- |
+| `.cargo/` | Cargo 的目标平台、链接器等构建配置。 |
+| `.github/` | `workflows/` 是 CI、覆盖率、发布和文档部署流程；`ISSUE_TEMPLATE/` 是问题模板。 |
+| `nodelite-proto/` | 共享 Rust 类型、WebSocket 消息、配置解析和校验；`src/` 放实现，`tests/` 放集成测试。 |
+| `nodelite-agent/` | 节点数据采集、连接上报和凭证持久化；`src/` 放实现，`tests/` 放集成测试。 |
+| `nodelite-server/` | 面板后端；`src/` 包含 HTTP/WebSocket、注册表、历史库、认证与告警，`tests/` 是集成测试，`benches/` 是压测基准。 |
+| `nodelite-server/web/` | Vue 3 前端；`src/` 包含页面、组件和状态管理，`public/` 是静态资源，`e2e/` 是浏览器端到端测试，详见[前端说明](nodelite-server/web/README.md)。 |
+| `nodelite-updater/` | 独立 Rust 签名 Agent 更新器；`src/` 是验签、下载、激活和回滚逻辑，`systemd/` 是固定沙箱单元，`policy.example.toml` 是本地策略示例。 |
+| `tools/` | 发布与迁移所需的 Python 管理工具，不是临时实验脚本。`nodelite_release/` 管理签名及静态仓库，`nodelite_migrate/` 负责首次迁移与恢复，下面有各自说明。 |
+| `scripts/` | 安装、升级、CI 检查和相关测试脚本；`fixtures/`、`tests/` 是脚本测试使用的夹具和测试代码。 |
+| `config/` | Server、Agent 和限速功能的公开示例配置，不放真实凭证。 |
+| `ops/` | 外部观测系统的接入示例；`prometheus/` 是抓取配置，`grafana/` 是仪表盘模板。 |
+| `docs/` | 部署与架构文档、开发和运维专题；`index.html` 是在线指南，`assets/` 是文档站资源。 |
+| `fuzz/` | 独立的协议模糊测试 crate；`src/` 是测试入口，`corpus/` 是输入语料。 |
+| `images/` | 中英文 README 使用的横幅和界面截图，分别位于 `zh_cn/`、`en/`。 |
+| `logo/` | 项目品牌素材；`vector/` 保存 SVG 和对应使用说明。 |
+
+日常 Server/Agent 运行不依赖 Python。只有发布管理员使用
+[签名发布工具](tools/nodelite_release/README.md)，节点管理员首次启用签名更新时使用
+[迁移工具](tools/nodelite_migrate/README.md)；工具内的 `test_*.py` 是 CI 保留的安全回归测试。
+Rust 单元测试通常紧邻实现，跨模块集成测试放在各 crate 的 `tests/`。
+
+`target/`、`output/`、`.venv/`、`node_modules/` 和 `web/dist/` 是本地环境或生成产物，不纳入 Git。
+一次性实验、阶段报告和部署记录也不属于交付源码；私钥、口令、真实配置及数据库不得提交。
+
 ### 本地编译与测试
 
 ```bash
@@ -390,6 +419,14 @@ sudo systemctl restart nodelite-server.service
 cargo check
 cargo test --workspace
 cargo clippy --all-targets -- -D warnings
+```
+
+需要修改签名或迁移工具时，在仓库根目录运行：
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install --only-binary=:all: -r tools/nodelite_release/requirements.txt
+.venv/bin/python -m unittest discover -s tools -t . -p 'test_*.py' -v
 ```
 
 ### 压测基准 (Benchmarks)
