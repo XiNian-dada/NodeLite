@@ -3,13 +3,14 @@
 import os
 from pathlib import Path
 import secrets
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from cryptography.hazmat.primitives import serialization
-from . import keys, metadata, repository
-from .io import create, decode, directory, json_bytes, read
+from . import bundle, keys, metadata, repository
+from .io import create, decode, digest, directory, json_bytes, read
 
 
 class _CeremonyFixture(unittest.TestCase):
@@ -67,6 +68,30 @@ class _CeremonyFixture(unittest.TestCase):
 
 
 class Ceremony(_CeremonyFixture):
+    def test_installer_archive_contains_only_public_runtime_and_bound_policy(self):
+        self.publish()
+        output = self.path / "nodelite-enrollment-x86_64-unknown-linux-musl.tar.gz"
+        units = Path(__file__).resolve().parents[2] / "nodelite-updater/systemd"
+        result = bundle.pack_installer(self.path / "mirror", self.artifact, units, output,
+                                       "https://updates.example.invalid/metadata/", "https://updates.example.invalid/targets/")
+        self.assertEqual(result["archive_sha256"], digest(read(output)))
+        self.assertIn(result["archive_sha256"].encode(), read(str(output) + ".sha256"))
+        with tarfile.open(output) as archive:
+            names = archive.getnames()
+            self.assertEqual(len(names), 27)
+            self.assertTrue(set(bundle.SOURCES) <= set(names))
+            self.assertFalse(any("test_" in name or "keys.py" in name or name.endswith(".pem") for name in names))
+            descriptor = decode(archive.extractfile("enrollment.json").read())
+            self.assertEqual(descriptor["root_sha256"], result["root_sha256"])
+            self.assertEqual(descriptor["bundle_sha256"], result["bundle_sha256"])
+        with self.assertRaises(FileExistsError):
+            bundle.pack_installer(self.path / "mirror", self.artifact, units, output,
+                                  descriptor["metadata_url"], descriptor["targets_url"])
+        with self.assertRaises(ValueError):
+            bundle.pack_installer(self.path / "mirror", self.artifact, units, self.path / "unsafe.tar.gz",
+                                  "http://example.invalid/metadata/", descriptor["targets_url"])
+        self.assertFalse((self.path / "unsafe.tar.gz").exists())
+
     def test_private_keys_are_encrypted_owner_only_and_not_overwritten(self):
         private, public = self.roles["root"][0]
         self.assertIn(b"ENCRYPTED PRIVATE KEY", read(private))

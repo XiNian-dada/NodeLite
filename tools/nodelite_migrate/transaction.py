@@ -63,7 +63,7 @@ def install_recovery():
     directories(LIB / "tools")
     create(LIB / "tools/__init__.py", read(source / "__init__.py"), 0o555)
     for package, names in (("nodelite_release", ("__init__.py", "io.py")),
-                           ("nodelite_migrate", ("__init__.py", "common.py", "bundle.py", "transaction.py", "audit.py", "__main__.py"))):
+                           ("nodelite_migrate", ("__init__.py", "common.py", "bundle.py", "transaction.py", "audit.py", "installer.py", "__main__.py"))):
         directories(LIB / "tools" / package)
         for name in names:
             create(LIB / "tools" / package / name, read(source / package / name), 0o555)

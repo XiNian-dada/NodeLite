@@ -47,6 +47,8 @@ def parser():
         publish.add_argument("--" + name, type=Path, required=True)
     pack = sub.add_parser("pack-enrollment")
     pack.add_argument("--bootstrap-version", type=int)
+    pack.add_argument("--metadata-url")
+    pack.add_argument("--targets-url")
     for name in ("repository", "updater", "units", "out"):
         pack.add_argument("--" + name, type=Path, required=True)
     check = sub.add_parser("check")
@@ -80,7 +82,13 @@ def main():
     elif args.action == "publish":
         result = repository.publish(args.roots, args.targets, args.snapshot, args.timestamp, args.artifact, args.destination)
     elif args.action == "pack-enrollment":
-        result = bundle.pack(args.repository, args.updater, args.units, args.out, args.bootstrap_version)
+        if args.metadata_url or args.targets_url:
+            if not args.metadata_url or not args.targets_url:
+                raise ValueError("both repository URLs are required for an installer archive")
+            result = bundle.pack_installer(args.repository, args.updater, args.units, args.out,
+                                          args.metadata_url, args.targets_url, args.bootstrap_version)
+        else:
+            result = bundle.pack(args.repository, args.updater, args.units, args.out, args.bootstrap_version)
     elif args.action == "check":
         result = maintenance.check(args.destination, args.root_sha256)
     elif args.action == "collect":

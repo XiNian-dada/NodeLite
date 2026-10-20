@@ -18,12 +18,15 @@ def main():
     mode.add_argument("--resume", action="store_true")
     mode.add_argument("--recover", action="store_true")
     mode.add_argument("--audit", action="store_true")
+    mode.add_argument("--upgrade", action="store_true")
+    mode.add_argument("--enroll", action="store_true")
     parser.add_argument("--bundle", type=Path)
     parser.add_argument("--bundle-sha256")
     parser.add_argument("--root-sha256")
     parser.add_argument("--metadata-url")
     parser.add_argument("--targets-url")
     parser.add_argument("--health-timeout", type=int, default=60)
+    parser.add_argument("--target")
     args = parser.parse_args()
     root_guard()
     if args.recover and not (MIGRATION / "journal.json").exists():
@@ -32,7 +35,15 @@ def main():
     fd = os.open("/run/nodelite-updater-migration.lock", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        if args.audit:
+        if args.upgrade:
+            from .installer import upgrade
+            result = upgrade()
+        elif args.enroll:
+            from .installer import enroll
+            if args.bundle is None or args.target is None:
+                raise ValueError("installer requires a verified archive and architecture")
+            result = enroll(args.bundle, args.target)
+        elif args.audit:
             from .audit import check
             result = check()
         elif args.recover:

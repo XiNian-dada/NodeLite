@@ -4,10 +4,11 @@ from pathlib import Path
 import secrets
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from tools.nodelite_release.io import create, digest, directory, json_bytes
 
-from . import bundle
+from . import bundle, installer
 from .common import UNITS
 
 
@@ -64,6 +65,39 @@ class Bundles(unittest.TestCase):
         self.refresh()
         with self.assertRaises(ValueError):
             bundle.inspect(self.path, self.bundle_hash, self.root_hash)
+
+    def test_installer_descriptor_and_architecture_checked_before_migration(self):
+        value = {"schema": 1, "bundle_sha256": self.bundle_hash, "root_sha256": self.root_hash,
+                 "metadata_url": "https://example.invalid/metadata/", "targets_url": "https://example.invalid/targets/"}
+        descriptor = self.path / "enrollment.json"
+        create(descriptor, json_bytes(value))
+        self.assertEqual(installer.validate(self.path, self.manifest["target"])[1], self.bundle_hash)
+        with self.assertRaises(ValueError):
+            installer.validate(self.path, "aarch64-unknown-linux-musl")
+        descriptor.unlink()
+        value["command"] = "never execute descriptor commands"
+        create(descriptor, json_bytes(value))
+        with self.assertRaises(ValueError):
+            installer.validate(self.path, self.manifest["target"])
+
+    def test_installer_waits_for_actual_commit_and_reports_rollback(self):
+        self.assertFalse(installer.outcome(None))
+        for phase in ("prepared", "stopping", "trial", "rollback_intent"):
+            self.assertFalse(installer.outcome({"phase": phase, "manual_recovery": False}))
+        for phase in ("stable", "committed"):
+            self.assertTrue(installer.outcome({"phase": phase, "manual_recovery": False}))
+        for phase, recovery in (("rolled_back", False), ("manual_recovery", False), ("committed", True)):
+            with self.assertRaises(RuntimeError):
+                installer.outcome({"phase": phase, "manual_recovery": recovery})
+        stable = {"phase": "stable", "manual_recovery": False, "installed_sequence": 1}
+        committed = {**stable, "phase": "committed", "installed_sequence": 2}
+        trial = {**stable, "phase": "trial"}
+        with patch.object(installer, "status", side_effect=[None, stable, trial, None, committed]), \
+                patch.object(installer.time, "sleep"), patch.object(installer, "command") as command, \
+                patch("tools.nodelite_migrate.audit.check") as audit:
+            self.assertEqual(installer.upgrade()["installed_sequence"], 2)
+            command.assert_called_once_with("/usr/bin/systemctl", "start", "nodelite-updater-apply.service", timeout=100)
+            self.assertEqual(audit.call_count, 2)
 
     def test_lab_fault_binary_cannot_be_mistaken_for_normal_updater(self):
         path = self.path / "nodelite-updater"

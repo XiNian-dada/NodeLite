@@ -1,10 +1,18 @@
 """Explicit administrator bundle: public trust plus reviewed local programs and fixed units."""
 
+import io
 from pathlib import Path
+import tarfile
+import tempfile
 
 from .io import LIMIT, create, digest, directory, json_bytes, read
 from .metadata import now, release_scope
 from .repository import current, locked
+
+# Only the stdlib migration/recovery runtime is shipped to nodes, never signing tools.
+SOURCES = ("tools/__init__.py", "tools/nodelite_release/__init__.py", "tools/nodelite_release/io.py") + tuple(
+    "tools/nodelite_migrate/" + name for name in
+    ("__init__.py", "__main__.py", "common.py", "bundle.py", "transaction.py", "audit.py", "installer.py"))
 
 
 def pack(repository, updater, units, output, bootstrap_version=None):
@@ -42,3 +50,31 @@ def pack_locked(repository, updater, units, output, bootstrap_version):
     create(output / "manifest.json", manifest)
     return {"bundle_sha256": digest(manifest), "root_sha256": digest(files["root.json"]),
             "baseline_sha256": info.hashes["sha256"], "private_keys_included": False}
+
+
+def pack_installer(repository, updater, units, output, metadata_url, targets_url, bootstrap_version=None):
+    from tools.nodelite_migrate import bundle as migration
+
+    with tempfile.TemporaryDirectory() as temporary:
+        staged = Path(temporary) / "bundle"
+        pins = pack(repository, updater, units, staged, bootstrap_version)
+        manifest, files = migration.inspect(staged, pins["bundle_sha256"], pins["root_sha256"])
+        migration.policy(manifest, files, metadata_url, targets_url)
+        files["manifest.json"] = read(staged / "manifest.json")
+        files["enrollment.json"] = json_bytes({"schema": 1, "bundle_sha256": pins["bundle_sha256"],
+            "root_sha256": pins["root_sha256"], "metadata_url": metadata_url, "targets_url": targets_url})
+        source = Path(__file__).resolve().parents[2]
+        files.update({name: read(source / name) for name in SOURCES})
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+            for name, data in sorted(files.items()):
+                entry = tarfile.TarInfo(name)
+                entry.size, entry.mode = len(data), 0o600
+                archive.addfile(entry, io.BytesIO(data))
+        payload = buffer.getvalue()
+        if len(payload) > 2 * LIMIT + 1024 * 1024:
+            raise ValueError("enrollment archive too large")
+        create(output, payload)
+        checksum = digest(payload)
+        create(str(output) + ".sha256", (checksum + "  " + Path(output).name + "\n").encode())
+        return {**pins, "archive_sha256": checksum, "target": manifest["target"]}
