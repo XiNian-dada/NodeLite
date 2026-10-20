@@ -6,7 +6,8 @@
 
 当前已在隔离 KVM 客机验证。[签名仓库与密钥工具](../tools/nodelite_release/README.md)及
 [显式首次迁移工具](../tools/nodelite_migrate/README.md)已补齐，但尚未部署生产签名源、
-建立真实多方密钥保管或启用官方发布流程。不要把 `experiments/` 的 root 测试脚本安装到现网。
+建立真实多方密钥保管或启用官方发布流程。运行时程序为 Rust 二进制，Python 工具仅供发布
+管理员和首次迁移使用，不属于日常采集链路。
 
 ## 边界与目录
 
@@ -110,7 +111,7 @@ cargo test -p nodelite-updater --all-features --locked
 ```
 
 正常二进制没有故障注入能力。`lab-faults` 仅供带专用标记的隔离客机使用，必须单独构建，
-不得作为发布二进制。验证脚本会记录两者不同的摘要。
+不得作为发布二进制，组包工具也会拒绝它。
 
 首次启用优先使用上述显式迁移工具：审查完整包和独立 root 指纹，先检查再 `--apply`。
 工具支持默认手动安装的 v3.0.4，先验签、只读预检，再切换到支持健康证据的签名 Agent；
@@ -128,7 +129,24 @@ sudo systemctl start nodelite-updater-apply.service
 初始化拒绝已有状态；下载命令不停止服务；apply 仅请求最新的本地策略授权目标。
 `verify-enrollment` 仅供迁移时核对仓库当前授权基线，固定旧 unit 的身份检查阻止已迁移节点
 再次调用它改变 active 指针。失败重试保留根链和版本下限，不重新 initialize。
-本次没有自动启用安装器或网页按钮，实际隔离验证记录见
-[Rust 更新器验证报告](../docs/agent-update-rust-validation.md)和
-[签名与迁移验证报告](../docs/agent-update-signing-migration-validation.md)。
-生产 canary 的必要前提与停止条件见[受控部署准入](../docs/agent-update-deployment-gate.md)。
+本项目没有自动启用安装器或网页按钮。日常升级只使用 Rust 更新器和固定 systemd 单元。
+
+## 受控部署检查
+
+1. 独立核对源码、正常 updater、12 个固定单元、整包及 root 指纹，禁止故障构建进入生产。
+2. root/targets 与在线角色使用不同密钥，备份与口令分开保管。多把密钥由同一人持有不等于
+   独立多方审批；私钥与面板同机时，即使加密保存也不能抵抗已失陷 root 对签名过程的窃取。
+3. 按渠道/架构建立只读 HTTPS 仓库，HTTP 用户不能写，私钥、工作区和归档不在 web root，
+   所有祖先目录均受保护。源地址只由节点本地 root 策略指定。
+4. timestamp 至少每六小时续签，其他角色在到期前审批；将发布工具的 `check` 非零退出
+   接入管理员告警并演练接收。配置时间同步、容量监控和公开历史保留策略。
+5. 先选一台符合条件的节点，检查后显式迁移，再运行 `sudo python3 -m tools.nodelite_migrate --audit`。
+   确认鉴权上报、download 不重启服务、已签名后续版本激活和重启后再次 audit 均正常；
+   至少观察一次在线元数据续签后再扩大范围。
+
+出现非 ready、manual_recovery、签名/摘要不符、异常会话、凭证落盘失败、到期或容量告警时
+停止推广。保留当前 Token 和信任状态，不删除 journal/缓存/current，不重跑 initialize 或
+降低回滚下限。未提交迁移的恢复方式见[迁移说明](../tools/nodelite_migrate/README.md)。
+
+隔离运行验证覆盖 x86_64 / Ubuntu 22.04 / systemd 249 / cgroup v2；不能据此视为其他发行版
+或架构的运行验收。健康证据不是主机未失陷的证明。

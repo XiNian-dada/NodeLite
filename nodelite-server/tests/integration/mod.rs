@@ -15,6 +15,3 @@ mod settings_routes;
 mod shutdown_signal;
 mod token_lifecycle;
 mod traffic_control;
-#[cfg(target_os = "linux")]
-#[path = "../../../experiments/agent-update-isolation/real_agent.rs"]
-mod updater_handoff;

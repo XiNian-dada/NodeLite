@@ -17,6 +17,16 @@ passkeys.json
 .claude/
 
 # Local analysis reports and implementation notes
+/experiments/agent-update-isolation/
+/docs/agent-update-deployment-gate.md
+/docs/agent-update-isolation-prototype.md
+/docs/agent-update-isolation-validation.md
+/docs/agent-update-real-credential-validation.md
+/docs/agent-update-release-network-validation.md
+/docs/agent-update-resilience-validation.md
+/docs/agent-update-rust-validation.md
+/docs/agent-update-security-validation.md
+/docs/agent-update-signing-migration-validation.md
 NodeLite_DIFFERENTIAL_REVIEW*.md
 PERFORMANCE*.md
 /PERF_OPTIMIZATION*.md
