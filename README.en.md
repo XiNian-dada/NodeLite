@@ -340,6 +340,28 @@ sudo journalctl -u nodelite-agent.service -f
   /usr/local/bin/nodelite-server --config /opt/nodelite/config/server.toml upgrade-agent
   ```
 
+### Optional signed Agent upgrades
+
+Once a release includes the new installer and its architecture-specific enrollment archive, opt in
+on a default Linux/systemd Agent v3.0.4+ installation with one command:
+
+```sh
+curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/install-agent.sh | \
+  sudo sh -s -- --mode upgrade --enable-signed-updates
+```
+
+For a fresh installation, append the same option to the existing bootstrap command. The installer
+verifies the package, provisions the OS recovery runtime and waits for authenticated health; users
+do not install Python packages, handle signing keys or enter fingerprints. Subsequent upgrades use
+the usual `--mode upgrade` command, which automatically dispatches to the locally pinned signed updater.
+It does not accept dashboard commands or fetch new versions unattended. Default manual installations
+remain unchanged; containers, traffic control/capabilities and non-default layouts remain manual.
+Retry an interrupted enrollment with the same opt-in command after resolving its cause. Credentials
+and trust history are never rolled back or reset; damaged trust requires operator intervention.
+Missing or invalid enrollment assets never fall back to unsigned updates. A production signing feed
+has not yet been deployed; this opt-in path requires a release that publishes enrollment assets.
+See the [maintainer instructions](tools/nodelite_migrate/README.md).
+
 ### Password Reset & 2FA Recovery
 
 Edit `/opt/nodelite/config/server.toml` directly:
@@ -372,7 +394,7 @@ sudo systemctl restart nodelite-server.service
 ## Developer & Build Guide
 
 The standalone [signed Agent updater](nodelite-updater/README.md) is disabled by default and requires
-explicit administrator enrollment. It does not replace the manual upgrade instructions above.
+explicit opt-in through the installer. It does not replace the default manual upgrade instructions above.
 
 ### Repository Layout
 
@@ -396,7 +418,7 @@ explicit administrator enrollment. It does not replace the manual upgrade instru
 
 Normal Server/Agent operation does not require Python. The [release tools](tools/nodelite_release/README.md)
 are for release administrators; the [migration tools](tools/nodelite_migrate/README.md) are for node
-administrators enrolling signed updates. Their `test_*.py` files are security regressions run in CI.
+administrators and are automatically invoked by the installer. Their `test_*.py` files are security regressions run in CI.
 Rust unit tests live alongside implementation; integration tests live in each crate's `tests/`.
 
 `target/`, `output/`, `.venv/`, `node_modules/` and `web/dist/` are local environments or generated output,

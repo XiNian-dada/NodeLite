@@ -1,5 +1,8 @@
 # 显式的首次迁移
 
+普通用户使用[根 README 的一条安装／升级命令](../../README.md#可选的签名-agent-升级)，无需
+运行本目录的 Python 命令或管理签名。以下是发布维护者的底层接口与故障排查说明。
+
 本地管理员使用的工具，将原手动安装迁到双用户 Rust 签名更新器。默认只做检查，修改必须显式
 `--apply`。不接收网页/Server 的迁移指令，不赋予 updater sudo，不修改现网。操作密钥和仓库见
 [签名说明](../nodelite_release/README.md)。
@@ -13,6 +16,7 @@
 | `common.py` | 固定安装路径、root/权限检查、受限 systemd 调用和停机/凭证持久化屏障。 |
 | `transaction.py` | 建立账户与目录，持久化迁移状态，编排切换、试运行和恢复。 |
 | `audit.py` | 迁移后检查固定单元、身份、安装摘要和近期健康证据，不读取 Token。 |
+| `installer.py` | 校验安装器内置的登记信息，复用 apply/resume；调用固定更新单元并等待实际提交，不把回滚报为成功。 |
 | `test_*.py` | 迁移包与准入边界回归；测试命令见[根 README](../../README.md#本地编译与测试)。 |
 
 这些模块是实际迁移和开机恢复所需源码，不是实验夹具。节点只需 Python 标准库；文件安全
@@ -52,7 +56,8 @@ sudo python3 -m tools.nodelite_migrate --bundle /root/review/enrollment --bundle
 
 检查模式不更改 Agent 服务或配置。确认维护窗口和输出后，以相同参数追加 `--apply`。
 已有 updater/migration 状态会拒绝新的 apply，不能用重复安装覆盖信任记录。正常启用后的
-旧版 `install-agent.sh` 也拒绝覆盖 signed updater 的 active 路径。
+旧版 `install-agent.sh` 拒绝覆盖 signed updater 的 active 路径；新版安装器自动转到本地签名
+更新器，保留原策略和信任记录，不用远端包替换它们。
 
 ## 事务与恢复
 
@@ -113,5 +118,12 @@ sudo python3 -m tools.nodelite_migrate --audit
 
 本检查不是远程证明：主机 root、updater 身份或 Agent 本身已被攻破不在其保证范围内。
 
-本轮不提供批量自动迁移或生产一键安装，不自动创建生产密钥，不自动重发节点凭证，也不以
+安装器的 `--enable-signed-updates` 从同一具体 Release 下载、校验 helper 和公开迁移归档，
+使用 root 私有临时目录，拒绝归档路径穿越、链接、重复条目和超限文件；SHA256 校验成功后
+才加载迁移代码。首次信任继承管理员选择的 HTTPS Release 来源，不能只拿未核验的面板脚本
+当成独立信任证明。归档中的 root 指纹/固定 URL 由发布方绑定，后续更新只信任本地根和策略。
+节点需要 OS Python >=3.9（只有标准库）；未安装时由 apt/dnf 自动准备，不能准备则明确失败，
+不会偷偷跳过恢复能力。每日数据采集和签名更新核心仍是独立 Rust 程序。
+
+本轮不提供批量自动迁移，不自动创建生产密钥，不自动重发节点凭证，也不以
 删除 `/var/lib/nodelite-updater/private`、旧 journal 或信任根作为恢复方案。

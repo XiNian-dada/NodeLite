@@ -351,6 +351,31 @@ sudo journalctl -u nodelite-agent.service -f
   /usr/local/bin/nodelite-server --config /opt/nodelite/config/server.toml upgrade-agent
   ```
 
+### 可选的签名 Agent 升级
+
+默认仍是原来的手动升级，不会自动迁移。发布方提供新版安装器及对应架构的迁移包后，已有
+v3.0.4+ 默认 Linux/systemd 节点只需执行一次：
+
+```sh
+curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/install-agent.sh | \
+  sudo sh -s -- --mode upgrade --enable-signed-updates
+```
+
+安装器自动校验迁移包、准备系统恢复运行时、检查配置、迁移并等待鉴权健康检查，无需手动
+安装 Python 包、管理密钥或填写签名参数。全新安装在原安装命令后追加同一选项即可。
+后续仍执行普通升级命令；已迁移节点自动使用本机签名策略，不重新登记信任：
+
+```sh
+curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/install-agent.sh | \
+  sudo sh -s -- --mode upgrade
+```
+
+签名模式不从网页接收命令、不无人值守拉取新版。迁移中断或失败可修复原因后重跑开启命令，
+恢复过程不回滚配置或 Token；损坏的信任状态会拒绝操作，要求人工检查，不会重置信任。
+仅支持默认路径、cgroup v2、无流量控制/capabilities 的非容器 Linux；其他环境继续用手动升级。
+缺少迁移包或校验失败时不会降级到无签名更新。当前尚未配置生产签名源，以上可选入口须随
+迁移包发布后才可使用；[维护者说明](tools/nodelite_migrate/README.md)。
+
 ### 忘记管理员密码 / 重置 2FA
 
 直接修改 `/opt/nodelite/config/server.toml` 中的 `[auth]` 配置段并重启服务：
@@ -382,7 +407,7 @@ sudo systemctl restart nodelite-server.service
 ## 开发者与源码构建
 
 独立的 Linux/systemd 签名 Agent 更新器见 [nodelite-updater](nodelite-updater/README.md)。
-它默认关闭、需要管理员显式登记可信基线；当前没有生产签名仓库或自动迁移入口，不改变上面的手动升级方式。
+它默认关闭，可由安装器显式开启并自动迁移；尚未部署生产签名源，不改变默认手动升级方式。
 
 ### 源码目录说明
 
@@ -406,7 +431,8 @@ sudo systemctl restart nodelite-server.service
 
 日常 Server/Agent 运行不依赖 Python。只有发布管理员使用
 [签名发布工具](tools/nodelite_release/README.md)，节点管理员首次启用签名更新时使用
-[迁移工具](tools/nodelite_migrate/README.md)；工具内的 `test_*.py` 是 CI 保留的安全回归测试。
+[迁移工具](tools/nodelite_migrate/README.md)由安装器自动调用，无需用户操作 Python；工具内的
+`test_*.py` 是 CI 保留的安全回归测试。
 Rust 单元测试通常紧邻实现，跨模块集成测试放在各 crate 的 `tests/`。
 
 `target/`、`output/`、`.venv/`、`node_modules/` 和 `web/dist/` 是本地环境或生成产物，不纳入 Git。

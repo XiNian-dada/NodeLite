@@ -166,3 +166,28 @@ python -m tools.nodelite_release collect --destination /srv/nodelite-repository 
 失败迁移重试必须保留原 anchor，可显式 `pack-enrollment --bootstrap-version N`；这不是允许已
 运行的 updater 降级信任根。首次迁移包同时含 root 管理的 updater 和固定单元，管理员必须审查
 完整包 SHA256，不能仅凭签名 Agent 的摘要信任其中的 root 程序。
+
+## 给一键安装器发布迁移包（仅维护者操作）
+
+仍使用 `pack-enrollment`，加上固定仓库 URL 即输出自包含公开归档：
+
+```sh
+python -m tools.nodelite_release pack-enrollment \
+  --repository /srv/nodelite-repository \
+  --updater /build/nodelite-updater-x86_64-unknown-linux-musl \
+  --units nodelite-updater/systemd \
+  --metadata-url https://updates.example.invalid/stable/x86_64/metadata/ \
+  --targets-url https://updates.example.invalid/stable/x86_64/targets/ \
+  --out /review/nodelite-enrollment-x86_64-unknown-linux-musl.tar.gz
+```
+
+归档只含原有 15 个公开登记文件、manifest、固定登记描述和标准库迁移／恢复代码，不含签名
+SDK、测试、私钥、口令或生产配置；旁边生成 `.sha256`。逐架构使用匹配的仓库和正常 updater
+构建（禁止 `lab-faults`），独立核对 root、URL、平台及完整归档摘要后，上传到**同一具体
+Release**，将 `.sha256` 条目并入该 Release 原有 `SHA256SUMS.txt`，保留全部既有条目。
+每个资产文件名只保留一个摘要；重新组包时替换该项，不要重复追加。
+新安装器和 `install-agent-signed.sh` 必须同版且都在清单中；发布工作流负责正常 updater、
+helper 和原有资产，签名包由可信发布机审批后另行上传，不把签名私钥交给 GitHub CI。
+
+先确认签名源、完整连续根链及当前授权 baseline 可访问，再开放迁移入口。没有迁移包的
+Release 仍能正常手动安装／升级；请求开启签名模式会明确失败，不修改已有 Agent。
