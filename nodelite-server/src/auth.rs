@@ -11,6 +11,7 @@
 //! 这一层不直接持有 `AppState`,避免 main.rs 的总状态结构反过来产生循环依赖。
 //! 调用方在 handler 里把 `AppState` 拆成所需字段后再调用本模块。
 
+mod basic;
 mod browser;
 mod common_passwords;
 mod step_up;
@@ -104,6 +105,8 @@ pub const TWO_FACTOR_PENDING_SECS: u64 = 300;
 pub const TWO_FACTOR_AUTH_SECS: u64 = 24 * 60 * 60;
 /// Basic Auth 会话 cookie 的有效期(24 小时),用于避免每次请求都记录 LoginSuccess。
 pub const BASIC_AUTH_SESSION_SECS: u64 = 24 * 60 * 60;
+/// Shared budget bounds memory and expiry scans without evicting live browser sessions.
+pub(crate) const MAX_AUTH_SESSIONS: usize = 1_024;
 /// 敏感设置修改的确认凭证为短效机制，且与当前浏览器会话绑定。
 pub const SENSITIVE_CONFIRMATION_SECS: u64 = 5 * 60;
 /// 单个 pending session 允许的最大 TOTP 错误尝试次数。达到后该 pending token
@@ -239,6 +242,7 @@ pub type AuthSessionResult<T> = std::result::Result<T, AuthSessionError>;
 #[derive(Debug)]
 pub enum AuthSessionError {
     Entropy(getrandom::Error),
+    Capacity,
 }
 
 impl std::fmt::Display for AuthSessionError {
@@ -247,6 +251,7 @@ impl std::fmt::Display for AuthSessionError {
             Self::Entropy(_) => {
                 f.write_str("failed to gather secure random bytes for session token")
             }
+            Self::Capacity => f.write_str("browser session capacity reached"),
         }
     }
 }
@@ -255,6 +260,7 @@ impl std::error::Error for AuthSessionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Entropy(error) => Some(error),
+            Self::Capacity => None,
         }
     }
 }
@@ -271,6 +277,7 @@ impl TwoFactorSessions {
         let expires_at = Instant::now() + Duration::from_secs(TWO_FACTOR_PENDING_SECS);
         let mut store = lock_mutex(&self.inner);
         prune_expired_sessions(&mut store, Instant::now());
+        ensure_session_capacity(&store)?;
         store.pending.insert(
             token.clone(),
             PendingSession {
@@ -322,6 +329,7 @@ impl TwoFactorSessions {
         let now = Instant::now();
         let mut store = lock_mutex(&self.inner);
         prune_expired_sessions(&mut store, now);
+        ensure_session_capacity(&store)?;
         insert_authenticated_session(&mut store, &token, now);
         Ok(token)
     }
@@ -389,22 +397,6 @@ impl TwoFactorSessions {
             .map(|session| session.lifetime.clone())
     }
 
-    pub(crate) fn basic_auth_lifetime(&self, token: &str) -> Option<BrowserSession> {
-        let mut store = lock_mutex(&self.inner);
-        prune_expired_sessions(&mut store, Instant::now());
-        store
-            .basic_auth_sessions
-            .get(token)
-            .map(|session| session.lifetime.clone())
-    }
-
-    pub(crate) fn remove_basic_auth_session(&self, token: &str) {
-        let mut store = lock_mutex(&self.inner);
-        if let Some(session) = store.basic_auth_sessions.remove(token) {
-            session.lifetime.revoke();
-        }
-    }
-
     /// 绑定已完成 2FA 的会话与其 LoginSuccess 审计事件。
     pub fn set_authenticated_login_event_id(&self, token: &str, login_event_id: Option<i64>) {
         let Some(login_event_id) = login_event_id else {
@@ -438,45 +430,15 @@ impl TwoFactorSessions {
             session.lifetime.revoke();
         }
     }
+}
 
-    /// 创建 Basic Auth 会话 token。用于 Basic-only 模式下跟踪已登录会话,
-    /// 避免每次请求都记录 LoginSuccess 事件。同时记录登录审计事件 id,
-    /// 用于 last-login API 排除当前会话。
-    pub fn create_basic_auth_session(
-        &self,
-        login_event_id: Option<i64>,
-    ) -> AuthSessionResult<String> {
-        let token = generate_session_token()?;
-        let expires_at = Instant::now() + Duration::from_secs(BASIC_AUTH_SESSION_SECS);
-        let mut store = lock_mutex(&self.inner);
-        prune_expired_sessions(&mut store, Instant::now());
-        store.basic_auth_sessions.insert(
-            token.clone(),
-            BasicAuthSession {
-                lifetime: BrowserSession::new(expires_at),
-                login_event_id,
-                confirmed_until: None,
-            },
-        );
-        Ok(token)
+fn ensure_session_capacity(store: &TwoFactorSessionStore) -> AuthSessionResult<()> {
+    if store.pending.len() + store.authenticated.len() + store.basic_auth_sessions.len()
+        >= MAX_AUTH_SESSIONS
+    {
+        return Err(AuthSessionError::Capacity);
     }
-
-    /// 验证 Basic Auth 会话 token 是否有效。
-    pub fn is_basic_auth_session_valid(&self, token: &str) -> bool {
-        let mut store = lock_mutex(&self.inner);
-        prune_expired_sessions(&mut store, Instant::now());
-        store.basic_auth_sessions.contains_key(token)
-    }
-
-    /// 获取 Basic Auth 会话的登录审计事件 id。用于 last-login API 排除当前会话。
-    pub fn get_basic_auth_login_event_id(&self, token: &str) -> Option<i64> {
-        let mut store = lock_mutex(&self.inner);
-        prune_expired_sessions(&mut store, Instant::now());
-        store
-            .basic_auth_sessions
-            .get(token)
-            .and_then(|session| session.login_event_id)
-    }
+    Ok(())
 }
 
 fn mark_unused_totp_steps(store: &mut TwoFactorSessionStore, steps: &[u64], now: Instant) -> bool {
@@ -629,6 +591,9 @@ pub fn expire_cookie(name: &'static str, secure: bool) -> (header::HeaderName, S
 pub fn secure_cookies(config: &ServerConfig) -> bool {
     config.public_base_url.starts_with("https://")
 }
+
+#[cfg(test)]
+mod session_capacity_tests;
 
 #[cfg(test)]
 mod tests {
