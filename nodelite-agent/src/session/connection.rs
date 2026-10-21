@@ -7,7 +7,7 @@ use anyhow::{Context, Result, anyhow};
 use futures::StreamExt;
 use tokio::time::{Instant, MissedTickBehavior, interval, sleep_until, timeout, timeout_at};
 use tokio_tungstenite::tungstenite::{Error as WebSocketError, Message};
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async_with_config};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use tracing::{info, warn};
 
 use nodelite_proto::{
@@ -66,10 +66,9 @@ pub async fn run_session(
     );
     let (socket, _) = timeout(
         Duration::from_secs(config.connect_timeout_secs),
-        connect_async_with_config(
+        crate::tls::connect(
             config.server.as_str(),
-            Some(incoming_ws_config(config.max_incoming_message_bytes)),
-            false,
+            incoming_ws_config(config.max_incoming_message_bytes),
         ),
     )
     .await

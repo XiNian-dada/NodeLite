@@ -46,6 +46,7 @@ thiserror = "2.0"
 url = "2.5"
 uuid = { version = "1.19", features = ["v4", "serde"] }
 webauthn-rs = { version = "0.5.5", default-features = false }
+webpki-roots = "1.0.10"
 
 [profile.release]
 codegen-units = 1

@@ -62,6 +62,7 @@
 - `nodelite-server/src/admission.rs`
 
 当前传输与来源识别规则：
+- Agent 在线连接和升级凭证检查共用 Mozilla 根证书配置与默认严格验证，不接受未知 CA 或域名不匹配的服务端证书
 - 远程明文 HTTP 只有在显式 opt-in 时才允许
 - 开启 2FA 时要求 `public_base_url` 为 HTTPS
 - 服务端新增 `server.trusted_proxies` CIDR 配置
