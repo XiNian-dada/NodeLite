@@ -48,7 +48,9 @@ where
             return Ok((value, file));
         }
 
-        file.version = base_version.saturating_add(1);
+        file.version = base_version
+            .checked_add(1)
+            .ok_or_else(|| RegistryError::validation("registry commit version exhausted"))?;
         validate_registry_file(path, &file)?;
 
         let tmp_path = temporary_registry_path(path)?;

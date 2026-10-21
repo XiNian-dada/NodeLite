@@ -18,6 +18,7 @@ use nodelite_proto::NodeIdentity;
 
 mod authorize_tests;
 mod cache_tests;
+mod consistency_tests;
 mod error_tests;
 mod migrate_tests;
 mod reload_tests;

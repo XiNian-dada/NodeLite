@@ -40,7 +40,7 @@ impl NodeRegistry {
     ) -> RegistryResult<PreparedToken> {
         validate_identifier("node_id", node_id).map_err(RegistryError::validation)?;
         let node_id = node_id.to_string();
-        let (prepared, _) = mutate_registry_file(self.path.as_ref(), move |file| {
+        let (prepared, file) = mutate_registry_file(self.path.as_ref(), move |file| {
             let node = file.nodes.iter_mut().find(|n| n.node_id == node_id)
                 .ok_or_else(|| RegistryError::NodeNotFound(node_id.clone()))?;
             let now = Utc::now();
@@ -63,7 +63,7 @@ impl NodeRegistry {
                 generation: next, expires_at });
             Ok((PreparedToken { token, refresh_id, generation: next, expires_at }, true))
         }).await?;
-        self.reload().await?;
+        self.replace_state_from_file(file).await?;
         Ok(prepared)
     }
 
@@ -75,7 +75,7 @@ impl NodeRegistry {
         crate::sanitize::validate_refresh_id(refresh_id).map_err(RegistryError::validation)?;
         let node_id = node_id.to_string();
         let refresh_id = refresh_id.to_string();
-        let (committed, _) = mutate_registry_file(self.path.as_ref(), move |file| {
+        let (committed, file) = mutate_registry_file(self.path.as_ref(), move |file| {
             let node = file
                 .nodes
                 .iter_mut()
@@ -103,7 +103,7 @@ impl NodeRegistry {
             Ok(((candidate.generation, candidate.expires_at), true))
         })
         .await?;
-        self.reload().await?;
+        self.replace_state_from_file(file).await?;
         self.token_cache.lock().clear();
         Ok(committed)
     }

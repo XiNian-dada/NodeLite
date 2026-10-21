@@ -220,6 +220,7 @@ pub(super) fn load_registry_state_from_file(
     }
 
     Ok(RegistryState {
+        version: file.version,
         entries,
         install_sessions,
     })
