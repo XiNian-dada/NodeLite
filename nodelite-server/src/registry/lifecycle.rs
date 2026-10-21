@@ -21,8 +21,8 @@ use super::storage::{
 use super::token::{constant_time_eq, prune_expired_install_sessions};
 use super::{
     ConsumedInstall, MAX_TRAFFIC_THROTTLE_KBPS, NodeRegistry, NodeServiceMetadata, RegisteredNode,
-    RegistryError, RegistryFile, RegistryReloadCheckpoint, RegistryResult, TOKEN_CACHE_CAPACITY,
-    TrafficQuota, coordinate_to_microdegrees,
+    RegistryError, RegistryFile, RegistryReloadCheckpoint, RegistryResult, RegistryState,
+    TOKEN_CACHE_CAPACITY, TrafficQuota, coordinate_to_microdegrees,
 };
 
 impl NodeRegistry {
@@ -102,17 +102,7 @@ impl NodeRegistry {
         fingerprint: super::storage::RegistryFileFingerprint,
     ) -> RegistryResult<bool> {
         let next_state = load_registry_state(self.path.as_path()).await?;
-        let mut state = self.state.write().await;
-        let changed = *state != next_state;
-        if changed {
-            self.bump_registry_revision();
-            *state = next_state;
-        }
-        drop(state);
-
-        let mut checkpoint = self.reload_checkpoint.write().await;
-        checkpoint.fingerprint = Some(fingerprint);
-        Ok(changed)
+        Ok(self.apply_loaded_state(next_state, Some(fingerprint)).await)
     }
 
     /// 已登记的节点数量。
@@ -326,10 +316,27 @@ impl NodeRegistry {
 
     pub(super) async fn replace_state_from_file(&self, file: RegistryFile) -> RegistryResult<()> {
         let state = super::storage::load_registry_state_from_file(self.path.as_path(), file)?;
-        let mut guard = self.state.write().await;
-        self.bump_registry_revision();
-        *guard = state;
+        self.apply_loaded_state(state, None).await;
         Ok(())
+    }
+
+    pub(super) async fn apply_loaded_state(
+        &self,
+        next_state: RegistryState,
+        fingerprint: Option<super::storage::RegistryFileFingerprint>,
+    ) -> bool {
+        let mut state = self.state.write().await;
+        // Commit order, not completion order, controls authorization and the reload checkpoint.
+        if next_state.version < state.version {
+            return false;
+        }
+        let changed = *state != next_state;
+        if changed {
+            *state = next_state;
+            self.bump_registry_revision();
+        }
+        self.reload_checkpoint.write().await.fingerprint = fingerprint;
+        changed
     }
 
     pub(super) fn bump_registry_revision(&self) {

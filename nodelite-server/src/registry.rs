@@ -295,6 +295,7 @@ struct RegistryReloadCheckpoint {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct RegistryState {
+    version: u64,
     entries: HashMap<String, RegisteredNode>,
     install_sessions: HashMap<String, InstallSession>,
 }

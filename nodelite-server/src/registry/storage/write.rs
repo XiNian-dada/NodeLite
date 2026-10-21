@@ -17,21 +17,6 @@ use super::{MAX_REGISTRY_WRITE_RETRIES, load_registry_file_sync};
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
-pub(super) fn save_registry_file_sync(path: &Path, file: &RegistryFile) -> RegistryResult<()> {
-    validate_registry_file(path, file)?;
-    ensure_registry_parent_dir(path)?;
-
-    let payload = serde_json::to_string_pretty(file).map_err(RegistryError::serialize)?;
-    let tmp_path = temporary_registry_path(path)?;
-    write_registry_payload(&tmp_path, &payload)?;
-    harden_registry_permissions(&tmp_path)?;
-    std::fs::rename(&tmp_path, path)
-        .map_err(|error| RegistryError::io("replacing", path, error))?;
-    sync_parent_dir(path)?;
-    verify_registry_permissions(path)?;
-    Ok(())
-}
-
 pub(super) fn mutate_registry_file_sync<T, F>(
     path: &Path,
     operation: F,
@@ -48,7 +33,9 @@ where
             return Ok((value, file));
         }
 
-        file.version = base_version.saturating_add(1);
+        file.version = base_version
+            .checked_add(1)
+            .ok_or_else(|| RegistryError::validation("registry commit version exhausted"))?;
         validate_registry_file(path, &file)?;
 
         let tmp_path = temporary_registry_path(path)?;

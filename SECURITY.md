@@ -48,6 +48,7 @@
 - `issue-node` 生成 256-bit 随机 token
 - 新签发 token 在磁盘上只保存 Argon2id 哈希，不再保存明文
 - 旧版本遗留的明文 token 会在加载 registry 时自动迁移到 `token_hash`
+- 注册表管理写入与后台重载按提交版本单调生效；旧格式迁移复用版本校验与原子落盘流程
 - 每个节点维护 `token_generation`，用于在 WebSocket 热路径上判断当前会话是否已被轮换
 - token 默认有效期 30 天
 - 距离过期不足 7 天时，在线节点可自动续期
@@ -61,6 +62,7 @@
 - `nodelite-server/src/admission.rs`
 
 当前传输与来源识别规则：
+- Agent 在线连接和升级凭证检查共用 Mozilla 根证书配置与默认严格验证，不接受未知 CA 或域名不匹配的服务端证书
 - 远程明文 HTTP 只有在显式 opt-in 时才允许
 - 开启 2FA 时要求 `public_base_url` 为 HTTPS
 - 服务端新增 `server.trusted_proxies` CIDR 配置

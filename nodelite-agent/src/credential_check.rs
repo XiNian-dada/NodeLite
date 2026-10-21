@@ -7,7 +7,7 @@ use nodelite_proto::{
     AgentConfig, HelloMessage, NodeIdentity, NoticeLevel, WIRE_PROTOCOL_VERSION, WireMessage,
 };
 use thiserror::Error;
-use tokio_tungstenite::{connect_async_with_config, tungstenite::Message};
+use tokio_tungstenite::tungstenite::Message;
 
 #[derive(Debug, Error)]
 pub enum CredentialCheckError {
@@ -38,12 +38,9 @@ pub async fn check_credentials(
             .saturating_add(config.auth_timeout_secs),
     );
     tokio::time::timeout(duration, async {
-        let (mut socket, _) = connect_async_with_config(
+        let (mut socket, _) = crate::tls::connect(
             url.as_str(),
-            Some(crate::session::incoming_ws_config(
-                config.max_incoming_message_bytes,
-            )),
-            false,
+            crate::session::incoming_ws_config(config.max_incoming_message_bytes),
         )
         .await
         .map_err(|_| CredentialCheckError::Unavailable)?;
