@@ -1,10 +1,14 @@
 //! Authorization snapshots must follow durable commit order, not task completion order.
 
 use std::path::PathBuf;
+use std::sync::Barrier;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::Poll;
 
 use super::*;
-use crate::registry::storage::{load_registry_file_sync, mutate_registry_file};
+use crate::registry::storage::{
+    load_registry_file_sync, migrate_registry_file, mutate_registry_file,
+};
 
 struct Fixture {
     path: PathBuf,
@@ -41,6 +45,16 @@ impl Fixture {
             *self.registry.state.read().await == disk,
             "runtime must match the durable registry"
         );
+    }
+
+    fn write_legacy_snapshot(&self, version: u64) {
+        let mut file = self.snapshot();
+        file.version = version;
+        file.nodes[0].token_hash.clear();
+        file.nodes[0].token = self.issued.node_session_token.clone();
+        file.nodes[0].token_generation = 0;
+        let payload = serde_json::to_vec(&file).expect("serialize legacy fixture");
+        std::fs::write(&self.path, payload).expect("write legacy fixture");
     }
 }
 
@@ -273,4 +287,115 @@ async fn registry_version_exhaustion_does_not_publish_a_mutation() {
         std::fs::read(&fixture.path).expect("read boundary fixture") == payload,
         "failed mutation must leave disk unchanged"
     );
+}
+
+#[tokio::test]
+async fn delayed_legacy_migration_preserves_later_removal() {
+    let fixture = Fixture::new().await;
+    fixture.write_legacy_snapshot(fixture.snapshot().version);
+    let legacy = fixture.snapshot();
+    assert!(!legacy.nodes[0].token.is_empty());
+
+    fixture
+        .registry
+        .remove_node("fixture-node")
+        .await
+        .expect("remove legacy node");
+    let migrated = migrate_registry_file(&fixture.path)
+        .await
+        .expect("finish delayed migration");
+    assert!(migrated.version > legacy.version);
+    fixture
+        .registry
+        .replace_state_from_file(migrated)
+        .await
+        .expect("apply migration");
+    assert_eq!(fixture.registry.count().await, 0);
+    fixture.assert_disk_matches_runtime().await;
+}
+
+#[tokio::test]
+async fn migration_retry_cannot_restore_a_concurrently_removed_node() {
+    let fixture = Fixture::new().await;
+    fixture.write_legacy_snapshot(fixture.snapshot().version);
+    let prepared = Arc::new(tokio::sync::Notify::new());
+    let resume = Arc::new(Barrier::new(2));
+    let ready = Arc::clone(&prepared);
+    let release = Arc::clone(&resume);
+    let first_attempt = Arc::new(AtomicBool::new(true));
+    let path = fixture.path.clone();
+    let migration = tokio::spawn(async move {
+        mutate_registry_file(&path, move |file| {
+            if first_attempt.swap(false, Ordering::SeqCst) {
+                ready.notify_one();
+                release.wait();
+            }
+            crate::registry::token::migrate_legacy_tokens(file)?;
+            Ok(((), true))
+        })
+        .await
+    });
+
+    tokio::time::timeout(Duration::from_secs(10), prepared.notified())
+        .await
+        .expect("migration must reach the preparation barrier");
+    let removed = fixture.registry.remove_node("fixture-node").await;
+    resume.wait();
+    removed.expect("commit removal while migration is preparing");
+    let ((), migrated) = migration
+        .await
+        .expect("migration task")
+        .expect("retry migration");
+    fixture
+        .registry
+        .replace_state_from_file(migrated)
+        .await
+        .expect("apply retried migration");
+    assert_eq!(fixture.registry.count().await, 0);
+    fixture.assert_disk_matches_runtime().await;
+}
+
+#[tokio::test]
+async fn delayed_legacy_migration_preserves_later_credentials() {
+    let fixture = Fixture::new().await;
+    fixture.write_legacy_snapshot(fixture.snapshot().version);
+    let legacy = fixture.snapshot();
+    assert!(!legacy.nodes[0].token.is_empty());
+
+    let rotated = issue_node(&fixture.path, request())
+        .await
+        .expect("rotate legacy credential");
+    let migrated = migrate_registry_file(&fixture.path)
+        .await
+        .expect("finish delayed migration");
+    assert!(migrated.version > legacy.version);
+    fixture
+        .registry
+        .replace_state_from_file(migrated)
+        .await
+        .expect("apply migration");
+    let identity = identity_for("fixture-node");
+    assert!(
+        fixture
+            .registry
+            .authorize(&identity, &fixture.issued.node_session_token)
+            .await
+            .is_err()
+    );
+    fixture
+        .registry
+        .authorize(&identity, &rotated.node_session_token)
+        .await
+        .expect("new credential survives migration");
+    fixture.assert_disk_matches_runtime().await;
+}
+
+#[tokio::test]
+async fn legacy_migration_version_exhaustion_does_not_replace_disk() {
+    let fixture = Fixture::new().await;
+    fixture.write_legacy_snapshot(u64::MAX);
+    let before = std::fs::read(&fixture.path).expect("read legacy fixture");
+
+    assert!(NodeRegistry::load(&fixture.path).await.is_err());
+    assert!(std::fs::read(&fixture.path).expect("read preserved fixture") == before);
 }

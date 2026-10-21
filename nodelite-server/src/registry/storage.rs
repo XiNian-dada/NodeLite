@@ -11,9 +11,9 @@ use std::time::SystemTime;
 use chrono::Utc;
 use tokio::fs;
 
+use self::write::mutate_registry_file_sync;
 #[cfg(test)]
 pub(super) use self::write::release_registry_lock_with;
-use self::write::{mutate_registry_file_sync, save_registry_file_sync};
 use super::migration::migrate_legacy_display_metadata;
 use super::token::{migrate_legacy_tokens, prune_expired_install_sessions};
 use super::validate::validate_registry_file;
@@ -117,18 +117,27 @@ pub(super) async fn load_registry_state(path: &Path) -> RegistryResult<RegistryS
     // Argon2 token 迁移，避免损坏的注册表在拒绝前消耗额外资源。
     let metadata_migrated = migrate_legacy_display_metadata(&mut file);
     validate_registry_file(path, &file)?;
-    let token_migrated = migrate_legacy_tokens(&mut file)?;
-    let migrated = token_migrated || metadata_migrated;
-    if migrated {
-        file.version = file.version.saturating_add(1);
-        let path_buf = path.to_path_buf();
-        let file_clone = file.clone();
-        tokio::task::spawn_blocking(move || save_registry_file_sync(&path_buf, &file_clone))
-            .await
-            .map_err(RegistryError::background_task)??;
+    let legacy_tokens = file
+        .nodes
+        .iter()
+        .any(|node| node.token_hash.is_empty() && !node.token.is_empty());
+    if metadata_migrated || legacy_tokens {
+        file = migrate_registry_file(path).await?;
     }
 
     load_registry_state_from_file(path, file)
+}
+
+pub(super) async fn migrate_registry_file(path: &Path) -> RegistryResult<RegistryFile> {
+    // Rebase migrations on the latest durable file using the same commit protection as edits.
+    let ((), file) = mutate_registry_file(path, |file| {
+        prune_expired_install_sessions(file, Utc::now());
+        migrate_legacy_tokens(file)?;
+        // The synchronous loader has already normalized legacy display metadata.
+        Ok(((), true))
+    })
+    .await?;
+    Ok(file)
 }
 
 async fn load_registry_file(path: &Path) -> RegistryResult<RegistryFile> {
