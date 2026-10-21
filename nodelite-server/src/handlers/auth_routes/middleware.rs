@@ -57,7 +57,10 @@ pub(crate) async fn require_readonly_auth(
             }
             return issue_two_factor_redirect(&state, request).await;
         }
-        // Basic Auth only mode: record LoginSuccess on first access in this session
+        // API scrapers do not retain cookies; only UI entry points start browser sessions.
+        if !starts_browser_session(&request) {
+            return next.run(request).await;
+        }
         let has_valid_session = cookie_value(&headers, BASIC_AUTH_SESSION_COOKIE)
             .as_deref()
             .is_some_and(|token| state.two_factor_sessions.is_basic_auth_session_valid(token));
@@ -266,6 +269,16 @@ fn is_sensitive_readonly_path(path: &str, request: &Request) -> bool {
     request.method() != axum::http::Method::GET && path.starts_with("/api/settings/")
 }
 
+fn starts_browser_session(request: &Request) -> bool {
+    if request.method() != axum::http::Method::GET {
+        return false;
+    }
+    let path = request.uri().path();
+    matches!(path, "/" | "/settings" | "/account" | "/alerts" | "/logs")
+        || path.starts_with("/nodes/")
+        || (path == "/ws/browser" && is_websocket_upgrade(request.headers()))
+}
+
 async fn record_readonly_auth_block(
     state: &AppState,
     audit_ip: &str,
@@ -405,3 +418,7 @@ async fn issue_basic_auth_session_and_continue(
 #[cfg(test)]
 #[path = "middleware_revocation_tests.rs"]
 mod revocation_tests;
+
+#[cfg(test)]
+#[path = "basic_session_tests.rs"]
+mod basic_session_tests;
