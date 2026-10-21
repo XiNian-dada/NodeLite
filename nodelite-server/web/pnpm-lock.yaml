@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  vite: ^6.4.3
+  vite: ^6.4.4
   js-beautify@1.15.4: 2.0.3
   nopt@10.0.1: 9.0.0
   postcss@8.5.15: 8.5.23
@@ -39,7 +39,7 @@ importers:
         version: 22.19.19
       '@vitejs/plugin-vue':
         specifier: ^5.2.1
-        version: 5.2.4(vite@6.4.3(@types/node@22.19.19))(vue@3.5.44(typescript@5.6.3))
+        version: 5.2.4(vite@6.4.4(@types/node@22.19.19))(vue@3.5.44(typescript@5.6.3))
       '@vue/eslint-config-prettier':
         specifier: ^10.1.0
         version: 10.2.0(eslint@10.8.0)(prettier@3.8.3)
@@ -65,14 +65,14 @@ importers:
         specifier: ^8.60.0
         version: 8.71.2(eslint@10.8.0)(typescript@5.6.3)
       vite:
-        specifier: ^6.4.3
-        version: 6.4.3(@types/node@22.19.19)
+        specifier: ^6.4.4
+        version: 6.4.4(@types/node@22.19.19)
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@22.19.19)(jsdom@26.1.0)(vite@6.4.3(@types/node@22.19.19))
+        version: 4.1.11(@types/node@22.19.19)(jsdom@26.1.0)(vite@6.4.4(@types/node@22.19.19))
       vitest-websocket-mock:
         specifier: 0.4.0
-        version: 0.4.0(vitest@4.1.11(@types/node@22.19.19)(jsdom@26.1.0)(vite@6.4.3(@types/node@22.19.19)))
+        version: 0.4.0(vitest@4.1.11(@types/node@22.19.19)(jsdom@26.1.0)(vite@6.4.4(@types/node@22.19.19)))
       vue-eslint-parser:
         specifier: ^10.4.0
         version: 10.4.1(eslint@10.8.0)
@@ -590,7 +590,7 @@ packages:
     resolution: {integrity: sha512-7Yx/SXSOcQq5HiiV3orevHUFn+pmMB4cgbEkDYgnkUWb0WfeQ/wa2yFv6D5ICiCQOVpjA7vYDXrC7AGO8yjDHA==}
     engines: {node: ^18.0.0 || >=20.0.0}
     peerDependencies:
-      vite: ^6.4.3
+      vite: ^6.4.4
       vue: ^3.2.25
 
   '@vitest/expect@4.1.11':
@@ -600,7 +600,7 @@ packages:
     resolution: {integrity: sha512-2XJVD55d1o5AZous5CCGKS74g/riOj9odEt2bQpCVZeblHyHdnMeFl4jl0XjU21stf4mbjUkew2eXQZt65g5CQ==}
     peerDependencies:
       msw: ^2.4.9
-      vite: ^6.4.3
+      vite: ^6.4.4
     peerDependenciesMeta:
       msw:
         optional: true
@@ -1305,8 +1305,8 @@ packages:
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
 
-  vite@6.4.3:
-    resolution: {integrity: sha512-NTKlcQjlAK7MlQoyb6LgaqHc8sso/pVyUJYWMws3jg21uTJw/LddqIFPcPqP6PzpgbIcZyKI85sFE4HBrQDA8A==}
+  vite@6.4.4:
+    resolution: {integrity: sha512-xGjU/SyjeNyb0E4KxXBvYz/1C+3JXuujvf2hXNOtnlcE+58o5ajd9N2/n2VhkiJvpCP2qQasnUpx5PXNeI+p1Q==}
     engines: {node: ^18.0.0 || ^20.0.0 || >=22.0.0}
     hasBin: true
     peerDependencies:
@@ -1366,7 +1366,7 @@ packages:
       '@vitest/ui': 4.1.11
       happy-dom: '*'
       jsdom: '*'
-      vite: ^6.4.3
+      vite: ^6.4.4
     peerDependenciesMeta:
       '@edge-runtime/vm':
         optional: true
@@ -1888,9 +1888,9 @@ snapshots:
       '@typescript-eslint/types': 8.71.2
       eslint-visitor-keys: 5.0.1
 
-  '@vitejs/plugin-vue@5.2.4(vite@6.4.3(@types/node@22.19.19))(vue@3.5.44(typescript@5.6.3))':
+  '@vitejs/plugin-vue@5.2.4(vite@6.4.4(@types/node@22.19.19))(vue@3.5.44(typescript@5.6.3))':
     dependencies:
-      vite: 6.4.3(@types/node@22.19.19)
+      vite: 6.4.4(@types/node@22.19.19)
       vue: 3.5.44(typescript@5.6.3)
 
   '@vitest/expect@4.1.11':
@@ -1902,13 +1902,13 @@ snapshots:
       chai: 6.3.0
       tinyrainbow: 3.2.0
 
-  '@vitest/mocker@4.1.11(vite@6.4.3(@types/node@22.19.19))':
+  '@vitest/mocker@4.1.11(vite@6.4.4(@types/node@22.19.19))':
     dependencies:
       '@vitest/spy': 4.1.11
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 6.4.3(@types/node@22.19.19)
+      vite: 6.4.4(@types/node@22.19.19)
 
   '@vitest/pretty-format@2.1.9':
     dependencies:
@@ -2662,7 +2662,7 @@ snapshots:
 
   util-deprecate@1.0.2: {}
 
-  vite@6.4.3(@types/node@22.19.19):
+  vite@6.4.4(@types/node@22.19.19):
     dependencies:
       esbuild: 0.25.12
       fdir: 6.5.0(picomatch@4.0.4)
@@ -2674,16 +2674,16 @@ snapshots:
       '@types/node': 22.19.19
       fsevents: 2.3.3
 
-  vitest-websocket-mock@0.4.0(vitest@4.1.11(@types/node@22.19.19)(jsdom@26.1.0)(vite@6.4.3(@types/node@22.19.19))):
+  vitest-websocket-mock@0.4.0(vitest@4.1.11(@types/node@22.19.19)(jsdom@26.1.0)(vite@6.4.4(@types/node@22.19.19))):
     dependencies:
       '@vitest/utils': 2.1.9
       mock-socket: 9.3.1
-      vitest: 4.1.11(@types/node@22.19.19)(jsdom@26.1.0)(vite@6.4.3(@types/node@22.19.19))
+      vitest: 4.1.11(@types/node@22.19.19)(jsdom@26.1.0)(vite@6.4.4(@types/node@22.19.19))
 
-  vitest@4.1.11(@types/node@22.19.19)(jsdom@26.1.0)(vite@6.4.3(@types/node@22.19.19)):
+  vitest@4.1.11(@types/node@22.19.19)(jsdom@26.1.0)(vite@6.4.4(@types/node@22.19.19)):
     dependencies:
       '@vitest/expect': 4.1.11
-      '@vitest/mocker': 4.1.11(vite@6.4.3(@types/node@22.19.19))
+      '@vitest/mocker': 4.1.11(vite@6.4.4(@types/node@22.19.19))
       '@vitest/pretty-format': 4.1.11
       '@vitest/runner': 4.1.11
       '@vitest/snapshot': 4.1.11
@@ -2700,7 +2700,7 @@ snapshots:
       tinyexec: 1.3.1
       tinyglobby: 0.2.17
       tinyrainbow: 3.2.0
-      vite: 6.4.3(@types/node@22.19.19)
+      vite: 6.4.4(@types/node@22.19.19)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 22.19.19
