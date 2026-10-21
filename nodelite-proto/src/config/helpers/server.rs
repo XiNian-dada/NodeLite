@@ -88,10 +88,10 @@ pub(in crate::config) fn parse_trusted_proxies(
     normalize_string_list(values)
         .into_iter()
         .map(|value| {
-            value.parse::<IpNet>().map_err(|error| {
-                ConfigError::new(format!(
-                    "invalid server.trusted_proxies entry {value:?}: {error}"
-                ))
+            value.parse::<IpNet>().map_err(|_| {
+                ConfigError::new(
+                    "invalid server.trusted_proxies entry: expected a valid IP network",
+                )
             })
         })
         .collect()
@@ -194,10 +194,9 @@ mod tests {
 
         let error = parse_trusted_proxies(vec!["bad-cidr".to_string()])
             .expect_err("invalid proxy cidrs should fail");
-        assert!(
-            error
-                .to_string()
-                .contains("invalid server.trusted_proxies entry \"bad-cidr\"")
+        assert_eq!(
+            error.to_string(),
+            "invalid server.trusted_proxies entry: expected a valid IP network"
         );
     }
 }

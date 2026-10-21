@@ -59,6 +59,32 @@ fn update_auth_password_rejects_missing_auth_section() {
 }
 
 #[test]
+fn settings_parse_errors_do_not_retain_source_values() {
+    let marker = "synthetic-settings-value";
+    let input = format!("[auth]\nusername = 'viewer'\npassword = '{marker}\n");
+    let errors = [
+        update_auth_password(&input, "replacement").expect_err("invalid document"),
+        update_auth_2fa(&input, true, Some("JBSWY3DPEHPK3PXP")).expect_err("invalid document"),
+        update_alerting_settings(&input, &sample_alerting_config()).expect_err("invalid document"),
+    ];
+    for error in errors {
+        for text in [
+            error.to_string(),
+            format!("{error:#}"),
+            format!("{error:?}"),
+        ] {
+            assert!(
+                !text.contains(marker),
+                "settings diagnostic exposed an input value"
+            );
+        }
+        let chain = format!("{error:#}");
+        assert!(chain.contains("line"));
+        assert!(chain.contains("column"));
+    }
+}
+
+#[test]
 fn update_alerting_settings_replaces_alerts_section_and_preserves_other_sections() {
     let updated = update_alerting_settings(ALERTS_BASE, &sample_alerting_config())
         .expect("alert settings update should succeed");

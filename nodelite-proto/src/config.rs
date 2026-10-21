@@ -179,6 +179,39 @@ impl ConfigError {
             message: message.into(),
         }
     }
+
+    /// Discards parser values and source excerpts before diagnostics reach logs or API responses.
+    pub fn from_toml_diagnostic(
+        input: &str,
+        message: &str,
+        span: Option<std::ops::Range<usize>>,
+    ) -> Self {
+        // Even snippet-free parser messages can interpolate credentials, keys or enum values.
+        let category = [
+            "unknown field",
+            "missing field",
+            "invalid type",
+            "invalid value",
+            "unknown variant",
+            "duplicate field",
+            "duplicate key",
+        ]
+        .into_iter()
+        .find(|category| message.starts_with(category))
+        .unwrap_or("syntax or structure error");
+        let diagnostic = format!("invalid TOML configuration: {category}");
+        let Some(span) = span else {
+            return Self::new(diagnostic);
+        };
+        let offset = span.start.min(input.len());
+        let prefix = &input.as_bytes()[..offset];
+        let line = prefix.iter().filter(|byte| **byte == b'\n').count() + 1;
+        let column = prefix
+            .iter()
+            .rposition(|byte| *byte == b'\n')
+            .map_or(offset + 1, |newline| offset - newline);
+        Self::new(format!("{diagnostic} at line {line}, column {column}"))
+    }
 }
 
 impl std::fmt::Display for ConfigError {
@@ -237,7 +270,8 @@ pub struct AgentConfig {
 
 /// 从 TOML 文本中解析并校验出 `AgentConfig`。
 pub fn parse_agent_config(input: &str) -> Result<AgentConfig, ConfigError> {
-    let raw: RawAgentConfigFile =
-        toml::from_str(input).map_err(|error| ConfigError::new(error.to_string()))?;
+    let raw: RawAgentConfigFile = toml::from_str(input).map_err(|error: toml::de::Error| {
+        ConfigError::from_toml_diagnostic(input, error.message(), error.span())
+    })?;
     raw.validate()
 }

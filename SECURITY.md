@@ -93,6 +93,7 @@
 - 安装脚本默认使用私有 `umask`
 - 配置、registry 与数据目录按 root-owned / private mode 方向初始化
 - `ServerConfig` / `ReadonlyAuthConfig` 不允许直接整结构序列化回 API，避免把密码或 TOTP secret 泄露到 JSON 输出
+- 启动解析与设置保存共用安全的 TOML 诊断边界：仅保留固定错误类别及字节行列，不附原始配置片段或解析器中的输入值
 
 ## 已知限制
 

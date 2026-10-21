@@ -230,8 +230,9 @@ pub enum GeoIpEdition {
 
 /// 从 TOML 文本中解析并校验出 `ServerConfig`。
 pub fn parse_server_config(input: &str) -> Result<ServerConfig, ConfigError> {
-    let raw: RawServerConfigFile =
-        toml::from_str(input).map_err(|error| ConfigError::new(error.to_string()))?;
+    let raw: RawServerConfigFile = toml::from_str(input).map_err(|error: toml::de::Error| {
+        ConfigError::from_toml_diagnostic(input, error.message(), error.span())
+    })?;
     raw.validate()
 }
 
