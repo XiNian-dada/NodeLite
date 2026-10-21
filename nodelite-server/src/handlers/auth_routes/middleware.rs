@@ -15,7 +15,7 @@ use crate::AppState;
 use crate::admission::resolve_client_ip;
 use crate::audit::{AuditEventType, NewAuditEvent};
 use crate::auth::{
-    BASIC_AUTH_SESSION_COOKIE, BASIC_AUTH_SESSION_SECS, TWO_FACTOR_AUTH_COOKIE,
+    AuthSessionError, BASIC_AUTH_SESSION_COOKIE, BASIC_AUTH_SESSION_SECS, TWO_FACTOR_AUTH_COOKIE,
     TWO_FACTOR_PENDING_COOKIE, TWO_FACTOR_PENDING_SECS, auth_cookie, cookie_value, expire_cookie,
     secure_cookies,
 };
@@ -57,14 +57,15 @@ pub(crate) async fn require_readonly_auth(
             }
             return issue_two_factor_redirect(&state, request).await;
         }
-        // Basic Auth only mode: record LoginSuccess on first access in this session
+        // API scrapers do not retain cookies; only UI entry points start browser sessions.
+        if !starts_browser_session(&request) {
+            return next.run(request).await;
+        }
         let has_valid_session = cookie_value(&headers, BASIC_AUTH_SESSION_COOKIE)
             .as_deref()
             .is_some_and(|token| state.two_factor_sessions.is_basic_auth_session_valid(token));
         if !has_valid_session {
-            let login_event_id = record_basic_auth_login_success(&state, &meta).await;
-            return issue_basic_auth_session_and_continue(&state, request, next, login_event_id)
-                .await;
+            return issue_basic_auth_session_and_continue(&state, &meta, request, next).await;
         }
         return next.run(request).await;
     }
@@ -198,7 +199,7 @@ async fn issue_two_factor_redirect(state: &AppState, request: Request) -> Respon
         Ok(token) => token,
         Err(error) => {
             error!(error = ?error, "failed to create pending 2FA session");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            return session_creation_error_response(error);
         }
     };
     drop(auth);
@@ -264,6 +265,16 @@ fn readonly_auth_unauthorized_response() -> Response {
 
 fn is_sensitive_readonly_path(path: &str, request: &Request) -> bool {
     request.method() != axum::http::Method::GET && path.starts_with("/api/settings/")
+}
+
+fn starts_browser_session(request: &Request) -> bool {
+    if request.method() != axum::http::Method::GET {
+        return false;
+    }
+    let path = request.uri().path();
+    matches!(path, "/" | "/settings" | "/account" | "/alerts" | "/logs")
+        || path.starts_with("/nodes/")
+        || (path == "/ws/browser" && is_websocket_upgrade(request.headers()))
 }
 
 async fn record_readonly_auth_block(
@@ -355,23 +366,27 @@ async fn record_basic_auth_login_success(state: &AppState, meta: &ReadonlyAuthMe
 
 async fn issue_basic_auth_session_and_continue(
     state: &AppState,
+    meta: &ReadonlyAuthMeta,
     mut request: Request,
     next: Next,
-    login_event_id: Option<i64>,
 ) -> Response {
-    let session_token = match state
-        .two_factor_sessions
-        .create_basic_auth_session(login_event_id)
-    {
+    // Reserve capacity before recording a login, under the same auth generation check.
+    let auth = state.readonly_auth.read().await;
+    if auth.enable_2fa || !auth.is_authorized(&request) {
+        return readonly_auth_unauthorized_response();
+    }
+    let session_token = match state.two_factor_sessions.create_basic_auth_session(None) {
         Ok(token) => token,
         Err(error) => {
             error!(error = ?error, "failed to generate basic auth session token");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            return session_creation_error_response(error);
         }
     };
+    drop(auth);
+    let login_event_id = record_basic_auth_login_success(state, meta).await;
     let Some(lifetime) = state
         .two_factor_sessions
-        .basic_auth_lifetime(&session_token)
+        .bind_basic_auth_login(&session_token, login_event_id)
     else {
         return readonly_auth_unauthorized_response();
     };
@@ -402,6 +417,18 @@ async fn issue_basic_auth_session_and_continue(
     response
 }
 
+fn session_creation_error_response(error: AuthSessionError) -> Response {
+    match error {
+        AuthSessionError::Capacity => StatusCode::SERVICE_UNAVAILABLE,
+        AuthSessionError::Entropy(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+    .into_response()
+}
+
 #[cfg(test)]
 #[path = "middleware_revocation_tests.rs"]
 mod revocation_tests;
+
+#[cfg(test)]
+#[path = "basic_session_tests.rs"]
+mod basic_session_tests;

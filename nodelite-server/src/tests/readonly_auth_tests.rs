@@ -93,19 +93,20 @@ fn last_login_excludes_current_login_on_first_request_before_cookie_arrives() {
             .await
             .expect("previous login");
         let app = Router::new()
-            .route("/api/auth/last-login", get(last_login))
+            .route("/", get(last_login))
             .route_layer(from_fn_with_state(state.clone(), require_readonly_auth))
             .with_state(state.clone());
         let response = app
             .oneshot(protected_request(
                 "GET",
-                "/api/auth/last-login",
+                "/",
                 Some(TEST_BASIC_AUTH_HEADER),
                 SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 24), 51234)),
             ))
             .await
             .expect("response");
         assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().contains_key(header::SET_COOKIE));
         let body = to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("body");
