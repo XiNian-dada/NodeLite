@@ -18,6 +18,7 @@ const mockUpdateMeta = vi.mocked(apiClient.updateNodeServiceMetadata);
 
 const FAKE_DICT = {
   en: {
+    'agent_update.start': 'Upgrade Agent',
     'settings.tokens.title': 'Agent Renewal',
     'settings.tokens.empty': 'No enrolled agents yet.',
     'settings.tokens.node': 'Node',

@@ -2,6 +2,7 @@
 import { toRef } from 'vue';
 import { useI18n } from 'vue-i18n';
 import SettingsMessage from '@/components/SettingsMessage.vue';
+import AgentUpdatePanel from '@/components/AgentUpdatePanel.vue';
 import { useNodeSettingsDraft } from '@/composables/useNodeSettingsDraft';
 import { fmtBytes } from '@/lib/format';
 
@@ -35,6 +36,7 @@ const {
 
 <template>
   <div class="node-settings" data-test="node-settings-panel">
+    <AgentUpdatePanel :node-id="nodeId" />
     <article class="panel" data-test="node-token-info-panel">
       <header class="card-head">
         <h2 class="card-title">{{ t('node.settings.token_info') }}</h2>

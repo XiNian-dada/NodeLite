@@ -294,6 +294,48 @@ export interface StartServerUpdateRequest extends ReauthPayload {
   release_tag?: string;
 }
 
+export type AgentUpdatePhase =
+  | 'idle'
+  | 'queued'
+  | 'downloading'
+  | 'prepared'
+  | 'stopping'
+  | 'trial'
+  | 'rolling_back'
+  | 'committed'
+  | 'up_to_date'
+  | 'rolled_back'
+  | 'failed'
+  | 'manual_recovery'
+  | 'unknown';
+
+export interface AgentUpdateView {
+  online: boolean;
+  agent_version: string;
+  can_update: boolean;
+  status: {
+    capability: 'ready' | 'disabled' | 'unsupported' | 'manual_recovery';
+    phase: AgentUpdatePhase;
+    request_id: string | null;
+    updated_at: number;
+    installed_sequence: number | null;
+    target_sequence: number | null;
+    channel: 'stable' | 'testing' | null;
+    reason:
+      | 'not_enrolled'
+      | 'disabled_by_policy'
+      | 'unsupported_environment'
+      | 'local_state_invalid'
+      | 'invalid_request'
+      | 'rate_limited'
+      | 'busy'
+      | 'update_failed'
+      | 'request_expired'
+      | 'manual_recovery'
+      | null;
+  };
+}
+
 /** POST /api/settings/agents/install */
 export interface GenerateAgentInstallRequest extends ReauthPayload {
   node_id: string;

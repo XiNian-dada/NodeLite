@@ -239,6 +239,14 @@ const rows = computed(() =>
           </td>
           <td :data-label="t('settings.tokens.actions')" class="token-actions">
             <div class="row-actions">
+              <a
+                v-if="authEnabled"
+                class="btn btn--subtle"
+                :href="`/nodes/${encodeURIComponent(row.nodeId)}#settings`"
+                data-test="agent-upgrade-link"
+              >
+                {{ t('agent_update.start') }}
+              </a>
               <button
                 class="meta-save"
                 type="button"
