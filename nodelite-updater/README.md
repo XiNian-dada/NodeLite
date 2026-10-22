@@ -1,9 +1,10 @@
 # NodeLite Rust Agent 更新器
 
 独立的 Linux/systemd CLI，连接 TUF 签名下载、只读预检、停止屏障、试运行与单次回滚。
-默认关闭，不接收 Server 下发的 URL、命令、服务名或安装路径，不包含网页接口。
+默认关闭，不接收 Server 下发的 URL、命令、服务名或安装路径。
 不会默认迁移节点；安装器可通过 `--enable-signed-updates` 显式开启，自动校验和迁移。
 之后同一手动升级入口调用本机固定策略，不覆盖签名更新器，也不会无人值守拉取新版本。
+额外使用 `--enable-web-updates` 才允许网页触发同一本地流程；仅开启签名模式不会隐式授权远程触发。
 
 当前已在隔离 KVM 客机验证。[签名仓库与密钥工具](../tools/nodelite_release/README.md)及
 [显式首次迁移工具](../tools/nodelite_migrate/README.md)已补齐，但尚未部署生产签名源、
@@ -15,8 +16,8 @@
 
 - `src/`：Rust CLI。`policy.rs`/`fs.rs` 约束信任与文件访问，`download.rs`/`transport.rs`/
   `trust.rs` 负责签名下载与信任缓存，`state.rs`/`activate.rs`/`system.rs` 负责状态和激活恢复；
-  测试与实现放在同一模块内。
-- `systemd/`：12 个固定 Agent、预检、更新及桥接单元，不能用来自面板的服务名或命令替换。
+  `remote.rs` 消费有时限的本地触发并发布不含凭证的状态；测试与实现放在同一模块内。
+- `systemd/`：14 个固定 Agent、预检、更新及桥接单元，不能用来自面板的服务名或命令替换。
 - `policy.example.toml`：不含凭证、默认关闭的节点本地策略模板。
 
 ## 边界与目录
@@ -34,6 +35,8 @@
 | `code/`、`code/objects/` | nodelite-updater:nodelite-read，0750 | 按 SHA256 命名的不可写可执行对象，0550 |
 | `private/` | nodelite-updater:nodelite-updater，0700 | journal、互斥锁、信任历史与缓存；文件 0600 |
 | `bridge/` | root:nodelite-updater，0770 | 仅三个固定动作标记：preflight、stop、restart |
+| `requests/` | root:nodelite-read，0770 | Agent 只能原子提交固定 `request.json`，更新器消费后再次校验 |
+| `public/` | nodelite-updater:nodelite-read，0750；文件 0640 | Agent 只读的升级进度和结果，不含 Token 或配置 |
 | `/var/lib/nodelite-agent/` | nodelite-agent，0700；配置 0600 | 原有可写 Agent 配置，更新器不可直接读取 |
 | `/run/nodelite-agent/` | nodelite-agent:nodelite-read，0750 | 0640 的本地非敏感健康证据 |
 
@@ -140,7 +143,33 @@ sudo systemctl start nodelite-updater-apply.service
 初始化拒绝已有状态；下载命令不停止服务；apply 仅请求最新的本地策略授权目标。
 `verify-enrollment` 仅供迁移时核对仓库当前授权基线，固定旧 unit 的身份检查阻止已迁移节点
 再次调用它改变 active 指针。失败重试保留根链和版本下限，不重新 initialize。
-本项目没有自动启用安装器或网页按钮。日常升级只使用 Rust 更新器和固定 systemd 单元。
+网页触发不直接执行安装器；日常升级仍只使用 Rust 更新器和固定 systemd 单元。
+
+## 网页触发与结果
+
+本地 root 策略中的 `allow_remote_updates` 默认为 false。首次使用新版安装器的
+`--enable-web-updates` 执行完整迁移和本地审计后，才开启该策略及 `nodelite-updater-remote.path`。
+旧版实验安装不能通过网页升级更新器或固定单元，须先由本地管理员更新受信运行时。
+
+`nodelite-proto/src/agent_update.rs` 定义严格的请求和状态类型。Server 与新版 Agent 双向协商
+支持后才发送新消息；旧 Agent 保持正常上报。Server 的
+`GET/POST /api/settings/agents/{node_id}/update` 使用现有认证、敏感操作短效确认和请求体上限。
+`nodelite-server/src/agent_updates.rs` 只保存有容量上限、绑定当前会话的任务观察，不是授权源。
+
+请求仅含随机任务 ID、签发及到期时间，有效期不超过 60 秒。Agent 检查本地策略和环境，
+将请求写入固定目录；root 所有的 path 单元启动固定的非 root 更新服务。更新器重新检查
+本地策略、请求期限、持久化的防重放/五分钟冷却及事务锁，再从本地固定签名源获取目标。
+没有 Polkit、免密 sudo、可变服务名或远程脚本执行入口。
+
+任务 ID 随 journal 持久化，状态经 `public/status.json`、Agent 已认证 WebSocket 和受保护 API
+回传。新版停止旧进程后试运行，只有本地原有健康检查确认才返回 committed；rollback_intent
+仍显示「正在回滚」。下载中断在恢复时标为失败，不在开机后无人值守继续下载；更新、回滚
+和重连均不回退 Token。Server 重启后由 Agent 重新上报本地结果；未确认的请求显示 unknown，
+不会把排队、断线或请求超时视为成功。
+
+关闭网页触发时，将 root 策略中的 `allow_remote_updates` 改回 false，并禁用
+`nodelite-updater-remote.path`；不要关闭恢复单元或删除 journal。已经开始的事务仍须完成
+健康确认或安全恢复。面板自身更新与 Agent 更新是两条独立流程。
 
 ## 受控部署检查
 
