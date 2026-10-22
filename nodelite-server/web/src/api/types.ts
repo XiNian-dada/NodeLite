@@ -318,6 +318,7 @@ export interface AgentUpdateView {
     phase: AgentUpdatePhase;
     request_id: string | null;
     updated_at: number;
+    next_request_at: number;
     installed_sequence: number | null;
     target_sequence: number | null;
     channel: 'stable' | 'testing' | null;

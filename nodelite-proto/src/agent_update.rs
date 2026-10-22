@@ -94,6 +94,8 @@ pub struct AgentUpdateStatus {
     pub phase: AgentUpdatePhase,
     pub request_id: Option<String>,
     pub updated_at: u64,
+    #[serde(default)]
+    pub next_request_at: u64,
     pub installed_sequence: Option<u64>,
     pub target_sequence: Option<u64>,
     pub channel: Option<String>,
@@ -108,6 +110,7 @@ impl AgentUpdateStatus {
             phase: AgentUpdatePhase::Idle,
             request_id: None,
             updated_at: 0,
+            next_request_at: 0,
             installed_sequence: None,
             target_sequence: None,
             channel: None,
@@ -117,6 +120,7 @@ impl AgentUpdateStatus {
     pub fn validate(&self) -> bool {
         self.request_id.as_deref().is_none_or(valid_request_id)
             && self.updated_at < 1 << 53
+            && self.next_request_at < 1 << 53
             && [self.installed_sequence, self.target_sequence]
                 .into_iter()
                 .flatten()

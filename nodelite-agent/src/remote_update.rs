@@ -24,12 +24,7 @@ pub(crate) fn request(request: AgentUpdateRequest) -> AgentUpdateStatus {
         status.reason.or(Some(Reason::DisabledByPolicy))
     } else if status.phase.in_progress() {
         Some(Reason::Busy)
-    } else if status.request_id.is_some()
-        && now
-            < status
-                .updated_at
-                .saturating_add(nodelite_proto::agent_update::UPDATE_COOLDOWN_SECS)
-    {
+    } else if now < status.next_request_at {
         Some(Reason::RateLimited)
     } else {
         #[cfg(target_os = "linux")]

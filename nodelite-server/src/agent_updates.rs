@@ -130,6 +130,7 @@ impl AgentUpdates {
             && entry.reported
             && cooldown
             && status.capability == Capability::Ready
+            && now >= status.next_request_at
             && !status.phase.in_progress();
         (status, ready)
     }
@@ -159,6 +160,7 @@ impl AgentUpdates {
         if entry
             .requested
             .is_some_and(|when| when.elapsed() < Duration::from_secs(UPDATE_COOLDOWN_SECS))
+            || request.issued_at < entry.status.next_request_at
         {
             return Err(RequestError::RateLimited);
         }
@@ -252,5 +254,38 @@ mod tests {
         assert_eq!(updates.view("node", 100).0.phase, Phase::Queued);
         updates.forget("node");
         assert!(!updates.view("node", 100).1);
+    }
+
+    #[test]
+    fn local_cooldown_survives_server_restart_without_extending_on_status_updates() {
+        let updates = AgentUpdates::default();
+        updates.begin("node", 1);
+        let mut report = ready();
+        report.next_request_at = 400;
+        report.updated_at = 390;
+        updates.record("node", 1, report);
+        assert!(!updates.view("node", 399).1);
+        assert!(updates.view("node", 400).1);
+        assert!(matches!(
+            updates.reserve(
+                "node",
+                AgentUpdateRequest {
+                    request_id: "a".repeat(32),
+                    issued_at: 399,
+                    expires_at: 459
+                }
+            ),
+            Err(RequestError::RateLimited)
+        ));
+        updates
+            .reserve(
+                "node",
+                AgentUpdateRequest {
+                    request_id: "a".repeat(32),
+                    issued_at: 400,
+                    expires_at: 460,
+                },
+            )
+            .expect("cooldown ended");
     }
 }

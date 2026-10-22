@@ -18,6 +18,7 @@ function view(phase: AgentUpdateView['status']['phase'] = 'idle'): AgentUpdateVi
       phase,
       request_id: phase === 'idle' ? null : 'a'.repeat(32),
       updated_at: 100,
+      next_request_at: 0,
       installed_sequence: 1,
       target_sequence: null,
       channel: 'stable',

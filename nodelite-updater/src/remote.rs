@@ -86,12 +86,16 @@ pub(crate) fn status(state: &Journal) -> AgentUpdateStatus {
             phase: UpdatePhase::Idle,
             request_id: None,
             updated_at: 0,
+            next_request_at: 0,
             installed_sequence: None,
             target_sequence: None,
             channel: None,
             reason: None,
         });
     status.installed_sequence = Some(state.installed.sequence);
+    status.next_request_at = state.remote_update.as_ref().map_or(0, |update| {
+        update.accepted_at.saturating_add(UPDATE_COOLDOWN_SECS)
+    });
     status.channel = Some(state.channel.clone());
     if let Some(update) = &state.remote_update
         && let Some(transaction) = &state.transaction
@@ -285,5 +289,32 @@ mod tests {
         .expect("malformed request");
         assert!(consume(&store).is_err());
         assert!(!store.root.join("requests/request.json").exists());
+    }
+
+    #[test]
+    fn cooldown_uses_acceptance_time_not_later_progress_publication() {
+        let (_dir, store, mut policy, mut state) = state();
+        policy.allow_remote_updates = true;
+        accept(
+            &mut state,
+            AgentUpdateRequest {
+                request_id: "c".repeat(32),
+                issued_at: 100,
+                expires_at: 160,
+            },
+            &policy,
+            100,
+        )
+        .expect("request");
+        state
+            .remote_update
+            .as_mut()
+            .expect("remote job")
+            .status
+            .updated_at = 390;
+        assert_eq!(status(&state).next_request_at, 400);
+        recover_download(&store, &mut state).expect("interrupted download");
+        assert_eq!(status(&state).phase, UpdatePhase::Failed);
+        assert_eq!(status(&state).next_request_at, 400);
     }
 }
