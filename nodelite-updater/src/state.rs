@@ -57,6 +57,8 @@ pub(crate) struct Transaction {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Journal {
+    #[serde(default)]
+    pub remote_update: Option<crate::remote::RemoteUpdate>,
     pub schema: u32,
     pub anchor: String,
     pub channel: String,
@@ -100,7 +102,14 @@ impl Store {
         Ok(self.code().join("objects").join(hash))
     }
     pub(crate) fn save(&self, state: &Journal) -> Result<()> {
-        fs::json(&self.private().join("journal.json"), state)
+        let mut persisted = state.clone();
+        crate::remote::snapshot(&mut persisted);
+        fs::json(&self.private().join("journal.json"), &persisted)?;
+        // UI telemetry must not turn an otherwise durable activation into a failed transaction.
+        if crate::remote::publish(self, &persisted).is_err() {
+            eprintln!("nodelite-updater: public update status could not be published");
+        }
+        Ok(())
     }
 
     pub(crate) fn initialize(&self, policy: &Policy, root: &[u8], baseline: &Path) -> Result<()> {
@@ -123,6 +132,7 @@ impl Store {
         fs::pointer(&self.code(), "active", &policy.baseline_sha256)?;
         fs::pointer(&self.code(), "candidate", &policy.baseline_sha256)?;
         let journal = Journal {
+            remote_update: None,
             schema: 1,
             anchor: fs::digest(root),
             channel: policy.channel.clone(),
@@ -241,6 +251,7 @@ impl Store {
 
 impl Journal {
     fn validate(&self, policy: &Policy, anchor: &[u8]) -> Result<()> {
+        crate::remote::validate(self)?;
         if self.schema != 1
             || self.anchor != fs::digest(anchor)
             || self.channel != policy.channel

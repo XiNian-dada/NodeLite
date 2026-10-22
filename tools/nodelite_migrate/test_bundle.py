@@ -17,6 +17,25 @@ from tools.nodelite_migrate.common import UNITS
 
 
 class Bundles(unittest.TestCase):
+    def test_enrollment_never_enables_web_updates_implicitly(self):
+        data = bundle.policy(self.manifest, self.files, "https://example.invalid/metadata/", "https://example.invalid/targets/")
+        self.assertIn(b"allow_remote_updates = false\n", data)
+
+    def test_web_opt_in_requires_local_audit_and_is_idempotent(self):
+        policy = self.path / "policy.toml"
+        create(policy, b"enabled = true\nallow_remote_updates = false\n")
+        with patch.object(installer, "POLICY", self.path), patch.object(installer, "root_guard"), \
+                patch.object(installer, "protected"), patch("tools.nodelite_migrate.audit.check") as audit, \
+                patch.object(installer, "systemctl") as systemctl:
+            installer.enable_web_updates()
+            installer.enable_web_updates()
+            self.assertEqual(audit.call_count, 2)
+            self.assertEqual(policy.read_bytes(), b"enabled = true\nallow_remote_updates = true\n")
+            systemctl.assert_called_with("enable", "--now", "nodelite-updater-remote.path")
+            audit.side_effect = ValueError("unapproved fixed unit")
+            with self.assertRaises(ValueError):
+                installer.enable_web_updates()
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)

@@ -1,5 +1,6 @@
 # Opt in only after installing fixed units and manually enrolling a trusted baseline.
 enabled = false
+allow_remote_updates = false
 metadata_url = "https://updates.example.invalid/nodelite/metadata/"
 targets_url = "https://updates.example.invalid/nodelite/targets/"
 channel = "stable"

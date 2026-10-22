@@ -5,6 +5,7 @@
 
 mod agent_delete;
 mod agent_install;
+mod agent_update;
 mod alerts;
 mod config_edit;
 mod helpers;
@@ -18,6 +19,7 @@ mod updates;
 
 pub(crate) use agent_delete::delete_agent;
 pub(crate) use agent_install::generate_agent_install;
+pub(crate) use agent_update::{agent_update, start_agent_update};
 pub(crate) use alerts::{alert_settings, update_alert_settings};
 pub(crate) use passkeys::{
     delete_passkey, finish_passkey_registration, start_passkey_registration,

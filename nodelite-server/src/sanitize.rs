@@ -31,6 +31,16 @@ pub(crate) fn validate_refresh_id(value: &str) -> Result<(), &'static str> {
     }
 }
 
+pub(crate) fn validate_agent_update_status(
+    status: &nodelite_proto::agent_update::AgentUpdateStatus,
+) -> Result<(), &'static str> {
+    if status.validate() {
+        Ok(())
+    } else {
+        Err("invalid agent update status")
+    }
+}
+
 pub(crate) fn valid_test_release_tag(tag: &str) -> bool {
     if tag.len() > 64 || !tag.is_ascii() {
         return false;

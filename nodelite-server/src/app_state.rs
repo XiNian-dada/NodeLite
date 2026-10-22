@@ -28,6 +28,7 @@ use crate::admission::{auth_failure_admission_config, sensitive_auth_failure_adm
 pub(crate) struct AppState {
     pub(crate) agent_logs: AgentLogStore,
     pub(crate) traffic_control: crate::traffic_control::TrafficControlStatuses,
+    pub(crate) agent_updates: crate::agent_updates::AgentUpdates,
     pub(crate) history: HistoryStore,
     pub(crate) audit_log: AuditLog,
     pub(crate) geoip: GeoIpResolver,
@@ -146,6 +147,7 @@ impl AppState {
         Ok(Self {
             agent_logs: AgentLogStore::with_limits(config.agent_logs),
             traffic_control: crate::traffic_control::TrafficControlStatuses::default(),
+            agent_updates: crate::agent_updates::AgentUpdates::default(),
             history,
             audit_log,
             geoip,

@@ -39,12 +39,13 @@ use crate::background::{
 use crate::fs_security::log_if_directory_is_not_private;
 use crate::geoip::GeoIpResolver;
 use crate::handlers::{
-    alert_settings, audit_log, bootstrap, change_readonly_password, confirm_settings, delete_agent,
-    delete_passkey, disable_two_factor, enable_two_factor, finish_passkey_authentication,
-    finish_passkey_registration, finish_settings_passkey_confirmation, generate_agent_install,
-    healthz, index, install_agent_script, install_bootstrap, last_login, logout_and_reauth,
-    metrics, node_detail, node_history, node_logs, node_status, nodes, overview, readyz,
-    refresh_node_token, require_readonly_auth, server_update_log, settings,
+    agent_update, alert_settings, audit_log, bootstrap, change_readonly_password, confirm_settings,
+    delete_agent, delete_passkey, disable_two_factor, enable_two_factor,
+    finish_passkey_authentication, finish_passkey_registration,
+    finish_settings_passkey_confirmation, generate_agent_install, healthz, index,
+    install_agent_script, install_bootstrap, last_login, logout_and_reauth, metrics, node_detail,
+    node_history, node_logs, node_status, nodes, overview, readyz, refresh_node_token,
+    require_readonly_auth, server_update_log, settings, start_agent_update,
     start_passkey_authentication, start_passkey_registration, start_server_update,
     start_settings_passkey_confirmation, start_two_factor_setup, static_asset,
     update_alert_settings, update_node_location_override, update_node_service_metadata,
@@ -180,6 +181,7 @@ async fn initialize_server_runtime(
     let state = AppState {
         agent_logs: AgentLogStore::with_limits(config.agent_logs),
         traffic_control: crate::traffic_control::TrafficControlStatuses::default(),
+        agent_updates: crate::agent_updates::AgentUpdates::default(),
         history,
         audit_log,
         geoip,
@@ -382,6 +384,10 @@ pub(crate) fn build_router(state: AppState) -> Router {
         .route("/ws/preflight", get(ws_handler))
         .route_layer(from_fn(set_protected_response_headers));
     let protected_json_routes = Router::new()
+        .route(
+            "/api/settings/agents/{node_id}/update",
+            get(agent_update).post(start_agent_update),
+        )
         .route(
             "/api/nodes/{node_id}/refresh-token",
             post(refresh_node_token),

@@ -26,6 +26,7 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 ReadWritePaths=/var/lib/nodelite-agent
+ReadWritePaths=/var/lib/nodelite-updater/requests
 CapabilityBoundingSet=
 AmbientCapabilities=
 RestrictSUIDSGID=yes

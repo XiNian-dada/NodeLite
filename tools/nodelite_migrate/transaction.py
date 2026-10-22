@@ -94,6 +94,8 @@ def ensure_layout(resuming):
             (HOME / "private", "nodelite-updater", "nodelite-updater", 0o700),
             (HOME / "code", "nodelite-updater", "nodelite-read", 0o750),
             (HOME / "code/objects", "nodelite-updater", "nodelite-read", 0o750),
+            (HOME / "public", "nodelite-updater", "nodelite-read", 0o750),
+            (HOME / "requests", "root", "nodelite-read", 0o770),
             (HOME / "bridge", "root", "nodelite-updater", 0o770), (POLICY, "root", "root", 0o755))
     for path, user, group, mode in layout:
         if resuming and path.exists():

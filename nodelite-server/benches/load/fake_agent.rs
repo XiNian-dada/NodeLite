@@ -268,6 +268,7 @@ async fn connect_authenticated_fake_agent(
     let t1 = Instant::now();
 
     let hello = WireMessage::Hello(HelloMessage {
+        supports_agent_updates: false,
         supports_metrics_zlib: false,
         supports_token_refresh_ack: false,
         protocol_version: nodelite_proto::WIRE_PROTOCOL_VERSION,

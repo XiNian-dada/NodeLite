@@ -132,9 +132,13 @@ pub(crate) fn json_request(
     request
 }
 
-pub(crate) fn json_write_routes() -> [(&'static str, Option<&'static str>); 9] {
+pub(crate) fn json_write_routes() -> [(&'static str, Option<&'static str>); 10] {
     [
         ("/api/verify-2fa", None),
+        (
+            "/api/settings/agents/test-node/update",
+            Some(TEST_BASIC_AUTH_HEADER),
+        ),
         (
             "/api/nodes/test-node/refresh-token",
             Some(TEST_BASIC_AUTH_HEADER),
@@ -155,10 +159,15 @@ pub(crate) fn json_write_routes() -> [(&'static str, Option<&'static str>); 9] {
     ]
 }
 
-pub(crate) fn small_json_write_requests() -> [(&'static str, Option<&'static str>, &'static str); 9]
+pub(crate) fn small_json_write_requests() -> [(&'static str, Option<&'static str>, &'static str); 10]
 {
     [
         ("/api/verify-2fa", None, r#"{"code":"000000"}"#),
+        (
+            "/api/settings/agents/test-node/update",
+            Some(TEST_BASIC_AUTH_HEADER),
+            "{}",
+        ),
         (
             "/api/nodes/test-node/refresh-token",
             Some(TEST_BASIC_AUTH_HEADER),

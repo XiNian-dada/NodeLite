@@ -17,6 +17,8 @@ pub(crate) const ROOT: &str = "/etc/nodelite-updater/root.json";
 pub(crate) struct Policy {
     #[serde(default = "disabled")]
     pub enabled: bool,
+    #[serde(default = "disabled")]
+    pub allow_remote_updates: bool,
     pub metadata_url: Url,
     pub targets_url: Url,
     #[serde(default = "stable")]

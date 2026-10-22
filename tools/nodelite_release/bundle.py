@@ -8,6 +8,7 @@ import tempfile
 from .io import LIMIT, create, digest, directory, json_bytes, read
 from .metadata import now, release_scope
 from .repository import current, locked
+from tools.nodelite_migrate.common import UNITS
 
 # Only the stdlib migration/recovery runtime is shipped to nodes, never signing tools.
 SOURCES = ("tools/__init__.py", "tools/nodelite_release/__init__.py", "tools/nodelite_release/io.py") + tuple(
@@ -34,9 +35,7 @@ def pack_locked(repository, updater, units, output, bootstrap_version):
     if files["nodelite-updater"][:4] != b"\x7fELF" or b"/etc/nlup-lab-guest" in files["nodelite-updater"]:
         raise ValueError("updater must be a normal ELF without lab fault hooks")
     info.verify_length_and_hashes(files["nodelite-agent"])
-    expected = {"nodelite-agent.service", "nodelite-agent-preflight.service"}
-    expected.update("nodelite-updater-" + name for name in ("apply.service", "boot.service", "reconcile.service", "reconcile.timer",
-        "preflight.service", "preflight.path", "stop.service", "stop.path", "restart.service", "restart.path"))
+    expected = UNITS
     if {path.name for path in Path(units).iterdir()} != expected:
         raise ValueError("fixed systemd unit inventory mismatch")
     directory(output / "systemd")

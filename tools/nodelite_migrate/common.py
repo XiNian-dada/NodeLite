@@ -25,7 +25,7 @@ RECOVERY = "nodelite-updater-migration-recover.service"
 DROPIN = Path("/etc/systemd/system/nodelite-agent.service.d/10-enrollment-recovery.conf")
 UNITS = {AGENT, "nodelite-agent-preflight.service"}
 UNITS.update("nodelite-updater-" + name for name in ("apply.service", "boot.service", "reconcile.service", "reconcile.timer",
-    "preflight.service", "preflight.path", "stop.service", "stop.path", "restart.service", "restart.path"))
+    "preflight.service", "preflight.path", "stop.service", "stop.path", "restart.service", "restart.path", "remote.service", "remote.path"))
 ENABLED = ("nodelite-updater-reconcile.timer", "nodelite-updater-preflight.path", "nodelite-updater-stop.path", "nodelite-updater-restart.path")
 
 

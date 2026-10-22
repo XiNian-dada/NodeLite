@@ -1,0 +1,10 @@
+[Unit]
+Description=NodeLite explicitly enabled remote update request bridge
+After=nodelite-updater-boot.service
+Requires=nodelite-updater-boot.service
+
+[Path]
+PathExists=/var/lib/nodelite-updater/requests/request.json
+
+[Install]
+WantedBy=multi-user.target

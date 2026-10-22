@@ -1,4 +1,4 @@
-//! Local administration only: no remote commands, arbitrary download URLs or root execution.
+//! Fixed local operations; remote signals never select commands, URLs or privileged actions.
 
 use std::path::{Path, PathBuf};
 
@@ -38,6 +38,8 @@ enum Action {
     Download,
     /// Download and request a journaled activation through fixed systemd units.
     Apply,
+    /// Consume one bounded local request, only when root explicitly allows remote triggers.
+    Remote,
     /// Resume a pending transaction; does not fetch a new release.
     Reconcile {
         #[arg(long)]
@@ -61,6 +63,9 @@ pub async fn run() -> Result<()> {
     let store = Store::system();
     system::paths_safe(&store)?;
     let _lock = Lock::acquire(&store.private().join("lock"))?;
+    if matches!(cli.action, Action::Remote) {
+        return crate::remote::run(&store, &policy, &bootstrap).await;
+    }
     if let Action::VerifyEnrollment { baseline } = &cli.action {
         crate::enrollment::verify(&store, &policy, &bootstrap, baseline).await?;
         println!("signed enrollment verified without starting or changing any service");
@@ -92,6 +97,7 @@ async fn dispatch(action: Action, store: &Store, policy: &Policy, bootstrap: &[u
             if boot {
                 system::clear_markers()?;
             }
+            crate::remote::recover_download(store, &mut state)?;
             activate::reconcile(store, &mut state, policy).await
         }
         Action::Download | Action::Apply => {
@@ -103,10 +109,14 @@ async fn dispatch(action: Action, store: &Store, policy: &Policy, bootstrap: &[u
             if matches!(action, Action::Apply) && candidate != state.installed {
                 activate::prepare(store, &mut state, policy, candidate).await
             } else {
+                if matches!(action, Action::Apply) {
+                    crate::remote::up_to_date(&mut state);
+                    store.save(&state)?;
+                }
                 Ok(())
             }
         }
-        Action::Initialize { .. } | Action::VerifyEnrollment { .. } => {
+        Action::Initialize { .. } | Action::VerifyEnrollment { .. } | Action::Remote => {
             Err(UpdateError::Recovery("initialization dispatch failed"))
         }
     };
@@ -134,4 +144,8 @@ async fn dispatch(action: Action, store: &Store, policy: &Policy, bootstrap: &[u
         }))?
     );
     Ok(())
+}
+
+pub(crate) async fn apply(store: &Store, policy: &Policy, bootstrap: &[u8]) -> Result<()> {
+    dispatch(Action::Apply, store, policy, bootstrap).await
 }

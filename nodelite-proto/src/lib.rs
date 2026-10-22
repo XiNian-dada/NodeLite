@@ -4,6 +4,7 @@
 //! - `message` — WebSocket 上传输的线协议(WireMessage)。
 //! - `model` — 节点身份、监控快照、历史采样等数据模型。
 
+pub mod agent_update;
 #[cfg(feature = "wire-compression")]
 pub mod compression;
 pub mod config;
