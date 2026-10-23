@@ -102,9 +102,20 @@ cargo test test_name -- --nocapture
 
 **测试覆盖率：**
 ```bash
-cargo install cargo-tarpaulin
-cargo tarpaulin --out Html --workspace
+rustup component add llvm-tools-preview
+cargo install cargo-llvm-cov --version 0.9.1 --locked
+export NODELITE_SKIP_WEB_BUILD=1 RUSTFLAGS='--cfg=tarpaulin'
+cargo llvm-cov --workspace --locked --no-report
+mkdir -p target/coverage
+cargo llvm-cov report --cobertura --output-path target/coverage/cobertura.xml --fail-under-lines 75 --ignore-filename-regex 'nodelite-server/src/(load_test|test_support)\.rs'
+cargo llvm-cov report --html --output-dir target/coverage --ignore-filename-regex 'nodelite-server/src/(load_test|test_support)\.rs'
 ```
+
+运行前需已构建 `nodelite-server/web/dist`。覆盖率使用与 Rust 配套的 LLVM 工具，
+避免 Ptrace 断点跟踪干扰异步测试时序；保留原测试期 cfg 和超时，不跳过测试。
+全仓行覆盖率门槛为 75%，排除既有的两个测试辅助文件；XML 报告位于
+`target/coverage/cobertura.xml`，HTML 入口位于 `target/coverage/html/index.html`。
+不同覆盖率引擎的统计口径不完全相同，不应直接比较迁移前后的百分比。
 
 **测试要求：**
 - 新功能必须有单元测试

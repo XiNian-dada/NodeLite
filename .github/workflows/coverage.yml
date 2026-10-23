@@ -63,28 +63,35 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
+          rustup component add llvm-tools-preview
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
-          shared-key: ci-coverage
+          shared-key: ci-coverage-llvm
           workspaces: |
             . -> target
 
-      - name: Install cargo-tarpaulin
-        uses: taiki-e/install-action@51b65422b7953c6b71a6f15b2ba16135551ce70a # cargo-tarpaulin
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@51b65422b7953c6b71a6f15b2ba16135551ce70a # cargo-llvm-cov
         with:
-          tool: cargo-tarpaulin
+          tool: cargo-llvm-cov@0.9.1
 
       - name: Run coverage
         env:
           NODELITE_SKIP_WEB_BUILD: 1
-        run: cargo tarpaulin --config tarpaulin.toml
+          # Preserve the existing coverage-only fixture timeouts without changing the tests.
+          RUSTFLAGS: --cfg=tarpaulin
+        run: |
+          cargo llvm-cov --workspace --locked --no-report
+          mkdir -p target/coverage
+          cargo llvm-cov report --cobertura --output-path target/coverage/cobertura.xml --fail-under-lines 75 --ignore-filename-regex 'nodelite-server/src/(load_test|test_support)\.rs'
+          cargo llvm-cov report --html --output-dir target/coverage --ignore-filename-regex 'nodelite-server/src/(load_test|test_support)\.rs'
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
-          files: target/tarpaulin/cobertura.xml
+          files: target/coverage/cobertura.xml
           fail_ci_if_error: false
 
       - name: Upload HTML report as artifact
@@ -92,5 +99,5 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-report
-          path: target/tarpaulin/
+          path: target/coverage/
           retention-days: 14
