@@ -46,7 +46,7 @@ python -m tools.nodelite_release pack-enrollment --repository /srv/nodelite-repo
 ```
 
 返回 manifest 和 root 的公开 SHA256。管理员独立核对 root、updater、固定 systemd 单元和整包
-摘要，通过可信渠道把源代码和包放进 root 保护的本地路径。manifest 只允许精确的 15 个文件，
+摘要，通过可信渠道把源代码和包放进 root 保护的本地路径。manifest 只允许精确的 17 个文件，
 不允许任意脚本、路径或密钥；所有字节先快照、校验，再做 root 写入。
 
 下面从 root 所有、组/其他用户不可写的源码目录执行，摘要和地址均为占位符：

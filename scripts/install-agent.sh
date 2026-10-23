@@ -37,6 +37,7 @@ INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/nodelite"
 MODE="${NODELITE_AGENT_MODE:-auto}"
 SIGNED_UPDATES=0
+WEB_UPDATES=0
 SIGNED_STAGE=""
 # Pin binaries, helpers and enrollment assets to the same release.
 VERSION="${NODELITE_AGENT_VERSION:-}"
@@ -563,6 +564,11 @@ while [ "$#" -gt 0 ]; do
       SIGNED_UPDATES=1
       shift
       ;;
+    --enable-web-updates)
+      SIGNED_UPDATES=1
+      WEB_UPDATES=1
+      shift
+      ;;
     --mode)
       [ "$#" -ge 2 ] || fail "--mode requires a value"
       MODE="$2"
@@ -608,6 +614,7 @@ Optional:
   --enable-traffic-control
   --disable-traffic-control
   --enable-signed-updates (optional Linux/systemd signed migration)
+  --enable-web-updates (explicitly allow web-triggered signed updates; includes signed migration)
   --mode <install|upgrade|auto>
   --base-url <release-base-url>
   --checksums-url <release-checksums-url>
@@ -655,7 +662,9 @@ if [ "$SERVICE_KIND" = systemd ] && [ -e /etc/nodelite-updater/policy.toml ] &&
   [ "$MODE" != install ] && [ -z "$BOOTSTRAP_URL$BINARY_URL$SHA256_X86_64$SHA256_AARCH64" ] &&
     [ "$INSTALL_DIR" = /usr/local/bin ] && [ "$STATE_DIR" = /var/lib/nodelite-agent ] &&
     [ "$CONFIG_DIR" = /etc/nodelite ] && [ "$TRAFFIC_CONTROL" = auto ] || fail 'enrolled Agent uses its fixed local policy; installer overrides are not allowed'
-  /usr/bin/python3 -I /usr/local/lib/nodelite-operator/recover.py --upgrade || fail 'signed update failed; inspect local updater logs'
+  set -- --upgrade
+  [ "$WEB_UPDATES" -eq 0 ] || set -- "$@" --enable-web-updates
+  /usr/bin/python3 -I /usr/local/lib/nodelite-operator/recover.py "$@" || fail 'signed update or explicit web opt-in failed; inspect local updater logs'
   exit 0
 fi
 [ ! -e /etc/nodelite-updater/policy.toml ] || [ "$SIGNED_UPDATES" -eq 1 ] || fail 'migration pending; rerun with --enable-signed-updates to recover/resume'

@@ -78,7 +78,7 @@ class Ceremony(_CeremonyFixture):
         self.assertIn(result["archive_sha256"].encode(), read(str(output) + ".sha256"))
         with tarfile.open(output) as archive:
             names = archive.getnames()
-            self.assertEqual(len(names), 27)
+            self.assertEqual(len(names), len(bundle.SOURCES) + len(bundle.UNITS) + 5)
             self.assertTrue(set(bundle.SOURCES) <= set(names))
             self.assertFalse(any("test_" in name or "keys.py" in name or name.endswith(".pem") for name in names))
             descriptor = decode(archive.extractfile("enrollment.json").read())

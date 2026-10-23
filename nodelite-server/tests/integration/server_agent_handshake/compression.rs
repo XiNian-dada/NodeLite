@@ -12,6 +12,7 @@ async fn connect(server: &TestServer, node: &TestNode, compressed: bool) -> Resu
     send_wire_message(
         &mut socket,
         &WireMessage::Hello(HelloMessage {
+            supports_agent_updates: false,
             supports_metrics_zlib: compressed,
             supports_token_refresh_ack: false,
             protocol_version: WIRE_PROTOCOL_VERSION,

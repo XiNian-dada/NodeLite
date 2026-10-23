@@ -269,6 +269,7 @@ impl AuditLog {
         }
 
         match event_type {
+            AuditEventType::AgentUpdateRequested => true,
             AuditEventType::LoginSuccess
             | AuditEventType::TotpVerifySuccess
             | AuditEventType::PasskeyVerifySuccess

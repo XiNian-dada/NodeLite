@@ -1,6 +1,9 @@
 [Unit]
+DefaultDependencies=no
 After=nodelite-updater-boot.service
 Requires=nodelite-updater-boot.service
+Before=shutdown.target
+Conflicts=shutdown.target
 
 [Timer]
 OnBootSec=3

@@ -45,6 +45,7 @@ pub async fn check_credentials(
         .await
         .map_err(|_| CredentialCheckError::Unavailable)?;
         let hello = WireMessage::Hello(HelloMessage {
+            supports_agent_updates: false,
             supports_metrics_zlib: false,
             supports_token_refresh_ack: true,
             protocol_version: WIRE_PROTOCOL_VERSION,

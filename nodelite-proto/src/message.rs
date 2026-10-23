@@ -47,6 +47,8 @@ pub enum WireMessage {
     AgentLogs(AgentLogsMessage),
     /// Server 要求 Agent 应用或撤销双向网络限速。
     NetworkThrottle(NetworkThrottleMessage),
+    AgentUpdateRequest(crate::agent_update::AgentUpdateRequest),
+    AgentUpdateStatus(crate::agent_update::AgentUpdateStatus),
 }
 
 /// Agent 连接 Server 时发送的首个消息。
@@ -54,6 +56,8 @@ pub enum WireMessage {
 /// `token` 由 Server 的节点注册表分发,`identity` 由 Agent 在本地采集后填充。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HelloMessage {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub supports_agent_updates: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub supports_token_refresh_ack: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -108,6 +112,7 @@ pub struct ServerNoticeMessage {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ServerNoticeCode {
+    AgentUpdatesV1,
     /// 认证通过的对端可发送独立经 zlib 压缩的 Metrics 指标帧。
     MetricsZlibV1,
     /// Agent token 已过期,需要运维侧轮换并重装/更新节点配置。
@@ -133,6 +138,7 @@ where
 impl ServerNoticeCode {
     fn from_wire_code(code: &str) -> Option<Self> {
         match code {
+            "agent_updates_v1" => Some(Self::AgentUpdatesV1),
             "metrics_zlib_v1" => Some(Self::MetricsZlibV1),
             "token_expired" => Some(Self::TokenExpired),
             "unauthorized" => Some(Self::Unauthorized),
@@ -420,6 +426,7 @@ mod tests {
             tags: vec!["apac".to_string()],
         };
         let hello = WireMessage::Hello(HelloMessage {
+            supports_agent_updates: false,
             supports_metrics_zlib: false,
             supports_token_refresh_ack: false,
             protocol_version: WIRE_PROTOCOL_VERSION,

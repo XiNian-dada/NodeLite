@@ -181,7 +181,7 @@ python -m tools.nodelite_release pack-enrollment \
   --out /review/nodelite-enrollment-x86_64-unknown-linux-musl.tar.gz
 ```
 
-归档只含原有 15 个公开登记文件、manifest、固定登记描述和标准库迁移／恢复代码，不含签名
+归档只含 17 个公开登记文件、manifest、固定登记描述和标准库迁移／恢复代码，不含签名
 SDK、测试、私钥、口令或生产配置；旁边生成 `.sha256`。逐架构使用匹配的仓库和正常 updater
 构建（禁止 `lab-faults`），独立核对 root、URL、平台及完整归档摘要后，上传到**同一具体
 Release**，将 `.sha256` 条目并入该 Release 原有 `SHA256SUMS.txt`，保留全部既有条目。

@@ -46,7 +46,7 @@ sources.update("tools/nodelite_migrate/" + name + ".py" for name in
                ("__init__", "__main__", "common", "bundle", "transaction", "audit", "installer"))
 units = {"nodelite-agent.service", "nodelite-agent-preflight.service"}
 units.update("nodelite-updater-" + name for name in ("apply.service", "boot.service", "reconcile.service", "reconcile.timer",
-             "preflight.service", "preflight.path", "stop.service", "stop.path", "restart.service", "restart.path"))
+             "preflight.service", "preflight.path", "stop.service", "stop.path", "restart.service", "restart.path", "remote.service", "remote.path"))
 expected = sources | {"systemd/" + name for name in units} | {
     "root.json", "nodelite-agent", "nodelite-updater", "manifest.json", "enrollment.json"}
 with tarfile.open(stage / "package.tar.gz", "r:gz") as archive:
@@ -76,12 +76,14 @@ validate(pathlib.Path(sys.argv[1]), sys.argv[2])
 }
 
 finish_signed_update() {
+  set --
+  [ "$WEB_UPDATES" -eq 0 ] || set -- --enable-web-updates
   /usr/bin/python3 -I -c '
 import sys
 sys.path.insert(0, sys.argv.pop(1))
 from tools.nodelite_migrate.__main__ import main
 main()
-' "$SIGNED_STAGE" --enroll --bundle "$SIGNED_STAGE" --target "$TARGET" ||
+' "$SIGNED_STAGE" --enroll --bundle "$SIGNED_STAGE" --target "$TARGET" "$@" ||
     fail 'signed migration did not commit; recovery preserves the previous Agent and current credentials'
   printf '%s\n' 'Signed updates enabled. Future upgrades use the same install-agent.sh --mode upgrade command.'
 }

@@ -56,6 +56,7 @@ pub(crate) async fn run_authenticated_session(
     state: &AppState,
     socket: WebSocket,
     session: &mut ActiveSession,
+    supports_agent_updates: bool,
 ) -> Result<(), super::ProtocolError> {
     let shared = state.shared.clone();
     let (mut sender, mut receiver) = socket.split();
@@ -88,6 +89,23 @@ pub(crate) async fn run_authenticated_session(
     )
     .await?;
 
+    if supports_agent_updates {
+        let feature = WireMessage::ServerNotice(ServerNoticeMessage {
+            level: nodelite_proto::NoticeLevel::Info,
+            code: Some(nodelite_proto::ServerNoticeCode::AgentUpdatesV1),
+            message: "agent update status supported".into(),
+        });
+        send_message(
+            &mut sender,
+            Message::Text(
+                serde_json::to_string(&feature)
+                    .map_err(|error| anyhow!(error))?
+                    .into(),
+            ),
+            "failed to negotiate agent updates",
+        )
+        .await?;
+    }
     let mut loop_state = SessionLoopState::new(shared.config().ping_interval_secs);
     loop {
         tokio::select! {
@@ -194,12 +212,21 @@ async fn handle_wire_message(
         AgentWireAction::RefreshTokenAck(ack) => {
             super::refresh::handle_refresh_ack(state, session, ack).await
         }
+        AgentWireAction::UpdateStatus(status) => {
+            crate::sanitize::validate_agent_update_status(&status)
+                .map_err(|error| super::ProtocolError::Client(error.into()))?;
+            state
+                .agent_updates
+                .record(&session.node_id, session.session_id, status);
+            Ok(LoopAction::Continue)
+        }
         AgentWireAction::Reject(message) => Err(super::ProtocolError::Client(message.to_string())),
     }
 }
 
 #[derive(Debug)]
 enum AgentWireAction {
+    UpdateStatus(nodelite_proto::agent_update::AgentUpdateStatus),
     Metrics(NodeSnapshot),
     AgentLogs(AgentLogsMessage),
     Pong(u64),
@@ -210,6 +237,10 @@ enum AgentWireAction {
 
 fn classify_agent_wire_message(message: WireMessage) -> AgentWireAction {
     match message {
+        WireMessage::AgentUpdateStatus(status) => AgentWireAction::UpdateStatus(status),
+        WireMessage::AgentUpdateRequest(_) => {
+            AgentWireAction::Reject("agent must not send update requests")
+        }
         WireMessage::Metrics(MetricsMessage { snapshot }) => AgentWireAction::Metrics(snapshot),
         WireMessage::AgentLogs(message) => AgentWireAction::AgentLogs(message),
         WireMessage::Pong(PongMessage { nonce }) => AgentWireAction::Pong(nonce),
@@ -471,6 +502,31 @@ async fn handle_session_command(
     command: SessionCommand,
 ) -> Result<LoopAction, super::ProtocolError> {
     match command {
+        SessionCommand::AgentUpdate(request) => {
+            if !request.validate(chrono::Utc::now().timestamp().max(0) as u64)
+                || !state
+                    .shared
+                    .is_current_session(&session.node_id, session.session_id)
+                    .await
+                || !ensure_current_token(
+                    state,
+                    session,
+                    "rejecting update request after token revocation",
+                )
+                .await
+            {
+                return Ok(LoopAction::Break);
+            }
+            let payload = serde_json::to_string(&WireMessage::AgentUpdateRequest(request))
+                .map_err(|error| anyhow!(error))?;
+            send_message(
+                sender,
+                Message::Text(payload.into()),
+                "failed to send update request",
+            )
+            .await?;
+            Ok(LoopAction::Continue)
+        }
         SessionCommand::RefreshToken {
             response,
             refresh_permit,
@@ -568,6 +624,7 @@ mod tests {
 
     fn hello_message() -> HelloMessage {
         HelloMessage {
+            supports_agent_updates: false,
             supports_metrics_zlib: false,
             supports_token_refresh_ack: false,
             protocol_version: WIRE_PROTOCOL_VERSION,

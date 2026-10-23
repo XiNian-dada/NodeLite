@@ -1,0 +1,28 @@
+[Unit]
+Description=NodeLite bounded remote signed update request
+After=network-online.target nodelite-updater-boot.service
+Requires=nodelite-updater-boot.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+User=nodelite-updater
+Group=nodelite-read
+SupplementaryGroups=nodelite-updater
+ExecStart=/usr/local/bin/nodelite-updater remote
+UMask=0077
+TimeoutStartSec=90
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/nodelite-updater
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

@@ -2,10 +2,27 @@
 
 import time
 
-from tools.nodelite_release.io import decode, read
+from tools.nodelite_release.io import atomic, decode, read
 
 from . import bundle, transaction
-from .common import AGENT, MIGRATION, UPDATER, command, systemctl
+from .common import AGENT, MIGRATION, POLICY, UPDATER, command, protected, root_guard, systemctl
+
+
+def enable_web_updates():
+    from .audit import check
+
+    root_guard()
+    check()
+    policy = POLICY / "policy.toml"
+    protected(policy)
+    original = read(policy, 16384)
+    disabled, enabled = b"allow_remote_updates = false\n", b"allow_remote_updates = true\n"
+    if original.count(disabled) == 1 and enabled not in original:
+        atomic(policy, original.replace(disabled, enabled), 0o644)
+    elif original.count(enabled) != 1 or disabled in original:
+        raise ValueError("update the locally approved updater/runtime before enabling web updates")
+    systemctl("enable", "--now", "nodelite-updater-remote.path")
+    return True
 
 
 def validate(path, target):

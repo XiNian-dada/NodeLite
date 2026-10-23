@@ -184,7 +184,7 @@ describe('NodeSettingsPanel', () => {
     }
     const wrapper = mount(NodeSettingsPanel, {
       props: { nodeId },
-      global: { plugins: [pinia, getI18n()] },
+      global: { plugins: [pinia, getI18n()], stubs: { AgentUpdatePanel: true } },
     });
     await flushPromises();
     return wrapper;

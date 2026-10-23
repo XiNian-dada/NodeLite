@@ -6,6 +6,7 @@
 import { api } from './client';
 import type {
   AgentLogEntry,
+  AgentUpdateView,
   AlertSettingsResponse,
   AuditLogEntry,
   BootstrapResponse,
@@ -155,6 +156,13 @@ export const apiClient = {
     postJson<GenerateAgentInstallResponse>('/api/settings/agents/install', body),
   deleteAgent: (id: string, body: ReauthPayload) =>
     deleteJson<SettingsActionResponse>(`/api/settings/agents/${encodeURIComponent(id)}`, body),
+  agentUpdate: (id: string, signal?: AbortSignal) =>
+    api<AgentUpdateView>(
+      `/api/settings/agents/${encodeURIComponent(id)}/update`,
+      signal ? { signal } : undefined,
+    ),
+  startAgentUpdate: (id: string) =>
+    postJson<AgentUpdateView>(`/api/settings/agents/${encodeURIComponent(id)}/update`, {}),
   updateServer: (body: StartServerUpdateRequest) =>
     postJson<SettingsActionResponse>('/api/settings/update/server', body),
   serverUpdateLog: (offset = 0) => {

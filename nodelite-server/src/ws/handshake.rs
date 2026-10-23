@@ -90,7 +90,14 @@ pub(super) async fn handle_socket(
     state
         .traffic_control
         .begin(&session.node_id, session.session_id);
-    let session_result = run_authenticated_session(&state, socket, &mut session).await;
+    state
+        .agent_updates
+        .begin(&session.node_id, session.session_id);
+    let session_result =
+        run_authenticated_session(&state, socket, &mut session, hello.supports_agent_updates).await;
+    state
+        .agent_updates
+        .end(&session.node_id, session.session_id);
     state
         .traffic_control
         .end(&session.node_id, session.session_id);

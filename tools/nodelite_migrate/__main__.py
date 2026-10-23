@@ -27,7 +27,10 @@ def main():
     parser.add_argument("--targets-url")
     parser.add_argument("--health-timeout", type=int, default=60)
     parser.add_argument("--target")
+    parser.add_argument("--enable-web-updates", action="store_true")
     args = parser.parse_args()
+    if args.enable_web_updates and not (args.enroll or args.upgrade):
+        raise ValueError("web update opt-in requires verified enrollment or a local upgrade")
     root_guard()
     if args.recover and not (MIGRATION / "journal.json").exists():
         print(json.dumps({"recovery": "not_pending"}))
@@ -63,6 +66,9 @@ def main():
                 inspect_legacy()
                 result = {"plan_only": True, "channel": manifest["channel"], "target": manifest["target"],
                           "baseline_sequence": manifest["baseline_sequence"], "service_changed": False}
+        if args.enable_web_updates:
+            from .installer import enable_web_updates
+            result["web_updates_enabled"] = enable_web_updates()
         print(json.dumps(result))
     finally:
         os.close(fd)

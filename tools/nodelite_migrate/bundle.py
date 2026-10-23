@@ -51,7 +51,7 @@ def policy(manifest, files, metadata_url, targets_url):
                 or parsed.scheme == "http" and parsed.hostname not in {"127.0.0.1", "::1"} \
                 or any(ord(char) < 33 for char in value) or '"' in value or "\\" in value:
             raise ValueError("repository policy URL rejected")
-    return (f'enabled = true\nmetadata_url = "{metadata_url}"\ntargets_url = "{targets_url}"\n'
+    return (f'enabled = true\nallow_remote_updates = false\nmetadata_url = "{metadata_url}"\ntargets_url = "{targets_url}"\n'
             f'channel = "{manifest["channel"]}"\ntarget = "{manifest["target"]}"\n'
             f'baseline_sha256 = "{digest(files["nodelite-agent"])}"\n'
             f'baseline_sequence = {manifest["baseline_sequence"]}\nminimum_sequence = {manifest["minimum_sequence"]}\n'

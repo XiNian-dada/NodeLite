@@ -173,7 +173,8 @@ pub(crate) fn manual(store: &Store, reason: &'static str) -> Result<()> {
     fs::json(
         &store.private().join("recovery-required.json"),
         &serde_json::json!({"reason": reason}),
-    )
+    )?;
+    crate::remote::publish_manual(store)
 }
 
 pub(crate) fn paths_safe(store: &Store) -> Result<()> {

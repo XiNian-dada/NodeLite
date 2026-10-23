@@ -11,6 +11,7 @@ pub(crate) const SESSION_CONTROL_CHANNEL_CAPACITY: usize = 8;
 
 /// 运行中的 WebSocket 会话可接收的控制命令。
 pub(crate) enum SessionCommand {
+    AgentUpdate(nodelite_proto::agent_update::AgentUpdateRequest),
     RefreshToken {
         // Field drop order must release the permit before cancellation wakes callers.
         refresh_permit: SessionRefreshPermit,
@@ -52,6 +53,31 @@ impl SessionControlHandle {
                 mpsc::error::TrySendError::Full(_) => SessionCommandError::QueueFull,
                 mpsc::error::TrySendError::Closed(_) => SessionCommandError::SessionClosed,
             })
+    }
+
+    pub(crate) fn try_enqueue_update(
+        &self,
+        request: nodelite_proto::agent_update::AgentUpdateRequest,
+    ) -> Result<(), SessionCommandError> {
+        self.tx
+            .try_send(SessionCommand::AgentUpdate(request))
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => SessionCommandError::QueueFull,
+                mpsc::error::TrySendError::Closed(_) => SessionCommandError::SessionClosed,
+            })
+    }
+}
+
+impl super::SharedState {
+    pub(crate) async fn request_agent_update(
+        &self,
+        node_id: &str,
+        request: nodelite_proto::agent_update::AgentUpdateRequest,
+    ) -> Result<(), SessionCommandError> {
+        self.registry
+            .session_control(node_id)
+            .ok_or(SessionCommandError::NodeOffline)?
+            .try_enqueue_update(request)
     }
 }
 
@@ -157,7 +183,10 @@ mod tests {
             let SessionCommand::RefreshToken {
                 response,
                 refresh_permit,
-            } = commands.try_recv().expect("queued refresh");
+            } = commands.try_recv().expect("queued refresh")
+            else {
+                panic!("expected token refresh");
+            };
             let wake = Arc::new(CheckReleasedOnWake {
                 pending: Arc::clone(&control.refresh_pending),
                 calls: AtomicUsize::new(0),
@@ -185,7 +214,10 @@ mod tests {
         let SessionCommand::RefreshToken {
             response,
             refresh_permit,
-        } = commands.try_recv().expect("queued refresh");
+        } = commands.try_recv().expect("queued refresh")
+        else {
+            panic!("expected token refresh");
+        };
         drop(received);
 
         refresh_permit.complete(response, Err("request cancelled".to_string()));
@@ -217,7 +249,10 @@ mod tests {
                 let SessionCommand::RefreshToken {
                     refresh_permit,
                     response,
-                } = command;
+                } = command
+                else {
+                    panic!("expected token refresh");
+                };
                 drop((refresh_permit, response));
             }
 

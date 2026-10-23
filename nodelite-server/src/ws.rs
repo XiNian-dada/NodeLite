@@ -175,6 +175,7 @@ mod tests {
 
     fn hello_text_frame() -> Message {
         let hello = WireMessage::Hello(HelloMessage {
+            supports_agent_updates: false,
             supports_metrics_zlib: false,
             supports_token_refresh_ack: false,
             protocol_version: WIRE_PROTOCOL_VERSION,

@@ -8,6 +8,7 @@ use serde_json::Value;
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AuditEventType {
+    AgentUpdateRequested,
     LoginSuccess,
     LoginFailure,
     TotpVerifySuccess,
@@ -22,6 +23,7 @@ pub enum AuditEventType {
 impl AuditEventType {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::AgentUpdateRequested => "agent_update_requested",
             Self::LoginSuccess => "login_success",
             Self::LoginFailure => "login_failure",
             Self::TotpVerifySuccess => "totp_verify_success",
@@ -36,6 +38,7 @@ impl AuditEventType {
 
     pub fn parse(input: &str) -> Option<Self> {
         match input {
+            "agent_update_requested" => Some(Self::AgentUpdateRequested),
             "login_success" => Some(Self::LoginSuccess),
             "login_failure" => Some(Self::LoginFailure),
             "totp_verify_success" => Some(Self::TotpVerifySuccess),

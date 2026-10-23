@@ -44,6 +44,8 @@ struct Session<'a> {
     authenticated: bool,
     metrics_zlib: bool,
     traffic: TrafficController,
+    update_protocol: bool,
+    last_update_status: Option<nodelite_proto::agent_update::AgentUpdateStatus>,
 }
 
 /// 与 Server 进行一次完整会话；任何期限到达都会交还给外层重连策略。
@@ -88,9 +90,12 @@ pub async fn run_session(
         authenticated: false,
         metrics_zlib: false,
         traffic: TrafficController::default(),
+        update_protocol: false,
+        last_update_status: None,
     };
     let deadline = Instant::now() + Duration::from_secs(session.config.auth_timeout_secs);
     let hello = WireMessage::Hello(HelloMessage {
+        supports_agent_updates: true,
         supports_metrics_zlib: true,
         supports_token_refresh_ack: true,
         protocol_version: WIRE_PROTOCOL_VERSION,
@@ -174,6 +179,9 @@ impl Session<'_> {
                 self.handle_frame(frame).await
             }
             SessionEvent::Report => {
+                self.report_update_status()
+                    .await
+                    .map_err(|error| session_error(true, error))?;
                 send_metrics(&mut self.sender, collector, self.config, self.metrics_zlib)
                     .await
                     .map_err(|error| session_error(true, error))
@@ -223,6 +231,17 @@ impl Session<'_> {
             WireMessage::NetworkThrottle(NetworkThrottleMessage { rate_kbps }) => {
                 self.throttle(rate_kbps).await
             }
+            WireMessage::AgentUpdateRequest(request)
+                if self.authenticated && self.update_protocol =>
+            {
+                let status =
+                    tokio::task::spawn_blocking(move || crate::remote_update::request(request))
+                        .await
+                        .map_err(|error| session_error(true, error.into()))?;
+                send_wire_message(&mut self.sender, &WireMessage::AgentUpdateStatus(status))
+                    .await
+                    .map_err(|error| session_error(true, error))
+            }
             _ => Err(session_error(
                 self.authenticated,
                 anyhow!("received unexpected websocket message from server"),
@@ -236,6 +255,13 @@ impl Session<'_> {
             code,
             message,
         } = notice;
+        if self.authenticated && code == Some(nodelite_proto::ServerNoticeCode::AgentUpdatesV1) {
+            self.update_protocol = true;
+            return self
+                .report_update_status()
+                .await
+                .map_err(|error| session_error(true, error));
+        }
         if !self.authenticated && matches!(level, NoticeLevel::Info) && message == "authenticated" {
             self.metrics_zlib = code == Some(nodelite_proto::ServerNoticeCode::MetricsZlibV1);
             self.authenticated = true;
@@ -268,6 +294,22 @@ impl Session<'_> {
     async fn initial_telemetry(&mut self) -> Result<()> {
         send_traffic_control_status(&mut self.sender, &self.traffic).await?;
         flush_agent_logs(&mut self.sender, self.logs).await
+    }
+
+    async fn report_update_status(&mut self) -> Result<()> {
+        if !self.update_protocol {
+            return Ok(());
+        }
+        let status = tokio::task::spawn_blocking(crate::remote_update::status).await?;
+        if self.last_update_status.as_ref() != Some(&status) {
+            send_wire_message(
+                &mut self.sender,
+                &WireMessage::AgentUpdateStatus(status.clone()),
+            )
+            .await?;
+            self.last_update_status = Some(status);
+        }
+        Ok(())
     }
 
     async fn refresh_token(&mut self, response: RefreshTokenResponseMessage) -> Result<()> {

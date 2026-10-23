@@ -67,6 +67,7 @@ async fn remove_agent(state: AppState, node_id: String) -> Response {
     };
 
     state.shared.remove_node(&removed.node_id).await;
+    state.agent_updates.forget(&removed.node_id);
     state
         .agent_logs
         .forget_missing(&state.registry.node_ids().await)
