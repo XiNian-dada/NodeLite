@@ -1,6 +1,7 @@
 """Fingerprint and path regressions without privileged commands or host installation."""
 
 from pathlib import Path
+import configparser
 import io
 import secrets
 import subprocess
@@ -17,6 +18,28 @@ from tools.nodelite_migrate.common import UNITS
 
 
 class Bundles(unittest.TestCase):
+    def test_boot_ordered_triggers_do_not_depend_on_early_boot_targets(self):
+        units = Path(__file__).resolve().parents[2] / "nodelite-updater/systemd"
+        checked = set()
+        for name in sorted(UNITS):
+            if not name.endswith((".path", ".timer")):
+                continue
+            config = configparser.ConfigParser(interpolation=None)
+            config.read(units / name)
+            unit = config["Unit"]
+            if "nodelite-updater-boot.service" not in unit.get("After", "").split():
+                continue
+            with self.subTest(unit=name):
+                # Default paths/timers precede basic.target, which boot recovery needs.
+                self.assertEqual(unit.get("DefaultDependencies"), "no")
+                self.assertIn("nodelite-updater-boot.service", unit["Requires"].split())
+                self.assertIn("shutdown.target", unit["Before"].split())
+                self.assertIn("shutdown.target", unit["Conflicts"].split())
+            checked.add(name)
+        self.assertEqual(checked, {"nodelite-updater-reconcile.timer", "nodelite-updater-preflight.path",
+                                   "nodelite-updater-stop.path", "nodelite-updater-restart.path",
+                                   "nodelite-updater-remote.path"})
+
     def test_enrollment_never_enables_web_updates_implicitly(self):
         data = bundle.policy(self.manifest, self.files, "https://example.invalid/metadata/", "https://example.invalid/targets/")
         self.assertIn(b"allow_remote_updates = false\n", data)

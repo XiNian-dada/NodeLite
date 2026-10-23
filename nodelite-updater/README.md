@@ -173,7 +173,7 @@ sudo systemctl start nodelite-updater-apply.service
 
 ## 受控部署检查
 
-1. 独立核对源码、正常 updater、12 个固定单元、整包及 root 指纹，禁止故障构建进入生产。
+1. 独立核对源码、正常 updater、14 个固定单元、整包及 root 指纹，禁止故障构建进入生产。
 2. root/targets 与在线角色使用不同密钥，备份与口令分开保管。多把密钥由同一人持有不等于
    独立多方审批；私钥与面板同机时，即使加密保存也不能抵抗已失陷 root 对签名过程的窃取。
 3. 按渠道/架构建立只读 HTTPS 仓库，HTTP 用户不能写，私钥、工作区和归档不在 web root，
