@@ -1,6 +1,7 @@
 //! A fixed non-root service consumes untrusted triggers and publishes credential-free status.
 
 use std::os::unix::fs::MetadataExt;
+use std::time::Duration;
 
 use nodelite_proto::agent_update::{
     AgentUpdateCapability as Capability, AgentUpdatePhase as UpdatePhase,
@@ -9,6 +10,7 @@ use nodelite_proto::agent_update::{
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, UpdateError};
+use crate::fs::Lock;
 use crate::policy::Policy;
 use crate::state::{Artifact, Journal, Phase, Store, epoch};
 
@@ -160,7 +162,24 @@ fn consume(store: &Store) -> Result<AgentUpdateRequest> {
     crate::fs::sync_dir(&store.root.join("requests"))?;
     let bytes = crate::fs::read(&consumed, 1024);
     std::fs::remove_file(&consumed)?;
+    crate::fs::sync_dir(&store.private())?;
     Ok(serde_json::from_slice(&bytes?)?)
+}
+
+pub(crate) async fn take(store: &Store) -> Result<(AgentUpdateRequest, Lock)> {
+    // Claim before waiting: a persistent PathExists trigger would otherwise exhaust systemd's
+    // start limit on a momentarily busy lock. No trust or journal changes precede the lock.
+    let request = consume(store)?;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match Lock::acquire(&store.private().join("lock")) {
+            Ok(lock) => return Ok((request, lock)),
+            Err(UpdateError::Busy) if tokio::time::Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 fn accept(
@@ -198,9 +217,15 @@ fn accept(
     Ok(())
 }
 
-pub(crate) async fn run(store: &Store, policy: &Policy, bootstrap: &[u8]) -> Result<()> {
-    let request = consume(store)?;
-    let mut state = store.load(policy, bootstrap)?;
+pub(crate) async fn run(
+    store: &Store,
+    policy: &Policy,
+    bootstrap: &[u8],
+    request: AgentUpdateRequest,
+) -> Result<()> {
+    let mut state = store.load(policy, bootstrap).inspect_err(|_| {
+        let _ = crate::system::manual(store, "journal or committed object invalid");
+    })?;
     if store.private().join("recovery-required.json").exists() {
         return Err(UpdateError::Recovery("operator recovery required"));
     }
@@ -289,6 +314,30 @@ mod tests {
         .expect("malformed request");
         assert!(consume(&store).is_err());
         assert!(!store.root.join("requests/request.json").exists());
+    }
+
+    #[tokio::test]
+    async fn a_busy_transaction_cannot_retrigger_the_unconsumed_path() {
+        let (_dir, store, _policy, _state) = state();
+        std::fs::create_dir(store.root.join("requests")).expect("requests");
+        let source = store.root.join("requests/request.json");
+        let request = AgentUpdateRequest {
+            request_id: "d".repeat(32),
+            issued_at: 100,
+            expires_at: 160,
+        };
+        std::fs::write(&source, serde_json::to_vec(&request).expect("JSON")).expect("request");
+        let held = Lock::acquire(&store.private().join("lock")).expect("held lock");
+        let (claimed, ()) = tokio::join!(take(&store), async {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            assert!(
+                !source.exists(),
+                "the path must be consumed even while the lock is busy"
+            );
+            drop(held);
+        });
+        let (received, _lock) = claimed.expect("wait for brief contention");
+        assert_eq!(received, request);
     }
 
     #[test]

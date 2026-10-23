@@ -62,10 +62,11 @@ pub async fn run() -> Result<()> {
     system::guard(!matches!(&cli.action, Action::VerifyEnrollment { .. })).await?;
     let store = Store::system();
     system::paths_safe(&store)?;
-    let _lock = Lock::acquire(&store.private().join("lock"))?;
     if matches!(cli.action, Action::Remote) {
-        return crate::remote::run(&store, &policy, &bootstrap).await;
+        let (request, _lock) = crate::remote::take(&store).await?;
+        return crate::remote::run(&store, &policy, &bootstrap, request).await;
     }
+    let _lock = Lock::acquire(&store.private().join("lock"))?;
     if let Action::VerifyEnrollment { baseline } = &cli.action {
         crate::enrollment::verify(&store, &policy, &bootstrap, baseline).await?;
         println!("signed enrollment verified without starting or changing any service");
