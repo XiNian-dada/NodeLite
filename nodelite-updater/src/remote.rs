@@ -340,6 +340,37 @@ mod tests {
         assert_eq!(received, request);
     }
 
+    #[tokio::test]
+    async fn corrupt_remote_journal_marks_and_publishes_manual_recovery() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (_dir, store, policy, _state) = state();
+        let public = store.root.join("public");
+        std::fs::create_dir(&public).expect("public directory");
+        std::fs::set_permissions(&public, std::fs::Permissions::from_mode(0o750))
+            .expect("public mode");
+        std::fs::write(store.private().join("journal.json"), b"corrupt").expect("damage journal");
+        let result = run(
+            &store,
+            &policy,
+            b"root",
+            AgentUpdateRequest {
+                request_id: "e".repeat(32),
+                issued_at: 100,
+                expires_at: 160,
+            },
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(store.private().join("recovery-required.json").is_file());
+        let published: AgentUpdateStatus = serde_json::from_slice(
+            &crate::fs::read(&public.join("status.json"), 4096).expect("status"),
+        )
+        .expect("published status");
+        assert_eq!(published.capability, Capability::ManualRecovery);
+        assert_eq!(published.phase, UpdatePhase::ManualRecovery);
+    }
+
     #[test]
     fn cooldown_uses_acceptance_time_not_later_progress_publication() {
         let (_dir, store, mut policy, mut state) = state();
