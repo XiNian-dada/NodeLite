@@ -117,6 +117,53 @@ describe('AgentUpdatePanel', () => {
     expect(wrapper.get('[data-test="agent-update-phase"]').attributes('data-phase')).toBe('idle');
   });
 
+  it('keeps the last result but disables requests until a failed poll recovers', async () => {
+    const wrapper = await panel();
+    vi.mocked(apiClient.agentUpdate).mockRejectedValueOnce(new Error('status unavailable'));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(wrapper.get('[data-test="agent-update-error"]').text()).toContain('status unavailable');
+    expect(wrapper.get('[data-test="agent-update-phase"]').attributes('data-phase')).toBe('idle');
+    expect(
+      wrapper.get<HTMLButtonElement>('[data-test="agent-update-start"]').element.disabled,
+    ).toBe(true);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(wrapper.find('[data-test="agent-update-error"]').exists()).toBe(false);
+    expect(
+      wrapper.get<HTMLButtonElement>('[data-test="agent-update-start"]').element.disabled,
+    ).toBe(false);
+  });
+
+  it('explains the cooldown after a confirmed result without implying another upgrade', async () => {
+    vi.mocked(apiClient.agentUpdate).mockResolvedValue(view('committed'));
+    const wrapper = await panel();
+    expect(wrapper.get('[data-test="agent-update-reason"]').text()).toContain('间隔五分钟');
+    expect(wrapper.get('[data-test="agent-update-phase"]').attributes('data-phase')).toBe(
+      'committed',
+    );
+    expect(
+      wrapper.get<HTMLButtonElement>('[data-test="agent-update-start"]').element.disabled,
+    ).toBe(true);
+  });
+
+  it('ignores a late status response after navigating to another node', async () => {
+    let finishOld!: (result: AgentUpdateView) => void;
+    vi.mocked(apiClient.agentUpdate).mockImplementationOnce(
+      () => new Promise((resolve) => (finishOld = resolve)),
+    );
+    const wrapper = await panel();
+    expect(wrapper.text()).toContain('等待数据');
+    expect(wrapper.find('[data-test="agent-update-version"]').exists()).toBe(false);
+    const next = view();
+    next.agent_version = '3.0.5-next-node';
+    vi.mocked(apiClient.agentUpdate).mockResolvedValue(next);
+    await wrapper.setProps({ nodeId: 'jp' });
+    await flushPromises();
+    finishOld(view('failed'));
+    await flushPromises();
+    expect(wrapper.get('[data-test="agent-update-version"]').text()).toBe('3.0.5-next-node');
+    expect(wrapper.get('[data-test="agent-update-phase"]').attributes('data-phase')).toBe('idle');
+  });
+
   it('stops polling on unmount', async () => {
     const wrapper = await panel();
     wrapper.unmount();
