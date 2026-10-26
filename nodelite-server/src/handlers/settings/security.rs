@@ -10,9 +10,9 @@ use tracing::error;
 
 use crate::AppState;
 use crate::auth::{
-    BASIC_AUTH_SESSION_COOKIE, ReadonlyRouteAuth, TWO_FACTOR_AUTH_COOKIE, TWO_FACTOR_AUTH_SECS,
-    TWO_FACTOR_PENDING_COOKIE, auth_cookie, constant_time_compare_bytes, cookie_value,
-    decode_totp_secret, expire_cookie, matching_totp_steps, secure_cookies,
+    AuthSessionError, BASIC_AUTH_SESSION_COOKIE, ReadonlyRouteAuth, TWO_FACTOR_AUTH_COOKIE,
+    TWO_FACTOR_AUTH_SECS, TWO_FACTOR_PENDING_COOKIE, auth_cookie, constant_time_compare_bytes,
+    cookie_value, decode_totp_secret, expire_cookie, matching_totp_steps, secure_cookies,
 };
 use crate::qr::qr_svg_for_text;
 use nodelite_proto::ReadonlyAuthConfig;
@@ -319,10 +319,11 @@ async fn enable_two_factor_inner(state: AppState, request: EnableTwoFactorReques
         Ok(token) => token,
         Err(error) => {
             error!(error = ?error, "failed to create 2FA session after enabling 2FA");
-            return settings_json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to create authenticated session",
-            );
+            let status = match error {
+                AuthSessionError::Capacity => StatusCode::SERVICE_UNAVAILABLE,
+                AuthSessionError::Entropy(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            return settings_json_error(status, "failed to create authenticated session");
         }
     };
     let secure = secure_cookies(state.shared.config());

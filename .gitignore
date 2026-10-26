@@ -1,6 +1,5 @@
 /target
 /fuzz/target/
-target/tarpaulin/
 *.log
 *.tmp
 /.DS_Store
