@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from 'vue';
+import { createI18n, type Composer } from 'vue-i18n';
 import {
   FALLBACK_LOCALE,
   LANGUAGE_STORAGE_KEY,
@@ -10,8 +11,15 @@ import {
 import { useLanguage } from './language';
 
 const FAKE_DICT = {
-  en: { 'common.theme_toggle': 'Toggle theme' },
-  'zh-CN': { 'common.theme_toggle': '切换主题' },
+  en: {
+    'common.theme_toggle': 'Toggle theme',
+    'common.greeting': 'Hello, {name}!',
+    'common.fallback_only': 'English fallback',
+  },
+  'zh-CN': {
+    'common.theme_toggle': '切换主题',
+    'common.greeting': '你好，{name}！',
+  },
 };
 
 const TestRoot = { render: () => null };
@@ -105,5 +113,44 @@ describe('useLanguage', () => {
     setLocale('klingon');
     expect(currentLocale.value).toBe('en');
     expect(window.localStorage.getItem(LANGUAGE_STORAGE_KEY)).toBe('en');
+  });
+
+  it('preserves dotted keys, interpolation and fallback when switching languages', async () => {
+    const instance = await setupI18n(createApp(TestRoot));
+    expect(instance.mode).toBe('composition');
+    const composer = instance.global as Composer;
+    const { setLocale } = useLanguage();
+
+    expect(composer.t('common.theme_toggle')).toBe('Toggle theme');
+    expect(composer.t('common.greeting', { name: 'NodeLite' })).toBe('Hello, NodeLite!');
+
+    setLocale('zh-CN');
+    expect(composer.t('common.theme_toggle')).toBe('切换主题');
+    expect(composer.t('common.greeting', { name: 'NodeLite' })).toBe('你好，NodeLite！');
+    expect(composer.t('common.fallback_only')).toBe('English fallback');
+
+    setLocale('en');
+    expect(composer.t('common.theme_toggle')).toBe('Toggle theme');
+  });
+});
+
+describe('translation HTML sanitization', () => {
+  it.each([
+    ['<iframe srcdoc="{content}"></iframe>', { content: '<b>untrusted</b>' }],
+    ['<iframe srcdoc="<b>untrusted</b>"></iframe>', {}],
+  ])('neutralizes srcdoc in %s (GHSA-83rm-6c8r-g728)', (message, parameters) => {
+    const instance = createI18n({
+      legacy: false,
+      locale: 'en',
+      escapeParameter: true,
+      warnHtmlMessage: false,
+      messages: { en: { message } },
+    });
+    const template = document.createElement('template');
+    template.innerHTML = instance.global.t('message', parameters);
+
+    const iframe = template.content.querySelector('iframe');
+    expect(iframe).not.toBeNull();
+    expect(iframe?.hasAttribute('srcdoc')).toBe(false);
   });
 });

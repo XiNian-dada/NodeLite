@@ -14,6 +14,7 @@ test('language toggle updates app shell copy and persists', async ({ page }) => 
 
   await select.selectOption('zh-CN');
   await expect(page.locator('[data-test="language-select"]')).toHaveValue('zh-CN');
+  await expect(page.locator('a[href="/settings"]')).toHaveAttribute('aria-label', '设置');
   const persisted = await page.evaluate(() =>
     window.localStorage.getItem('nodelite.ui.language'),
   );
@@ -22,7 +23,9 @@ test('language toggle updates app shell copy and persists', async ({ page }) => 
   await page.reload();
   await waitForAppShell(page);
   await expect(page.locator('[data-test="language-select"]')).toHaveValue('zh-CN');
+  await expect(page.locator('a[href="/settings"]')).toHaveAttribute('aria-label', '设置');
 
   await page.locator('[data-test="language-select"]').selectOption('en');
   await expect(page.locator('[data-test="language-select"]')).toHaveValue('en');
+  await expect(page.locator('a[href="/settings"]')).toHaveAttribute('aria-label', 'Settings');
 });
