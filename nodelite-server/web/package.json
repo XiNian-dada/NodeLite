@@ -20,7 +20,7 @@
   "dependencies": {
     "pinia": "^2.2.0",
     "vue": "^3.5.44",
-    "vue-i18n": "^10.0.0",
+    "vue-i18n": "11.4.14",
     "vue-router": "^4.4.0"
   },
   "devDependencies": {
@@ -42,7 +42,7 @@
     "vue-tsc": "^3.3.8"
   },
   "engines": {
-    "node": "^20.19.0 || ^22.13.0 || >=24"
+    "node": "^22.13.0 || >=24"
   },
   "packageManager": "pnpm@10.11.0"
 }
