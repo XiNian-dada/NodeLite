@@ -7,7 +7,7 @@ use anyhow::Result;
 use axum::extract::ws::WebSocket;
 use nodelite_proto::{
     HelloMessage, MIN_SUPPORTED_WIRE_PROTOCOL_VERSION, ServerNoticeMessage, WIRE_PROTOCOL_VERSION,
-    WireMessage,
+    WireMessage, truncate_to_byte_boundary,
 };
 use serde_json::json;
 use tracing::{info, warn};
@@ -18,6 +18,9 @@ use super::session::run_authenticated_session;
 use crate::AppState;
 use crate::audit::{AuditEventType, NewAuditEvent};
 use crate::registry::{AuthorizedNode, RegistryError};
+
+/// A rejected Hello has not passed identity validation, so logs keep only a short prefix.
+const MAX_LOGGED_NODE_ID_BYTES: usize = 128;
 
 /// 一次完整的 WebSocket 会话:握手 → 认证 → 数据循环 → 资源回收。
 pub(super) async fn handle_socket(
@@ -183,7 +186,10 @@ async fn authorize_hello(
         Err(error) => {
             warn!(
                 client_ip = %client_ip,
-                requested_node_id = %hello.identity.node_id,
+                requested_node_id = ?truncate_to_byte_boundary(
+                    &hello.identity.node_id,
+                    MAX_LOGGED_NODE_ID_BYTES,
+                ),
                 error = ?error,
                 "websocket authentication rejected",
             );
