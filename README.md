@@ -140,6 +140,8 @@ server {
 ```
 </details>
 
+> 面板实时推送会校验浏览器 `Origin`，它必须与请求的 `Host` 或 `server.public_base_url` 同源。代理请保留原始 `Host`；若代理监听非默认端口（如 `listen 8443 ssl`），请改用 `proxy_set_header Host $http_host;`，因为 `$host` 不含端口。
+
 <details>
 <summary><b>本地局域网测试（无需域名 / HTTP 直连）</b></summary>
 

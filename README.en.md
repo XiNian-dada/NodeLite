@@ -139,6 +139,8 @@ server {
 ```
 </details>
 
+> The live dashboard checks the browser `Origin`: it must match the request `Host` or `server.public_base_url`. Keep the original `Host` at the proxy. If the proxy listens on a non-default port (for example `listen 8443 ssl`), use `proxy_set_header Host $http_host;`, because `$host` drops the port.
+
 <details>
 <summary><b>Local Testing Mode (HTTP direct, no domain)</b></summary>
 

@@ -187,3 +187,26 @@ async fn browser_ws_two_factor_revocation_logout_and_expiry_close_connections() 
     other.close(None).await?;
     finish(harness, server).await
 }
+
+#[tokio::test]
+async fn browser_ws_two_factor_session_rejects_foreign_origin() -> Result<()> {
+    let harness = SettingsHarness::new(readonly_auth(true, Some(TEST_TOTP_SECRET))).await?;
+    let (addr, server) = serve(&harness).await?;
+    let token = harness.state.two_factor_sessions.create_authenticated()?;
+
+    let mut request = format!("ws://{addr}/ws/browser").into_client_request()?;
+    let headers = request.headers_mut();
+    headers.insert(header::COOKIE, auth_cookie(&token).parse()?);
+    headers.insert(header::ORIGIN, "https://elsewhere.example".parse()?);
+    match connect_async(request).await {
+        Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+            assert_eq!(response.status().as_u16(), 403);
+        }
+        Ok(_) => anyhow::bail!("foreign-origin handshake must be rejected"),
+        Err(other) => anyhow::bail!("expected http 403 error, got {other}"),
+    }
+
+    let (mut socket, _) = connect(addr, None, Some(&auth_cookie(&token))).await?;
+    socket.close(None).await?;
+    finish(harness, server).await
+}
