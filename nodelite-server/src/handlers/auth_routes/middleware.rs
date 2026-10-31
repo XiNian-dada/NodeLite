@@ -20,6 +20,7 @@ use crate::auth::{
     secure_cookies,
 };
 use crate::handlers::record_audit_event;
+use crate::ws::{browser_origin_allowed, cross_origin_rejected_response};
 
 struct ReadonlyAuthMeta {
     request_path: String,
@@ -36,6 +37,14 @@ pub(crate) async fn require_readonly_auth(
     request: Request,
     next: Next,
 ) -> Response {
+    // Reject before authentication so foreign-origin handshakes never create browser
+    // sessions or login audit records.
+    if request.uri().path() == "/ws/browser"
+        && is_websocket_upgrade(&headers)
+        && !browser_origin_allowed(&headers, &state.shared.config().public_base_url)
+    {
+        return cross_origin_rejected_response(&headers);
+    }
     let meta = readonly_auth_meta(&state, &headers, &request);
     let auth = state.readonly_auth.read().await;
     let evaluated = evaluate_readonly_auth(&state, &auth, &headers, &request);

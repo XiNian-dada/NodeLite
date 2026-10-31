@@ -19,6 +19,7 @@ mod session;
 mod transport;
 
 pub use browser::ws_browser_handler;
+pub(crate) use origin::{browser_origin_allowed, cross_origin_rejected_response};
 
 use std::net::{IpAddr, SocketAddr};
 

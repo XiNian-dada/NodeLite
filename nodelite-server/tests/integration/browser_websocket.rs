@@ -229,7 +229,8 @@ async fn browser_ws_replies_pong_to_ping() -> Result<()> {
     server.shutdown().await
 }
 
-/// 携带有效凭据、但由其他来源页面发起的握手必须被拒为 HTTP 403。
+/// 携带有效凭据、但由其他来源页面发起的握手必须被拒为 HTTP 403，
+/// 且在认证前拒绝：不签发浏览器会话 cookie。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn browser_ws_rejects_cross_origin_handshake() -> Result<()> {
     let server = TestServer::start().await?;
@@ -237,6 +238,10 @@ async fn browser_ws_rejects_cross_origin_handshake() -> Result<()> {
     match connect_async(request).await {
         Err(WsError::Http(response)) => {
             assert_eq!(response.status(), StatusCode::FORBIDDEN);
+            assert!(
+                response.headers().get(header::SET_COOKIE).is_none(),
+                "a rejected cross-origin handshake must not start a browser session"
+            );
         }
         Ok(_) => bail!("cross-origin browser ws handshake must be rejected"),
         Err(other) => bail!("expected http 403 error, got {other}"),
