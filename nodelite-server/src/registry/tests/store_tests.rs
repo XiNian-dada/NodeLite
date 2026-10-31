@@ -339,6 +339,52 @@ fn update_service_metadata_rejects_throttle_without_traffic_limit() {
 }
 
 #[test]
+fn update_service_metadata_rejects_zero_traffic_limit() {
+    let runtime = Runtime::new().expect("runtime should build");
+    runtime.block_on(async {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic enough")
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("nodelite-zero-quota-test-{unique}"));
+        std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+        let path = temp_dir.join("server.json");
+        issue_node(
+            &path,
+            IssueNodeRequest {
+                node_id: "hk-01".to_string(),
+                node_label: None,
+                tags: Vec::new(),
+            },
+        )
+        .await
+        .expect("node should be issued");
+        let registry = NodeRegistry::load(&path)
+            .await
+            .expect("registry should load");
+
+        let error = registry
+            .update_service_metadata(
+                "hk-01",
+                NodeServiceMetadata {
+                    service_expires_at: None,
+                    service_unlimited: false,
+                    renewal_price: None,
+                    traffic_limit_bytes: Some(0),
+                    traffic_accounting: super::super::TrafficAccounting::Bidirectional,
+                    traffic_throttle_kbps: None,
+                },
+            )
+            .await
+            .expect_err("a zero quota must be rejected");
+        assert!(error.to_string().contains("traffic_limit_bytes"));
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&temp_dir);
+    });
+}
+
+#[test]
 fn update_location_override_persists_and_clears_display_fields() {
     let runtime = Runtime::new().expect("runtime should build");
     runtime.block_on(async {
