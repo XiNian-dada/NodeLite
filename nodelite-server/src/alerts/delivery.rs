@@ -447,10 +447,26 @@ mod tests {
     }
 
     #[test]
-    fn webhook_endpoint_label_omits_query_values() {
+    fn webhook_endpoint_label_omits_path_and_query_values() {
         assert_eq!(
             webhook_endpoint_label("https://hooks.example.com/path?token=secret"),
-            "https://hooks.example.com/path"
+            "https://hooks.example.com"
+        );
+        assert_eq!(
+            webhook_endpoint_label("https://api.telegram.org/bot123:ABC/sendMessage?chat_id=1"),
+            "https://api.telegram.org"
+        );
+        assert_eq!(
+            webhook_endpoint_label("https://hooks.slack.com/services/T000/B000/XXXX"),
+            "https://hooks.slack.com"
+        );
+        assert_eq!(
+            webhook_endpoint_label("https://discord.com/api/webhooks/1/abc"),
+            "https://discord.com"
+        );
+        assert_eq!(
+            webhook_endpoint_label("http://127.0.0.1:9000/hook/secret"),
+            "http://127.0.0.1:9000"
         );
     }
 

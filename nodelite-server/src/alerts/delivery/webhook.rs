@@ -118,12 +118,17 @@ pub(crate) async fn send_inspection_summary(
     send_payload(config, url, &payload).await
 }
 
+/// Telegram, Slack and Discord carry their secret in the URL path, so log labels keep only
+/// the scheme, host and port.
 pub(crate) fn endpoint_label(url: &str) -> String {
     let Ok(parsed) = Url::parse(url) else {
         return "invalid-webhook-url".to_string();
     };
     let host = parsed.host_str().unwrap_or("unknown-host");
-    format!("{}://{}{}", parsed.scheme(), host, parsed.path())
+    match parsed.port() {
+        Some(port) => format!("{}://{host}:{port}", parsed.scheme()),
+        None => format!("{}://{host}", parsed.scheme()),
+    }
 }
 
 async fn send_payload(
