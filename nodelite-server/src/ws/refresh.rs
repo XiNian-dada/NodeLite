@@ -48,7 +48,7 @@ pub(crate) async fn handle_refresh_request(
         );
     }
     if !agent_refresh_request_due(session) {
-        debug!(node_id = %session.node_id, "ignoring token refresh request outside the renewal window");
+        debug!(node_id = %session.node_id, "ignoring agent token refresh request that is not due");
         return Ok(super::LoopAction::Continue);
     }
     match refresh_session_token(sender, &state.registry, session, "agent-request").await {
@@ -164,9 +164,11 @@ fn token_needs_refresh(
 }
 
 /// Each rotation rewrites the registry and makes every online session revalidate its token,
-/// so agent-initiated requests follow the same window and pacing as server-initiated renewal.
+/// so agent-initiated requests pass the same gate as server-initiated renewal. That includes
+/// the durable-ack requirement, which would otherwise turn every request into a warning.
 fn agent_refresh_request_due(session: &ActiveSession) -> bool {
-    if tokio::time::Instant::now() < session.refresh_retry_at {
+    if !session.supports_token_refresh_ack || tokio::time::Instant::now() < session.refresh_retry_at
+    {
         return false;
     }
     let refresh_after = Utc::now() + ChronoDuration::days(AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS);
@@ -329,6 +331,10 @@ mod tests {
 
         let without_expiry = session();
         assert!(agent_refresh_request_due(&without_expiry));
+
+        let mut without_durable_ack = session();
+        without_durable_ack.supports_token_refresh_ack = false;
+        assert!(!agent_refresh_request_due(&without_durable_ack));
     }
 
     fn session() -> ActiveSession {
