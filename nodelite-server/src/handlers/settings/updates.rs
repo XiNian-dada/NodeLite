@@ -214,7 +214,14 @@ pub(crate) async fn update_node_service_metadata(
 ) -> Response {
     // Traffic limits and throttles reach the agent's `tc` rules, so these writes need the
     // same auth and step-up checks as every other settings write.
-    if let Some(response) = settings_write_guard(&state, &headers).await {
+    if let Some(response) = settings_write_guard(
+        &state,
+        &headers,
+        request.current_password.as_deref(),
+        request.code.as_deref(),
+    )
+    .await
+    {
         return response;
     }
     match state
@@ -253,7 +260,14 @@ pub(crate) async fn update_node_location_override(
     headers: HeaderMap,
     Json(request): Json<UpdateNodeLocationOverrideRequest>,
 ) -> Response {
-    if let Some(response) = settings_write_guard(&state, &headers).await {
+    if let Some(response) = settings_write_guard(
+        &state,
+        &headers,
+        request.current_password.as_deref(),
+        request.code.as_deref(),
+    )
+    .await
+    {
         return response;
     }
     match state

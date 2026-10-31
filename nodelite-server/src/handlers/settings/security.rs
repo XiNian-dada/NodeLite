@@ -104,6 +104,8 @@ async fn change_readonly_password_inner(
 pub(super) async fn settings_write_guard(
     state: &AppState,
     headers: &HeaderMap,
+    current_password: Option<&str>,
+    code: Option<&str>,
 ) -> Option<Response> {
     let current_auth = state.readonly_auth.read().await.config.clone();
     let Some(current_auth) = current_auth else {
@@ -112,7 +114,13 @@ pub(super) async fn settings_write_guard(
             "readonly auth is not enabled",
         ));
     };
-    settings_confirmation_error_for_sensitive_action(state, &current_auth, headers, None, None)
+    settings_confirmation_error_for_sensitive_action(
+        state,
+        &current_auth,
+        headers,
+        current_password,
+        code,
+    )
 }
 
 pub(super) fn settings_confirmation_error_for_sensitive_action(
