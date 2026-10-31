@@ -1,6 +1,32 @@
 use super::*;
 
+use anyhow::{Context, bail};
+use futures::StreamExt;
 use nodelite_proto::BrowserMessage;
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::handshake::client::Request;
+use tokio_tungstenite::tungstenite::http::{HeaderValue, StatusCode, header};
+use tokio_tungstenite::tungstenite::{Error as WsError, Message};
+
+use crate::test_support::TEST_BASIC_AUTH_HEADER;
+
+/// 带正确 Basic 凭据的 `/ws/browser` 握手请求，可附带浏览器会发送的 `Origin`。
+fn authorized_browser_request(server: &TestServer, origin: &str) -> Result<Request> {
+    let mut request = format!("ws://{}/ws/browser", server.addr)
+        .into_client_request()
+        .context("build browser ws request")?;
+    let headers = request.headers_mut();
+    headers.insert(
+        header::AUTHORIZATION,
+        HeaderValue::from_static(TEST_BASIC_AUTH_HEADER),
+    );
+    headers.insert(
+        header::ORIGIN,
+        HeaderValue::from_str(origin).context("origin header")?,
+    );
+    Ok(request)
+}
 
 /// 未认证的浏览器 WebSocket 升级握手必须被拒为 HTTP 401。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -200,5 +226,43 @@ async fn browser_ws_replies_pong_to_ping() -> Result<()> {
     assert!(matches!(pong, BrowserMessage::Pong));
 
     browser.close().await?;
+    server.shutdown().await
+}
+
+/// 携带有效凭据、但由其他来源页面发起的握手必须被拒为 HTTP 403。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn browser_ws_rejects_cross_origin_handshake() -> Result<()> {
+    let server = TestServer::start().await?;
+    let request = authorized_browser_request(&server, "https://elsewhere.example")?;
+    match connect_async(request).await {
+        Err(WsError::Http(response)) => {
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        }
+        Ok(_) => bail!("cross-origin browser ws handshake must be rejected"),
+        Err(other) => bail!("expected http 403 error, got {other}"),
+    }
+    server.shutdown().await
+}
+
+/// 与请求 `Host` 同源的握手照常建立，并立即收到 `InitialState`。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn browser_ws_accepts_same_origin_handshake() -> Result<()> {
+    let server = TestServer::start().await?;
+    let request = authorized_browser_request(&server, &format!("http://{}", server.addr))?;
+    let (mut socket, _response) = connect_async(request)
+        .await
+        .context("connect same-origin browser ws")?;
+    let first = tokio::time::timeout(TEST_TIMEOUT, socket.next())
+        .await
+        .context("wait for initial state")?;
+    match first {
+        Some(Ok(Message::Text(text))) => {
+            let message =
+                serde_json::from_str::<BrowserMessage>(&text).context("decode browser message")?;
+            assert!(matches!(message, BrowserMessage::InitialState { .. }));
+        }
+        other => bail!("expected InitialState text frame, got {other:?}"),
+    }
+    socket.close(None).await.context("close browser ws")?;
     server.shutdown().await
 }

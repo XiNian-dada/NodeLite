@@ -2,6 +2,7 @@
 //!
 //! 与 agent `/ws` 区分:浏览器通道是**只读监控推送**,认证由 `require_readonly_auth`
 //! 中间件在升级前完成(Basic Auth + 可选 2FA)。会话流程:
+//!   0. 来源校验:`Origin` 必须属于面板自身(见 `origin.rs`),否则 403;
 //!   1. 准入:每 IP 并发上限(RAII permit,与 agent 连接各自计数);
 //!   2. 升级为 WebSocket;
 //!   3. 立即下发全量 `InitialState`;
@@ -33,11 +34,12 @@ use crate::admission::{resolve_client_ip, ws_admission_error_response};
 use crate::auth::{BrowserAuthorization, BrowserSession};
 use crate::state::SharedState;
 
+use super::origin::{browser_origin_allowed, cross_origin_rejected_response};
 use super::transport::{WebSocketPeer, configure_upgrade, send_message};
 
 type BrowserSink = SplitSink<WebSocket, Message>;
 
-/// `/ws/browser` 入口。认证已由 `require_readonly_auth` 中间件完成;这里只做
+/// `/ws/browser` 入口。认证已由 `require_readonly_auth` 中间件完成;这里校验来源、
 /// 并发准入(每 IP 上限)与协议升级。
 pub async fn ws_browser_handler(
     State(state): State<AppState>,
@@ -46,6 +48,9 @@ pub async fn ws_browser_handler(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
+    if !browser_origin_allowed(&headers, &state.shared.config().public_base_url) {
+        return cross_origin_rejected_response(&headers);
+    }
     let auth = state.readonly_auth.read().await;
     let Some(authorization) = BrowserAuthorization::capture(
         &auth,
