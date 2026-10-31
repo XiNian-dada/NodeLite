@@ -216,6 +216,18 @@ describe('TokenTable', () => {
     expect(wrapper.find('[data-test="delete-agent-modal"]').exists()).toBe(false);
   });
 
+  it('disables service edits and deletion when auth is disabled', async () => {
+    const wrapper = mountTable([agent({ node_id: 'a' })], { authEnabled: false });
+
+    const save = wrapper.find('[data-test="service-meta-save"]');
+    expect(save.attributes('disabled')).toBeDefined();
+    expect(wrapper.find('[data-test="delete-agent"]').attributes('disabled')).toBeDefined();
+    await save.trigger('click');
+    await flushPromises();
+
+    expect(mockUpdateMeta).not.toHaveBeenCalled();
+  });
+
   it('deletes without inline credentials when 2FA is enabled', async () => {
     const wrapper = mountTable([agent({ node_id: 'a' })], { twoFactorEnabled: true });
 

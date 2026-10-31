@@ -93,7 +93,7 @@ watch(
 
 async function saveServiceMetadata(nodeId: string): Promise<void> {
   const draft = drafts[nodeId];
-  if (!draft) return;
+  if (!draft || !props.authEnabled) return;
   draft.saving = true;
   draft.state = null;
   draft.message = '';
@@ -250,7 +250,7 @@ const rows = computed(() =>
               <button
                 class="meta-save"
                 type="button"
-                :disabled="row.draft.saving"
+                :disabled="!authEnabled || row.draft.saving"
                 data-test="service-meta-save"
                 @click="saveServiceMetadata(row.nodeId)"
               >
