@@ -2,8 +2,13 @@
 
 use anyhow::Error;
 use chrono::{DateTime, Utc};
+use nodelite_proto::truncate_string_to_byte_boundary;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
+
+/// Rows stay for the whole retention period, so their size must not follow request size.
+const MAX_AUDIT_TEXT_BYTES: usize = 512;
+const MAX_AUDIT_DETAILS_BYTES: usize = 4096;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -91,6 +96,24 @@ impl NewAuditEvent {
             details: Value::Object(Default::default()),
         }
     }
+
+    /// Text fields can come straight from a client, so every write path stores this form.
+    pub(super) fn bounded(mut self) -> Self {
+        self.user = self.user.map(bounded_text);
+        self.node_id = self.node_id.map(bounded_text);
+        self.user_agent = self.user_agent.map(bounded_text);
+        self.ip_address = bounded_text(self.ip_address);
+        if self.details.to_string().len() > MAX_AUDIT_DETAILS_BYTES {
+            self.details = json!({ "truncated": true });
+        }
+        self
+    }
+}
+
+fn bounded_text(value: String) -> String {
+    let mut text: String = value.chars().filter(|c| !c.is_control()).collect();
+    truncate_string_to_byte_boundary(&mut text, MAX_AUDIT_TEXT_BYTES);
+    text
 }
 
 #[derive(Debug, Clone, PartialEq)]

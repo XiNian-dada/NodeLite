@@ -331,3 +331,61 @@ async fn audit_writer_flushes_at_configured_interval() {
     let _ = std::fs::remove_file(&db_path);
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn audit_log_bounds_client_supplied_fields_on_every_write_path() {
+    let runtime = Runtime::new().expect("runtime should build");
+    runtime.block_on(async {
+        let temp_dir = unique_temp_dir("nodelite-audit-field-bounds");
+        std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+        let db_path = temp_dir.join("audit.sqlite3");
+        let audit = AuditLog::new(sample_config(db_path.clone()), 5);
+        audit.initialize().await.expect("audit should initialize");
+
+        let oversized = || {
+            let mut event =
+                NewAuditEvent::now(AuditEventType::TokenInvalid, "198.51.100.12", false);
+            event.user_agent = Some("u".repeat(8 * 1024));
+            event.node_id = Some(format!("node\nnext-line-{}", "n".repeat(8 * 1024)));
+            event.details = json!({ "path": "p".repeat(8 * 1024) });
+            event
+        };
+        audit
+            .record(oversized())
+            .await
+            .expect("queued event should persist");
+        audit
+            .record_and_return_id(oversized())
+            .await
+            .expect("direct event should persist");
+        audit.shutdown().await;
+
+        let connection = rusqlite::Connection::open(&db_path).expect("audit database should open");
+        let mut statement = connection
+            .prepare("SELECT user_agent, node_id, details FROM audit_log")
+            .expect("query should prepare");
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .expect("query should run")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("rows should decode");
+
+        assert_eq!(rows.len(), 2);
+        for (user_agent, node_id, details) in rows {
+            assert_eq!(user_agent.len(), 512);
+            assert_eq!(node_id.len(), 512);
+            assert!(node_id.starts_with("nodenext-line-"));
+            assert_eq!(details, r#"{"truncated":true}"#);
+        }
+
+        drop(statement);
+        drop(connection);
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    });
+}
