@@ -84,6 +84,10 @@ pub(super) fn settings_app(state: crate::AppState) -> Router {
             "/api/nodes/{node_id}/location-override",
             post(update_node_location_override),
         )
+        .route(
+            "/api/nodes/{node_id}/service-meta",
+            post(update_node_service_metadata),
+        )
         .route_layer(from_fn(set_protected_response_headers))
         .route_layer(from_fn_with_state(state.clone(), require_readonly_auth));
     Router::new()
@@ -166,6 +170,19 @@ pub(super) fn basic_auth_header(password: &str) -> String {
 
 pub(super) fn auth_cookie(token: &str) -> String {
     format!("{TWO_FACTOR_AUTH_COOKIE}={token}")
+}
+
+/// A Basic browser session that already passed step-up, as the UI holds after confirming.
+pub(super) fn confirmed_basic_session_cookie(harness: &SettingsHarness) -> Result<String> {
+    let token = harness
+        .state
+        .two_factor_sessions
+        .create_basic_auth_session(None)?;
+    harness
+        .state
+        .two_factor_sessions
+        .confirm_sensitive_action(&token, false);
+    Ok(format!("{BASIC_AUTH_SESSION_COOKIE}={token}"))
 }
 
 pub(super) fn json_request(

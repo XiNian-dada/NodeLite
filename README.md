@@ -322,6 +322,7 @@ curl -fsSL https://monitor.example.com/install/install-agent.sh | \
 
 * **权限最小化**：服务以非 root 用户 `nodelite-agent` 运行，仅保留 `CAP_NET_ADMIN` 和 `AF_NETLINK`，保留完整的 systemd 沙箱隔离；
 * **联动控制**：在 Web 仪表盘设置节点月流量上限与结算日后，一旦超出流量配额，Agent 将自动调用 Linux `tc` 限制网卡带宽，告警系统将同步发出通知。
+* **需要认证**：流量上限、限速、服务到期与位置覆盖属于设置写入，Server 必须配置 `[auth]`，保存时与其他设置一样需要二次确认。
 
 ---
 

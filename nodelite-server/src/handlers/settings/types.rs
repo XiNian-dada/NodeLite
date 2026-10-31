@@ -90,6 +90,10 @@ pub(crate) struct UpdateNodeServiceMetadataRequest {
     pub(crate) traffic_accounting: TrafficAccounting,
     #[serde(default)]
     pub(crate) traffic_throttle_kbps: Option<u64>,
+    #[serde(default)]
+    pub(crate) current_password: Option<String>,
+    #[serde(default)]
+    pub(crate) code: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,6 +106,10 @@ pub(crate) struct UpdateNodeLocationOverrideRequest {
     pub(crate) latitude: Option<f64>,
     #[serde(default)]
     pub(crate) longitude: Option<f64>,
+    #[serde(default)]
+    pub(crate) current_password: Option<String>,
+    #[serde(default)]
+    pub(crate) code: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

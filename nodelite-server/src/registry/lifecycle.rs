@@ -359,6 +359,12 @@ fn validate_traffic_settings(
     traffic_limit_bytes: Option<u64>,
     traffic_throttle_kbps: Option<u64>,
 ) -> RegistryResult<()> {
+    // Only the write path rejects zero: registries already holding it must still load.
+    if traffic_limit_bytes == Some(0) {
+        return Err(RegistryError::validation(
+            "traffic_limit_bytes must be at least 1",
+        ));
+    }
     if traffic_throttle_kbps.is_some() && traffic_limit_bytes.is_none() {
         return Err(RegistryError::validation(
             "traffic_throttle_kbps requires traffic_limit_bytes",

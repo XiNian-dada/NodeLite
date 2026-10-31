@@ -21,7 +21,7 @@ use crate::auth::{BASIC_AUTH_SESSION_COOKIE, TWO_FACTOR_AUTH_COOKIE, decode_totp
 use crate::handlers::{
     change_readonly_password, confirm_settings, delete_agent, disable_two_factor,
     enable_two_factor, refresh_node_token, require_readonly_auth, start_server_update,
-    start_two_factor_setup, update_node_location_override,
+    start_two_factor_setup, update_node_location_override, update_node_service_metadata,
 };
 use crate::registry::{IssueNodeRequest, issue_node};
 use crate::set_protected_response_headers;
@@ -36,6 +36,7 @@ use support::*;
 mod browser_auth;
 mod concurrency;
 mod config_redaction;
+mod node_metadata_guards;
 mod snapshot_concurrency;
 mod traffic_cleanup;
 
@@ -445,13 +446,14 @@ async fn settings_node_location_override_persists_and_updates_runtime_view() -> 
         .update_snapshot("edge-hkg-01", session_id, fake_snapshot(1))
         .await;
 
+    let cookie = confirmed_basic_session_cookie(&harness)?;
     let saved = harness
         .app
         .clone()
         .oneshot(json_request(
             "/api/nodes/edge-hkg-01/location-override",
             &basic_auth_header("secret"),
-            None,
+            Some(&cookie),
             json!({
                 "country": "香港",
                 "city": "香港",
@@ -490,7 +492,7 @@ async fn settings_node_location_override_persists_and_updates_runtime_view() -> 
         .oneshot(json_request(
             "/api/nodes/edge-hkg-01/location-override",
             &basic_auth_header("secret"),
-            None,
+            Some(&cookie),
             json!({
                 "country": null,
                 "city": null,

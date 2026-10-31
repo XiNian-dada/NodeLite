@@ -18,7 +18,7 @@ use crate::AppState;
 use crate::registry::NodeServiceMetadata;
 use crate::sanitize::valid_test_release_tag;
 
-use super::security::settings_confirmation_error_for_sensitive_action;
+use super::security::{settings_confirmation_error_for_sensitive_action, settings_write_guard};
 use super::{
     MAX_UPDATE_LOG_CHUNK_BYTES, NodeTokenRefreshResponse, ServerUpdateLogQuery,
     ServerUpdateLogResponse, ServerUpdateMode, SettingsActionResponse, StartServerUpdateRequest,
@@ -209,8 +209,21 @@ pub(crate) async fn refresh_node_token(
 pub(crate) async fn update_node_service_metadata(
     State(state): State<AppState>,
     AxumPath(node_id): AxumPath<String>,
+    headers: HeaderMap,
     Json(request): Json<UpdateNodeServiceMetadataRequest>,
 ) -> Response {
+    // Traffic limits and throttles reach the agent's `tc` rules, so these writes need the
+    // same auth and step-up checks as every other settings write.
+    if let Some(response) = settings_write_guard(
+        &state,
+        &headers,
+        request.current_password.as_deref(),
+        request.code.as_deref(),
+    )
+    .await
+    {
+        return response;
+    }
     match state
         .registry
         .update_service_metadata(
@@ -244,8 +257,19 @@ pub(crate) async fn update_node_service_metadata(
 pub(crate) async fn update_node_location_override(
     State(state): State<AppState>,
     AxumPath(node_id): AxumPath<String>,
+    headers: HeaderMap,
     Json(request): Json<UpdateNodeLocationOverrideRequest>,
 ) -> Response {
+    if let Some(response) = settings_write_guard(
+        &state,
+        &headers,
+        request.current_password.as_deref(),
+        request.code.as_deref(),
+    )
+    .await
+    {
+        return response;
+    }
     match state
         .registry
         .update_location_override(
