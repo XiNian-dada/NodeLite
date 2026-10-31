@@ -311,6 +311,7 @@ curl -fsSL https://monitor.example.com/install/install-agent.sh | \
 
 * **Least Privilege**: Runs as non-root `nodelite-agent` user with `CAP_NET_ADMIN` and `AF_NETLINK` within systemd sandbox;
 * **Automatic Enforcement**: When monthly quota is exceeded, bandwidth is limited automatically, and alerts are dispatched.
+* **Authentication Required**: Traffic limits, throttles, service terms, and location overrides are settings writes. The server must have `[auth]` configured, and saving asks for the same re-confirmation as other settings.
 
 ---
 
