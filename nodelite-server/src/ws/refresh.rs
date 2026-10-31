@@ -3,6 +3,7 @@
 use anyhow::{Result, anyhow};
 use axum::extract::ws::{Message, WebSocket};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use nodelite_proto::truncate_to_byte_boundary;
 use tracing::{debug, info, warn};
 
 use super::ActiveSession;
@@ -25,6 +26,9 @@ pub(super) struct PendingRefresh {
 /// Token 距离过期不足该天数时,服务端在已认证会话内主动续期并下发新 token。
 pub(crate) const AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS: i64 = 7;
 
+/// The request body is not validated, so logs keep only a short, escaped prefix.
+const MAX_LOGGED_NODE_ID_BYTES: usize = 128;
+
 pub(crate) async fn handle_refresh_request(
     state: &AppState,
     session: &mut ActiveSession,
@@ -40,16 +44,17 @@ pub(crate) async fn handle_refresh_request(
     {
         return Ok(super::LoopAction::Break);
     }
-    if request.node_id != session.node_id {
-        warn!(
-            session_node_id = %session.node_id,
-            client_supplied_node_id = %request.node_id,
-            "ignoring client-supplied node_id in refresh_token_request",
-        );
-    }
     if !agent_refresh_request_due(session) {
         debug!(node_id = %session.node_id, "ignoring agent token refresh request that is not due");
         return Ok(super::LoopAction::Continue);
+    }
+    if request.node_id != session.node_id {
+        warn!(
+            session_node_id = %session.node_id,
+            client_supplied_node_id =
+                ?truncate_to_byte_boundary(&request.node_id, MAX_LOGGED_NODE_ID_BYTES),
+            "ignoring client-supplied node_id in refresh_token_request",
+        );
     }
     match refresh_session_token(sender, &state.registry, session, "agent-request").await {
         Ok(_) => {}
