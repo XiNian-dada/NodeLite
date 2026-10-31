@@ -347,7 +347,7 @@ fn audit_log_bounds_client_supplied_fields_on_every_write_path() {
                 NewAuditEvent::now(AuditEventType::TokenInvalid, "198.51.100.12", false);
             event.user_agent = Some("u".repeat(8 * 1024));
             event.node_id = Some(format!("node\nnext-line-{}", "n".repeat(8 * 1024)));
-            event.details = json!({ "path": "p".repeat(8 * 1024) });
+            event.details = json!({ "reason": "unauthorized", "path": "p".repeat(8 * 1024) });
             event
         };
         audit
@@ -381,11 +381,33 @@ fn audit_log_bounds_client_supplied_fields_on_every_write_path() {
             assert_eq!(user_agent.len(), 512);
             assert_eq!(node_id.len(), 512);
             assert!(node_id.starts_with("nodenext-line-"));
-            assert_eq!(details, r#"{"truncated":true}"#);
+            let details: serde_json::Value =
+                serde_json::from_str(&details).expect("details should stay valid JSON");
+            assert_eq!(details["reason"], "unauthorized");
+            assert_eq!(details["path"].as_str().map(str::len), Some(512));
         }
 
         drop(statement);
         drop(connection);
         let _ = std::fs::remove_dir_all(&temp_dir);
     });
+}
+
+#[test]
+fn audit_details_cap_nested_strings_and_fall_back_when_still_large() {
+    let mut nested = NewAuditEvent::now(AuditEventType::TokenInvalid, "198.51.100.12", false);
+    nested.details = json!({
+        "reason": "unauthorized",
+        "request": { "paths": ["p".repeat(8 * 1024)] },
+    });
+    let details = nested.bounded().details;
+    assert_eq!(details["reason"], "unauthorized");
+    assert_eq!(
+        details["request"]["paths"][0].as_str().map(str::len),
+        Some(512)
+    );
+
+    let mut many = NewAuditEvent::now(AuditEventType::TokenInvalid, "198.51.100.12", false);
+    many.details = json!({ "paths": vec!["p".repeat(400); 16] });
+    assert_eq!(many.bounded().details, json!({ "truncated": true }));
 }

@@ -103,6 +103,7 @@ impl NewAuditEvent {
         self.node_id = self.node_id.map(bounded_text);
         self.user_agent = self.user_agent.map(bounded_text);
         self.ip_address = bounded_text(self.ip_address);
+        bound_detail_strings(&mut self.details);
         if self.details.to_string().len() > MAX_AUDIT_DETAILS_BYTES {
             self.details = json!({ "truncated": true });
         }
@@ -114,6 +115,16 @@ fn bounded_text(value: String) -> String {
     let mut text: String = value.chars().filter(|c| !c.is_control()).collect();
     truncate_string_to_byte_boundary(&mut text, MAX_AUDIT_TEXT_BYTES);
     text
+}
+
+/// One long value must not push short ones such as `reason` out of the stored details.
+fn bound_detail_strings(value: &mut Value) {
+    match value {
+        Value::String(text) => truncate_string_to_byte_boundary(text, MAX_AUDIT_TEXT_BYTES),
+        Value::Array(items) => items.iter_mut().for_each(bound_detail_strings),
+        Value::Object(fields) => fields.values_mut().for_each(bound_detail_strings),
+        _ => {}
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
