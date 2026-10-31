@@ -99,6 +99,22 @@ async fn change_readonly_password_inner(
         .into_response()
 }
 
+/// Settings writes require enabled auth (otherwise they would be open to anonymous visitors)
+/// and a recent step-up confirmation; a 428 lets the UI confirm and replay the request.
+pub(super) async fn settings_write_guard(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Option<Response> {
+    let current_auth = state.readonly_auth.read().await.config.clone();
+    let Some(current_auth) = current_auth else {
+        return Some(settings_json_error(
+            StatusCode::CONFLICT,
+            "readonly auth is not enabled",
+        ));
+    };
+    settings_confirmation_error_for_sensitive_action(state, &current_auth, headers, None, None)
+}
+
 pub(super) fn settings_confirmation_error_for_sensitive_action(
     state: &AppState,
     auth: &ReadonlyAuthConfig,
