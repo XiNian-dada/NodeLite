@@ -83,6 +83,7 @@
 - 支持记录认证失败、TOTP 成功/失败、Token 误用、限流事件、节点连接事件
 - `/api/audit-log` 可按时间、事件类型、成功状态等条件查询
 - 审计写入走 best-effort，不反向阻塞主业务路径
+- 入库前过滤控制字符，User-Agent、节点 ID 等文本字段上限 512 字节，超过 4 KiB 的 details 整体替换为 `{"truncated":true}`
 
 ### 文件与本地密钥材料保护
 
