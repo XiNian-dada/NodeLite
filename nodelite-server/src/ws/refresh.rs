@@ -3,7 +3,8 @@
 use anyhow::{Result, anyhow};
 use axum::extract::ws::{Message, WebSocket};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use tracing::{info, warn};
+use nodelite_proto::truncate_to_byte_boundary;
+use tracing::{debug, info, warn};
 
 use super::ActiveSession;
 use super::transport::send_message;
@@ -25,6 +26,9 @@ pub(super) struct PendingRefresh {
 /// Token 距离过期不足该天数时,服务端在已认证会话内主动续期并下发新 token。
 pub(crate) const AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS: i64 = 7;
 
+/// The request body is not validated, so logs keep only a short, escaped prefix.
+const MAX_LOGGED_NODE_ID_BYTES: usize = 128;
+
 pub(crate) async fn handle_refresh_request(
     state: &AppState,
     session: &mut ActiveSession,
@@ -40,10 +44,15 @@ pub(crate) async fn handle_refresh_request(
     {
         return Ok(super::LoopAction::Break);
     }
+    if !agent_refresh_request_due(session) {
+        debug!(node_id = %session.node_id, "ignoring agent token refresh request that is not due");
+        return Ok(super::LoopAction::Continue);
+    }
     if request.node_id != session.node_id {
         warn!(
             session_node_id = %session.node_id,
-            client_supplied_node_id = %request.node_id,
+            client_supplied_node_id =
+                ?truncate_to_byte_boundary(&request.node_id, MAX_LOGGED_NODE_ID_BYTES),
             "ignoring client-supplied node_id in refresh_token_request",
         );
     }
@@ -157,6 +166,19 @@ fn token_needs_refresh(
     token_expires_at
         .map(|expires_at| expires_at <= refresh_after)
         .unwrap_or(true)
+}
+
+/// Each rotation rewrites the registry and makes every online session revalidate its token,
+/// so agent-initiated requests pass the same gate as server-initiated renewal. That includes
+/// the durable-ack requirement, which would otherwise turn every request into a warning.
+fn agent_refresh_request_due(session: &ActiveSession) -> bool {
+    if !session.supports_token_refresh_ack || tokio::time::Instant::now() < session.refresh_retry_at
+    {
+        return false;
+    }
+    let refresh_after = Utc::now() + ChronoDuration::days(AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS);
+    session.pending_refresh.is_some()
+        || token_needs_refresh(session.token_expires_at, refresh_after)
 }
 
 /// Staging is not activation: the current token remains valid until a durable acknowledgement.
@@ -292,10 +314,33 @@ mod tests {
 
     use super::{
         AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS, ActiveSession, RegistryTokenStatus,
-        apply_current_token_status, token_needs_refresh,
+        agent_refresh_request_due, apply_current_token_status, token_needs_refresh,
     };
     use crate::registry::{IssueNodeRequest, NodeRegistry, issue_node};
     use crate::ws::transport::send_message_with_timeout;
+
+    #[tokio::test]
+    async fn agent_refresh_requests_follow_the_renewal_window_and_pacing() {
+        let window = chrono::Duration::days(AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS);
+
+        let mut far_from_expiry = session();
+        far_from_expiry.token_expires_at = Some(Utc::now() + window + chrono::Duration::days(1));
+        assert!(!agent_refresh_request_due(&far_from_expiry));
+
+        let mut near_expiry = session();
+        near_expiry.token_expires_at = Some(Utc::now() + window - chrono::Duration::days(1));
+        assert!(agent_refresh_request_due(&near_expiry));
+
+        near_expiry.refresh_retry_at = tokio::time::Instant::now() + Duration::from_secs(60);
+        assert!(!agent_refresh_request_due(&near_expiry));
+
+        let without_expiry = session();
+        assert!(agent_refresh_request_due(&without_expiry));
+
+        let mut without_durable_ack = session();
+        without_durable_ack.supports_token_refresh_ack = false;
+        assert!(!agent_refresh_request_due(&without_durable_ack));
+    }
 
     fn session() -> ActiveSession {
         ActiveSession {
