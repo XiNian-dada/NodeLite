@@ -58,6 +58,18 @@ fn parses_cpu_sample_and_usage() {
 }
 
 #[test]
+fn guest_time_is_not_counted_twice() {
+    let previous = parse_cpu_sample("cpu  0 0 0 0 0 0 0 0 0 0\n").expect("parse previous sample");
+    let current =
+        parse_cpu_sample("cpu  100 0 20 100 0 0 0 0 80 0\n").expect("parse current sample");
+    let usage = compute_cpu_usage(previous, current);
+    assert!(
+        (usage - 120.0 / 220.0 * 100.0).abs() < 0.01,
+        "usage={usage}"
+    );
+}
+
+#[test]
 fn parses_load_average() {
     let load = parse_load_average("0.11 0.22 0.33 1/100 12345\n").expect("parse load average line");
     assert_eq!(load.one, 0.11);

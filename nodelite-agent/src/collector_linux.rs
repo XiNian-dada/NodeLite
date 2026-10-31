@@ -243,7 +243,10 @@ fn parse_cpu_sample(content: &str) -> Result<CpuSample> {
     let mut counter_count = 0_usize;
     for (index, raw_value) in line.split_whitespace().skip(1).enumerate() {
         let value = raw_value.parse::<u64>().context("invalid cpu counter")?;
-        total = total.saturating_add(value);
+        // guest and guest_nice are already included in user and nice.
+        if index < 8 {
+            total = total.saturating_add(value);
+        }
         if index == 3 || index == 4 {
             idle = idle.saturating_add(value);
         }
