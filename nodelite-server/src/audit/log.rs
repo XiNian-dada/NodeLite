@@ -94,7 +94,7 @@ impl AuditLog {
         let Some(tx) = guard.as_ref() else {
             anyhow::bail!("audit writer is not initialized");
         };
-        match tx.try_send(AuditWriterCommand::Event(event)) {
+        match tx.try_send(AuditWriterCommand::Event(event.bounded())) {
             Ok(()) => Ok(()),
             Err(mpsc::error::TrySendError::Full(_)) => {
                 self.dropped_writes.fetch_add(1, Ordering::Relaxed);
@@ -118,6 +118,7 @@ impl AuditLog {
         }
 
         self.flush_pending().await?;
+        let event = event.bounded();
         let connection = Arc::clone(&self.connection);
         let id = tokio::task::spawn_blocking(move || {
             let mut guard = connection.blocking_lock();
