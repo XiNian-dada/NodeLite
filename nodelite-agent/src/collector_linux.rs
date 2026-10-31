@@ -231,8 +231,8 @@ fn read_uptime(path: &std::path::Path) -> Result<u64> {
 
 /// 解析 `/proc/stat` 中的 `cpu ` 聚合行。
 ///
-/// 字段顺序:user / nice / system / idle / iowait / ...
-/// 这里我们只关心 `total = 全部之和`,以及 `idle = idle + iowait`。
+/// 字段顺序:user / nice / system / idle / iowait / irq / softirq / steal / guest / guest_nice。
+/// `total` 只累加前 8 个字段,`idle = idle + iowait`。
 fn parse_cpu_sample(content: &str) -> Result<CpuSample> {
     let line = content
         .lines()
