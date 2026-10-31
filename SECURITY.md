@@ -21,6 +21,7 @@
 - 常见弱密码会被拒绝
 - 启用 `enable_2fa = true` 时，TOTP secret 由服务端保存，验证通过后才会发放已认证会话 cookie
 - Basic-only 的指标、API 和静态资源请求不创建浏览器会话或登录成功记录；HTML 页面入口与浏览器 WebSocket 保留 24 小时会话和登录审计
+- 浏览器 WebSocket（`/ws/browser`）在认证前校验 `Origin`：必须与请求的 `Host` 或 `server.public_base_url` 同源，否则返回 `403`，且不创建会话或登录记录；不带 `Origin` 的非浏览器客户端不受影响
 - pending、2FA 与 Basic 浏览器会话共享 1,024 条硬上限；到期记录在分配前清理，容量不足时新会话返回 `503`，不驱逐有效会话，也不阻断已认证的无状态指标/API 访问
 
 ### 2FA 与只读认证限流
@@ -132,6 +133,7 @@
 - 为 `[auth]` 使用高强度密码，并开启 2FA
 - 只在明确隔离的测试环境下使用远程明文 HTTP
 - 将 NodeLite 放在反向代理、防火墙或 WAF 后面，而不是直接裸露到公网
+- 反向代理需保留原始 `Host`（如 Nginx `proxy_set_header Host $host;`）；若改写了 `Host`，请通过 `server.public_base_url` 的地址访问面板，否则实时推送会因来源校验被拒绝
 
 ### 凭证与主机保护
 
