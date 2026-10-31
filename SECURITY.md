@@ -133,7 +133,7 @@
 - 为 `[auth]` 使用高强度密码，并开启 2FA
 - 只在明确隔离的测试环境下使用远程明文 HTTP
 - 将 NodeLite 放在反向代理、防火墙或 WAF 后面，而不是直接裸露到公网
-- 反向代理需保留原始 `Host`（如 Nginx `proxy_set_header Host $host;`）；若改写了 `Host`，请通过 `server.public_base_url` 的地址访问面板，否则实时推送会因来源校验被拒绝
+- 反向代理需保留原始 `Host`（如 Nginx `proxy_set_header Host $host;`；代理监听非默认端口时改用 `$http_host`，因为 `$host` 不含端口）；若改写了 `Host`，请通过 `server.public_base_url` 的地址访问面板，否则实时推送会因来源校验被拒绝
 
 ### 凭证与主机保护
 

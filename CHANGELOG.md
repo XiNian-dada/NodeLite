@@ -7,6 +7,12 @@
 
 ## [未发布]
 
+### 安全与稳定性
+- 浏览器实时推送 `/ws/browser` 在认证前校验 `Origin`，只接受与本次请求 `Host` 或 `server.public_base_url` 同源的页面；`public_base_url` 为 https 时拒绝同主机的 http 页面，代理转发 `X-Forwarded-Proto: https` 时拒绝所有 http 页面。不带 `Origin` 的脚本客户端不受影响。
+
+### 升级与兼容性
+- 反向代理需保留原始 `Host`。代理监听非默认端口时请使用 Nginx `proxy_set_header Host $http_host;`（`$host` 不含端口），或让 `server.public_base_url` 与浏览器访问地址一致，否则面板实时推送会返回 403。
+
 ## [v3.0.4] - 2026-10-14
 
 本次热修复解决 Agent 凭证仅在内存中更新、升级重启后读取旧 token 导致离线的问题。现有 v3.0.3 标签与发布产物保持不变。
