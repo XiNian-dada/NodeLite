@@ -135,6 +135,30 @@ awk '
   END { exit !(found && guard) }
 ' "$INSTALLER"
 
+# Remote sources must use https; loopback is allowed; remote http needs the explicit opt-in.
+INSECURE_HTTP=0
+for url in https://monitor.example.com/install/bootstrap http://127.0.0.1:8080/x 'http://[::1]:9/x' http://localhost/x; do
+  require_secure_url test "$url"
+done
+for url in http://monitor.example.com/x http://127.0.0.1.example.com/x http://127.0.0.1:1@example.com/x https://user@example.com/x ftp://example.com/x; do
+  if (require_secure_url test "$url") >/dev/null 2>&1; then
+    printf '%s\n' "Insecure source must be rejected: $url" >&2
+    exit 1
+  fi
+done
+INSECURE_HTTP=1
+require_secure_url test http://monitor.example.com/x 2>/dev/null
+if (require_secure_url test ftp://example.com/x) >/dev/null 2>&1; then
+  printf '%s\n' 'Opt-in must only relax http' >&2
+  exit 1
+fi
+INSECURE_HTTP=0
+awk '
+  /require_secure_url .bootstrap URL/ { b=1 } /require_secure_url .agent download URL/ { d=1 }
+  /^  fetch_bootstrap_config$/ { if (!(b && d)) exit 1; ok=1 }
+  END { exit !ok }
+' "$INSTALLER"
+
 SERVICE_KIND=launchd
 # Linux musl pins must not be applied to macOS artifacts.
 select_release_target x86_64

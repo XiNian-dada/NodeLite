@@ -58,6 +58,7 @@ SERVICE_USER="nodelite-agent"
 SERVICE_GROUP="nodelite-agent"
 STATE_DIR="${NODELITE_AGENT_STATE_DIR:-/var/lib/nodelite-agent}"
 TRAFFIC_CONTROL="${NODELITE_AGENT_TRAFFIC_CONTROL:-auto}"
+INSECURE_HTTP="${NODELITE_AGENT_INSECURE_ALLOW_HTTP:-0}"
 LEGACY_CONFIG_PATH=""
 BIN_PATH=""
 CONFIG_PATH=""
@@ -377,6 +378,18 @@ refuse_signed_updater_override() {
   fi
 }
 
+# 远程地址必须是 https;loopback 便于隔离测试;远程 http 仅在服务端已开启
+# insecure_allow_http 并渲染 --insecure-allow-http 时放行。
+# shellcheck disable=SC2317
+require_secure_url() {
+  printf '%s\n' "$2" | grep -Eq '^(https://[^/@[:space:]]+|http://(127[.]0[.]0[.]1|\[::1\]|localhost)(:[0-9]+)?)(/[^[:space:]]*)?$' && return 0
+  if [ "$INSECURE_HTTP" = 1 ] && printf '%s\n' "$2" | grep -Eq '^http://[^/@[:space:]]+(/[^[:space:]]*)?$'; then
+    printf '%s\n' "warning: $1 uses plain http because --insecure-allow-http was given" >&2
+    return 0
+  fi
+  fail "$1 must use https:// (remote http requires --insecure-allow-http): $2"; return 1
+}
+
 # 自动更新支持已移除。升级时顺手清理旧版本曾经写入的 timer / service,
 # 避免无人值守任务继续从 latest 通道自我替换 agent。
 cleanup_legacy_auto_update() {
@@ -552,6 +565,7 @@ while [ "$#" -gt 0 ]; do
     --disable-traffic-control) TRAFFIC_CONTROL=0; shift ;;
     --enable-signed-updates) SIGNED_UPDATES=1; shift ;;
     --enable-web-updates) SIGNED_UPDATES=1; WEB_UPDATES=1; shift ;;
+    --insecure-allow-http) INSECURE_HTTP=1; shift ;;
     --mode) need_value "$@"; MODE="$2"; shift 2 ;;
     --base-url) need_value "$@"; BASE_URL="$2"; shift 2 ;;
     --checksums-url) need_value "$@"; CHECKSUMS_URL="$2"; shift 2 ;;
@@ -580,6 +594,7 @@ Optional:
   --binary-url <exact-binary-url>
   --sha256-x86_64 <sha256-override>
   --sha256-aarch64 <sha256-override>
+  --insecure-allow-http (accept remote http:// sources; https and loopback need no flag)
 
 Notes:
   Linux keeps its writable agent.toml in /var/lib/nodelite-agent (0700/0600).
@@ -648,6 +663,9 @@ else
   DOWNLOAD_URL="$BASE_URL/$ARTIFACT_NAME"
 fi
 
+[ -z "$BOOTSTRAP_URL" ] || require_secure_url 'bootstrap URL' "$BOOTSTRAP_URL"
+require_secure_url 'agent download URL' "$DOWNLOAD_URL"
+[ -n "$EXPECTED_SHA256" ] || require_secure_url 'checksums URL' "${CHECKSUMS_URL:-$BASE_URL/SHA256SUMS.txt}"
 BIN_PATH="$INSTALL_DIR/nodelite-agent"
 configure_agent_config_paths
 
