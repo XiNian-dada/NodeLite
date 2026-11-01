@@ -351,6 +351,8 @@ check_saved_credentials() {
 }
 
 # 选择当前平台产物;--sha256-* 固定值只对应 Linux musl 产物,macOS 改读发布源 SHA256SUMS.txt。
+# The return after fail is for the test harness, whose fail stub returns.
+# shellcheck disable=SC2317
 select_release_target() {
   case "$1" in
     x86_64|amd64) arch=x86_64; pinned="$SHA256_X86_64" ;;
