@@ -262,7 +262,7 @@ insecure_allow_http = true
 | `[server]` | `token_verify_max_parallelism` | `4` | Argon2id 验证并发槽位数（防重连尖刺 OOM，每任务约 19MB） |
 | `[auth]` | `username` / `password` | 自动生成强密码 | 面板登录凭据（必须包含大小写字母、数字和特殊字符） |
 | `[auth]` | `enable_2fa` | `false` | 是否启用二次验证；启用后可绑定 TOTP 与 Passkey |
-| `[audit]` | `enabled` / `retention_days`| `true` / `90` | 独立安全审计日志，默认留存 90 天 |
+| `[audit]` | `enabled` / `retention_days` / `max_rows` | `true` / `90` / `500000` | 独立安全审计日志，默认留存 90 天，最多 50 万行 |
 | `[geoip]` | `provider` | `"ipwhois"` | 物理位置查询：`"ipwhois"`（在线）/ `"dbip"`（本地 MMDB） |
 
 ---

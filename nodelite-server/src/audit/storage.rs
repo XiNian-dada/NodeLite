@@ -59,14 +59,28 @@ pub(super) fn open_audit_connection(
     Ok(connection)
 }
 
-pub(super) fn prune_expired_records(connection: &Connection, retention_days: u64) -> Result<usize> {
+pub(super) fn prune_expired_records(
+    connection: &Connection,
+    retention_days: u64,
+    max_rows: u64,
+) -> Result<usize> {
     let cutoff = Utc::now() - ChronoDuration::days(retention_days as i64);
-    connection
+    let expired = connection
         .execute(
             "DELETE FROM audit_log WHERE timestamp < ?1",
             params![cutoff.timestamp()],
         )
-        .context("failed to prune expired audit records")
+        .context("failed to prune expired audit records")?;
+    // Retention alone does not bound the table when events arrive faster than they age out.
+    // Ids only grow and rows leave from the oldest end, so an id cutoff keeps at most
+    // `max_rows` rows without the full index walk an OFFSET would need on every prune.
+    let excess = connection
+        .execute(
+            "DELETE FROM audit_log WHERE id <= (SELECT MAX(id) FROM audit_log) - ?1",
+            params![i64::try_from(max_rows).unwrap_or(i64::MAX)],
+        )
+        .context("failed to prune audit records above the row limit")?;
+    Ok(expired + excess)
 }
 
 fn harden_audit_artifacts(path: &Path) -> Result<()> {

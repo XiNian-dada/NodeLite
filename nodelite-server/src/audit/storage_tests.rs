@@ -46,3 +46,41 @@ fn audit_database_artifacts_are_mode_600() {
         let _ = std::fs::remove_dir_all(&temp_dir);
     });
 }
+
+#[test]
+fn prune_removes_the_oldest_rows_above_the_row_limit() {
+    let temp_dir = unique_temp_dir("nodelite-audit-row-limit");
+    std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+    let db_path = temp_dir.join("audit.sqlite3");
+    let connection = super::storage::open_audit_connection(&db_path, 5).expect("audit db opens");
+    let now = chrono::Utc::now().timestamp();
+    for index in 0..1_500_i64 {
+        connection
+            .execute(
+                "INSERT INTO audit_log (timestamp, event_type, ip_address, success, details)
+                 VALUES (?1, 'login_failure', '198.51.100.30', 0, '{}')",
+                rusqlite::params![now + index],
+            )
+            .expect("row inserts");
+    }
+
+    let removed =
+        super::storage::prune_expired_records(&connection, 90, 1_000).expect("prune runs");
+    assert_eq!(removed, 500);
+    let (count, oldest): (i64, i64) = connection
+        .query_row(
+            "SELECT COUNT(*), MIN(timestamp) FROM audit_log",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("count query");
+    assert_eq!(count, 1_000);
+    assert_eq!(oldest, now + 500);
+    assert_eq!(
+        super::storage::prune_expired_records(&connection, 90, 1_000).expect("prune runs"),
+        0
+    );
+
+    drop(connection);
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}

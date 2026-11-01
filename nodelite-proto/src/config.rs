@@ -118,6 +118,9 @@ pub const MIN_TOKEN_VERIFY_MAX_PARALLELISM: usize = 1;
 pub const MAX_TOKEN_VERIFY_MAX_PARALLELISM: usize = 8;
 /// 审计日志默认保留天数。
 pub const DEFAULT_AUDIT_RETENTION_DAYS: u64 = 90;
+/// Rows are size-bounded, so this also bounds the audit database on disk.
+pub const DEFAULT_AUDIT_MAX_ROWS: u64 = 500_000;
+pub const MIN_AUDIT_MAX_ROWS: u64 = 1_000;
 /// 审计写入器单次事务默认最多写入的记录数。
 pub const DEFAULT_AUDIT_WRITER_BATCH_MAX: usize = 128;
 /// 审计写入器默认最大攒批时间(毫秒)。

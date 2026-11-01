@@ -40,6 +40,8 @@ impl NodeRegistry {
     ) -> RegistryResult<PreparedToken> {
         validate_identifier("node_id", node_id).map_err(RegistryError::validation)?;
         let node_id = node_id.to_string();
+        self.precheck_token_refresh(&node_id, generation).await?;
+        let (token, refresh_id, token_hash) = self.hash_candidate_token().await?;
         let (prepared, file) = mutate_registry_file(self.path.as_ref(), move |file| {
             let node = file.nodes.iter_mut().find(|n| n.node_id == node_id)
                 .ok_or_else(|| RegistryError::NodeNotFound(node_id.clone()))?;
@@ -54,17 +56,62 @@ impl NodeRegistry {
             let next = node.pending_tokens.iter().map(|p| p.generation)
                 .chain(std::iter::once(node.token_generation)).max().unwrap_or(node.token_generation)
                 .checked_add(1).ok_or_else(|| RegistryError::validation("token generation exhausted"))?;
-            let token = generate_token()?;
-            let refresh_id = generate_token()?;
             let expires_at = now + Duration::days(DEFAULT_TOKEN_VALIDITY_DAYS);
-            let token_hash = hash_token(&token)
-                .map_err(|e| RegistryError::internal("failed to hash candidate token", e.into()))?;
-            node.pending_tokens.push(PendingToken { refresh_id: refresh_id.clone(), token_hash,
-                generation: next, expires_at });
-            Ok((PreparedToken { token, refresh_id, generation: next, expires_at }, true))
+            node.pending_tokens.push(PendingToken { refresh_id: refresh_id.clone(),
+                token_hash: token_hash.clone(), generation: next, expires_at });
+            Ok((PreparedToken { token: token.clone(), refresh_id: refresh_id.clone(),
+                generation: next, expires_at }, true))
         }).await?;
         self.replace_state_from_file(file).await?;
         Ok(prepared)
+    }
+
+    /// Rejects from memory before spending an Argon2 hash; the file update below stays the
+    /// authoritative check.
+    async fn precheck_token_refresh(&self, node_id: &str, generation: u64) -> RegistryResult<()> {
+        let node = self
+            .registered_node(node_id)
+            .await
+            .ok_or_else(|| RegistryError::NodeNotFound(node_id.to_string()))?;
+        let now = Utc::now();
+        if token_status_for_node(&node, generation, 0, now).is_none() {
+            return Err(RegistryError::Unauthorized);
+        }
+        let live_pending = node
+            .pending_tokens
+            .iter()
+            .filter(|pending| now < pending.expires_at)
+            .count();
+        if live_pending >= MAX_PENDING_TOKENS {
+            return Err(RegistryError::validation(
+                "unconfirmed credential limit reached; retry with a saved candidate or reissue the node",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Hashing happens before the optimistic write so a version conflict retries only the
+    /// cheap file update, and it shares the verify limiter so renewals cannot stack up
+    /// unbounded Argon2 work next to handshakes.
+    async fn hash_candidate_token(&self) -> RegistryResult<(String, String, String)> {
+        let permit = std::sync::Arc::clone(&self.token_verify_limiter)
+            .acquire_owned()
+            .await
+            .map_err(|error| {
+                RegistryError::internal("token verify limiter closed", anyhow::anyhow!(error))
+            })?;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let token = generate_token()?;
+            let refresh_id = generate_token()?;
+            let token_hash = hash_token(&token)
+                .map_err(|e| RegistryError::internal("failed to hash candidate token", e.into()))?;
+            Ok((token, refresh_id, token_hash))
+        })
+        .await
+        .map_err(|error| {
+            RegistryError::internal("candidate hash task failed", anyhow::anyhow!(error))
+        })?
     }
 
     pub(crate) async fn commit_token_refresh(
@@ -104,7 +151,6 @@ impl NodeRegistry {
         })
         .await?;
         self.replace_state_from_file(file).await?;
-        self.token_cache.lock().clear();
         Ok(committed)
     }
 

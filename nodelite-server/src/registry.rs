@@ -264,9 +264,11 @@ pub struct InstallSession {
     pub node_session_token: String,
 }
 
-/// Token 验证缓存键:(token_hash_hex, registry_revision)。
-/// 使用 token 的 SHA256 哈希作为缓存键,避免存储明文。
-type TokenCacheKey = (String, u64);
+/// SHA-256 of the presented token and the stored hash string. Argon2 verification of that
+/// pair never changes, and callers read the node's current hash from the registry, so the key
+/// needs no registry revision: unrelated registry writes must not force every session back
+/// through Argon2.
+type TokenCacheKey = String;
 
 /// Token 验证缓存值:(验证结果, 缓存时间戳)。
 struct TokenCacheEntry {
