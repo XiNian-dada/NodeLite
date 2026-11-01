@@ -32,7 +32,7 @@ pub(super) fn collect_disks(
         .with_context(|| format!("read {}", mounts_path.display()))?;
     let mut seen_mounts = HashSet::new();
     let mut seen_devices = HashSet::new();
-    let mut disks = Vec::new();
+    let mut candidates = Vec::new();
 
     for line in content.lines() {
         let mut fields = line.split_whitespace();
@@ -53,10 +53,20 @@ pub(super) fn collect_disks(
             continue;
         }
 
-        let probe_path = mount_point.clone();
-        let Some(stats) = probes.probe(&mount_point, Instant::now(), move || {
-            statvfs_fn(&probe_path)
-        }) else {
+        candidates.push((device, mount_point, fs_type));
+    }
+
+    let requests = candidates
+        .iter()
+        .map(|(_, mount_point, _)| {
+            let probe_path = mount_point.clone();
+            (mount_point.clone(), move || statvfs_fn(&probe_path))
+        })
+        .collect();
+    let probed = probes.probe_all(Instant::now(), requests);
+    let mut disks = Vec::new();
+    for ((device, mount_point, fs_type), stats) in candidates.into_iter().zip(probed) {
+        let Some(stats) = stats else {
             warn!(
                 mount_point = %mount_point,
                 fs_type = %fs_type,

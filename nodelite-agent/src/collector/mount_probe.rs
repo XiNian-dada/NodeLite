@@ -53,61 +53,94 @@ impl<T: Clone + Send + 'static> MountProbes<T> {
         }
     }
 
-    /// 返回挂载点容量：成功时为新值；超时、失败或冷却中时为上次成功值（从未成功则为 `None`）。
-    pub(crate) fn probe<F>(&mut self, mount_point: &str, now: Instant, probe: F) -> Option<T>
+    /// 对一轮内的全部挂载点探测并按输入顺序返回容量：成功时为新值；超时、失败或冷却中时为
+    /// 上次成功值（从未成功则为 `None`）。所有探测先并行启动，再共享同一个截止时间等待，
+    /// 因此多个挂载点同时卡住时整轮耗时仍约为一个超时。
+    pub(crate) fn probe_all<F>(
+        &mut self,
+        now: Instant,
+        requests: Vec<(String, F)>,
+    ) -> Vec<Option<T>>
     where
         F: FnOnce() -> Result<T> + Send + 'static,
     {
-        let timeout = self.timeout;
         let cooldown = self.cooldown;
-        let state = self.mounts.entry(mount_point.to_string()).or_default();
+        let mut results = Vec::with_capacity(requests.len());
+        let mut waiting = Vec::new();
 
-        if let Some(pending) = &state.pending {
-            match pending.try_recv() {
-                Ok(result) => {
-                    state.pending = None;
-                    return state.apply(mount_point, result, now, cooldown);
+        for (index, (mount_point, probe)) in requests.into_iter().enumerate() {
+            let state = self.mounts.entry(mount_point.clone()).or_default();
+            results.push(None);
+            if let Some(pending) = &state.pending {
+                match pending.try_recv() {
+                    Ok(result) => {
+                        state.pending = None;
+                        results[index] = state.apply(&mount_point, result, now, cooldown);
+                        continue;
+                    }
+                    Err(TryRecvError::Empty) => {
+                        results[index] = state.last.clone();
+                        continue;
+                    }
+                    Err(TryRecvError::Disconnected) => state.pending = None,
                 }
-                Err(TryRecvError::Empty) => return state.last.clone(),
-                Err(TryRecvError::Disconnected) => state.pending = None,
+            }
+            if state.cooldown_until.is_some_and(|until| now < until) {
+                results[index] = state.last.clone();
+                continue;
+            }
+
+            let (sender, receiver) = mpsc::sync_channel(1);
+            let spawned = std::thread::Builder::new()
+                .name("nodelite-statvfs".to_string())
+                .stack_size(PROBE_THREAD_STACK_BYTES)
+                .spawn(move || {
+                    // 接收端可能已因挂载点消失而被丢弃，此时结果无人需要。
+                    let _ = sender.send(probe());
+                });
+            match spawned {
+                Ok(_) => waiting.push((index, mount_point, receiver)),
+                Err(error) => {
+                    warn!(mount_point = %mount_point, error = ?error, "failed to spawn disk probe thread");
+                    state.cooldown_until = Some(now + cooldown);
+                    results[index] = state.last.clone();
+                }
             }
         }
 
-        if state.cooldown_until.is_some_and(|until| now < until) {
-            return state.last.clone();
+        let deadline = Instant::now() + self.timeout;
+        for (index, mount_point, receiver) in waiting {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let state = self.mounts.entry(mount_point.clone()).or_default();
+            results[index] = match receiver.recv_timeout(remaining) {
+                Ok(result) => state.apply(&mount_point, result, now, cooldown),
+                Err(RecvTimeoutError::Timeout) => {
+                    warn!(
+                        mount_point = %mount_point,
+                        timeout_ms = self.timeout.as_millis() as u64,
+                        "disk probe timed out; reusing last capacity until it recovers",
+                    );
+                    state.pending = Some(receiver);
+                    state.cooldown_until = Some(now + cooldown);
+                    state.last.clone()
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    state.cooldown_until = Some(now + cooldown);
+                    state.last.clone()
+                }
+            };
         }
+        results
+    }
 
-        let (sender, receiver) = mpsc::sync_channel(1);
-        let spawned = std::thread::Builder::new()
-            .name("nodelite-statvfs".to_string())
-            .stack_size(PROBE_THREAD_STACK_BYTES)
-            .spawn(move || {
-                // 接收端可能已因挂载点消失而被丢弃，此时结果无人需要。
-                let _ = sender.send(probe());
-            });
-        if let Err(error) = spawned {
-            warn!(mount_point = %mount_point, error = ?error, "failed to spawn disk probe thread");
-            state.cooldown_until = Some(now + cooldown);
-            return state.last.clone();
-        }
-
-        match receiver.recv_timeout(timeout) {
-            Ok(result) => state.apply(mount_point, result, now, cooldown),
-            Err(RecvTimeoutError::Timeout) => {
-                warn!(
-                    mount_point = %mount_point,
-                    timeout_ms = timeout.as_millis() as u64,
-                    "disk probe timed out; reusing last capacity until it recovers",
-                );
-                state.pending = Some(receiver);
-                state.cooldown_until = Some(now + cooldown);
-                state.last.clone()
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                state.cooldown_until = Some(now + cooldown);
-                state.last.clone()
-            }
-        }
+    #[cfg(test)]
+    fn probe<F>(&mut self, mount_point: &str, now: Instant, probe: F) -> Option<T>
+    where
+        F: FnOnce() -> Result<T> + Send + 'static,
+    {
+        self.probe_all(now, vec![(mount_point.to_string(), probe)])
+            .pop()
+            .flatten()
     }
 
     /// 丢弃本轮未出现的挂载点状态，避免卸载后的条目无限增长。
@@ -275,6 +308,34 @@ mod tests {
         );
         assert_eq!(probes.probe("/", now, || Ok(2)), Some(2));
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn several_hung_mounts_share_one_timeout() {
+        let mut probes = MountProbes::<u64>::new(Duration::from_millis(200), COOLDOWN);
+        let (release, gate) = mpsc::channel::<()>();
+        let gate = Arc::new(std::sync::Mutex::new(gate));
+        let requests = (0..5)
+            .map(|i| {
+                let gate = Arc::clone(&gate);
+                let probe: Box<dyn FnOnce() -> anyhow::Result<u64> + Send> = Box::new(move || {
+                    if let Ok(gate) = gate.lock() {
+                        let _ = gate.recv();
+                    }
+                    Ok(1)
+                });
+                (format!("/stuck{i}"), probe)
+            })
+            .collect::<Vec<_>>();
+        let started = Instant::now();
+        let results = probes.probe_all(Instant::now(), requests);
+        let elapsed = started.elapsed();
+        assert_eq!(results, vec![None; 5]);
+        assert!(
+            elapsed < Duration::from_millis(600),
+            "five hung mounts took {elapsed:?}, expected about one timeout"
+        );
+        drop(release);
     }
 
     #[test]
