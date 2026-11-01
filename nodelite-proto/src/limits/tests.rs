@@ -60,8 +60,12 @@ fn trims_excess_disks_to_shared_count_limit() {
 #[test]
 fn trims_long_disk_entries_to_shared_frame_limit() {
     let mut snapshot = snapshot_with_disks(MAX_SNAPSHOT_DISKS, 8);
-    for disk in &mut snapshot.disks {
-        disk.device.push_str(&"d".repeat(2048));
+    // 字符串已限长，只有 JSON 转义膨胀才可能让 64 条磁盘超过帧上限。
+    let escaped = "\"".repeat(MAX_SNAPSHOT_STRING_BYTES);
+    for (index, disk) in snapshot.disks.iter_mut().enumerate() {
+        disk.device = escaped.clone();
+        disk.fs_type = escaped.clone();
+        disk.mount_point = format!("/{index:04}{escaped}");
     }
     assert!(wire_len(snapshot.clone()) > MAX_METRICS_FRAME_BYTES);
     let dropped = fit_snapshot_to_wire_limits(&mut snapshot).expect("fit snapshot");
@@ -109,4 +113,20 @@ fn drops_mount_points_that_collide_after_truncation() {
     assert_eq!(snapshot.disks[0].device, "rpool/data/subvol-0");
     assert_eq!(snapshot.disks[0].mount_point, shared);
     assert_eq!(snapshot.disks[1].device, "rpool/data/subvol-2");
+}
+
+#[test]
+fn truncates_long_device_and_fs_type_at_a_char_boundary() {
+    let mut snapshot = snapshot_with_disks(1, 0);
+    let long = format!("/{}", "目".repeat(MAX_SNAPSHOT_STRING_BYTES));
+    snapshot.disks[0].device = long.clone();
+    snapshot.disks[0].fs_type = long;
+    assert_eq!(
+        fit_snapshot_to_wire_limits(&mut snapshot).expect("fit snapshot"),
+        0
+    );
+    for value in [&snapshot.disks[0].device, &snapshot.disks[0].fs_type] {
+        assert!(value.len() <= MAX_SNAPSHOT_STRING_BYTES);
+        assert!(value.ends_with('目'));
+    }
 }

@@ -18,7 +18,7 @@ const WIRE_ENVELOPE_RESERVE_BYTES: usize = 256;
 
 /// 把快照裁剪到共享上限内，返回被丢弃的磁盘条目数。
 ///
-/// 磁盘是快照里唯一随主机规模增长的字段，因此只裁剪磁盘；过长的挂载路径按字符边界截断，
+/// 磁盘是快照里唯一随主机规模增长的字段，因此只裁剪磁盘；过长的字符串字段按字符边界截断，
 /// 保留排序靠前的条目，
 /// 让结果在相邻采样之间保持稳定。
 pub fn fit_snapshot_to_wire_limits(
@@ -29,6 +29,8 @@ pub fn fit_snapshot_to_wire_limits(
     // 先截断再去重：两条长路径可能只在上限之后才不同，截断后会变成同一挂载点。
     snapshot.disks.retain_mut(|disk| {
         truncate_string_to_byte_boundary(&mut disk.mount_point, MAX_SNAPSHOT_STRING_BYTES);
+        truncate_string_to_byte_boundary(&mut disk.device, MAX_SNAPSHOT_STRING_BYTES);
+        truncate_string_to_byte_boundary(&mut disk.fs_type, MAX_SNAPSHOT_STRING_BYTES);
         seen_mounts.insert(disk.mount_point.clone())
     });
     snapshot.disks.truncate(MAX_SNAPSHOT_DISKS);
