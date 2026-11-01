@@ -13,6 +13,10 @@ fail() {
   exit 1
 }
 
+need_value() {
+  [ "$#" -ge 2 ] || fail "$1 requires a value"
+}
+
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
@@ -538,83 +542,22 @@ restart_service() {
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --bootstrap-url)
-      [ "$#" -ge 2 ] || fail "--bootstrap-url requires a value"
-      BOOTSTRAP_URL="$2"
-      shift 2
-      ;;
-    --install-token)
-      [ "$#" -ge 2 ] || fail "--install-token requires a value"
-      INSTALL_TOKEN="$2"
-      shift 2
-      ;;
-    --install-token-file)
-      [ "$#" -ge 2 ] || fail "--install-token-file requires a value"
-      INSTALL_TOKEN_FILE="$2"
-      shift 2
-      ;;
-    --install-dir)
-      [ "$#" -ge 2 ] || fail "--install-dir requires a value"
-      INSTALL_DIR="$2"
-      shift 2
-      ;;
-    --config-dir)
-      [ "$#" -ge 2 ] || fail "--config-dir requires a value"
-      CONFIG_DIR="$2"
-      shift 2
-      ;;
-    --state-dir)
-      [ "$#" -ge 2 ] || fail "--state-dir requires a value"
-      STATE_DIR="$2"
-      shift 2
-      ;;
-    --enable-traffic-control)
-      TRAFFIC_CONTROL=1
-      shift
-      ;;
-    --disable-traffic-control)
-      TRAFFIC_CONTROL=0
-      shift
-      ;;
-    --enable-signed-updates)
-      SIGNED_UPDATES=1
-      shift
-      ;;
-    --enable-web-updates)
-      SIGNED_UPDATES=1
-      WEB_UPDATES=1
-      shift
-      ;;
-    --mode)
-      [ "$#" -ge 2 ] || fail "--mode requires a value"
-      MODE="$2"
-      shift 2
-      ;;
-    --base-url)
-      [ "$#" -ge 2 ] || fail "--base-url requires a value"
-      BASE_URL="$2"
-      shift 2
-      ;;
-    --checksums-url)
-      [ "$#" -ge 2 ] || fail "--checksums-url requires a value"
-      CHECKSUMS_URL="$2"
-      shift 2
-      ;;
-    --binary-url)
-      [ "$#" -ge 2 ] || fail "--binary-url requires a value"
-      BINARY_URL="$2"
-      shift 2
-      ;;
-    --sha256-x86_64)
-      [ "$#" -ge 2 ] || fail "--sha256-x86_64 requires a value"
-      SHA256_X86_64="$2"
-      shift 2
-      ;;
-    --sha256-aarch64)
-      [ "$#" -ge 2 ] || fail "--sha256-aarch64 requires a value"
-      SHA256_AARCH64="$2"
-      shift 2
-      ;;
+    --bootstrap-url) need_value "$@"; BOOTSTRAP_URL="$2"; shift 2 ;;
+    --install-token) need_value "$@"; INSTALL_TOKEN="$2"; shift 2 ;;
+    --install-token-file) need_value "$@"; INSTALL_TOKEN_FILE="$2"; shift 2 ;;
+    --install-dir) need_value "$@"; INSTALL_DIR="$2"; shift 2 ;;
+    --config-dir) need_value "$@"; CONFIG_DIR="$2"; shift 2 ;;
+    --state-dir) need_value "$@"; STATE_DIR="$2"; shift 2 ;;
+    --enable-traffic-control) TRAFFIC_CONTROL=1; shift ;;
+    --disable-traffic-control) TRAFFIC_CONTROL=0; shift ;;
+    --enable-signed-updates) SIGNED_UPDATES=1; shift ;;
+    --enable-web-updates) SIGNED_UPDATES=1; WEB_UPDATES=1; shift ;;
+    --mode) need_value "$@"; MODE="$2"; shift 2 ;;
+    --base-url) need_value "$@"; BASE_URL="$2"; shift 2 ;;
+    --checksums-url) need_value "$@"; CHECKSUMS_URL="$2"; shift 2 ;;
+    --binary-url) need_value "$@"; BINARY_URL="$2"; shift 2 ;;
+    --sha256-x86_64) need_value "$@"; SHA256_X86_64="$2"; shift 2 ;;
+    --sha256-aarch64) need_value "$@"; SHA256_AARCH64="$2"; shift 2 ;;
     --help|-h)
       cat <<'EOF'
 Usage:
