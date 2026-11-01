@@ -79,7 +79,7 @@ default_fns! {
     default_audit_log_failed_auth -> bool = true;
     default_audit_log_token_events -> bool = true;
     default_audit_log_rate_limit -> bool = true;
-    default_geoip_enabled -> bool = true;
+    default_geoip_enabled -> bool = false;
     default_geoip_provider -> super::GeoIpProvider = super::GeoIpProvider::Ipwhois;
     default_geoip_edition -> super::GeoIpEdition = super::GeoIpEdition::CountryLite;
     default_geoip_auto_update -> bool = false;
