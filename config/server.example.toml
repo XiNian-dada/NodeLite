@@ -13,6 +13,9 @@ insecure_allow_http = false
 # 时,NodeLite 才会解析 X-Forwarded-For / X-Real-IP。留空表示仅信任本机反代。
 # 不接受前缀长度为 0 的网段(如 0.0.0.0/0、::/0)。
 trusted_proxies = []
+# 下列相对路径按进程工作目录(systemd WorkingDirectory)解析,而不是本文件所在目录;
+# CLI 与服务的工作目录不同时会读写不同文件,生产部署请改用绝对路径(启动时会对相对路径告警)。
+# 本文件含凭据,建议 chmod 600,组/其他用户可读时启动会告警。
 # 节点凭证文件;Server 与 CLI 都会读写它。
 node_registry_path = "./config/server.json"
 # 历史数据 SQLite 文件,缺失时会在启动时自动创建。

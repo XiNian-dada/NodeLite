@@ -58,6 +58,7 @@ use crate::snapshot::{load_snapshot, persist_current_snapshot, spawn_snapshot_pe
 use crate::state::SharedState;
 use crate::ws::{ws_browser_handler, ws_handler};
 
+mod config_checks;
 mod shutdown;
 
 pub(crate) const PROTECTED_CONTENT_SECURITY_POLICY: &str = "default-src 'self'; img-src 'self' data:; \
@@ -515,6 +516,8 @@ pub(crate) async fn load_server_config(path: &Path) -> Result<ServerConfig> {
         .with_context(|| format!("failed to read config file {}", path.display()))?;
     let config = parse_server_config(&content)
         .map_err(|error| anyhow!("failed to parse {}: {error}", path.display()))?;
+    config_checks::warn_if_config_file_is_not_private(path);
+    config_checks::warn_about_relative_data_paths(&config);
 
     if let Some(parent) = config.snapshot_path.parent()
         && !parent.as_os_str().is_empty()
