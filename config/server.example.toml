@@ -31,7 +31,7 @@ snapshot_path = "./data/snapshot.json"
 stale_after_secs = 20
 # Server 主动向 Agent 发送 Ping 的间隔(秒),决定 RTT 测量频率。
 ping_interval_secs = 10
-# WebSocket 单帧最大字节数,防止异常 Agent 发巨型负载。
+# WebSocket 单帧最大字节数,防止异常 Agent 发巨型负载。不得低于 Agent 的发送上限 65536。
 max_message_bytes = 65536
 # WebSocket Hello 握手超时(秒)。
 hello_timeout_secs = 10

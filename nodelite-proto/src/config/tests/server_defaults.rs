@@ -474,3 +474,27 @@ fn rejects_token_verify_parallelism_outside_safe_range() {
         );
     }
 }
+
+fn server_config_with_max_message_bytes(value: usize) -> String {
+    format!(
+        r#"
+        [server]
+        listen = "127.0.0.1:8080"
+        public_base_url = "http://127.0.0.1:8080"
+        max_message_bytes = {value}
+        "#
+    )
+}
+
+#[test]
+fn max_message_bytes_cannot_go_below_the_shared_frame_limit() {
+    let limit = crate::limits::MAX_METRICS_FRAME_BYTES;
+    let error = parse_server_config(&server_config_with_max_message_bytes(limit - 1))
+        .expect_err("a limit below the agent frame limit must be rejected");
+    assert!(error.to_string().contains("server.max_message_bytes"));
+    for accepted in [limit, limit + 1] {
+        let config = parse_server_config(&server_config_with_max_message_bytes(accepted))
+            .expect("limits at or above the agent frame limit should parse");
+        assert_eq!(config.max_message_bytes, accepted);
+    }
+}
