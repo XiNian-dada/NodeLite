@@ -26,6 +26,7 @@ const FAKE_DICT = {
     'alerts.heading': 'Alerts',
     'alerts.subtitle': 'sub',
     'alerts.save': 'Save',
+    'alerts.retry_load': 'Retry',
     'alerts.saving': 'Saving…',
     'alerts.saved': 'Saved',
     'alerts.save_failed': 'Save failed: {error}',
@@ -291,6 +292,43 @@ describe('AlertsView', () => {
       await save.trigger('click');
       await flushPromises();
       expect(mockSave).not.toHaveBeenCalled();
+    });
+
+    it('re-enables saving after retrying a failed refresh, keeping user edits', async () => {
+      const { ApiError } = await import('@/api/client');
+      const get = deferredLoad();
+      const wrapper = await mountView(preparePinia(cached));
+      const overview = wrapper.findComponent(AlertOverviewCard);
+      overview.vm.$emit('update:modelValue', { ...overview.props('modelValue'), enabled: false });
+      get.reject(new ApiError(503, 'service unavailable'));
+      await flushPromises();
+
+      mockLoad.mockResolvedValueOnce(makeAlertSettings({ config: { enabled: true, rules: [] } }));
+      await wrapper.find('[data-test="alerts-retry-load"]').trigger('click');
+      await flushPromises();
+
+      expect(mockLoad).toHaveBeenCalledTimes(2);
+      expect(wrapper.find('[data-test="alerts-retry-load"]').exists()).toBe(false);
+      expect(wrapper.find('[data-test="alerts-refresh-error"]').exists()).toBe(false);
+      await wrapper.find('[data-test="alerts-save"]').trigger('click');
+      await flushPromises();
+      expect(savedPayload()?.enabled).toBe(false);
+      expect(savedPayload()?.rules).toHaveLength(cached.config.rules.length);
+    });
+
+    it('keeps saving disabled and offers retry again when the retry fails', async () => {
+      const { ApiError } = await import('@/api/client');
+      const get = deferredLoad();
+      const wrapper = await mountView(preparePinia(cached));
+      get.reject(new ApiError(503, 'service unavailable'));
+      await flushPromises();
+
+      mockLoad.mockRejectedValueOnce(new ApiError(503, 'still down'));
+      await wrapper.find('[data-test="alerts-retry-load"]').trigger('click');
+      await flushPromises();
+
+      expect(wrapper.find('[data-test="alerts-save"]').attributes('disabled')).toBeDefined();
+      expect(wrapper.find('[data-test="alerts-retry-load"]').exists()).toBe(true);
     });
   });
 });

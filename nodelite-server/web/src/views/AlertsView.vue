@@ -45,10 +45,12 @@ function isDraftDirty(): boolean {
 
 seedDraft();
 
-onMounted(async () => {
+async function loadConfig(): Promise<void> {
   await store.load();
   if (!isDraftDirty()) seedDraft();
-});
+}
+
+onMounted(loadConfig);
 
 async function save(): Promise<void> {
   if (!canSave.value) return;
@@ -192,6 +194,15 @@ async function save(): Promise<void> {
                   :text="store.error.message"
                   data-test="alerts-refresh-error"
                 />
+                <button
+                  v-if="store.error"
+                  type="button"
+                  class="btn btn--subtle"
+                  data-test="alerts-retry-load"
+                  @click="loadConfig"
+                >
+                  {{ t('alerts.retry_load') }}
+                </button>
                 <SettingsMessage :state="message.state" :text="message.text" />
               </div>
             </article>
