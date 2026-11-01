@@ -41,6 +41,24 @@ pub(crate) fn spawn_stale_reaper(
     })
 }
 
+/// 失败的 reload 不推进指纹，分叉期间每秒都会重试；只在状态切换时记录，避免刷屏。
+#[derive(Debug, Default)]
+struct DivergenceLatch {
+    active: bool,
+}
+
+impl DivergenceLatch {
+    /// 返回 true 表示刚进入分叉状态。
+    fn enter(&mut self) -> bool {
+        !std::mem::replace(&mut self.active, true)
+    }
+
+    /// 返回 true 表示刚从分叉状态恢复。
+    fn recover(&mut self) -> bool {
+        std::mem::replace(&mut self.active, false)
+    }
+}
+
 /// 后台任务:每秒检查一次注册表文件是否有外部更改(例如 CLI 颁发了新节点)。
 pub(crate) fn spawn_registry_reloader(state: AppState) -> JoinHandle<()> {
     let AppState {
@@ -55,6 +73,7 @@ pub(crate) fn spawn_registry_reloader(state: AppState) -> JoinHandle<()> {
         let mut ticker = interval(Duration::from_secs(1));
         // 挂起恢复后只想做一次最近态的 reload,而不是连续 N 次磁盘 IO。
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut divergence = DivergenceLatch::default();
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => break,
@@ -62,7 +81,14 @@ pub(crate) fn spawn_registry_reloader(state: AppState) -> JoinHandle<()> {
                     history.prune_query_cache();
                     let _traffic_guard = history.traffic_lifecycle_lock.lock().await;
                     let _logs_guard = agent_logs.lifecycle_lock.lock().await;
-                    match registry.reload_if_file_changed().await {
+                    let reload_result = registry.reload_if_file_changed().await;
+                    if reload_result.is_ok() && divergence.recover() {
+                        info!(
+                            registry_path = %registry.path().display(),
+                            "node registry on disk matches memory again; writes resumed",
+                        );
+                    }
+                    match reload_result {
                         Ok(true) => {
                             readiness.mark_registry_reload_healthy(true);
                             let enrolled_nodes = registry.count().await;
@@ -97,11 +123,13 @@ pub(crate) fn spawn_registry_reloader(state: AppState) -> JoinHandle<()> {
                         }
                         Err(error @ RegistryError::Diverged { .. }) => {
                             readiness.mark_registry_reload_healthy(false);
-                            error!(
-                                error = %error,
-                                registry_path = %registry.path().display(),
-                                "node registry on disk diverged from memory; serving in-memory snapshot and refusing writes until the file is restored",
-                            );
+                            if divergence.enter() {
+                                error!(
+                                    error = %error,
+                                    registry_path = %registry.path().display(),
+                                    "node registry on disk diverged from memory; serving in-memory snapshot and refusing writes until a file at or above the in-memory version is restored",
+                                );
+                            }
                         }
                         Err(error) => {
                             readiness.mark_registry_reload_healthy(false);
@@ -320,6 +348,17 @@ mod tests {
             .expect("registry reloader should stop promptly")
             .expect("registry reloader should stop cleanly");
         let _ = tokio::fs::remove_dir_all(temp_dir).await;
+    }
+
+    #[test]
+    fn divergence_latch_reports_only_state_transitions() {
+        let mut latch = super::DivergenceLatch::default();
+        assert!(!latch.recover(), "healthy ticks report nothing");
+        assert!(latch.enter(), "first divergence is reported");
+        assert!(!latch.enter(), "repeat ticks stay quiet");
+        assert!(latch.recover(), "recovery is reported once");
+        assert!(!latch.recover());
+        assert!(latch.enter(), "a new divergence is reported again");
     }
 
     #[tokio::test]
