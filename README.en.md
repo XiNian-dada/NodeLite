@@ -259,7 +259,7 @@ Server configuration file: `/opt/nodelite/config/server.toml`:
 | `[server]` | `token_verify_max_parallelism` | `4` | Max parallel Argon2id workers (prevents OOM spikes) |
 | `[auth]` | `username` / `password` | Generated strong pass | Readonly Basic Auth credentials |
 | `[auth]` | `enable_2fa` | `false` | Enable second-factor verification; TOTP and Passkeys can then be enrolled |
-| `[audit]` | `enabled` / `retention_days`| `true` / `90` | Audit trail SQLite retention |
+| `[audit]` | `enabled` / `retention_days` / `max_rows` | `true` / `90` / `500000` | Audit trail SQLite retention and row limit |
 | `[geoip]` | `provider` | `"ipwhois"` | Location source: `"ipwhois"` (online) / `"dbip"` (local MMDB) |
 
 ---

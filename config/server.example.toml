@@ -84,6 +84,8 @@ enabled = true
 db_path = "./data/audit.sqlite3"
 # 仅保留最近 N 天的安全事件。
 retention_days = 90
+# 最多保留的审计记录行数,超出时从最旧的记录开始删除,至少为 1000。
+max_rows = 500000
 # 审计 writer 单次 SQLite 事务最多写入的事件数,允许 1-4096。
 writer_batch_max = 128
 # 审计 writer 最大攒批时间(毫秒),必须至少为 10。

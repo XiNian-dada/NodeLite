@@ -57,7 +57,7 @@ impl AuditLog {
         let sqlite_busy_timeout_secs = self.sqlite_busy_timeout_secs;
         let connection = tokio::task::spawn_blocking(move || {
             let connection = open_audit_connection(&config.db_path, sqlite_busy_timeout_secs)?;
-            prune_expired_records(&connection, config.retention_days)?;
+            prune_expired_records(&connection, config.retention_days, config.max_rows)?;
             Ok::<Connection, anyhow::Error>(connection)
         })
         .await
@@ -265,13 +265,14 @@ impl AuditLog {
         }
 
         let retention_days = self.config.retention_days;
+        let max_rows = self.config.max_rows;
         let connection = Arc::clone(&self.connection);
         tokio::task::spawn_blocking(move || {
             let guard = connection.blocking_lock();
             let Some(ref connection) = *guard else {
                 anyhow::bail!("audit connection not initialized");
             };
-            prune_expired_records(connection, retention_days)
+            prune_expired_records(connection, retention_days, max_rows)
         })
         .await
         .context("audit log prune task failed")?
