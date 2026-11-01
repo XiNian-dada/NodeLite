@@ -185,7 +185,7 @@ fn parses_server_config_with_defaults() {
     assert!(config.audit.log_failed_auth);
     assert!(config.audit.log_token_events);
     assert!(config.audit.log_rate_limit);
-    assert!(config.geoip.enabled);
+    assert!(!config.geoip.enabled);
     assert_eq!(config.geoip.provider, GeoIpProvider::Ipwhois);
     assert_eq!(config.geoip.edition, GeoIpEdition::CountryLite);
     assert_eq!(

@@ -33,6 +33,11 @@ struct ReadyzSignals {
     history_lost_samples: u64,
     history_last_success_at: i64,
     history_write_degraded: bool,
+    traffic_ledger_available: bool,
+    traffic_write_degraded: bool,
+    traffic_write_failures: u64,
+    traffic_last_success_at: i64,
+    traffic_pending_writes: u64,
     audit_dropped_writes: u64,
     audit_write_failures: u64,
     history_queue_depth: u64,
@@ -64,6 +69,7 @@ pub(crate) async fn readyz(State(state): State<AppState>) -> Response {
     let audit_available = state.audit_log.is_available().await;
     let history_dropped_writes = state.history.dropped_writes();
     let history_write = state.history.write_metrics();
+    let traffic = state.history.traffic_health();
     let audit_dropped_writes = state.audit_log.dropped_writes();
     let audit_write_failures = state.audit_log.write_failures();
     let (history_queue_depth, history_queue_capacity) = state.history.writer_queue_metrics().await;
@@ -86,6 +92,12 @@ pub(crate) async fn readyz(State(state): State<AppState>) -> Response {
     }
     if history_write.degraded {
         problems.push("history_write_failed");
+    }
+    if !traffic.available {
+        problems.push("traffic_ledger_unavailable");
+    }
+    if traffic.write_degraded {
+        problems.push("traffic_write_failed");
     }
     if audit_dropped_writes > 0 {
         problems.push("audit_dropped_writes");
@@ -115,6 +127,11 @@ pub(crate) async fn readyz(State(state): State<AppState>) -> Response {
             history_lost_samples: history_write.lost_samples,
             history_last_success_at: history_write.last_success_at,
             history_write_degraded: history_write.degraded,
+            traffic_ledger_available: traffic.available,
+            traffic_write_degraded: traffic.write_degraded,
+            traffic_write_failures: traffic.write_failures,
+            traffic_last_success_at: traffic.last_success_at,
+            traffic_pending_writes: traffic.pending_writes,
             audit_dropped_writes,
             audit_write_failures,
             history_queue_depth,

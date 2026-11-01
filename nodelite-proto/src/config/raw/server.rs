@@ -155,8 +155,10 @@ config_section! {
 
 config_section! {
     struct RawGeoIpSection {
-        enabled: bool = default_geoip_enabled(),
-        provider: GeoIpProvider = default_geoip_provider(),
+        // Optional so an explicit `provider` without `enabled` still opts in,
+        // keeping older configs that chose a provider working.
+        enabled: Option<bool> = None,
+        provider: Option<GeoIpProvider> = None,
         edition: GeoIpEdition = default_geoip_edition(),
         database_path: PathBuf = default_geoip_database_path(),
         auto_update: bool = default_geoip_auto_update(),
@@ -387,14 +389,19 @@ impl RawServerConfigFile {
                 "geoip.update_interval_days must be greater than 0",
             ));
         }
-        if self.geoip.provider != GeoIpProvider::Dbip && self.geoip.auto_update {
+        let geoip_provider = self.geoip.provider.unwrap_or_else(default_geoip_provider);
+        let geoip_enabled = self
+            .geoip
+            .enabled
+            .unwrap_or(self.geoip.provider.is_some() || default_geoip_enabled());
+        if geoip_provider != GeoIpProvider::Dbip && self.geoip.auto_update {
             return Err(ConfigError::new(
                 "geoip.auto_update must be false unless geoip.provider = \"dbip\"",
             ));
         }
         Ok(GeoIpConfig {
-            enabled: self.geoip.enabled,
-            provider: self.geoip.provider,
+            enabled: geoip_enabled,
+            provider: geoip_provider,
             edition: self.geoip.edition,
             database_path: self.geoip.database_path.clone(),
             auto_update: self.geoip.auto_update,

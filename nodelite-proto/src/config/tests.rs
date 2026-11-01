@@ -5,6 +5,8 @@ mod agent;
 mod alert_rules;
 mod errors;
 #[cfg(feature = "server-config")]
+mod geoip_opt_in;
+#[cfg(feature = "server-config")]
 mod network_rules;
 mod range_rules;
 #[cfg(feature = "server-config")]

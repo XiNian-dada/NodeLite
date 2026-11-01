@@ -260,7 +260,8 @@ Server configuration file: `/opt/nodelite/config/server.toml`:
 | `[auth]` | `username` / `password` | Generated strong pass | Readonly Basic Auth credentials |
 | `[auth]` | `enable_2fa` | `false` | Enable second-factor verification; TOTP and Passkeys can then be enrolled |
 | `[audit]` | `enabled` / `retention_days` / `max_rows` | `true` / `90` / `500000` | Audit trail SQLite retention and row limit |
-| `[geoip]` | `provider` | `"ipwhois"` | Location source: `"ipwhois"` (online) / `"dbip"` (local MMDB) |
+| `[geoip]` | `enabled` | `false` | GeoIP is off by default. Enabling `"ipwhois"` sends public IPs of agents and authenticated clients to the third-party ipwho.is; use local `"dbip"` / `"custom"` for privacy-sensitive or offline deployments |
+| `[geoip]` | `provider` | `"ipwhois"` | Location source: `"ipwhois"` (online) / `"dbip"` (local MMDB); setting `provider` without `enabled` counts as opt-in |
 
 ---
 

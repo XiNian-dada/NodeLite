@@ -25,6 +25,7 @@ pub(crate) use passkeys::{
     delete_passkey, finish_passkey_registration, start_passkey_registration,
 };
 pub(crate) use query::settings;
+pub(crate) use security::InlineConfirmationRejected;
 pub(crate) use security::{
     change_readonly_password, disable_two_factor, enable_two_factor, start_two_factor_setup,
 };

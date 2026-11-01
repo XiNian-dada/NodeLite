@@ -51,7 +51,7 @@ async fn change_readonly_password_inner(
         current_auth.password.as_bytes(),
         request.current_password.as_bytes(),
     ) {
-        return settings_json_error(StatusCode::FORBIDDEN, "current password is incorrect");
+        return inline_confirmation_rejected("current password is incorrect");
     }
     if let Some(response) = settings_confirmation_error_for_sensitive_action(
         &state,
@@ -154,8 +154,7 @@ pub(super) fn settings_confirmation_error_for_sensitive_action(
             }
             return None;
         }
-        return Some(settings_json_error(
-            StatusCode::FORBIDDEN,
+        return Some(inline_confirmation_rejected(
             "current password is incorrect",
         ));
     }
@@ -174,14 +173,10 @@ pub(super) fn settings_confirmation_error_for_sensitive_action(
     match verify_and_consume_totp_steps(state, &secret, code) {
         Ok(()) => {}
         Err(TotpVerificationError::Invalid) => {
-            return Some(settings_json_error(
-                StatusCode::FORBIDDEN,
-                "invalid verification code",
-            ));
+            return Some(inline_confirmation_rejected("invalid verification code"));
         }
         Err(TotpVerificationError::AlreadyUsed) => {
-            return Some(settings_json_error(
-                StatusCode::FORBIDDEN,
+            return Some(inline_confirmation_rejected(
                 "verification code already used",
             ));
         }
@@ -308,7 +303,7 @@ async fn enable_two_factor_inner(
         current_auth.password.as_bytes(),
         request.current_password.as_bytes(),
     ) {
-        return settings_json_error(StatusCode::FORBIDDEN, "current password is incorrect");
+        return inline_confirmation_rejected("current password is incorrect");
     }
     let rotating = current_auth.enable_2fa;
     // A password and a live session must not be enough to swap in a different second factor.
@@ -439,7 +434,7 @@ async fn disable_two_factor_inner(
         current_auth.password.as_bytes(),
         request.current_password.as_bytes(),
     ) {
-        return settings_json_error(StatusCode::FORBIDDEN, "current password is incorrect");
+        return inline_confirmation_rejected("current password is incorrect");
     }
     if let Some(response) = settings_confirmation_error_for_sensitive_action(
         &state,
@@ -482,4 +477,15 @@ async fn disable_two_factor_inner(
         }),
     )
         .into_response()
+}
+
+/// Marks a rejected inline password or code so the auth middleware can charge it to the
+/// sensitive failure budget for the client address.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct InlineConfirmationRejected;
+
+fn inline_confirmation_rejected(message: &'static str) -> Response {
+    let mut response = settings_json_error(StatusCode::FORBIDDEN, message);
+    response.extensions_mut().insert(InlineConfirmationRejected);
+    response
 }
