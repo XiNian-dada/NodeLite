@@ -6,7 +6,7 @@ SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 INSTALLER="$SCRIPT_DIR/install-agent.sh"
 (
   eval "$(awk '/^cleanup\(\)/ { printing=1 } /^trap cleanup/ { exit } printing { print }' "$INSTALLER")"
-  SIGNED_STAGE='' TMP_PATH='' BOOTSTRAP_TMP='' CURL_AUTH_CONFIG='' CHECKSUMS_TMP=''
+  SIGNED_STAGE='' TMP_PATH='' BOOTSTRAP_TMP='' CURL_AUTH_CONFIG='' CHECKSUMS_TMP='' ROLLBACK_DIR=''
   cleanup
 )
 TEMP_DIR=$(mktemp -d)
@@ -177,6 +177,44 @@ fi
 [ ! -e "$TEMP_DIR/dl" ]
 unset -f curl
 [ "$(grep -c '^ *curl ' "$INSTALLER")" -eq 1 ] && grep -q 'curl -q -fsSI --connect-timeout 15 --max-time 30' "$INSTALLER"
+
+# After restart the service must stay active; otherwise the previous binary/unit is restored.
+# shellcheck disable=SC2317
+sleep() { :; }
+# shellcheck disable=SC2317
+service_is_active() { ACTIVE_CHECKS=$((ACTIVE_CHECKS + 1)); [ "$ACTIVE_CHECKS" -lt "$FAIL_AT" ]; }
+# shellcheck disable=SC2317
+restart_service() { RESTARTS=$((RESTARTS + 1)); }
+# shellcheck disable=SC2317
+stop_service() { STOPPED=1; }
+SERVICE_STATUS_NAME=nodelite-agent.service SERVICE_DEFINITION_PATH="$UNIT_PATH" SERVICE_SETTLE_SECS=3 RESTARTS=0 STOPPED=0
+printf '%s\n' old-binary >"$BIN_PATH"
+backup_previous_install
+printf '%s\n' new-binary >"$BIN_PATH"
+printf '%s\n' new-unit >"$UNIT_PATH"
+ACTIVE_CHECKS=0 FAIL_AT=99
+verify_or_roll_back
+[ "$ACTIVE_CHECKS" -eq 3 ] && grep -qx new-binary "$BIN_PATH" && [ "$RESTARTS" -eq 0 ]
+ACTIVE_CHECKS=0 FAIL_AT=2
+if verify_or_roll_back 2>/dev/null; then
+  printf '%s\n' 'A service that exits after restart must fail the install' >&2
+  exit 1
+fi
+grep -qx old-binary "$BIN_PATH" && cmp "$TEMP_DIR/original-unit" "$UNIT_PATH" && [ "$RESTARTS" -eq 1 ]
+rm -rf "$INSTALL_DIR"/.nodelite-agent-rollback.*
+rm -f "$BIN_PATH"
+backup_previous_install
+ACTIVE_CHECKS=0 FAIL_AT=1
+if verify_or_roll_back 2>/dev/null; then exit 1; fi
+[ "$STOPPED" -eq 1 ] && [ "$RESTARTS" -eq 1 ]
+rm -rf "$INSTALL_DIR"/.nodelite-agent-rollback.*
+awk '
+  /^backup_previous_install$/ { b=1 } /^install .*\$TMP_PATH.*\$BIN_PATH/ { if (!b) exit 1 }
+  /^restart_service [|][|] true$/ { r=1 } /^verify_or_roll_back$/ { if (!r) exit 1; v=1 }
+  /finish_signed_update$/ && /SIGNED_UPDATES/ { if (!v) exit 1 }
+  /upgraded and restarted/ { if (!v) exit 1; ok=1 }
+  END { exit !ok }
+' "$INSTALLER"
 
 SERVICE_KIND=launchd
 # Linux musl pins must not be applied to macOS artifacts.

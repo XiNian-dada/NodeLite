@@ -60,6 +60,8 @@ STATE_DIR="${NODELITE_AGENT_STATE_DIR:-/var/lib/nodelite-agent}"
 TRAFFIC_CONTROL="${NODELITE_AGENT_TRAFFIC_CONTROL:-auto}"
 INSECURE_HTTP="${NODELITE_AGENT_INSECURE_ALLOW_HTTP:-0}"
 MAX_BINARY_BYTES=134217728
+SERVICE_SETTLE_SECS=10
+ROLLBACK_DIR=""
 LEGACY_CONFIG_PATH=""
 BIN_PATH=""
 CONFIG_PATH=""
@@ -87,6 +89,7 @@ cleanup() {
   [ -n "$BOOTSTRAP_TMP" ] && rm -f "$BOOTSTRAP_TMP"
   [ -n "$CURL_AUTH_CONFIG" ] && rm -f "$CURL_AUTH_CONFIG"
   [ -n "$CHECKSUMS_TMP" ] && rm -f "$CHECKSUMS_TMP"
+  [ -z "$ROLLBACK_DIR" ] || rm -rf -- "$ROLLBACK_DIR"
   return 0
 }
 
@@ -110,22 +113,9 @@ resolve_nologin_shell() {
     command -v nologin
     return 0
   fi
-  if [ -x /usr/sbin/nologin ]; then
-    printf '%s\n' /usr/sbin/nologin
-    return 0
-  fi
-  if [ -x /sbin/nologin ]; then
-    printf '%s\n' /sbin/nologin
-    return 0
-  fi
-  if [ -x /usr/bin/false ]; then
-    printf '%s\n' /usr/bin/false
-    return 0
-  fi
-  if [ -x /bin/false ]; then
-    printf '%s\n' /bin/false
-    return 0
-  fi
+  for nologin_candidate in /usr/sbin/nologin /sbin/nologin /usr/bin/false /bin/false; do
+    [ -x "$nologin_candidate" ] && { printf '%s\n' "$nologin_candidate"; return 0; }
+  done
   fail "unable to find a nologin shell for the service user"
 }
 
@@ -402,6 +392,44 @@ fetch_bounded() {
   [ "$(wc -c <"$fb_out" | tr -d '[:space:]')" -le "$fb_bytes" ] || { rm -f "$fb_out"; return 1; }
 }
 
+# 替换前保留旧二进制与服务定义(放在 root 独占的安装目录,不放服务用户可写的 state 目录)。
+backup_previous_install() {
+  ROLLBACK_DIR="$(mktemp -d "$INSTALL_DIR/.nodelite-agent-rollback.XXXXXX")"
+  [ ! -f "$BIN_PATH" ] || cp -p "$BIN_PATH" "$ROLLBACK_DIR/binary"
+  [ ! -f "$SERVICE_DEFINITION_PATH" ] || cp -p "$SERVICE_DEFINITION_PATH" "$ROLLBACK_DIR/service"
+}
+
+service_is_active() {
+  if [ "$SERVICE_KIND" = systemd ]; then
+    systemctl is-active --quiet nodelite-agent.service
+  else
+    launchctl print "system/$LAUNCHD_LABEL" 2>/dev/null | grep -Eq '^[[:space:]]*state = running'
+  fi
+}
+
+# 重启后在观察窗口内逐秒确认服务持续运行,崩溃循环(activating/重启间隙)即判失败。
+service_stays_active() {
+  sa_left="$SERVICE_SETTLE_SECS"
+  while [ "$sa_left" -gt 0 ]; do
+    sleep 1
+    service_is_active || return 1
+    sa_left=$((sa_left - 1))
+  done
+}
+
+# shellcheck disable=SC2317
+verify_or_roll_back() {
+  service_stays_active && return 0
+  if [ ! -f "$ROLLBACK_DIR/binary" ]; then
+    stop_service
+    fail "agent service did not stay running; it was stopped. Inspect: $SERVICE_STATUS_NAME logs"; return 1
+  fi
+  install -m 0755 "$ROLLBACK_DIR/binary" "$BIN_PATH"
+  [ ! -f "$ROLLBACK_DIR/service" ] || install -m 0644 "$ROLLBACK_DIR/service" "$SERVICE_DEFINITION_PATH"
+  restart_service || true
+  fail "agent service did not stay running after the upgrade; the previous binary and service definition were restored (config kept: $CONFIG_PATH)"; return 1
+}
+
 # 自动更新支持已移除。升级时顺手清理旧版本曾经写入的 timer / service,
 # 避免无人值守任务继续从 latest 通道自我替换 agent。
 cleanup_legacy_auto_update() {
@@ -556,6 +584,14 @@ restart_launchd_service() {
   launchctl kickstart -k "system/$LAUNCHD_LABEL" || fail "failed to start launchd service"
 }
 
+stop_service() {
+  if [ "$SERVICE_KIND" = systemd ]; then
+    systemctl disable --now nodelite-agent.service >/dev/null 2>&1 || true
+  else
+    launchctl bootout "system/$LAUNCHD_LABEL" >/dev/null 2>&1 || true
+  fi
+}
+
 restart_service() {
   if [ "$SERVICE_KIND" = "systemd" ]; then
     restart_systemd_service
@@ -627,19 +663,9 @@ done
 
 [ "$(id -u)" -eq 0 ] || fail "please run as root"
 
-need_cmd uname
-need_cmd curl
-need_cmd awk
-need_cmd grep
-need_cmd id
-need_cmd install
-need_cmd mkdir
-need_cmd mktemp
-need_cmd mv
-need_cmd rm
-need_cmd sed
-need_cmd chown
-need_cmd chmod
+for required_cmd in uname curl awk grep id install mkdir mktemp mv rm sed chown chmod wc tr cp sleep; do
+  need_cmd "$required_cmd"
+done
 configure_platform
 case "$MODE" in auto|install|upgrade) ;; *) fail '--mode must be install, upgrade or auto' ;; esac
 if [ "$SERVICE_KIND" = systemd ] && [ -e /etc/nodelite-updater/policy.toml ] &&
@@ -686,20 +712,10 @@ if [ -e "$CONFIG_PATH" ] || [ -e "$LEGACY_CONFIG_PATH" ] || [ -e "$SERVICE_DEFIN
   existing_install=1
 fi
 
-case "$MODE" in
-  auto)
-    if [ "$existing_install" -eq 1 ]; then
-      MODE="upgrade"
-    else
-      MODE="install"
-    fi
-    ;;
-  install|upgrade)
-    ;;
-  *)
-    fail "--mode must be one of: install, upgrade, auto"
-    ;;
-esac
+# --mode was validated above; auto picks upgrade when anything is already installed.
+if [ "$MODE" = auto ]; then
+  [ "$existing_install" -eq 1 ] && MODE=upgrade || MODE=install
+fi
 
 if [ "$MODE" = "install" ] && [ -z "$BOOTSTRAP_URL" ]; then
   fail "install mode requires --bootstrap-url"
@@ -757,10 +773,13 @@ check_saved_credentials
 if [ "$SERVICE_KIND" = "systemd" ] && systemctl is-active --quiet nodelite-agent.service; then
   systemctl stop nodelite-agent.service
 fi
+backup_previous_install
 install -o root -g root -m 0755 "$TMP_PATH" "$BIN_PATH"
 install_agent_config
 write_service_definition
-restart_service
+# A failed restart is judged (and rolled back) by the liveness window below.
+restart_service || true
+verify_or_roll_back
 [ "$SIGNED_UPDATES" -eq 0 ] || finish_signed_update
 
 if [ "$MODE" = "upgrade" ]; then
