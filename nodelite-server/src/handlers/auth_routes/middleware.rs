@@ -49,10 +49,6 @@ pub(crate) async fn require_readonly_auth(
         state
             .sensitive_readonly_auth_admission
             .record_auth_failure(meta.client_ip);
-    } else if meta.sensitive_path && response.status().is_success() {
-        state
-            .sensitive_readonly_auth_admission
-            .clear_auth_failures(meta.client_ip);
     }
     response
 }
@@ -83,6 +79,15 @@ async fn authorize_readonly_request(
                 .sensitive_readonly_auth_admission
                 .check(meta.client_ip)
         {
+            record_readonly_auth_block(
+                &state,
+                &meta.audit_ip,
+                &meta.audit_user_agent,
+                &meta.request_path,
+                true,
+                retry_after_secs,
+            )
+            .await;
             return readonly_auth_block_response(retry_after_secs);
         }
         return next.run(request).await;
@@ -208,8 +213,9 @@ async fn enforce_readonly_auth_limits(
     None
 }
 
-/// The sensitive budget is cleared only after the handler succeeds (see
-/// `require_readonly_auth`), so a valid Basic header cannot reset inline guesses.
+/// The sensitive budget is left alone: a valid Basic header or an unrelated successful
+/// write must not reset inline guesses. It clears when its window passes or after
+/// /api/settings/confirm succeeds.
 fn clear_readonly_auth_failures(state: &AppState, meta: &ReadonlyAuthMeta) {
     state
         .readonly_auth_admission

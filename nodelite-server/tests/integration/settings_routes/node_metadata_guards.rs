@@ -374,3 +374,52 @@ async fn signed_in_two_factor_session_cannot_keep_guessing_inline_codes() -> Res
     harness.cleanup().await;
     Ok(())
 }
+
+#[tokio::test]
+async fn unconfirmed_successful_edits_do_not_reset_the_inline_budget() -> Result<()> {
+    let harness = SettingsHarness::new(readonly_auth(true, Some(TEST_TOTP_SECRET))).await?;
+    issue_guard_node(&harness).await?;
+    let token = harness.state.two_factor_sessions.create_authenticated()?;
+    let cookie = auth_cookie(&token);
+    harness
+        .state
+        .two_factor_sessions
+        .expire_sensitive_confirmation_for_test(&token);
+    let mut blocked = false;
+    for _ in 0..50 {
+        let wrong = with_confirmation(throttling_service_meta(), "code", "000000-wrong");
+        let response = harness
+            .app
+            .clone()
+            .oneshot(json_request(SERVICE_META_URI, "", Some(&cookie), wrong))
+            .await?;
+        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+            blocked = true;
+            break;
+        }
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        // A sensitive POST that needs no confirmation must not clear the count.
+        let harmless = harness
+            .app
+            .clone()
+            .oneshot(json_request(
+                "/api/settings/2fa/start",
+                "",
+                Some(&cookie),
+                json!({}),
+            ))
+            .await?;
+        if harmless.status() == StatusCode::TOO_MANY_REQUESTS {
+            blocked = true;
+            break;
+        }
+        assert!(harmless.status().is_success(), "{}", harmless.status());
+    }
+    assert!(
+        blocked,
+        "interleaved harmless edits must not reset the budget"
+    );
+
+    harness.cleanup().await;
+    Ok(())
+}
