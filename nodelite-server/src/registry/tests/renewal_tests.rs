@@ -190,3 +190,59 @@ async fn lost_responses_are_bounded_without_overwriting_earlier_saved_candidates
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn candidate_hashing_waits_for_the_token_verify_limiter() {
+    let fixture = Fixture::new();
+    fixture.issue().await;
+    let registry = NodeRegistry::load(&fixture.path).await.expect("load");
+    let permits = registry.token_verify_limiter.available_permits() as u32;
+    let held = std::sync::Arc::clone(&registry.token_verify_limiter)
+        .acquire_many_owned(permits)
+        .await
+        .expect("hold every verify permit");
+
+    let waiting = {
+        let registry = registry.clone();
+        tokio::spawn(async move { registry.prepare_token_refresh("renewal-01", 1).await })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(
+        !waiting.is_finished(),
+        "hashing must wait for a verify permit"
+    );
+    assert!(
+        registry
+            .registered_node("renewal-01")
+            .await
+            .expect("node")
+            .pending_tokens
+            .is_empty()
+    );
+
+    drop(held);
+    waiting
+        .await
+        .expect("task joins")
+        .expect("staging completes once a permit is free");
+}
+
+#[tokio::test]
+async fn ineligible_refreshes_are_rejected_before_hashing() {
+    let fixture = Fixture::new();
+    fixture.issue().await;
+    let registry = NodeRegistry::load(&fixture.path).await.expect("load");
+    let permits = registry.token_verify_limiter.available_permits() as u32;
+    let _held = std::sync::Arc::clone(&registry.token_verify_limiter)
+        .acquire_many_owned(permits)
+        .await
+        .expect("hold every verify permit");
+
+    let stale = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        registry.prepare_token_refresh("renewal-01", 7),
+    )
+    .await
+    .expect("a stale generation must not wait for a hash permit");
+    assert!(matches!(stale, Err(RegistryError::Unauthorized)));
+}
