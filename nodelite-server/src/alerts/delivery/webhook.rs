@@ -526,6 +526,7 @@ mod tests {
                 value: 91,
                 threshold: 90,
             }),
+            channels: crate::alerts::ChannelSet::ALL,
         }
     }
 }

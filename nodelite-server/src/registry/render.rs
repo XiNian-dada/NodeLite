@@ -2,6 +2,7 @@
 //!
 //! 根据服务端公网 URL 生成对应的 WebSocket 接入地址、渲染合法的 agent.toml 配置文本及安装 shell 命令。
 
+use nodelite_proto::ServerConfig;
 use url::Url;
 
 use crate::encoding::shell_quote;
@@ -102,25 +103,82 @@ pub fn default_agent_release_base_url() -> RegistryResult<String> {
     build_github_release_base_url(env!("CARGO_PKG_REPOSITORY"))
 }
 
+/// 安装/升级命令使用的 Agent 发布源。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentReleaseSource {
+    base_url: String,
+    sha256_x86_64: Option<String>,
+    sha256_aarch64: Option<String>,
+}
+
+impl AgentReleaseSource {
+    /// 有 `[install]` 镜像时使用它并固定两个架构的 SHA256;否则回退到项目 GitHub latest,
+    /// 由安装脚本读取发布源中的 SHA256SUMS.txt。
+    pub fn from_config(config: &ServerConfig) -> RegistryResult<Self> {
+        let Some(base_url) = config.agent_release_base_url.as_deref() else {
+            return Ok(Self {
+                base_url: default_agent_release_base_url()?,
+                sha256_x86_64: None,
+                sha256_aarch64: None,
+            });
+        };
+        // Config validation already enforces this; re-checking keeps a mirror from
+        // ever being rendered without pinned checksums.
+        let (Some(sha256_x86_64), Some(sha256_aarch64)) = (
+            config.agent_release_sha256_x86_64.clone(),
+            config.agent_release_sha256_aarch64.clone(),
+        ) else {
+            return Err(RegistryError::invalid_config(
+                "install.agent_release_base_url",
+                "both agent release SHA256 values are required",
+            ));
+        };
+        Ok(Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            sha256_x86_64: Some(sha256_x86_64),
+            sha256_aarch64: Some(sha256_aarch64),
+        })
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    fn push_args(&self, lines: &mut Vec<String>) {
+        let mut args = vec![format!("--base-url {}", shell_quote(&self.base_url))];
+        if let Some(sha256) = self.sha256_x86_64.as_deref() {
+            args.push(format!("--sha256-x86_64 {}", shell_quote(sha256)));
+        }
+        if let Some(sha256) = self.sha256_aarch64.as_deref() {
+            args.push(format!("--sha256-aarch64 {}", shell_quote(sha256)));
+        }
+        let last = args.len() - 1;
+        for (index, arg) in args.into_iter().enumerate() {
+            let suffix = if index == last { "" } else { " \\" };
+            lines.push(format!("  {arg}{suffix}"));
+        }
+    }
+}
+
 /// 渲染"复制即可用"的安装命令文本。
 ///
 /// 输出形如多行 `curl ... | sh ...`,把安装令牌通过环境变量传递,避免它出现在 `ps` 列表中。
 pub fn render_install_command(
     public_base_url: &str,
     install_token: &str,
-    agent_release_base_url: &str,
+    release: &AgentReleaseSource,
 ) -> RegistryResult<String> {
     let script_url = build_install_script_url(public_base_url)?;
     let bootstrap_url = build_install_bootstrap_url(public_base_url)?;
-    let lines = [
+    let mut lines = vec![
         format!("curl -fsSL {} | \\", shell_quote(&script_url)),
         format!(
             "  NODELITE_AGENT_INSTALL_TOKEN={} sh -s -- \\",
             shell_quote(install_token)
         ),
         format!("  --bootstrap-url {} \\", shell_quote(&bootstrap_url)),
-        format!("  --base-url {}", shell_quote(agent_release_base_url)),
     ];
+    release.push_args(&mut lines);
 
     Ok(lines.join("\n"))
 }
@@ -128,15 +186,15 @@ pub fn render_install_command(
 /// 渲染就地升级 Agent 的命令文本。与 `render_install_command` 类似,但不需要令牌。
 pub fn render_upgrade_command(
     public_base_url: &str,
-    agent_release_base_url: &str,
+    release: &AgentReleaseSource,
 ) -> RegistryResult<String> {
     let script_url = build_install_script_url(public_base_url)?;
-    let lines = [
+    let mut lines = vec![
         format!("curl -fsSL {} | \\", shell_quote(&script_url)),
         "  NODELITE_AGENT_MODE=upgrade sh -s -- \\".to_string(),
         "  --mode upgrade \\".to_string(),
-        format!("  --base-url {}", shell_quote(agent_release_base_url)),
     ];
+    release.push_args(&mut lines);
 
     Ok(lines.join("\n"))
 }

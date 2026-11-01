@@ -23,6 +23,7 @@ mod divergence_tests;
 mod error_tests;
 mod migrate_tests;
 mod reload_tests;
+mod render_tests;
 mod renewal_tests;
 mod store_tests;
 mod token_tests;

@@ -350,6 +350,22 @@ check_saved_credentials() {
     fail "saved Agent credentials could not be verified; old binary and running service were preserved. Upgrade the server first; if credentials are stale, reissue a bootstrap configuration."
 }
 
+# 选择当前平台产物;--sha256-* 固定值只对应 Linux musl 产物,macOS 改读发布源 SHA256SUMS.txt。
+# The return after fail is for the test harness, whose fail stub returns.
+# shellcheck disable=SC2317
+select_release_target() {
+  case "$1" in
+    x86_64|amd64) arch=x86_64; pinned="$SHA256_X86_64" ;;
+    aarch64|arm64) arch=aarch64; pinned="$SHA256_AARCH64" ;;
+    *) fail "unsupported architecture: $1"; return 1 ;;
+  esac
+  if [ "$SERVICE_KIND" = systemd ]; then
+    TARGET="$arch-unknown-linux-musl"; EXPECTED_SHA256="$pinned"
+  else
+    TARGET="$arch-apple-darwin"; EXPECTED_SHA256=''
+  fi
+}
+
 refuse_signed_updater_override() {
   if [ "$SERVICE_KIND" = systemd ] && [ -f "$UNIT_PATH" ] &&
      grep -Eq '^ExecStart=/var/lib/nodelite-updater/code/active([[:space:]]|$)' "$UNIT_PATH"; then
@@ -659,7 +675,9 @@ case "$MODE" in auto|install|upgrade) ;; *) fail '--mode must be install, upgrad
 if [ "$SERVICE_KIND" = systemd ] && [ -e /etc/nodelite-updater/policy.toml ] &&
     grep -Eq '"phase"[[:space:]]*:[[:space:]]*"committed"' /var/lib/nodelite-updater-migration/journal.json &&
     grep -Eq '^ExecStart=/var/lib/nodelite-updater/code/active([[:space:]]|$)' "$UNIT_PATH"; then
-  [ "$MODE" != install ] && [ -z "$BOOTSTRAP_URL$BINARY_URL$SHA256_X86_64$SHA256_AARCH64" ] &&
+  # The signed manifest stays authoritative here, so release-source pins are ignored rather than fatal.
+  [ -z "$SHA256_X86_64$SHA256_AARCH64" ] || printf '%s\n' 'warning: enrolled Agent ignores --base-url/--sha256-* overrides; using the signed update path' >&2
+  [ "$MODE" != install ] && [ -z "$BOOTSTRAP_URL$BINARY_URL" ] &&
     [ "$INSTALL_DIR" = /usr/local/bin ] && [ "$STATE_DIR" = /var/lib/nodelite-agent ] &&
     [ "$CONFIG_DIR" = /etc/nodelite ] && [ "$TRAFFIC_CONTROL" = auto ] || fail 'enrolled Agent uses its fixed local policy; installer overrides are not allowed'
   set -- --upgrade
@@ -677,28 +695,7 @@ else
   need_cmd launchctl
 fi
 
-ARCH="$(uname -m)"
-case "$ARCH" in
-  x86_64|amd64)
-    EXPECTED_SHA256="$SHA256_X86_64"
-    if [ "$SERVICE_KIND" = "systemd" ]; then
-      TARGET="x86_64-unknown-linux-musl"
-    else
-      TARGET="x86_64-apple-darwin"
-    fi
-    ;;
-  aarch64|arm64)
-    EXPECTED_SHA256="$SHA256_AARCH64"
-    if [ "$SERVICE_KIND" = "systemd" ]; then
-      TARGET="aarch64-unknown-linux-musl"
-    else
-      TARGET="aarch64-apple-darwin"
-    fi
-    ;;
-  *)
-    fail "unsupported architecture: $ARCH"
-    ;;
-esac
+select_release_target "$(uname -m)"
 ARTIFACT_NAME="nodelite-agent-$TARGET"
 
 if [ -n "$BINARY_URL" ]; then

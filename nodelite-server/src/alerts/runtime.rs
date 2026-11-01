@@ -16,7 +16,6 @@ use crate::history::HistoryStore;
 use crate::registry::NodeRegistry;
 use crate::state::SharedState;
 
-use super::delivery::AlertDeliveryError;
 use super::delivery_metrics::{DELIVERY_QUEUE_CAPACITY, DELIVERY_RESULT_CAPACITY};
 use dispatcher::{CompletedDelivery, DeliverySender, delivery_channel, spawn_delivery_dispatcher};
 use drain::drain_delivery_dispatcher;
@@ -27,8 +26,9 @@ mod drain;
 mod window;
 
 use super::{
-    AlertEvent, AlertEventKind, AlertStateTracker, InspectionHighlight, InspectionHighlightEvent,
-    InspectionReport, InspectionTrendPoint, smtp_endpoint_label, webhook_endpoint_label,
+    AlertEvent, AlertEventKind, AlertStateTracker, ChannelSet, DeliveryOutcome,
+    InspectionHighlight, InspectionHighlightEvent, InspectionReport, InspectionTrendPoint,
+    smtp_endpoint_label, webhook_endpoint_label,
 };
 
 const ALERT_EVALUATION_INTERVAL_SECS: u64 = 30;
@@ -48,6 +48,7 @@ enum DeliveryJob {
         lookback_hours: u64,
         report: InspectionReport,
         trends: Vec<InspectionTrendPoint>,
+        channels: ChannelSet,
     },
 }
 
@@ -56,13 +57,13 @@ enum DeliveryResult {
     Alert {
         config: Arc<AlertingConfig>,
         event: AlertEvent,
-        result: Result<(), AlertDeliveryError>,
+        outcome: DeliveryOutcome,
     },
     Inspection {
         config: Arc<AlertingConfig>,
         local_date: NaiveDate,
         report: InspectionReport,
-        result: Result<(), AlertDeliveryError>,
+        outcome: DeliveryOutcome,
     },
 }
 
@@ -189,19 +190,19 @@ fn process_delivery_result(
         DeliveryResult::Alert {
             config,
             event,
-            result,
-        } => handle_alert_delivery_result(tracker, delivery_tx, &config, &event, result),
+            outcome,
+        } => handle_alert_delivery_result(tracker, delivery_tx, &config, &event, outcome),
         DeliveryResult::Inspection {
             config,
             local_date,
             report,
-            result,
+            outcome,
         } => handle_inspection_delivery_result(
             inspection_dispatch,
             &config,
             local_date,
             &report,
-            result,
+            outcome,
         ),
     }
 }
@@ -220,7 +221,7 @@ fn enqueue_alert_delivery(
         })
         .is_err()
     {
-        tracker.record_delivery_failure(event, now);
+        tracker.record_delivery_outcome(event, ChannelSet::NONE, true, now);
         warn!(
             webhook = %webhook_endpoint_label(&config.webhook.url),
             smtp = %smtp_endpoint_label(&config.smtp),
@@ -248,6 +249,7 @@ fn enqueue_inspection_delivery(
             lookback_hours: config.inspection.lookback_hours,
             report,
             trends,
+            channels: inspection_dispatch.channels_due(local_date),
         })
         .is_ok()
     {
@@ -562,26 +564,24 @@ fn handle_alert_delivery_result(
     delivery_tx: &DeliverySender,
     config: &Arc<AlertingConfig>,
     event: &AlertEvent,
-    result: Result<(), AlertDeliveryError>,
+    outcome: DeliveryOutcome,
 ) {
-    match result {
-        Ok(()) => {
-            if let Some(resolved) = tracker.record_delivery_success(event) {
-                log_alert_event(&resolved);
-                enqueue_alert_delivery(delivery_tx, tracker, config, &resolved, Utc::now());
-            }
-        }
-        Err(error) => {
-            tracker.record_delivery_failure(event, Utc::now());
-            warn!(
-                error = ?error,
-                webhook = %webhook_endpoint_label(&config.webhook.url),
-                smtp = %smtp_endpoint_label(&config.smtp),
-                rule_id = %event.rule.id,
-                node_id = %event.node_id,
-                "failed to deliver alert notification",
-            );
-        }
+    let failed = outcome.error.is_some();
+    if let Some(resolved) =
+        tracker.record_delivery_outcome(event, outcome.delivered, failed, Utc::now())
+    {
+        log_alert_event(&resolved);
+        enqueue_alert_delivery(delivery_tx, tracker, config, &resolved, Utc::now());
+    }
+    if let Some(error) = outcome.error {
+        warn!(
+            error = ?error,
+            webhook = %webhook_endpoint_label(&config.webhook.url),
+            smtp = %smtp_endpoint_label(&config.smtp),
+            rule_id = %event.rule.id,
+            node_id = %event.node_id,
+            "failed to deliver alert notification",
+        );
     }
 }
 
@@ -590,9 +590,10 @@ fn handle_inspection_delivery_result(
     config: &AlertingConfig,
     local_date: NaiveDate,
     report: &InspectionReport,
-    result: Result<(), AlertDeliveryError>,
+    outcome: DeliveryOutcome,
 ) {
-    match result {
+    inspection_dispatch.record_sent_channels(local_date, outcome.delivered);
+    match outcome.into_result() {
         Ok(()) => {
             inspection_dispatch.mark_sent(local_date);
             info!(
@@ -647,6 +648,8 @@ struct InspectionDispatchState {
     last_sent_date: Option<NaiveDate>,
     pending_date: Option<NaiveDate>,
     last_failed_at: Option<DateTime<Utc>>,
+    /// Channels that already received the summary for that date; retries skip them.
+    sent_channels: Option<(NaiveDate, ChannelSet)>,
 }
 
 impl InspectionDispatchState {
@@ -658,6 +661,7 @@ impl InspectionDispatchState {
         self.last_sent_date = None;
         self.pending_date = None;
         self.last_failed_at = None;
+        self.sent_channels = None;
     }
 
     fn due_date(
@@ -705,6 +709,23 @@ impl InspectionDispatchState {
 
     fn mark_pending(&mut self, local_date: NaiveDate) {
         self.pending_date = Some(local_date);
+    }
+
+    fn channels_due(&self, local_date: NaiveDate) -> ChannelSet {
+        match self.sent_channels {
+            Some((date, sent)) if date == local_date => ChannelSet::ALL.without(sent),
+            _ => ChannelSet::ALL,
+        }
+    }
+
+    fn record_sent_channels(&mut self, local_date: NaiveDate, delivered: ChannelSet) {
+        let sent = match self.sent_channels {
+            Some((date, sent)) if date == local_date => sent.union(delivered),
+            // A result for an earlier day that finishes after midnight must not reset today's.
+            Some((date, _)) if date > local_date => return,
+            _ => delivered,
+        };
+        self.sent_channels = Some((local_date, sent));
     }
 
     fn mark_failed(&mut self, now: DateTime<Utc>) {

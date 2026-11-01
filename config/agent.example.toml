@@ -11,9 +11,10 @@ server = "wss://monitor.example.com/ws"
 token = "issued-by-nodelite-server"
 # 上报间隔(秒),决定前端最快多久能看到一次刷新。
 report_interval_secs = 5
-# 默认排除内核/容器等伪文件系统；此列表替换默认值。设为 [] 上报所有文件系统类型。
+# 默认排除内核/容器等伪文件系统，以及 nfs/cifs/sshfs 等网络文件系统
+# （远端无响应时 statvfs 会长时间阻塞）；此列表替换默认值。设为 [] 上报所有文件系统类型。
 # Server 的 [filters].ignored_filesystems 仍会二次过滤；需要完整展示时也将其设为 []。
-ignored_filesystems = ["autofs", "bpf", "cgroup", "cgroup2", "configfs", "debugfs", "devfs", "devpts", "devtmpfs", "fdesc", "fusectl", "mqueue", "overlay", "proc", "procfs", "pstore", "ramfs", "securityfs", "squashfs", "sysfs", "tmpfs", "tracefs", "volfs"]
+ignored_filesystems = ["9p", "afs", "autofs", "bpf", "ceph", "cgroup", "cgroup2", "cifs", "configfs", "debugfs", "devfs", "devpts", "devtmpfs", "fdesc", "fuse.glusterfs", "fuse.rclone", "fuse.s3fs", "fuse.sshfs", "fusectl", "glusterfs", "lustre", "mqueue", "ncpfs", "nfs", "nfs4", "overlay", "proc", "procfs", "pstore", "ramfs", "securityfs", "smb3", "smbfs", "squashfs", "sysfs", "tmpfs", "tracefs", "volfs"]
 # 可选:覆盖 /proc/sys/kernel/hostname,适用于容器或匿名化部署。
 hostname_override = "hk-01.internal"
 # 可选:节点标签,前端可据此分组过滤。

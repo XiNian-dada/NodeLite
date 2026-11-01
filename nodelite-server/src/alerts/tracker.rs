@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Duration, Utc};
 use nodelite_proto::AlertRuleConfig;
 
+use super::channels::ChannelSet;
 use super::{AlertMetricReading, EvaluatedRule};
 
 const DELIVERY_FAILURE_RETRY_DELAY_MINUTES: i64 = 5;
@@ -34,6 +35,8 @@ pub(crate) struct AlertEvent {
     pub(crate) node_id: String,
     pub(crate) node_label: String,
     pub(crate) reading: Option<AlertMetricReading>,
+    /// Channels this event still has to reach; the rule and config filter it further.
+    pub(crate) channels: ChannelSet,
 }
 
 #[derive(Debug, Default)]
@@ -52,8 +55,35 @@ struct ActiveAlertState {
     node_label: String,
     last_reading: AlertMetricReading,
     last_notified_at: DateTime<Utc>,
-    delivered: bool,
+    /// A cooldown repeat starts a new round even while a failed channel is still retrying.
+    round_started_at: DateTime<Utc>,
+    /// Channels that received the current notification round; retries skip them.
+    round_delivered: ChannelSet,
+    /// False until the first delivery attempt reports back.
+    outcome_seen: bool,
+    /// Set while the current round still has a failed channel.
+    retry_pending: bool,
+    /// Channels that ever received this alert; the resolved notice goes only to them.
+    ever_delivered: ChannelSet,
     resolved_at: Option<DateTime<Utc>>,
+}
+
+impl ActiveAlertState {
+    /// The resolved notice waits while the trigger is in flight or failed on every channel,
+    /// so no channel gets a resolution for an alert it never saw.
+    fn holds_resolved_notice(&self) -> bool {
+        !self.outcome_seen || (self.retry_pending && self.ever_delivered.is_empty())
+    }
+
+    /// Nothing delivered and nothing failed means no channel applied; config filtering then
+    /// decides, as for any other event.
+    fn resolved_channels(&self) -> ChannelSet {
+        if self.ever_delivered.is_empty() {
+            ChannelSet::ALL
+        } else {
+            self.ever_delivered
+        }
+    }
 }
 
 impl AlertStateTracker {
@@ -96,7 +126,19 @@ impl AlertStateTracker {
                     active.resolved_at = None;
                     if should_repeat_alert(active.last_notified_at, rule.cooldown_minutes, now) {
                         active.last_notified_at = now;
-                        events.push(triggered_event(rule, matched, now));
+                        if !active.retry_pending
+                            || should_repeat_alert(
+                                active.round_started_at,
+                                rule.cooldown_minutes,
+                                now,
+                            )
+                        {
+                            active.round_started_at = now;
+                            active.round_delivered = ChannelSet::NONE;
+                        }
+                        let mut event = triggered_event(rule, matched, now);
+                        event.channels = ChannelSet::ALL.without(active.round_delivered);
+                        events.push(event);
                     }
                 }
                 None => {
@@ -106,7 +148,11 @@ impl AlertStateTracker {
                             node_label: matched.node_label.clone(),
                             last_reading: matched.reading.clone(),
                             last_notified_at: now,
-                            delivered: false,
+                            round_started_at: now,
+                            round_delivered: ChannelSet::NONE,
+                            outcome_seen: false,
+                            retry_pending: false,
+                            ever_delivered: ChannelSet::NONE,
                             resolved_at: None,
                         },
                     );
@@ -128,13 +174,14 @@ impl AlertStateTracker {
             let Some(rule) = rules_by_id.get(key.rule_id.as_str()) else {
                 continue;
             };
-            if !active.delivered {
+            if active.holds_resolved_notice() {
                 let mut active = active;
                 active.resolved_at = Some(now);
                 self.active.insert(key, active);
                 continue;
             }
             if rule.send_resolved {
+                let channels = active.resolved_channels();
                 events.push(AlertEvent {
                     kind: AlertEventKind::Resolved,
                     occurred_at: now,
@@ -142,6 +189,7 @@ impl AlertStateTracker {
                     node_id: key.node_id,
                     node_label: active.node_label,
                     reading: Some(active.last_reading),
+                    channels,
                 });
             }
         }
@@ -149,21 +197,16 @@ impl AlertStateTracker {
         events
     }
 
-    pub(crate) fn record_delivery_failure(&mut self, event: &AlertEvent, now: DateTime<Utc>) {
-        if event.kind != AlertEventKind::Triggered {
-            return;
-        }
-        let key = AlertInstanceKey {
-            rule_id: event.rule.id.clone(),
-            node_id: event.node_id.clone(),
-        };
-        let Some(active) = self.active.get_mut(&key) else {
-            return;
-        };
-        active.last_notified_at = retry_notified_at(event.rule.cooldown_minutes, now);
-    }
-
-    pub(crate) fn record_delivery_success(&mut self, event: &AlertEvent) -> Option<AlertEvent> {
+    /// Records which channels accepted a triggered event. A failed channel is retried after
+    /// the short delay; the resolved notice is released once at least one channel has the
+    /// trigger, and only goes to those channels.
+    pub(crate) fn record_delivery_outcome(
+        &mut self,
+        event: &AlertEvent,
+        delivered: ChannelSet,
+        failed: bool,
+        now: DateTime<Utc>,
+    ) -> Option<AlertEvent> {
         if event.kind != AlertEventKind::Triggered {
             return None;
         }
@@ -172,8 +215,17 @@ impl AlertStateTracker {
             node_id: event.node_id.clone(),
         };
         let active = self.active.get_mut(&key)?;
-        active.delivered = true;
+        active.outcome_seen = true;
+        active.round_delivered = active.round_delivered.union(delivered);
+        active.ever_delivered = active.ever_delivered.union(delivered);
+        active.retry_pending = failed;
+        if failed {
+            active.last_notified_at = retry_notified_at(event.rule.cooldown_minutes, now);
+        }
         let resolved_at = active.resolved_at?;
+        if active.holds_resolved_notice() {
+            return None;
+        }
         let active = self.active.remove(&key)?;
         if !event.rule.send_resolved {
             return None;
@@ -183,9 +235,20 @@ impl AlertStateTracker {
             occurred_at: resolved_at,
             rule: event.rule.clone(),
             node_id: event.node_id.clone(),
+            channels: active.resolved_channels(),
             node_label: active.node_label,
             reading: Some(active.last_reading),
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn record_delivery_failure(&mut self, event: &AlertEvent, now: DateTime<Utc>) {
+        self.record_delivery_outcome(event, ChannelSet::NONE, true, now);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn record_delivery_success(&mut self, event: &AlertEvent) -> Option<AlertEvent> {
+        self.record_delivery_outcome(event, ChannelSet::ALL, false, Utc::now())
     }
 }
 
@@ -216,6 +279,7 @@ fn triggered_event(
         node_id: matched.node_id.clone(),
         node_label: matched.node_label.clone(),
         reading: Some(matched.reading.clone()),
+        channels: ChannelSet::ALL,
     }
 }
 
@@ -226,7 +290,7 @@ mod tests {
         AlertChannel, AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode, AlertSeverity,
     };
 
-    use super::{AlertEventKind, AlertStateTracker};
+    use super::{AlertEventKind, AlertStateTracker, ChannelSet};
     use crate::alerts::{AlertMetricReading, EvaluatedRule};
 
     fn rule(send_resolved: bool) -> AlertRuleConfig {
@@ -382,6 +446,113 @@ mod tests {
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].kind, AlertEventKind::Resolved);
+    }
+
+    const WEBHOOK_ONLY: ChannelSet = ChannelSet {
+        webhook: true,
+        smtp: false,
+    };
+    const SMTP_ONLY: ChannelSet = ChannelSet {
+        webhook: false,
+        smtp: true,
+    };
+
+    #[test]
+    fn partial_failure_retries_only_the_failed_channel() {
+        let rules = vec![rule(true)];
+        let now = Utc::now();
+        let mut tracker = AlertStateTracker::new();
+        let first = tracker.update(&rules, &[matched(95)], now);
+        assert_eq!(first[0].channels, ChannelSet::ALL);
+
+        assert!(
+            tracker
+                .record_delivery_outcome(&first[0], WEBHOOK_ONLY, true, now)
+                .is_none()
+        );
+        let retry = tracker.update(&rules, &[matched(95)], now + Duration::minutes(6));
+        assert_eq!(retry.len(), 1);
+        assert_eq!(retry[0].channels, SMTP_ONLY, "webhook already has it");
+
+        tracker.record_delivery_outcome(&retry[0], SMTP_ONLY, false, now);
+        let repeat = tracker.update(&rules, &[matched(95)], now + Duration::minutes(40));
+        assert_eq!(
+            repeat[0].channels,
+            ChannelSet::ALL,
+            "a new cooldown round goes to every channel"
+        );
+    }
+
+    #[test]
+    fn resolved_notice_reaches_channels_that_got_the_trigger_despite_a_failing_one() {
+        let rules = vec![rule(true)];
+        let now = Utc::now();
+        let mut tracker = AlertStateTracker::new();
+        let first = tracker.update(&rules, &[matched(95)], now);
+        tracker.record_delivery_outcome(&first[0], WEBHOOK_ONLY, true, now);
+
+        let resolved = tracker.update(&rules, &[], now + Duration::minutes(1));
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].kind, AlertEventKind::Resolved);
+        assert_eq!(resolved[0].channels, WEBHOOK_ONLY);
+        assert!(
+            tracker
+                .update(&rules, &[], now + Duration::minutes(10))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn resolved_notice_waits_until_some_channel_has_the_trigger() {
+        let rules = vec![rule(true)];
+        let now = Utc::now();
+        let mut tracker = AlertStateTracker::new();
+        let first = tracker.update(&rules, &[matched(95)], now);
+        tracker.record_delivery_outcome(&first[0], ChannelSet::NONE, true, now);
+        assert!(tracker.update(&rules, &[], now).is_empty());
+
+        let resolved = tracker
+            .record_delivery_outcome(&first[0], SMTP_ONLY, true, now)
+            .expect("resolved notice is released once smtp has the trigger");
+        assert_eq!(resolved.channels, SMTP_ONLY);
+    }
+
+    #[test]
+    fn healthy_channel_still_gets_cooldown_repeats_while_another_keeps_failing() {
+        let rules = vec![rule(true)];
+        let now = Utc::now();
+        let mut tracker = AlertStateTracker::new();
+        let first = tracker.update(&rules, &[matched(95)], now);
+        tracker.record_delivery_outcome(&first[0], WEBHOOK_ONLY, true, now);
+        let retry_at = now + Duration::minutes(6);
+        let retry = tracker.update(&rules, &[matched(95)], retry_at);
+        assert_eq!(retry[0].channels, SMTP_ONLY);
+        tracker.record_delivery_outcome(&retry[0], ChannelSet::NONE, true, retry_at);
+
+        let repeat = tracker.update(&rules, &[matched(95)], now + Duration::minutes(31));
+        assert_eq!(repeat.len(), 1);
+        assert_eq!(
+            repeat[0].channels,
+            ChannelSet::ALL,
+            "the cooldown boundary starts a new round for the healthy channel too"
+        );
+    }
+
+    #[test]
+    fn resolved_notice_is_released_when_no_channel_applied() {
+        let rules = vec![rule(true)];
+        let now = Utc::now();
+        let mut tracker = AlertStateTracker::new();
+        let first = tracker.update(&rules, &[matched(95)], now);
+        assert!(
+            tracker.update(&rules, &[], now).is_empty(),
+            "held while the trigger is in flight"
+        );
+
+        let resolved = tracker
+            .record_delivery_outcome(&first[0], ChannelSet::NONE, false, now)
+            .expect("nothing failed, so the notice is not held back");
+        assert_eq!(resolved.channels, ChannelSet::ALL);
     }
 
     #[test]
