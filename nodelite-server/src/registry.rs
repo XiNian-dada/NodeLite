@@ -16,6 +16,7 @@ mod metrics;
 mod migration;
 mod render;
 pub(crate) mod renewal;
+mod service_meta;
 mod storage;
 #[cfg(test)]
 mod tests;
@@ -46,6 +47,7 @@ pub use self::render::{
     build_install_script_url, default_agent_release_base_url, render_agent_config,
     render_install_command, render_upgrade_command,
 };
+pub(crate) use self::service_meta::NodeServiceMetadataPatch;
 #[cfg(test)]
 use self::storage::{
     MAX_REGISTRY_FILE_BYTES, registry_file_read_count, release_registry_lock_with,

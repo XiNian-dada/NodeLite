@@ -12,7 +12,7 @@ use nodelite_proto::{validate_identifier, validate_non_empty};
 use parking_lot::Mutex as ParkingLotMutex;
 use tokio::sync::{RwLock, Semaphore};
 
-use crate::sanitize::{sanitize_location_override, sanitize_renewal_price};
+use crate::sanitize::sanitize_location_override;
 
 use super::storage::{
     load_registry_state, load_registry_state_with_fingerprint, mutate_registry_file,
@@ -20,9 +20,9 @@ use super::storage::{
 };
 use super::token::{constant_time_eq, prune_expired_install_sessions};
 use super::{
-    ConsumedInstall, MAX_TRAFFIC_THROTTLE_KBPS, NodeRegistry, NodeServiceMetadata, RegisteredNode,
-    RegistryError, RegistryFile, RegistryReloadCheckpoint, RegistryResult, RegistryState,
-    TOKEN_CACHE_CAPACITY, TrafficQuota, coordinate_to_microdegrees,
+    ConsumedInstall, NodeRegistry, RegisteredNode, RegistryError, RegistryFile,
+    RegistryReloadCheckpoint, RegistryResult, RegistryState, TOKEN_CACHE_CAPACITY, TrafficQuota,
+    coordinate_to_microdegrees,
 };
 
 impl NodeRegistry {
@@ -167,49 +167,6 @@ impl NodeRegistry {
     }
 
     /// 更新设置页展示用的节点运营元数据。
-    pub(crate) async fn update_service_metadata(
-        &self,
-        node_id: &str,
-        metadata: NodeServiceMetadata,
-    ) -> RegistryResult<RegisteredNode> {
-        let NodeServiceMetadata {
-            service_expires_at,
-            service_unlimited,
-            renewal_price,
-            traffic_limit_bytes,
-            traffic_accounting,
-            traffic_throttle_kbps,
-        } = metadata;
-        validate_identifier("node_id", node_id).map_err(RegistryError::validation)?;
-        let renewal_price =
-            sanitize_renewal_price(renewal_price).map_err(RegistryError::validation)?;
-        let service_expires_at = if service_unlimited {
-            None
-        } else {
-            service_expires_at
-        };
-        validate_traffic_settings(traffic_limit_bytes, traffic_throttle_kbps)?;
-        let node_id = node_id.to_string();
-        let path = Arc::clone(&self.path);
-        let (node, file) = mutate_registry_file(path.as_ref(), move |file| {
-            let Some(node) = file.nodes.iter_mut().find(|node| node.node_id == node_id) else {
-                return Err(RegistryError::NodeNotFound(node_id.clone()));
-            };
-            node.service_expires_at = service_expires_at;
-            node.service_unlimited = service_unlimited;
-            node.renewal_price = renewal_price.clone();
-            node.traffic_limit_bytes = traffic_limit_bytes;
-            node.traffic_accounting = traffic_accounting;
-            node.traffic_throttle_kbps = traffic_throttle_kbps;
-            super::validate::validate_registered_node(node)?;
-            Ok((node.clone(), true))
-        })
-        .await?;
-
-        self.replace_state_from_file(file).await?;
-        Ok(node)
-    }
-
     /// 更新设置页展示与地图落点使用的手动位置覆盖。
     pub async fn update_location_override(
         &self,
@@ -353,29 +310,4 @@ impl NodeRegistry {
         let _ = acquired.send(());
         let _ = release.await;
     }
-}
-
-fn validate_traffic_settings(
-    traffic_limit_bytes: Option<u64>,
-    traffic_throttle_kbps: Option<u64>,
-) -> RegistryResult<()> {
-    // Only the write path rejects zero: registries already holding it must still load.
-    if traffic_limit_bytes == Some(0) {
-        return Err(RegistryError::validation(
-            "traffic_limit_bytes must be at least 1",
-        ));
-    }
-    if traffic_throttle_kbps.is_some() && traffic_limit_bytes.is_none() {
-        return Err(RegistryError::validation(
-            "traffic_throttle_kbps requires traffic_limit_bytes",
-        ));
-    }
-    if let Some(rate) = traffic_throttle_kbps
-        && (rate == 0 || rate > MAX_TRAFFIC_THROTTLE_KBPS)
-    {
-        return Err(RegistryError::validation(format!(
-            "traffic_throttle_kbps must be between 1 and {MAX_TRAFFIC_THROTTLE_KBPS}"
-        )));
-    }
-    Ok(())
 }

@@ -358,13 +358,14 @@ export interface GenerateAgentInstallResponse {
 /** POST /api/nodes/{id}/service-meta */
 export type TrafficAccounting = 'bidirectional' | 'inbound' | 'outbound';
 
+/** Omitted fields keep their stored value; `null` clears a nullable field. */
 export interface UpdateNodeServiceMetadataRequest {
-  service_expires_at: string | null;
-  service_unlimited: boolean;
-  renewal_price: string | null;
-  traffic_limit_bytes: number | null;
-  traffic_accounting: TrafficAccounting;
-  traffic_throttle_kbps: number | null;
+  service_expires_at?: string | null;
+  service_unlimited?: boolean;
+  renewal_price?: string | null;
+  traffic_limit_bytes?: number | null;
+  traffic_accounting?: TrafficAccounting;
+  traffic_throttle_kbps?: number | null;
 }
 
 /** POST /api/nodes/{id}/location-override */

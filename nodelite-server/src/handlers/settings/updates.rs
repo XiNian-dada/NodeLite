@@ -15,7 +15,7 @@ use tokio::time::timeout;
 use tracing::{error, info};
 
 use crate::AppState;
-use crate::registry::NodeServiceMetadata;
+use crate::registry::NodeServiceMetadataPatch;
 use crate::sanitize::valid_test_release_tag;
 
 use super::security::{settings_confirmation_error_for_sensitive_action, settings_write_guard};
@@ -226,9 +226,9 @@ pub(crate) async fn update_node_service_metadata(
     }
     match state
         .registry
-        .update_service_metadata(
+        .update_service_metadata_patch(
             &node_id,
-            NodeServiceMetadata {
+            NodeServiceMetadataPatch {
                 service_expires_at: request.service_expires_at,
                 service_unlimited: request.service_unlimited,
                 renewal_price: request.renewal_price,

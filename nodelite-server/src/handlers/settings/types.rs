@@ -11,6 +11,15 @@ use serde::{Deserialize, Serialize};
 use crate::passkeys::PasskeySummary;
 use crate::registry::TrafficAccounting;
 
+/// Marks a field as present so `null` can be told apart from an omitted field.
+fn present<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
 /// 设置页读取的服务端与安全状态。这里刻意不包含任何 token / password 明文。
 #[derive(Debug, Serialize)]
 pub(crate) struct SettingsResponse {
@@ -77,19 +86,20 @@ pub(crate) struct SettingsAgentToken {
 }
 
 #[derive(Debug, Deserialize)]
+/// Omitted fields keep their stored value; an explicit `null` clears a nullable field.
 pub(crate) struct UpdateNodeServiceMetadataRequest {
+    #[serde(default, deserialize_with = "present")]
+    pub(crate) service_expires_at: Option<Option<DateTime<Utc>>>,
     #[serde(default)]
-    pub(crate) service_expires_at: Option<DateTime<Utc>>,
+    pub(crate) service_unlimited: Option<bool>,
+    #[serde(default, deserialize_with = "present")]
+    pub(crate) renewal_price: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    pub(crate) traffic_limit_bytes: Option<Option<u64>>,
     #[serde(default)]
-    pub(crate) service_unlimited: bool,
-    #[serde(default)]
-    pub(crate) renewal_price: Option<String>,
-    #[serde(default)]
-    pub(crate) traffic_limit_bytes: Option<u64>,
-    #[serde(default)]
-    pub(crate) traffic_accounting: TrafficAccounting,
-    #[serde(default)]
-    pub(crate) traffic_throttle_kbps: Option<u64>,
+    pub(crate) traffic_accounting: Option<TrafficAccounting>,
+    #[serde(default, deserialize_with = "present")]
+    pub(crate) traffic_throttle_kbps: Option<Option<u64>>,
     #[serde(default)]
     pub(crate) current_password: Option<String>,
     #[serde(default)]
