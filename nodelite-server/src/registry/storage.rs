@@ -63,6 +63,28 @@ fn record_registry_file_read(path: &Path) {
     *counts.entry(path.to_path_buf()).or_default() += 1;
 }
 
+/// 磁盘文件必须满足的写入/加载前提。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RegistryGuard {
+    /// 没有内存状态可保护：启动、CLI 或尚未有任何提交的空注册表。
+    AllowCreate,
+    /// 内存持有已提交状态：文件必须存在且版本不低于它。缺失单独判断，
+    /// 因为无 `version` 字段的旧文件版本也是 0，版本比较区分不出删除。
+    RequireExisting { min_version: u64 },
+}
+
+impl RegistryGuard {
+    pub(super) fn check(self, path: &Path, disk_version: Option<u64>) -> RegistryResult<()> {
+        let Self::RequireExisting { min_version } = self else {
+            return Ok(());
+        };
+        match disk_version {
+            Some(version) if version >= min_version => Ok(()),
+            disk_version => Err(RegistryError::diverged(path, disk_version, min_version)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum RegistryFileFingerprint {
     Missing,
@@ -92,7 +114,7 @@ pub(super) async fn load_registry_state_with_fingerprint(
     path: &Path,
 ) -> RegistryResult<(RegistryState, RegistryFileFingerprint)> {
     let fingerprint = registry_file_fingerprint(path).await?;
-    let state = load_registry_state(path).await?;
+    let state = load_registry_state(path, RegistryGuard::AllowCreate).await?;
     Ok((state, fingerprint))
 }
 
@@ -109,9 +131,17 @@ impl RegistryFileFingerprint {
     }
 }
 
-pub(super) async fn load_registry_state(path: &Path) -> RegistryResult<RegistryState> {
-    let mut file = load_registry_file(path).await?;
-    prune_expired_install_sessions(&mut file, Utc::now());
+/// 在任何迁移或清理回写之前先用原始磁盘版本校验 `guard`，
+/// 否则回写会抬高回退文件的版本，使旧内容被当作新提交接受。
+pub(super) async fn load_registry_state(
+    path: &Path,
+    guard: RegistryGuard,
+) -> RegistryResult<RegistryState> {
+    let existing = read_registry_file(path).await?;
+    guard.check(path, existing.as_ref().map(|file| file.version))?;
+    let mut file = existing.unwrap_or_default();
+    // 过期安装会话仍带明文 session token，只在内存里丢弃会让它留在磁盘上直到下一次写入。
+    let pruned_sessions = prune_expired_install_sessions(&mut file, Utc::now());
 
     // 展示字段先迁移到当前安全边界，再执行严格校验；通过后才做昂贵的
     // Argon2 token 迁移，避免损坏的注册表在拒绝前消耗额外资源。
@@ -121,16 +151,19 @@ pub(super) async fn load_registry_state(path: &Path) -> RegistryResult<RegistryS
         .nodes
         .iter()
         .any(|node| node.token_hash.is_empty() && !node.token.is_empty());
-    if metadata_migrated || legacy_tokens {
-        file = migrate_registry_file(path).await?;
+    if metadata_migrated || legacy_tokens || pruned_sessions {
+        file = migrate_registry_file(path, guard).await?;
     }
 
     load_registry_state_from_file(path, file)
 }
 
-pub(super) async fn migrate_registry_file(path: &Path) -> RegistryResult<RegistryFile> {
+pub(super) async fn migrate_registry_file(
+    path: &Path,
+    guard: RegistryGuard,
+) -> RegistryResult<RegistryFile> {
     // Rebase migrations on the latest durable file using the same commit protection as edits.
-    let ((), file) = mutate_registry_file(path, |file| {
+    let ((), file) = mutate_registry_file(path, guard, |file| {
         prune_expired_install_sessions(file, Utc::now());
         migrate_legacy_tokens(file)?;
         // The synchronous loader has already normalized legacy display metadata.
@@ -140,11 +173,11 @@ pub(super) async fn migrate_registry_file(path: &Path) -> RegistryResult<Registr
     Ok(file)
 }
 
-async fn load_registry_file(path: &Path) -> RegistryResult<RegistryFile> {
+async fn read_registry_file(path: &Path) -> RegistryResult<Option<RegistryFile>> {
     let metadata = match fs::metadata(path).await {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(RegistryFile::default());
+            return Ok(None);
         }
         Err(error) => return Err(RegistryError::io("stat-ing", path, error)),
     };
@@ -153,7 +186,7 @@ async fn load_registry_file(path: &Path) -> RegistryResult<RegistryFile> {
     let content = match fs::read_to_string(path).await {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(RegistryFile::default());
+            return Ok(None);
         }
         Err(error) => return Err(RegistryError::io("reading", path, error)),
     };
@@ -162,14 +195,19 @@ async fn load_registry_file(path: &Path) -> RegistryResult<RegistryFile> {
 
     let file: RegistryFile =
         serde_json::from_str(&content).map_err(|error| RegistryError::parse(path, error))?;
-    Ok(file)
+    Ok(Some(file))
 }
 
+#[cfg(test)]
 pub(super) fn load_registry_file_sync(path: &Path) -> RegistryResult<RegistryFile> {
+    Ok(read_registry_file_sync(path)?.unwrap_or_default())
+}
+
+pub(super) fn read_registry_file_sync(path: &Path) -> RegistryResult<Option<RegistryFile>> {
     let metadata = match std::fs::metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(RegistryFile::default());
+            return Ok(None);
         }
         Err(error) => return Err(RegistryError::io("stat-ing", path, error)),
     };
@@ -178,7 +216,7 @@ pub(super) fn load_registry_file_sync(path: &Path) -> RegistryResult<RegistryFil
     let content = match std::fs::read_to_string(path) {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(RegistryFile::default());
+            return Ok(None);
         }
         Err(error) => return Err(RegistryError::io("reading", path, error)),
     };
@@ -187,7 +225,7 @@ pub(super) fn load_registry_file_sync(path: &Path) -> RegistryResult<RegistryFil
         serde_json::from_str(&content).map_err(|error| RegistryError::parse(path, error))?;
     migrate_legacy_display_metadata(&mut file);
     validate_registry_file(path, &file)?;
-    Ok(file)
+    Ok(Some(file))
 }
 
 fn ensure_registry_file_size(path: &Path, len: u64) -> RegistryResult<()> {
@@ -240,8 +278,12 @@ pub(super) fn load_registry_state_from_file(
 /// 重的 JSON 解析 / 序列化 / tmp 文件写入都发生在锁外; 独占 flock 只覆盖
 /// "确认 registry 版本未变化 + rename 提交" 这一步。若发现版本冲突就丢弃
 /// 当前准备结果并基于最新文件重试。
+///
+/// `guard` 描述调用方内存已提交的状态；不满足时拒绝写入，
+/// 否则会以回退后的文件为基线覆盖掉内存里仍在服务的节点。
 pub(super) async fn mutate_registry_file<T, F>(
     path: &Path,
+    guard: RegistryGuard,
     operation: F,
 ) -> RegistryResult<(T, RegistryFile)>
 where
@@ -249,7 +291,7 @@ where
     F: Fn(&mut RegistryFile) -> RegistryResult<(T, bool)> + Send + Clone + 'static,
 {
     let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || mutate_registry_file_sync(&path, operation))
+    tokio::task::spawn_blocking(move || mutate_registry_file_sync(&path, guard, operation))
         .await
         .map_err(RegistryError::mutation_task)?
 }

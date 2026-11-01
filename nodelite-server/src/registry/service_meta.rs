@@ -70,7 +70,8 @@ impl NodeRegistry {
         }
         let node_id = node_id.to_string();
         let path = Arc::clone(&self.path);
-        let (node, file) = mutate_registry_file(path.as_ref(), move |file| {
+        let guard = self.write_guard().await;
+        let (node, file) = mutate_registry_file(path.as_ref(), guard, move |file| {
             let Some(node) = file.nodes.iter_mut().find(|node| node.node_id == node_id) else {
                 return Err(RegistryError::NodeNotFound(node_id.clone()));
             };

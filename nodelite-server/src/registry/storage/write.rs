@@ -12,13 +12,14 @@ use crate::fs_security::{create_private_dir_all, ensure_directory_mode};
 
 use super::super::validate::validate_registry_file;
 use super::super::{RegistryError, RegistryFile, RegistryResult};
-use super::{MAX_REGISTRY_WRITE_RETRIES, load_registry_file_sync};
+use super::{MAX_REGISTRY_WRITE_RETRIES, RegistryGuard, read_registry_file_sync};
 
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 pub(super) fn mutate_registry_file_sync<T, F>(
     path: &Path,
+    guard: RegistryGuard,
     operation: F,
 ) -> RegistryResult<(T, RegistryFile)>
 where
@@ -26,7 +27,9 @@ where
 {
     ensure_registry_parent_dir(path)?;
     for _attempt in 0..MAX_REGISTRY_WRITE_RETRIES {
-        let mut file = load_registry_file_sync(path)?;
+        let existing = read_registry_file_sync(path)?;
+        guard.check(path, existing.as_ref().map(|file| file.version))?;
+        let mut file = existing.unwrap_or_default();
         let base_version = file.version;
         let (value, should_persist) = operation(&mut file)?;
         if !should_persist {
@@ -43,7 +46,7 @@ where
         write_registry_payload(&tmp_path, &payload)?;
         harden_registry_permissions(&tmp_path)?;
 
-        match commit_prepared_registry_write(path, base_version, &tmp_path) {
+        match commit_prepared_registry_write(path, guard, base_version, &tmp_path) {
             Ok(()) => return Ok((value, file)),
             Err(RegistryError::VersionConflict { .. }) => {
                 cleanup_temporary_registry_file(&tmp_path);
@@ -75,24 +78,34 @@ fn ensure_registry_parent_dir(path: &Path) -> RegistryResult<()> {
 
 fn commit_prepared_registry_write(
     path: &Path,
+    guard: RegistryGuard,
     expected_version: u64,
     tmp_path: &Path,
 ) -> RegistryResult<()> {
-    commit_prepared_registry_write_with_sync(path, expected_version, tmp_path, sync_parent_dir)
+    commit_prepared_registry_write_with_sync(
+        path,
+        guard,
+        expected_version,
+        tmp_path,
+        sync_parent_dir,
+    )
 }
 
 fn commit_prepared_registry_write_with_sync(
     path: &Path,
+    guard: RegistryGuard,
     expected_version: u64,
     tmp_path: &Path,
     sync: impl FnOnce(&Path) -> RegistryResult<()>,
 ) -> RegistryResult<()> {
     let _lock = acquire_registry_lock(path)?;
-    let current = load_registry_file_sync(path)?;
-    if current.version != expected_version {
+    let current_version = read_registry_file_sync(path)?.map(|file| file.version);
+    guard.check(path, current_version)?;
+    let current_version = current_version.unwrap_or_default();
+    if current_version != expected_version {
         return Err(RegistryError::version_conflict(
             expected_version,
-            current.version,
+            current_version,
         ));
     }
     std::fs::rename(tmp_path, path).map_err(|error| RegistryError::io("replacing", path, error))?;
@@ -308,17 +321,22 @@ mod tests {
         let tmp = super::temporary_registry_path(&path).expect("random staging path");
         super::write_registry_payload(&tmp, r#"{"version":1,"nodes":[],"install_sessions":[]}"#)
             .expect("fixture");
-        let version = super::load_registry_file_sync(&path)
+        let version = super::super::load_registry_file_sync(&path)
             .expect("empty fixture registry")
             .version;
-        let result =
-            super::commit_prepared_registry_write_with_sync(&path, version, &tmp, |path| {
+        let result = super::commit_prepared_registry_write_with_sync(
+            &path,
+            super::RegistryGuard::AllowCreate,
+            version,
+            &tmp,
+            |path| {
                 Err(crate::registry::RegistryError::io(
                     "injected parent fsync",
                     path,
                     std::io::Error::other("fixture failure"),
                 ))
-            });
+            },
+        );
         assert!(
             result.is_err(),
             "candidate must not be sent after failed durability"

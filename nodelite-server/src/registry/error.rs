@@ -51,6 +51,12 @@ pub enum RegistryError {
         expected_version: u64,
         actual_version: u64,
     },
+    /// 磁盘注册表缺失或版本低于内存已提交版本；继续读写会让两者分叉。
+    Diverged {
+        path: PathBuf,
+        disk_version: Option<u64>,
+        memory_version: u64,
+    },
     Internal {
         context: &'static str,
         source: anyhow::Error,
@@ -115,6 +121,14 @@ impl RegistryError {
         }
     }
 
+    pub fn diverged(path: &Path, disk_version: Option<u64>, memory_version: u64) -> Self {
+        Self::Diverged {
+            path: path.to_path_buf(),
+            disk_version,
+            memory_version,
+        }
+    }
+
     pub fn internal(context: &'static str, source: anyhow::Error) -> Self {
         Self::Internal { context, source }
     }
@@ -161,6 +175,24 @@ impl fmt::Display for RegistryError {
                 f,
                 "registry version conflict (expected {expected_version}, found {actual_version})"
             ),
+            Self::Diverged {
+                path,
+                disk_version: None,
+                memory_version,
+            } => write!(
+                f,
+                "node registry {} is missing while in-memory registry is at version {memory_version}",
+                path.display()
+            ),
+            Self::Diverged {
+                path,
+                disk_version: Some(disk_version),
+                memory_version,
+            } => write!(
+                f,
+                "node registry {} rolled back to version {disk_version} below in-memory version {memory_version}",
+                path.display()
+            ),
             Self::Internal { context, .. } => write!(f, "{context}"),
         }
     }
@@ -175,7 +207,7 @@ impl std::error::Error for RegistryError {
             Self::MutationTask { source } => Some(source),
             Self::BackgroundTask { source } => Some(source),
             Self::FileTooLarge { .. } => None,
-            Self::VersionConflict { .. } => None,
+            Self::VersionConflict { .. } | Self::Diverged { .. } => None,
             Self::Internal { source, .. } => Some(source.root_cause()),
             Self::Unauthorized
             | Self::TokenExpired { .. }

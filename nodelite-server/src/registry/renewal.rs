@@ -42,7 +42,8 @@ impl NodeRegistry {
         let node_id = node_id.to_string();
         self.precheck_token_refresh(&node_id, generation).await?;
         let (token, refresh_id, token_hash) = self.hash_candidate_token().await?;
-        let (prepared, file) = mutate_registry_file(self.path.as_ref(), move |file| {
+        let guard = self.write_guard().await;
+        let (prepared, file) = mutate_registry_file(self.path.as_ref(), guard, move |file| {
             let node = file.nodes.iter_mut().find(|n| n.node_id == node_id)
                 .ok_or_else(|| RegistryError::NodeNotFound(node_id.clone()))?;
             let now = Utc::now();
@@ -122,7 +123,8 @@ impl NodeRegistry {
         crate::sanitize::validate_refresh_id(refresh_id).map_err(RegistryError::validation)?;
         let node_id = node_id.to_string();
         let refresh_id = refresh_id.to_string();
-        let (committed, file) = mutate_registry_file(self.path.as_ref(), move |file| {
+        let guard = self.write_guard().await;
+        let (committed, file) = mutate_registry_file(self.path.as_ref(), guard, move |file| {
             let node = file
                 .nodes
                 .iter_mut()

@@ -8,7 +8,7 @@ use tracing::error;
 
 use crate::AppState;
 use crate::registry::{
-    AgentReleaseSource, IssueNodeRequest, RegistryError, issue_node, render_install_command,
+    AgentReleaseSource, IssueNodeRequest, RegistryError, render_install_command,
 };
 
 use super::security::settings_confirmation_error_for_sensitive_action;
@@ -37,19 +37,25 @@ pub(crate) async fn generate_agent_install(
         return response;
     }
 
-    let issued = match issue_node(
-        state.registry.path(),
-        IssueNodeRequest {
+    let issued = match state
+        .registry
+        .issue_node(IssueNodeRequest {
             node_id: request.node_id,
             node_label: request.node_label,
             tags: request.tags,
-        },
-    )
-    .await
+        })
+        .await
     {
         Ok(issued) => issued,
         Err(RegistryError::Validation { message }) => {
             return settings_json_error(StatusCode::BAD_REQUEST, message);
+        }
+        Err(error @ RegistryError::Diverged { .. }) => {
+            error!(error = %error, "refused to issue agent installation command");
+            return settings_json_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "node registry file is missing or rolled back; restore the latest file, or restart the server to accept an intentionally restored older file",
+            );
         }
         Err(error) => {
             error!(error = ?error, "failed to issue agent installation command");

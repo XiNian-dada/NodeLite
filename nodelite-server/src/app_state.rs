@@ -107,6 +107,28 @@ impl ServerReadiness {
     }
 }
 
+impl AppState {
+    /// 注册表撤销节点后撤下运行态视图条目；设置页注销与外部删除后的热重载共用，
+    /// 视图版本递增会让浏览器收到 `NodeRemoved`。
+    pub(crate) async fn forget_runtime_node(&self, node_id: &str) {
+        self.shared.remove_node(node_id).await;
+        self.agent_updates.forget(node_id);
+    }
+
+    /// 撤下注册表中已不存在的运行态节点，返回被移除的节点数。
+    pub(crate) async fn forget_unregistered_runtime_nodes(&self, registered: &[String]) -> usize {
+        let mut removed = 0;
+        for status in self.shared.list_statuses().await {
+            let node_id = status.identity.node_id;
+            if registered.binary_search(&node_id).is_err() {
+                self.forget_runtime_node(&node_id).await;
+                removed += 1;
+            }
+        }
+        removed
+    }
+}
+
 #[cfg(any(test, feature = "bench-internals"))]
 impl AppState {
     pub(crate) async fn test_fixture(

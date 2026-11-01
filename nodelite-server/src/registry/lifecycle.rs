@@ -15,7 +15,7 @@ use tokio::sync::{RwLock, Semaphore};
 use crate::sanitize::sanitize_location_override;
 
 use super::storage::{
-    load_registry_state, load_registry_state_with_fingerprint, mutate_registry_file,
+    RegistryGuard, load_registry_state, load_registry_state_with_fingerprint, mutate_registry_file,
     registry_file_fingerprint,
 };
 use super::token::{constant_time_eq, prune_expired_install_sessions};
@@ -101,8 +101,21 @@ impl NodeRegistry {
         &self,
         fingerprint: super::storage::RegistryFileFingerprint,
     ) -> RegistryResult<bool> {
-        let next_state = load_registry_state(self.path.as_path()).await?;
+        let guard = self.write_guard().await;
+        let next_state = load_registry_state(self.path.as_path(), guard).await?;
         Ok(self.apply_loaded_state(next_state, Some(fingerprint)).await)
+    }
+
+    /// 内存已提交状态对应的磁盘前提；内存有节点时即使版本为 0 也要求文件存在。
+    pub(super) async fn write_guard(&self) -> RegistryGuard {
+        let state = self.state.read().await;
+        if state.version == 0 && state.entries.is_empty() {
+            RegistryGuard::AllowCreate
+        } else {
+            RegistryGuard::RequireExisting {
+                min_version: state.version,
+            }
+        }
     }
 
     /// 已登记的节点数量。
@@ -132,7 +145,8 @@ impl NodeRegistry {
 
         let node_id = node_id.to_string();
         let path = Arc::clone(&self.path);
-        let (removed, file) = mutate_registry_file(path.as_ref(), move |file| {
+        let guard = self.write_guard().await;
+        let (removed, file) = mutate_registry_file(path.as_ref(), guard, move |file| {
             prune_expired_install_sessions(file, Utc::now());
             let Some(index) = file.nodes.iter().position(|node| node.node_id == node_id) else {
                 return Err(RegistryError::NodeNotFound(node_id.clone()));
@@ -181,7 +195,8 @@ impl NodeRegistry {
             .map_err(RegistryError::validation)?;
         let node_id = node_id.to_string();
         let path = Arc::clone(&self.path);
-        let (node, file) = mutate_registry_file(path.as_ref(), move |file| {
+        let guard = self.write_guard().await;
+        let (node, file) = mutate_registry_file(path.as_ref(), guard, move |file| {
             let Some(node) = file.nodes.iter_mut().find(|node| node.node_id == node_id) else {
                 return Err(RegistryError::NodeNotFound(node_id.clone()));
             };
@@ -240,7 +255,8 @@ impl NodeRegistry {
         validate_non_empty("install token", token).map_err(RegistryError::validation)?;
 
         let token = token.to_string();
-        let (result, file) = mutate_registry_file(self.path.as_path(), move |file| {
+        let guard = self.write_guard().await;
+        let (result, file) = mutate_registry_file(self.path.as_path(), guard, move |file| {
             let pruned = prune_expired_install_sessions(file, Utc::now());
             let Some(index) = file
                 .install_sessions

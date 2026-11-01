@@ -9,13 +9,12 @@ use nodelite_proto::uses_insecure_remote_url;
 use tokio::task::JoinHandle;
 use tokio::time::{MissedTickBehavior, interval};
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use url::Url;
 
-use crate::agent_logs::AgentLogStore;
-use crate::app_state::ServerReadiness;
-use crate::history::HistoryStore;
-use crate::registry::NodeRegistry;
+use crate::AppState;
+use crate::registry::RegistryError;
+use crate::snapshot::persist_current_snapshot;
 use crate::state::SharedState;
 
 /// 后台任务:每秒扫描一次注册表,把超时节点标记为离线。
@@ -42,18 +41,39 @@ pub(crate) fn spawn_stale_reaper(
     })
 }
 
+/// 失败的 reload 不推进指纹，分叉期间每秒都会重试；只在状态切换时记录，避免刷屏。
+#[derive(Debug, Default)]
+struct DivergenceLatch {
+    active: bool,
+}
+
+impl DivergenceLatch {
+    /// 返回 true 表示刚进入分叉状态。
+    fn enter(&mut self) -> bool {
+        !std::mem::replace(&mut self.active, true)
+    }
+
+    /// 返回 true 表示刚从分叉状态恢复。
+    fn recover(&mut self) -> bool {
+        std::mem::replace(&mut self.active, false)
+    }
+}
+
 /// 后台任务:每秒检查一次注册表文件是否有外部更改(例如 CLI 颁发了新节点)。
-pub(crate) fn spawn_registry_reloader(
-    registry: NodeRegistry,
-    history: HistoryStore,
-    agent_logs: AgentLogStore,
-    readiness: ServerReadiness,
-    shutdown: CancellationToken,
-) -> JoinHandle<()> {
+pub(crate) fn spawn_registry_reloader(state: AppState) -> JoinHandle<()> {
+    let AppState {
+        registry,
+        history,
+        agent_logs,
+        readiness,
+        shutdown,
+        ..
+    } = state.clone();
     tokio::spawn(async move {
         let mut ticker = interval(Duration::from_secs(1));
         // 挂起恢复后只想做一次最近态的 reload,而不是连续 N 次磁盘 IO。
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut divergence = DivergenceLatch::default();
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => break,
@@ -61,13 +81,31 @@ pub(crate) fn spawn_registry_reloader(
                     history.prune_query_cache();
                     let _traffic_guard = history.traffic_lifecycle_lock.lock().await;
                     let _logs_guard = agent_logs.lifecycle_lock.lock().await;
-                    match registry.reload_if_file_changed().await {
+                    let reload_result = registry.reload_if_file_changed().await;
+                    if reload_result.is_ok() && divergence.recover() {
+                        info!(
+                            registry_path = %registry.path().display(),
+                            "node registry on disk matches memory again; writes resumed",
+                        );
+                    }
+                    match reload_result {
                         Ok(true) => {
                             readiness.mark_registry_reload_healthy(true);
                             let enrolled_nodes = registry.count().await;
                             let node_ids = registry.node_ids().await;
                             let cleaned_history_nodes = history.forget_missing(&node_ids).await;
                             let cleaned_log_nodes = agent_logs.forget_missing(&node_ids).await;
+                            let removed_runtime_nodes =
+                                state.forget_unregistered_runtime_nodes(&node_ids).await;
+                            if removed_runtime_nodes > 0
+                                && let Err(error) = persist_current_snapshot(
+                                    &state.shared,
+                                    state.shared.config().snapshot_path.as_path(),
+                                )
+                                .await
+                            {
+                                error!(error = ?error, "failed to persist snapshot after registry reload removed nodes");
+                            }
                             if let Err(error) = history.reconcile_traffic(&node_ids).await {
                                 warn!(error = ?error, "failed to reconcile active traffic ledgers");
                             }
@@ -76,11 +114,22 @@ pub(crate) fn spawn_registry_reloader(
                                 enrolled_nodes,
                                 cleaned_history_nodes,
                                 cleaned_log_nodes,
+                                removed_runtime_nodes,
                                 "reloaded node registry",
                             );
                         }
                         Ok(false) => {
                             readiness.mark_registry_reload_healthy(true);
+                        }
+                        Err(error @ RegistryError::Diverged { .. }) => {
+                            readiness.mark_registry_reload_healthy(false);
+                            if divergence.enter() {
+                                error!(
+                                    error = %error,
+                                    registry_path = %registry.path().display(),
+                                    "node registry on disk diverged from memory; serving in-memory snapshot and refusing writes until a file at or above the in-memory version is restored, or restart the server to accept an intentionally restored older file",
+                                );
+                            }
                         }
                         Err(error) => {
                             readiness.mark_registry_reload_healthy(false);
@@ -245,13 +294,10 @@ mod tests {
         let (state, temp_dir) = background_state_fixture("registry-unchanged").await;
         state.readiness.mark_registry_reload_healthy(false);
         let shutdown = CancellationToken::new();
-        let handle = spawn_registry_reloader(
-            state.registry.clone(),
-            state.history.clone(),
-            state.agent_logs.clone(),
-            state.readiness.clone(),
-            shutdown.clone(),
-        );
+        let handle = spawn_registry_reloader(AppState {
+            shutdown: shutdown.clone(),
+            ..state.clone()
+        });
 
         timeout(Duration::from_secs(1), async {
             loop {
@@ -280,13 +326,10 @@ mod tests {
             .expect("registry path should be replaceable with a directory");
 
         let shutdown = CancellationToken::new();
-        let handle = spawn_registry_reloader(
-            state.registry.clone(),
-            state.history.clone(),
-            state.agent_logs.clone(),
-            state.readiness.clone(),
-            shutdown.clone(),
-        );
+        let handle = spawn_registry_reloader(AppState {
+            shutdown: shutdown.clone(),
+            ..state.clone()
+        });
 
         timeout(Duration::from_secs(1), async {
             loop {
@@ -298,6 +341,58 @@ mod tests {
         })
         .await
         .expect("registry reload failure should degrade readiness");
+
+        shutdown.cancel();
+        timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("registry reloader should stop promptly")
+            .expect("registry reloader should stop cleanly");
+        let _ = tokio::fs::remove_dir_all(temp_dir).await;
+    }
+
+    #[test]
+    fn divergence_latch_reports_only_state_transitions() {
+        let mut latch = super::DivergenceLatch::default();
+        assert!(!latch.recover(), "healthy ticks report nothing");
+        assert!(latch.enter(), "first divergence is reported");
+        assert!(!latch.enter(), "repeat ticks stay quiet");
+        assert!(latch.recover(), "recovery is reported once");
+        assert!(!latch.recover());
+        assert!(latch.enter(), "a new divergence is reported again");
+    }
+
+    #[tokio::test]
+    async fn registry_reloader_degrades_readiness_when_registry_file_is_deleted() {
+        use crate::registry::{IssueNodeRequest, issue_node};
+        let (state, temp_dir) = background_state_fixture("registry-deleted").await;
+        issue_node(
+            state.registry.path(),
+            IssueNodeRequest {
+                node_id: "hk-01".into(),
+                node_label: None,
+                tags: vec![],
+            },
+        )
+        .await
+        .expect("enroll node");
+        state.registry.reload().await.expect("load registry");
+        tokio::fs::remove_file(state.registry.path())
+            .await
+            .expect("registry file should be removable");
+
+        let shutdown = CancellationToken::new();
+        let handle = spawn_registry_reloader(AppState {
+            shutdown: shutdown.clone(),
+            ..state.clone()
+        });
+        timeout(Duration::from_secs(3), async {
+            while state.readiness.registry_reload_healthy() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("missing registry file should degrade readiness");
+        assert_eq!(state.registry.count().await, 1);
 
         shutdown.cancel();
         timeout(Duration::from_secs(1), handle)
@@ -333,6 +428,26 @@ mod tests {
                     }],
                 )
                 .await;
+            state
+                .shared
+                .register_node(
+                    nodelite_proto::NodeIdentity {
+                        node_id: id.into(),
+                        node_label: id.into(),
+                        hostname: format!("{id}.internal"),
+                        os: "Ubuntu".into(),
+                        kernel_version: None,
+                        cpu_model: None,
+                        cpu_cores: 1,
+                        agent_version: "0.1.0".into(),
+                        boot_time: None,
+                        tags: Vec::new(),
+                    },
+                    None,
+                    None,
+                    None,
+                )
+                .await;
         }
         state.registry.reload().await.expect("load registry");
         let external = NodeRegistry::load(state.registry.path())
@@ -343,20 +458,20 @@ mod tests {
             .await
             .expect("external deletion");
         let shutdown = CancellationToken::new();
-        let handle = spawn_registry_reloader(
-            state.registry.clone(),
-            state.history.clone(),
-            state.agent_logs.clone(),
-            state.readiness.clone(),
-            shutdown.clone(),
-        );
+        let handle = spawn_registry_reloader(AppState {
+            shutdown: shutdown.clone(),
+            ..state.clone()
+        });
         timeout(Duration::from_secs(5), async {
-            while !state.agent_logs.list("retired", 1).await.is_empty() {
+            while !state.agent_logs.list("retired", 1).await.is_empty()
+                || state.shared.get_status("retired").await.is_some()
+            {
                 tokio::task::yield_now().await;
             }
         })
         .await
-        .expect("reload prunes retired logs");
+        .expect("reload prunes retired logs and runtime node");
+        assert!(state.shared.get_status("live").await.is_some());
         assert_eq!(state.agent_logs.list("live", 1).await.len(), 1);
         shutdown.cancel();
         handle.await.expect("reloader stopped");
