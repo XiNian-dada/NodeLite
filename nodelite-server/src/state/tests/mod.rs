@@ -13,6 +13,7 @@ use nodelite_proto::{
 
 use super::{Registry, SessionControlHandle, SharedState};
 
+mod browser_broadcast_tests;
 mod overview_tests;
 mod registry_tests;
 mod string_pool_tests;

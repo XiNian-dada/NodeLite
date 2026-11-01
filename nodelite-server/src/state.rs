@@ -9,13 +9,13 @@
 //! 的延迟数据覆盖"新会话"的最新数据。
 
 mod alerts;
+mod browser_broadcast;
 mod overview;
 mod registry;
 mod session_control;
 mod sqlite_wal;
 mod view_cache;
 
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -23,12 +23,15 @@ use std::time::Duration;
 use axum::body::Bytes;
 use chrono::{DateTime, Utc};
 use nodelite_proto::{
-    BrowserMessage, GeoIpLocation, NodeIdentity, NodeListItem, NodeListItemView, NodeSnapshot,
-    NodeStatus, OverviewData, ServerConfig,
+    GeoIpLocation, NodeIdentity, NodeListItem, NodeListItemView, NodeSnapshot, NodeStatus,
+    OverviewData, ServerConfig,
 };
 use tokio::sync::{Mutex, broadcast, oneshot};
-use tokio_util::sync::CancellationToken;
 
+use self::browser_broadcast::{BROWSER_INCREMENTAL_CHANNEL_CAPACITY, BrowserResyncCache};
+pub(crate) use self::browser_broadcast::{
+    BrowserIncrementalUpdate, spawn_browser_incremental_task,
+};
 use self::registry::Registry;
 pub(crate) use self::session_control::{
     SessionCommand, SessionCommandError, SessionControlHandle, SessionRefreshPermit,
@@ -66,21 +69,9 @@ pub(crate) struct BrowserSnapshot {
     pub(crate) nodes: Vec<NodeListItem>,
 }
 
-/// 集中 diff 任务广播给浏览器会话的增量消息。
-#[derive(Clone)]
-pub(crate) struct BrowserIncrementalUpdate {
-    pub(crate) revision: u64,
-    pub(crate) message: Arc<BrowserMessage>,
-}
-
 /// 浏览器脏信号广播通道容量。200 节点 × 1Hz ≈ 200 信号/秒;某个会话若停顿超过
 /// 约 1.3 秒(256 / 200)就会 Lagged,届时会话回退到重发 InitialState 全量同步。
 const BROWSER_VIEW_DIRTY_CHANNEL_CAPACITY: usize = 256;
-
-/// 浏览器增量消息广播通道容量。集中 diff 任务每秒最多广播 ~400 条消息(200 节点
-/// 全变 × 每节点 1 upsert + 1 overview),慢连接若落后超过 256 条会收到 Lagged,
-/// 届时重发 InitialState 全量同步。
-const BROWSER_INCREMENTAL_CHANNEL_CAPACITY: usize = 256;
 
 /// 共享状态的对外句柄,可以低成本地克隆给每个异步任务。
 #[derive(Clone)]
@@ -118,6 +109,7 @@ pub struct SharedState {
     browser_view_dirty_tx: broadcast::Sender<BrowserViewDirty>,
     /// 集中 diff 任务计算出的增量消息,广播给所有浏览器会话直接转发(零锁、零 diff)。
     browser_incremental_tx: broadcast::Sender<BrowserIncrementalUpdate>,
+    browser_resync: Arc<BrowserResyncCache>,
     #[cfg(test)]
     metrics_cache_builds: Arc<AtomicU64>,
 }
@@ -156,6 +148,7 @@ impl SharedState {
             alert_delivery: AlertDeliveryMetrics::default(),
             browser_view_dirty_tx: broadcast::channel(BROWSER_VIEW_DIRTY_CHANNEL_CAPACITY).0,
             browser_incremental_tx: broadcast::channel(BROWSER_INCREMENTAL_CHANNEL_CAPACITY).0,
+            browser_resync: Arc::default(),
             #[cfg(test)]
             metrics_cache_builds: Arc::new(AtomicU64::new(0)),
         }
@@ -665,122 +658,6 @@ impl SharedState {
     fn metrics_cache_build_count(&self) -> u64 {
         self.metrics_cache_builds.load(Ordering::Relaxed)
     }
-}
-
-/// 启动集中 diff 后台任务,订阅脏信号、去抖并广播增量消息给所有浏览器会话。
-/// 返回 JoinHandle 供调用者纳入 shutdown 生命周期。
-pub(crate) fn spawn_browser_incremental_task(
-    shared: SharedState,
-    shutdown: CancellationToken,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        run_browser_incremental_task(shared, shutdown).await;
-    })
-}
-
-async fn run_browser_incremental_task(shared: SharedState, shutdown: CancellationToken) {
-    use tokio::time::{MissedTickBehavior, interval};
-
-    let mut updates = shared.subscribe_browser_updates();
-    let mut debounce = interval(Duration::from_secs(1));
-    debounce.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    let mut dirty = false;
-    let mut last_nodes: HashMap<String, NodeListItem> = HashMap::new();
-
-    loop {
-        tokio::select! {
-            _ = shutdown.cancelled() => return,
-            recv = updates.recv() => {
-                match recv {
-                    Ok(_) => dirty = true,
-                    Err(broadcast::error::RecvError::Lagged(_)) => {
-                        // 落后丢信号:强制下次 tick 重算并广播完整增量
-                        dirty = true;
-                    }
-                    Err(broadcast::error::RecvError::Closed) => return,
-                }
-            }
-            _ = debounce.tick() => {
-                if dirty {
-                    dirty = false;
-                    if let Err(error) = broadcast_incremental_updates(&shared, &mut last_nodes).await {
-                        tracing::warn!(error = %error, "browser incremental task failed to broadcast updates");
-                    }
-                }
-            }
-        }
-    }
-}
-
-async fn broadcast_incremental_updates(
-    shared: &SharedState,
-    last_nodes: &mut HashMap<String, NodeListItem>,
-) -> anyhow::Result<()> {
-    let snapshot = shared.browser_snapshot().await;
-    let current = snapshot.nodes;
-    let generated_at = snapshot.generated_at;
-    let revision = snapshot.revision;
-
-    // Diff: 与上次快照逐行对比,找出变更/新增/移除的节点
-    let mut seen: HashSet<&str> = HashSet::with_capacity(current.len());
-    let mut upserts = Vec::new();
-    for node in &current {
-        seen.insert(node.identity.node_id.as_str());
-        if last_nodes.get(&node.identity.node_id) != Some(node) {
-            upserts.push(node.clone());
-        }
-    }
-    let removed: Vec<String> = last_nodes
-        .keys()
-        .filter(|id: &&String| !seen.contains(id.as_str()))
-        .cloned()
-        .collect();
-
-    // 广播增量消息
-    for node in upserts {
-        let msg = Arc::new(BrowserMessage::NodeUpsert {
-            generated_at,
-            node: Box::new(node),
-        });
-        let _ = shared
-            .browser_incremental_tx
-            .send(BrowserIncrementalUpdate {
-                revision,
-                message: msg,
-            });
-    }
-    for node_id in removed {
-        let msg = Arc::new(BrowserMessage::NodeRemoved {
-            generated_at,
-            node_id,
-        });
-        let _ = shared
-            .browser_incremental_tx
-            .send(BrowserIncrementalUpdate {
-                revision,
-                message: msg,
-            });
-    }
-
-    // 更新快照
-    *last_nodes = current
-        .into_iter()
-        .map(|node| (node.identity.node_id.clone(), node))
-        .collect();
-
-    // 广播概览更新
-    let msg = Arc::new(BrowserMessage::OverviewUpdate {
-        generated_at,
-        overview: snapshot.overview,
-    });
-    let _ = shared
-        .browser_incremental_tx
-        .send(BrowserIncrementalUpdate {
-            revision,
-            message: msg,
-        });
-
-    Ok(())
 }
 
 #[cfg(test)]

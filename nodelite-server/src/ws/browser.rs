@@ -7,7 +7,7 @@
 //!   2. 升级为 WebSocket;
 //!   3. 立即下发全量 `InitialState`;
 //!   4. 订阅集中 diff 任务广播的增量消息(`Arc<BrowserMessage>`),直接转发
-//!      (零锁、零 diff);落后时(`Lagged`)重发全量 `InitialState` 强制重同步;
+//!      (零锁、零 diff);落后时(`Lagged`)重发共享的全量 `InitialState` 强制重同步;
 //!   5. 处理客户端应用层 `Ping`(回 `Pong`);
 //!   6. 连接关闭时 RAII permit 自动归还配额、广播订阅自动退订。
 //!
@@ -15,16 +15,17 @@
 //! "重算 + diff" 推导出变化行并广播给所有会话 —— 既无需注册表暴露细粒度变更钩子,
 //! 也天然覆盖节点移除(diff 发现某 id 消失即发 `NodeRemoved`)。
 
+use std::fmt::Display;
 use std::net::SocketAddr;
 
 use anyhow::anyhow;
 use axum::Extension;
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{Message, Utf8Bytes, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use futures::StreamExt;
 use futures::stream::SplitSink;
+use futures::{FutureExt, Sink, Stream, StreamExt};
 use nodelite_proto::BrowserMessage;
 use tokio::sync::broadcast;
 use tracing::warn;
@@ -100,21 +101,18 @@ async fn run_browser_session(shared: SharedState, socket: WebSocket) -> anyhow::
         tokio::select! {
             biased;
             incoming = receiver.next() => {
-                match incoming {
-                    None | Some(Err(_)) => return Ok(()), // 客户端关闭或传输错误 → 结束会话
-                    Some(Ok(message)) => {
-                        if handle_client_message(&mut sender, message).await? {
-                            return Ok(());
-                        }
-                    }
+                if handle_incoming(&mut sender, incoming).await? {
+                    return Ok(());
                 }
             }
             incremental = incremental_rx.recv() => {
                 match incremental {
                     Ok(update) => {
                         // 集中任务已计算好的增量消息,直接转发(零锁、零 diff)
-                        if should_forward_incremental(update.revision, baseline_revision) {
-                            send_browser_message(&mut sender, &update.message).await?;
+                        if should_forward_incremental(update.revision, baseline_revision)
+                            && forward_frames(&mut sender, &mut receiver, &update.frames).await?
+                        {
+                            return Ok(());
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
@@ -125,6 +123,55 @@ async fn run_browser_session(shared: SharedState, socket: WebSocket) -> anyhow::
                 }
             }
         }
+    }
+}
+
+/// 大批次转发期间不回到主循环,每隔这么多帧处理一次入站消息并让出调度,
+/// 否则千节点批次会让 Ping 和关闭一直等到整批发完。
+const FRAMES_BETWEEN_INCOMING_CHECKS: usize = 64;
+
+/// 逐帧转发一批增量。返回 `true` 表示应结束会话。
+async fn forward_frames<S, R, E>(
+    sender: &mut S,
+    receiver: &mut R,
+    frames: &[Utf8Bytes],
+) -> anyhow::Result<bool>
+where
+    S: Sink<Message> + Unpin,
+    S::Error: Display,
+    R: Stream<Item = Result<Message, E>> + Unpin,
+{
+    for (index, frame) in frames.iter().enumerate() {
+        if index > 0 && index % FRAMES_BETWEEN_INCOMING_CHECKS == 0 {
+            tokio::task::yield_now().await;
+            if let Some(incoming) = receiver.next().now_or_never()
+                && handle_incoming(sender, incoming).await?
+            {
+                return Ok(true);
+            }
+        }
+        send_message(
+            sender,
+            Message::Text(frame.clone()),
+            "failed to send browser message",
+        )
+        .await?;
+    }
+    Ok(false)
+}
+
+/// 处理一次入站结果。流结束或传输错误同样结束会话。返回 `true` 表示应结束会话。
+async fn handle_incoming<S, E>(
+    sender: &mut S,
+    incoming: Option<Result<Message, E>>,
+) -> anyhow::Result<bool>
+where
+    S: Sink<Message> + Unpin,
+    S::Error: Display,
+{
+    match incoming {
+        None | Some(Err(_)) => Ok(true),
+        Some(Ok(message)) => handle_client_message(sender, message).await,
     }
 }
 
@@ -157,7 +204,11 @@ fn classify_client_message(message: &Message) -> ClientAction {
 }
 
 /// 处理客户端发来的消息。返回 `true` 表示应结束会话。
-async fn handle_client_message(sender: &mut BrowserSink, message: Message) -> anyhow::Result<bool> {
+async fn handle_client_message<S>(sender: &mut S, message: Message) -> anyhow::Result<bool>
+where
+    S: Sink<Message> + Unpin,
+    S::Error: Display,
+{
     match classify_client_message(&message) {
         ClientAction::ReplyPong => {
             send_browser_message(sender, &BrowserMessage::Pong).await?;
@@ -170,24 +221,25 @@ async fn handle_client_message(sender: &mut BrowserSink, message: Message) -> an
 
 /// 发送全量 `InitialState`。连接建立或 Lagged 重同步时调用。
 async fn send_initial_state(shared: &SharedState, sender: &mut BrowserSink) -> anyhow::Result<u64> {
-    let snapshot = shared.browser_snapshot().await;
-    let message = BrowserMessage::InitialState {
-        generated_at: snapshot.generated_at,
-        overview: snapshot.overview,
-        nodes: snapshot.nodes,
-    };
-    send_browser_message(sender, &message).await?;
-    Ok(snapshot.revision)
+    let (revision, frame) = shared.browser_initial_state_frame().await?;
+    send_message(
+        sender,
+        Message::Text(frame),
+        "failed to send browser message",
+    )
+    .await?;
+    Ok(revision)
 }
 
 fn should_forward_incremental(update_revision: u64, baseline_revision: u64) -> bool {
     update_revision > baseline_revision
 }
 
-async fn send_browser_message(
-    sender: &mut BrowserSink,
-    message: &BrowserMessage,
-) -> anyhow::Result<()> {
+async fn send_browser_message<S>(sender: &mut S, message: &BrowserMessage) -> anyhow::Result<()>
+where
+    S: Sink<Message> + Unpin,
+    S::Error: Display,
+{
     let payload = serde_json::to_string(message)
         .map_err(|error| anyhow!("failed to serialize browser message: {error}"))?;
     send_message(
@@ -200,7 +252,6 @@ async fn send_browser_message(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
     use std::convert::Infallible;
     use std::net::IpAddr;
     use std::pin::Pin;
@@ -210,7 +261,7 @@ mod tests {
     use std::time::Duration;
 
     use futures::Sink;
-    use nodelite_proto::{BrowserMessage, NodeListIdentity, NodeListItem, WsConfig};
+    use nodelite_proto::{BrowserMessage, WsConfig};
 
     use super::*;
     use crate::admission::WsAdmissionController;
@@ -265,148 +316,57 @@ mod tests {
         })
     }
 
-    /// 一次重算相对上次发送快照的增量:新增/变更的行 + 消失的行 id。
-    struct NodeListDiff<'a> {
-        upserts: Vec<&'a NodeListItem>,
-        removed: Vec<String>,
-    }
-
-    /// 与上次发送的快照逐行对比:内容不同(或新出现)的行进 `upserts`,
-    /// 上次有、这次没有的 id 进 `removed`。行内容未变时不产生任何输出。
-    fn diff_node_lists<'a>(
-        last_nodes: &HashMap<String, NodeListItem>,
-        current: &'a [NodeListItem],
-    ) -> NodeListDiff<'a> {
-        let mut seen: HashSet<&str> = HashSet::with_capacity(current.len());
-        let mut upserts = Vec::new();
-        for node in current {
-            seen.insert(node.identity.node_id.as_str());
-            if last_nodes.get(&node.identity.node_id) != Some(node) {
-                upserts.push(node);
-            }
-        }
-        let removed = last_nodes
-            .keys()
-            .filter(|id| !seen.contains(id.as_str()))
-            .cloned()
-            .collect();
-        NodeListDiff { upserts, removed }
-    }
-
-    fn index_by_node_id(nodes: Vec<NodeListItem>) -> HashMap<String, NodeListItem> {
-        nodes
-            .into_iter()
-            .map(|node| (node.identity.node_id.clone(), node))
+    fn numbered_frames(count: usize) -> Vec<Utf8Bytes> {
+        (0..count)
+            .map(|index| Utf8Bytes::from(index.to_string()))
             .collect()
     }
 
-    fn list_item(node_id: &str) -> NodeListItem {
-        NodeListItem {
-            identity: NodeListIdentity {
-                node_id: node_id.to_string(),
-                node_label: format!("{node_id} label"),
-                hostname: format!("{node_id}.internal"),
-                tags: Vec::new(),
-            },
-            geoip_country: None,
-            geoip_city: None,
-            geoip_latitude: None,
-            geoip_longitude: None,
-            location_override_country: None,
-            location_override_city: None,
-            location_override_latitude: None,
-            location_override_longitude: None,
-            snapshot: None,
-            latency_ms: None,
-            online: true,
+    fn drain_sent(sent: &mut futures::channel::mpsc::UnboundedReceiver<Message>) -> Vec<Message> {
+        let mut messages = Vec::new();
+        while let Ok(message) = sent.try_recv() {
+            messages.push(message);
         }
+        messages
     }
 
-    fn upsert_ids<'a>(diff: &NodeListDiff<'a>) -> Vec<&'a str> {
-        diff.upserts
-            .iter()
-            .map(|node| node.identity.node_id.as_str())
-            .collect()
+    #[tokio::test]
+    async fn forwarding_a_large_batch_answers_ping_between_frames() {
+        let (mut sink, mut sent) = futures::channel::mpsc::unbounded::<Message>();
+        let ping = serde_json::to_string(&BrowserMessage::Ping).expect("ping should serialize");
+        let mut incoming = futures::stream::iter([Ok::<_, Infallible>(Message::Text(ping.into()))])
+            .chain(futures::stream::pending());
+        let frames = numbered_frames(FRAMES_BETWEEN_INCOMING_CHECKS + 1);
+
+        let ended = forward_frames(&mut sink, &mut incoming, &frames)
+            .await
+            .expect("forward batch");
+
+        assert!(!ended);
+        let messages = drain_sent(&mut sent);
+        assert_eq!(messages.len(), frames.len() + 1, "all frames plus one pong");
+        let Message::Text(pong) = &messages[FRAMES_BETWEEN_INCOMING_CHECKS] else {
+            panic!("expected a text pong");
+        };
+        assert!(matches!(
+            serde_json::from_str::<BrowserMessage>(pong.as_str()),
+            Ok(BrowserMessage::Pong)
+        ));
     }
 
-    #[test]
-    fn diff_reports_new_node_as_upsert() {
-        let last = HashMap::new();
-        let current = vec![list_item("hk-01")];
+    #[tokio::test]
+    async fn forwarding_a_large_batch_stops_when_the_client_closes() {
+        let (mut sink, mut sent) = futures::channel::mpsc::unbounded::<Message>();
+        let mut incoming = futures::stream::iter([Ok::<_, Infallible>(Message::Close(None))])
+            .chain(futures::stream::pending());
+        let frames = numbered_frames(FRAMES_BETWEEN_INCOMING_CHECKS * 2);
 
-        let diff = diff_node_lists(&last, &current);
+        let ended = forward_frames(&mut sink, &mut incoming, &frames)
+            .await
+            .expect("forward batch");
 
-        assert_eq!(upsert_ids(&diff), vec!["hk-01"]);
-        assert!(diff.removed.is_empty());
-    }
-
-    #[test]
-    fn diff_reports_changed_node_as_upsert() {
-        let last = index_by_node_id(vec![list_item("hk-01")]);
-        let mut changed = list_item("hk-01");
-        changed.latency_ms = Some(42);
-        let current = vec![changed];
-
-        let diff = diff_node_lists(&last, &current);
-
-        assert_eq!(upsert_ids(&diff), vec!["hk-01"]);
-        assert!(diff.removed.is_empty());
-    }
-
-    #[test]
-    fn diff_skips_unchanged_node() {
-        let last = index_by_node_id(vec![list_item("hk-01")]);
-        let current = vec![list_item("hk-01")];
-
-        let diff = diff_node_lists(&last, &current);
-
-        assert!(diff.upserts.is_empty());
-        assert!(diff.removed.is_empty());
-    }
-
-    #[test]
-    fn diff_reports_missing_node_as_removed() {
-        let last = index_by_node_id(vec![list_item("hk-01"), list_item("jp-01")]);
-        let current = vec![list_item("hk-01")];
-
-        let diff = diff_node_lists(&last, &current);
-
-        assert!(diff.upserts.is_empty());
-        assert_eq!(diff.removed, vec!["jp-01".to_string()]);
-    }
-
-    #[test]
-    fn diff_handles_mixed_changes_in_one_pass() {
-        let last = index_by_node_id(vec![
-            list_item("unchanged"),
-            list_item("changed"),
-            list_item("removed"),
-        ]);
-        let mut changed = list_item("changed");
-        changed.online = false;
-        let current = vec![list_item("unchanged"), changed, list_item("added")];
-
-        let diff = diff_node_lists(&last, &current);
-
-        assert_eq!(upsert_ids(&diff), vec!["changed", "added"]);
-        assert_eq!(diff.removed, vec!["removed".to_string()]);
-    }
-
-    #[test]
-    fn diff_of_two_empty_lists_is_empty() {
-        let diff = diff_node_lists(&HashMap::new(), &[]);
-
-        assert!(diff.upserts.is_empty());
-        assert!(diff.removed.is_empty());
-    }
-
-    #[test]
-    fn index_by_node_id_keys_each_item_by_its_id() {
-        let indexed = index_by_node_id(vec![list_item("hk-01"), list_item("jp-01")]);
-
-        assert_eq!(indexed.len(), 2);
-        assert_eq!(indexed["hk-01"].identity.node_id, "hk-01");
-        assert_eq!(indexed["jp-01"].identity.node_id, "jp-01");
+        assert!(ended);
+        assert_eq!(drain_sent(&mut sent).len(), FRAMES_BETWEEN_INCOMING_CHECKS);
     }
 
     #[test]
