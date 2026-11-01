@@ -14,8 +14,9 @@ on:
         type: string
 
 permissions:
-  # 发布 Release 需要写权限。
-  contents: write
+  # 默认只读:构建/校验 job 会执行依赖构建脚本与 pnpm install,不应持有写权限。
+  # 只有最终的发布 job 单独申请 contents: write。
+  contents: read
 
 env:
   # 兼容"tag 推送触发"与"手动指定 tag"两种入口。
@@ -33,6 +34,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
 
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -149,6 +151,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
 
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -282,6 +285,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
 
       - name: Set up Rust
         run: |
@@ -329,6 +333,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
 
       - name: Set up Rust
         run: |
@@ -382,6 +387,9 @@ jobs:
       - build-agent-macos
       - sbom
     runs-on: ubuntu-latest
+    permissions:
+      # 仅此 job 需要创建 Release 并上传资产。
+      contents: write
 
     steps:
       - name: Download build artifacts
