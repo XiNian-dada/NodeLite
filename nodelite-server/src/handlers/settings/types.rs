@@ -171,6 +171,9 @@ pub(crate) struct EnableTwoFactorRequest {
     pub(crate) current_password: String,
     pub(crate) secret: String,
     pub(crate) code: String,
+    /// Code from the factor already enrolled; replacing it needs the current factor too.
+    #[serde(default)]
+    pub(crate) current_code: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -49,6 +49,21 @@ impl TwoFactorSessions {
 }
 
 #[cfg(test)]
+impl TwoFactorSessions {
+    /// Simulates a session whose login-time confirmation window has passed.
+    pub(crate) fn expire_sensitive_confirmation_for_test(&self, token: &str) {
+        let mut store = lock_mutex(&self.inner);
+        let past = Some(Instant::now() - Duration::from_secs(1));
+        if let Some(entry) = store.authenticated.get_mut(token) {
+            entry.confirmed_until = past;
+        }
+        if let Some(entry) = store.basic_auth_sessions.get_mut(token) {
+            entry.confirmed_until = past;
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
