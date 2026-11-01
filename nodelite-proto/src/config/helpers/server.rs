@@ -88,11 +88,18 @@ pub(in crate::config) fn parse_trusted_proxies(
     normalize_string_list(values)
         .into_iter()
         .map(|value| {
-            value.parse::<IpNet>().map_err(|_| {
+            let network = value.parse::<IpNet>().map_err(|_| {
                 ConfigError::new(
                     "invalid server.trusted_proxies entry: expected a valid IP network",
                 )
-            })
+            })?;
+            // /0 会信任任意直连 peer，等于让客户端自带 X-Real-IP 绕过限流与封禁。
+            if network.prefix_len() == 0 {
+                return Err(ConfigError::new(format!(
+                    "server.trusted_proxies entry {network} must not use prefix length 0; list the proxy networks explicitly"
+                )));
+            }
+            Ok(network)
         })
         .collect()
 }
@@ -191,6 +198,13 @@ mod tests {
                     .expect("cidr should parse"),
             ]
         );
+
+        for catch_all in ["0.0.0.0/0", "::/0"] {
+            let error = parse_trusted_proxies(vec![catch_all.to_string()])
+                .expect_err("catch-all proxy networks should fail");
+            assert!(error.to_string().contains("server.trusted_proxies"));
+            assert!(error.to_string().contains("prefix length 0"));
+        }
 
         let error = parse_trusted_proxies(vec!["bad-cidr".to_string()])
             .expect_err("invalid proxy cidrs should fail");
