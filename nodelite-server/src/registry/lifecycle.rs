@@ -15,7 +15,7 @@ use tokio::sync::{RwLock, Semaphore};
 use crate::sanitize::sanitize_location_override;
 
 use super::storage::{
-    load_registry_state, load_registry_state_with_fingerprint, mutate_registry_file,
+    RegistryGuard, load_registry_state, load_registry_state_with_fingerprint, mutate_registry_file,
     registry_file_fingerprint,
 };
 use super::token::{constant_time_eq, prune_expired_install_sessions};
@@ -101,39 +101,21 @@ impl NodeRegistry {
         &self,
         fingerprint: super::storage::RegistryFileFingerprint,
     ) -> RegistryResult<bool> {
-        use super::storage::RegistryFileFingerprint;
-
-        let (memory_version, memory_has_nodes) = {
-            let state = self.state.read().await;
-            (state.version, !state.entries.is_empty())
-        };
-        if fingerprint == RegistryFileFingerprint::Missing
-            && (memory_version > 0 || memory_has_nodes)
-        {
-            return Err(RegistryError::diverged(
-                self.path.as_path(),
-                None,
-                memory_version,
-            ));
-        }
-        let next_state = load_registry_state(self.path.as_path(), memory_version).await?;
-        if next_state.version < memory_version {
-            // 本进程的写入可能在读取后提交并先行应用；文件指纹变化说明这是竞态而非回退，留给下一轮。
-            if registry_file_fingerprint(self.path.as_path()).await? != fingerprint {
-                return Ok(false);
-            }
-            return Err(RegistryError::diverged(
-                self.path.as_path(),
-                Some(next_state.version),
-                memory_version,
-            ));
-        }
+        let guard = self.write_guard().await;
+        let next_state = load_registry_state(self.path.as_path(), guard).await?;
         Ok(self.apply_loaded_state(next_state, Some(fingerprint)).await)
     }
 
-    /// 内存中已应用的最高磁盘提交版本，写入以它为下限防止覆盖回退文件。
-    pub(super) async fn committed_version(&self) -> u64 {
-        self.state.read().await.version
+    /// 内存已提交状态对应的磁盘前提；内存有节点时即使版本为 0 也要求文件存在。
+    pub(super) async fn write_guard(&self) -> RegistryGuard {
+        let state = self.state.read().await;
+        if state.version == 0 && state.entries.is_empty() {
+            RegistryGuard::AllowCreate
+        } else {
+            RegistryGuard::RequireExisting {
+                min_version: state.version,
+            }
+        }
     }
 
     /// 已登记的节点数量。
@@ -163,8 +145,8 @@ impl NodeRegistry {
 
         let node_id = node_id.to_string();
         let path = Arc::clone(&self.path);
-        let min_version = self.committed_version().await;
-        let (removed, file) = mutate_registry_file(path.as_ref(), min_version, move |file| {
+        let guard = self.write_guard().await;
+        let (removed, file) = mutate_registry_file(path.as_ref(), guard, move |file| {
             prune_expired_install_sessions(file, Utc::now());
             let Some(index) = file.nodes.iter().position(|node| node.node_id == node_id) else {
                 return Err(RegistryError::NodeNotFound(node_id.clone()));
@@ -213,8 +195,8 @@ impl NodeRegistry {
             .map_err(RegistryError::validation)?;
         let node_id = node_id.to_string();
         let path = Arc::clone(&self.path);
-        let min_version = self.committed_version().await;
-        let (node, file) = mutate_registry_file(path.as_ref(), min_version, move |file| {
+        let guard = self.write_guard().await;
+        let (node, file) = mutate_registry_file(path.as_ref(), guard, move |file| {
             let Some(node) = file.nodes.iter_mut().find(|node| node.node_id == node_id) else {
                 return Err(RegistryError::NodeNotFound(node_id.clone()));
             };
@@ -273,8 +255,8 @@ impl NodeRegistry {
         validate_non_empty("install token", token).map_err(RegistryError::validation)?;
 
         let token = token.to_string();
-        let min_version = self.committed_version().await;
-        let (result, file) = mutate_registry_file(self.path.as_path(), min_version, move |file| {
+        let guard = self.write_guard().await;
+        let (result, file) = mutate_registry_file(self.path.as_path(), guard, move |file| {
             let pruned = prune_expired_install_sessions(file, Utc::now());
             let Some(index) = file
                 .install_sessions

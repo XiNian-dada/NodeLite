@@ -7,7 +7,7 @@ use std::task::Poll;
 
 use super::*;
 use crate::registry::storage::{
-    load_registry_file_sync, migrate_registry_file, mutate_registry_file,
+    RegistryGuard, load_registry_file_sync, migrate_registry_file, mutate_registry_file,
 };
 
 struct Fixture {
@@ -183,7 +183,7 @@ async fn stale_reload_preserves_revocation_and_observes_the_next_commit() {
         crate::registry::storage::load_registry_state_with_fingerprint(&fixture.path)
             .await
             .expect("prepare reload snapshot");
-    let ((), removed) = mutate_registry_file(&fixture.path, 0, |file| {
+    let ((), removed) = mutate_registry_file(&fixture.path, RegistryGuard::AllowCreate, |file| {
         file.nodes.clear();
         file.install_sessions.clear();
         Ok(((), true))
@@ -275,7 +275,7 @@ async fn registry_version_exhaustion_does_not_publish_a_mutation() {
     let payload = serde_json::to_vec(&file).expect("serialize fixture");
     std::fs::write(&fixture.path, &payload).expect("write boundary fixture");
 
-    let result = mutate_registry_file(&fixture.path, 0, |file| {
+    let result = mutate_registry_file(&fixture.path, RegistryGuard::AllowCreate, |file| {
         file.nodes.clear();
         file.install_sessions.clear();
         Ok(((), true))
@@ -301,7 +301,7 @@ async fn delayed_legacy_migration_preserves_later_removal() {
         .remove_node("fixture-node")
         .await
         .expect("remove legacy node");
-    let migrated = migrate_registry_file(&fixture.path, 0)
+    let migrated = migrate_registry_file(&fixture.path, RegistryGuard::AllowCreate)
         .await
         .expect("finish delayed migration");
     assert!(migrated.version > legacy.version);
@@ -325,7 +325,7 @@ async fn migration_retry_cannot_restore_a_concurrently_removed_node() {
     let first_attempt = Arc::new(AtomicBool::new(true));
     let path = fixture.path.clone();
     let migration = tokio::spawn(async move {
-        mutate_registry_file(&path, 0, move |file| {
+        mutate_registry_file(&path, RegistryGuard::AllowCreate, move |file| {
             if first_attempt.swap(false, Ordering::SeqCst) {
                 ready.notify_one();
                 release.wait();
@@ -365,7 +365,7 @@ async fn delayed_legacy_migration_preserves_later_credentials() {
     let rotated = issue_node(&fixture.path, request())
         .await
         .expect("rotate legacy credential");
-    let migrated = migrate_registry_file(&fixture.path, 0)
+    let migrated = migrate_registry_file(&fixture.path, RegistryGuard::AllowCreate)
         .await
         .expect("finish delayed migration");
     assert!(migrated.version > legacy.version);

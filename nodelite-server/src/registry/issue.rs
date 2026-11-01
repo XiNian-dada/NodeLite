@@ -10,7 +10,7 @@ use nodelite_proto::{
     validate_bounded_text, validate_identifier, validate_tag_list,
 };
 
-use super::storage::mutate_registry_file;
+use super::storage::{RegistryGuard, mutate_registry_file};
 use super::token::{
     generate_token, hash_token, mint_install_session, prune_expired_install_sessions,
 };
@@ -24,20 +24,20 @@ use super::{
 ///
 /// 同时为该节点签发一个一次性安装令牌。这是 CLI 命令的核心入口。
 pub async fn issue_node(path: &Path, request: IssueNodeRequest) -> RegistryResult<IssueNodeResult> {
-    issue_node_at_least(path, 0, request).await
+    issue_node_guarded(path, RegistryGuard::AllowCreate, request).await
 }
 
 impl super::NodeRegistry {
     /// 运行中的服务端签发入口：磁盘缺失或回退时拒绝，避免写出只含新节点的注册表。
     pub async fn issue_node(&self, request: IssueNodeRequest) -> RegistryResult<IssueNodeResult> {
-        let min_version = self.committed_version().await;
-        issue_node_at_least(self.path(), min_version, request).await
+        let guard = self.write_guard().await;
+        issue_node_guarded(self.path(), guard, request).await
     }
 }
 
-async fn issue_node_at_least(
+async fn issue_node_guarded(
     path: &Path,
-    min_version: u64,
+    guard: RegistryGuard,
     request: IssueNodeRequest,
 ) -> RegistryResult<IssueNodeResult> {
     validate_identifier("node_id", &request.node_id).map_err(RegistryError::validation)?;
@@ -50,7 +50,7 @@ async fn issue_node_at_least(
         .map_err(RegistryError::validation)?;
 
     let request = request.clone();
-    let (result, _) = mutate_registry_file(path, min_version, move |file| {
+    let (result, _) = mutate_registry_file(path, guard, move |file| {
         let now = Utc::now();
         prune_expired_install_sessions(file, now);
         let mut rotated_token = false;

@@ -303,3 +303,91 @@ fn rolled_back_file_with_expired_sessions_is_not_rewritten() {
         cleanup(&path);
     });
 }
+
+fn edit_disk(path: &Path, edit: impl FnOnce(&mut serde_json::Value)) {
+    let content = std::fs::read_to_string(path).expect("registry file should be readable");
+    let mut value: serde_json::Value =
+        serde_json::from_str(&content).expect("registry file should parse");
+    edit(&mut value);
+    std::fs::write(path, value.to_string()).expect("registry file should be writable");
+}
+
+#[test]
+fn versionless_populated_registry_refuses_recreating_a_deleted_file() {
+    let runtime = Runtime::new().expect("runtime should build");
+    runtime.block_on(async {
+        let path = temp_registry_path("versionless");
+        issue_node(&path, request("hk-01"))
+            .await
+            .expect("issue hk-01");
+        edit_disk(&path, |value| {
+            value
+                .as_object_mut()
+                .expect("registry file should be an object")
+                .remove("version");
+        });
+        let registry = NodeRegistry::load(&path)
+            .await
+            .expect("registry should load");
+        assert_eq!(disk_version(&path), 0);
+
+        std::fs::remove_file(&path).expect("registry file should be removable");
+
+        let reloaded = registry.reload().await;
+        assert!(
+            matches!(reloaded, Err(RegistryError::Diverged { .. })),
+            "{reloaded:?}"
+        );
+        let issued = registry.issue_node(request("hk-02")).await;
+        assert!(
+            matches!(issued, Err(RegistryError::Diverged { .. })),
+            "{issued:?}"
+        );
+        assert!(!path.exists(), "refused write must not recreate the file");
+        assert_eq!(registry.count().await, 1);
+        cleanup(&path);
+    });
+}
+
+#[test]
+fn rolled_back_file_needing_migration_is_not_rewritten_or_accepted() {
+    let runtime = Runtime::new().expect("runtime should build");
+    runtime.block_on(async {
+        let path = temp_registry_path("migrate-rollback");
+        issue_node(&path, request("hk-01"))
+            .await
+            .expect("issue hk-01");
+        let backup = std::fs::read(&path).expect("backup should be readable");
+        issue_node(&path, request("hk-02"))
+            .await
+            .expect("issue hk-02");
+        let registry = NodeRegistry::load(&path)
+            .await
+            .expect("registry should load");
+        let memory_version = disk_version(&path);
+
+        // 备份只落后一个版本：若迁移先写，版本恰好追平内存，旧内容就会被接受。
+        std::fs::write(&path, &backup).expect("old backup should overwrite registry");
+        edit_disk(&path, |value| {
+            value["nodes"][0]["token"] = "legacy-plaintext-token-0123456789abcdef".into();
+            value["nodes"][0]["token_hash"] = "".into();
+        });
+        assert_eq!(disk_version(&path) + 1, memory_version);
+        let rolled_back = std::fs::read(&path).expect("file should be readable");
+
+        for _ in 0..2 {
+            let result = registry.reload().await;
+            assert!(
+                matches!(result, Err(RegistryError::Diverged { .. })),
+                "{result:?}"
+            );
+        }
+        assert_eq!(
+            std::fs::read(&path).expect("file should be readable"),
+            rolled_back,
+            "reload must not rewrite a rolled back file",
+        );
+        assert_eq!(registry.count().await, 2);
+        cleanup(&path);
+    });
+}
