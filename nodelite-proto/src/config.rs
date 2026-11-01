@@ -55,7 +55,7 @@ pub const DEFAULT_STALE_AFTER_SECS: u64 = 20;
 /// Server 默认 ping 间隔(秒)。
 pub const DEFAULT_PING_INTERVAL_SECS: u64 = 10;
 /// WebSocket 单帧最大字节数,用于抑制恶意大包。
-pub const DEFAULT_MAX_MESSAGE_BYTES: usize = 64 * 1024;
+pub const DEFAULT_MAX_MESSAGE_BYTES: usize = crate::limits::MAX_METRICS_FRAME_BYTES;
 /// 前端默认刷新间隔(秒)。
 pub const DEFAULT_REFRESH_INTERVAL_SECS: u64 = 5;
 /// Agent 默认上报间隔(秒)。
@@ -103,7 +103,7 @@ pub const DEFAULT_MAX_OUTSTANDING_PINGS: usize = 32;
 /// 不安全传输警告间隔(秒)。
 pub const DEFAULT_INSECURE_TRANSPORT_WARN_INTERVAL_SECS: u64 = 900;
 /// 最大磁盘数量限制。
-pub const DEFAULT_MAX_SANITIZED_DISKS: usize = 64;
+pub const DEFAULT_MAX_SANITIZED_DISKS: usize = crate::limits::MAX_SNAPSHOT_DISKS;
 /// 最大字符串字节数限制。
 pub const DEFAULT_MAX_SANITIZED_STRING_BYTES: usize = 256;
 /// 指标异常会话限制。
