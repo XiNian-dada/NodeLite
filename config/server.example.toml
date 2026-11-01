@@ -10,6 +10,7 @@ public_base_url = "https://monitor.example.com"
 insecure_allow_http = false
 # 远端反向代理/WAF 的可信 CIDR。只有当直连 peer 命中这里(或是 loopback)
 # 时,NodeLite 才会解析 X-Forwarded-For / X-Real-IP。留空表示仅信任本机反代。
+# 不接受前缀长度为 0 的网段(如 0.0.0.0/0、::/0)。
 trusted_proxies = []
 # 节点凭证文件;Server 与 CLI 都会读写它。
 node_registry_path = "./config/server.json"
