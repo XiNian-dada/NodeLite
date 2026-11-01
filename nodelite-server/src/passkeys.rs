@@ -8,11 +8,12 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
+use tracing::warn;
 use uuid::Uuid;
 use webauthn_rs::prelude::{
-    CreationChallengeResponse, Passkey, PasskeyAuthentication, PasskeyRegistration,
-    PublicKeyCredential, RegisterPublicKeyCredential, RequestChallengeResponse, Url, Webauthn,
-    WebauthnBuilder,
+    AuthenticationResult, CreationChallengeResponse, Passkey, PasskeyAuthentication,
+    PasskeyRegistration, PublicKeyCredential, RegisterPublicKeyCredential,
+    RequestChallengeResponse, Url, Webauthn, WebauthnBuilder,
 };
 
 use crate::fs_security::{PrivateWriteError, atomic_write_private};
@@ -29,7 +30,16 @@ pub(crate) struct PasskeyService {
     ceremonies: Arc<Mutex<PasskeyCeremonies>>,
     mutation_lock: Arc<tokio::sync::Mutex<()>>,
     #[cfg(test)]
-    before_write: Option<Arc<dyn Fn() + Send + Sync>>,
+    observer: Option<Arc<dyn CommitObserver>>,
+}
+
+/// Test probe for the commit task's ordering points.
+#[cfg(test)]
+pub(crate) trait CommitObserver: Send + Sync {
+    fn contended(&self);
+    fn before_write(&self);
+    fn after_write(&self);
+    fn finished(&self);
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -62,6 +72,8 @@ pub(crate) enum PasskeyError {
     CredentialLimit,
     #[error("the requested passkey does not exist")]
     CredentialNotFound,
+    #[error("passkey registration requires a confirmed session")]
+    ReauthRequired,
     #[error("passkey labels must contain 1 to {PASSKEY_LABEL_MAX_BYTES} non-control bytes")]
     InvalidLabel,
 }
@@ -129,7 +141,7 @@ impl PasskeyService {
             })),
             mutation_lock: Arc::new(tokio::sync::Mutex::new(())),
             #[cfg(test)]
-            before_write: None,
+            observer: None,
         })
     }
 
@@ -188,25 +200,33 @@ impl PasskeyService {
         Ok(challenge)
     }
 
+    /// `authorized` is re-evaluated inside the commit, so a registration that
+    /// waited on the lock cannot land after its session lost confirmation.
     pub(crate) async fn finish_registration(
         &self,
         session_binding: &str,
         response: &RegisterPublicKeyCredential,
+        authorized: impl Fn() -> bool + Send + 'static,
     ) -> Result<PasskeySummary, PasskeyError> {
         let pending = self.take_registration(session_binding)?;
         let passkey = self
             .webauthn()?
             .finish_passkey_registration(response, &pending.state)
             .map_err(|_| PasskeyError::Operation)?;
-        self.add_credential(pending.label, passkey).await
+        self.add_credential(pending.label, passkey, authorized)
+            .await
     }
 
     async fn add_credential(
         &self,
         label: String,
         passkey: Passkey,
+        authorized: impl Fn() -> bool + Send + 'static,
     ) -> Result<PasskeySummary, PasskeyError> {
         self.commit(move |next| {
+            if !authorized() {
+                return Err(PasskeyError::ReauthRequired);
+            }
             if next.credentials.len() >= MAX_PASSKEYS {
                 return Err(PasskeyError::CredentialLimit);
             }
@@ -273,6 +293,13 @@ impl PasskeyService {
             .webauthn()?
             .finish_passkey_authentication(response, &pending.state)
             .map_err(|_| PasskeyError::Operation)?;
+        self.record_authentication(result).await
+    }
+
+    async fn record_authentication(
+        &self,
+        result: AuthenticationResult,
+    ) -> Result<(), PasskeyError> {
         self.commit(move |next| {
             for credential in &mut next.credentials {
                 if let Some(changed) = credential.passkey.update_credential(&result) {
@@ -312,17 +339,41 @@ impl PasskeyService {
         F: FnOnce(&mut PasskeyFile) -> Result<(R, bool), PasskeyError> + Send + 'static,
     {
         let service = self.clone();
+        let (reply, outcome) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
-            let _mutation_guard = service.mutation_lock.clone().lock_owned().await;
-            let mut next = service.credentials_snapshot()?;
-            let (output, changed) = mutate(&mut next)?;
-            if changed {
-                service.persist(&next).await?;
-                *lock(&service.credentials)? = next;
+            let result = service.commit_locked(mutate).await;
+            #[cfg(test)]
+            if let Some(observer) = &service.observer {
+                observer.finished();
             }
-            Ok(output)
-        })
-        .await?
+            if let Err(Err(error)) = reply.send(result) {
+                warn!(error = %error, "passkey change failed after its caller stopped waiting");
+            }
+        });
+        outcome.await.map_err(|_| PasskeyError::StateUnavailable)?
+    }
+
+    async fn commit_locked<R, F>(&self, mutate: F) -> Result<R, PasskeyError>
+    where
+        F: FnOnce(&mut PasskeyFile) -> Result<(R, bool), PasskeyError>,
+    {
+        let _mutation_guard = match self.mutation_lock.clone().try_lock_owned() {
+            Ok(guard) => guard,
+            Err(_) => {
+                #[cfg(test)]
+                if let Some(observer) = &self.observer {
+                    observer.contended();
+                }
+                self.mutation_lock.clone().lock_owned().await
+            }
+        };
+        let mut next = self.credentials_snapshot()?;
+        let (output, changed) = mutate(&mut next)?;
+        if changed {
+            self.persist(&next).await?;
+            *lock(&self.credentials)? = next;
+        }
+        Ok(output)
     }
 
     fn webauthn(&self) -> Result<&Webauthn, PasskeyError> {
@@ -363,13 +414,18 @@ impl PasskeyService {
         let payload = serde_json::to_vec(credentials)?;
         let path = self.path.as_ref().clone();
         #[cfg(test)]
-        let before_write = self.before_write.clone();
+        let observer = self.observer.clone();
         tokio::task::spawn_blocking(move || {
             #[cfg(test)]
-            if let Some(hook) = before_write {
-                hook();
+            if let Some(observer) = &observer {
+                observer.before_write();
             }
-            atomic_write_private(&path, &payload)
+            let written = atomic_write_private(&path, &payload);
+            #[cfg(test)]
+            if let Some(observer) = &observer {
+                observer.after_write();
+            }
+            written
         })
         .await??;
         Ok(())
