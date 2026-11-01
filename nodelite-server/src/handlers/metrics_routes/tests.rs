@@ -200,6 +200,13 @@ fn exporter_exposes_writer_counters() {
             queue_full: 2500,
             queue_closed: 2,
         },
+        traffic_ledger: crate::history::TrafficLedgerHealth {
+            available: false,
+            write_degraded: true,
+            write_failures: 4,
+            last_success_at: 5,
+            pending_writes: 6,
+        },
         history_write: crate::history::HistoryWriteMetrics {
             failures: 2,
             lost_samples: 4,
@@ -222,6 +229,11 @@ fn exporter_exposes_writer_counters() {
     assert!(body.contains("nodelite_history_lost_samples_total 4"));
     assert!(body.contains("nodelite_history_last_success_timestamp_seconds 1234"));
     assert!(body.contains("nodelite_history_write_degraded 1"));
+    assert!(body.contains("nodelite_traffic_ledger_available 0"));
+    assert!(body.contains("nodelite_traffic_write_degraded 1"));
+    assert!(body.contains("nodelite_traffic_write_failures_total 4"));
+    assert!(body.contains("nodelite_traffic_last_success_timestamp_seconds 5"));
+    assert!(body.contains("nodelite_traffic_pending_writes 6"));
     assert!(body.contains("# TYPE nodelite_history_queue_depth gauge"));
     assert!(body.contains("nodelite_history_queue_depth 17"));
     assert!(body.contains("# TYPE nodelite_history_queue_capacity gauge"));
