@@ -1,3 +1,8 @@
+---
+title: Server 升级与失败恢复
+parent: 技术说明
+---
+
 # Server 升级与失败恢复
 
 安装器把一次升级绑定到具体 release，并校验该 release 的二进制、配置模块和升级模块摘要。

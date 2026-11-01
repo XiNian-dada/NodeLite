@@ -1,3 +1,8 @@
+---
+title: Memory measurement methodology
+parent: 技术说明
+---
+
 # Memory measurement methodology
 
 NodeLite does not use a single memory number as the release baseline. Process

@@ -1,0 +1,34 @@
+title: NodeLite
+description: 轻量的 Rust 服务器监控：部署、配置与运维文档
+lang: zh-CN
+remote_theme: just-the-docs/just-the-docs@v0.10.1
+plugins:
+  - jekyll-remote-theme
+  - jekyll-relative-links
+  - jekyll-optional-front-matter
+  - jekyll-titles-from-headings
+
+relative_links:
+  enabled: true
+  collections: false
+
+logo: /assets/brand-logo-light.webp
+favicon_ico: /assets/brand-icon-light.svg
+search_enabled: true
+heading_anchors: true
+back_to_top: true
+back_to_top_text: 回到顶部
+
+aux_links:
+  GitHub: https://github.com/XiNian-dada/NodeLite
+  Releases: https://github.com/XiNian-dada/NodeLite/releases
+
+gh_edit_link: true
+gh_edit_link_text: 在 GitHub 上编辑此页
+gh_edit_repository: https://github.com/XiNian-dada/NodeLite
+gh_edit_branch: main
+gh_edit_source: docs
+gh_edit_view_mode: edit
+
+footer_content: NodeLite 采用 MIT 许可证发布。
+

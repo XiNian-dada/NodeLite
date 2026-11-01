@@ -1,3 +1,8 @@
+---
+title: Token 验证并发与内存预算
+parent: 技术说明
+---
+
 # Token 验证并发与内存预算
 
 NodeLite 使用 Argon2id 验证 Agent Token。每次冷缓存验证约需要 19 MiB 临时工作内存，

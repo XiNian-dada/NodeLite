@@ -1,3 +1,8 @@
+---
+title: Metrics 传输压缩
+parent: 技术说明
+---
+
 # Metrics 传输压缩
 
 RC1 Agent 在 Hello 中声明 `supports_metrics_zlib = true`。Server 只有在验证凭证并接受该能力后，才在 `authenticated` 通知中返回 `code = "metrics_zlib_v1"`；Agent 收到这个确认后才压缩 Metrics。每次重连都会重新协商。

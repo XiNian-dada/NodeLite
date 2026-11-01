@@ -15,7 +15,7 @@
 | `bundle.py` | 将公开信任锚、Agent、updater 和固定单元组装为首次迁移包。 |
 | `maintenance.py` | 独立指纹检查、到期告警和旧代次的可恢复归档。 |
 | `io.py` | 有界文件读取、inode/权限检查和持久化写入；迁移工具也复用它。 |
-| `test_*.py`、`requirements.txt` | 安全回归测试及锁定的发布工具依赖；测试命令见[根 README](../../README.md#本地编译与测试)。 |
+| `test_*.py`、`requirements.txt` | 安全回归测试及锁定的发布工具依赖；测试命令见[开发文档](../../docs/development.md#构建与测试)。 |
 
 此目录只放程序、测试和说明。私钥、审批工作区、公开仓库及归档均放在仓库外的受保护路径，
 不要将真实数据添加到此目录。节点日常运行 Rust updater，不需要安装这里的 Python 依赖。

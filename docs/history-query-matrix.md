@@ -1,3 +1,8 @@
+---
+title: History query resource matrix
+parent: 技术说明
+---
+
 # History query resource matrix
 
 The history-only matrix isolates SQLite reads from Agent WebSocket authentication. It seeds 1,000
