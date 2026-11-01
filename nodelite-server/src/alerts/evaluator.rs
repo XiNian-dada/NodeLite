@@ -331,7 +331,8 @@ where
     let Some(last_seen) = status.last_seen() else {
         return now;
     };
-    let crossed_at = last_seen + chrono::Duration::minutes(offline_grace_minutes as i64);
+    let crossed_at =
+        super::time_math::add(last_seen, super::time_math::minutes(offline_grace_minutes));
     crossed_at.min(now)
 }
 

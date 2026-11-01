@@ -124,6 +124,18 @@ describe('RuleEditorCard', () => {
     expect(rule.delivery).toEqual(['smtp', 'webhook']);
   });
 
+  it('caps numeric inputs at the server-side alert limits', async () => {
+    const rule = reactive(blankRule());
+    const wrapper = mountCard(rule);
+    expect(wrapper.find('[data-test="rule-window"]').attributes('max')).toBe('20160');
+    expect(wrapper.find('[data-test="rule-cooldown"]').attributes('max')).toBe('43200');
+    expect(wrapper.find('[data-test="rule-threshold"]').attributes('max')).toBe('100');
+
+    rule.metric = 'traffic_usage_percent';
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-test="rule-threshold"]').attributes('max')).toBeUndefined();
+  });
+
   it('emits remove when the remove button is clicked', async () => {
     const rule = reactive(blankRule());
     const wrapper = mountCard(rule);

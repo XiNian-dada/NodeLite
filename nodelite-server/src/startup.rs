@@ -14,7 +14,7 @@ use axum::http::{HeaderValue, header};
 use axum::middleware::{Next, from_fn, from_fn_with_state};
 use axum::response::Response;
 use axum::routing::{delete, get, post};
-use nodelite_proto::{ServerConfig, parse_server_config};
+use nodelite_proto::{ServerConfig, parse_server_config_with_warnings};
 use tokio::fs;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
@@ -58,6 +58,7 @@ use crate::snapshot::{load_snapshot, persist_current_snapshot, spawn_snapshot_pe
 use crate::state::SharedState;
 use crate::ws::{ws_browser_handler, ws_handler};
 
+mod config_checks;
 mod shutdown;
 
 pub(crate) const PROTECTED_CONTENT_SECURITY_POLICY: &str = "default-src 'self'; img-src 'self' data:; \
@@ -507,8 +508,13 @@ pub(crate) async fn load_server_config(path: &Path) -> Result<ServerConfig> {
     let content = fs::read_to_string(path)
         .await
         .with_context(|| format!("failed to read config file {}", path.display()))?;
-    let config = parse_server_config(&content)
+    let (config, warnings) = parse_server_config_with_warnings(&content)
         .map_err(|error| anyhow!("failed to parse {}: {error}", path.display()))?;
+    for warning in &warnings {
+        warn!(config = %path.display(), "{warning}; edit the config file to silence this warning");
+    }
+    config_checks::warn_if_config_file_is_not_private(path);
+    config_checks::warn_about_relative_data_paths(&config);
 
     if let Some(parent) = config.snapshot_path.parent()
         && !parent.as_os_str().is_empty()

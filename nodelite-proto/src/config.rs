@@ -9,6 +9,8 @@
 mod macros;
 
 #[cfg(feature = "server-config")]
+mod alert_limits;
+#[cfg(feature = "server-config")]
 mod alerts;
 mod defaults;
 mod edit;
@@ -33,6 +35,13 @@ use self::raw::RawAgentConfigFile;
 pub use self::server::{
     AgentLogsConfig, AuditConfig, GeoIpConfig, GeoIpEdition, GeoIpProvider, MetricsConfig,
     ReadonlyAuthConfig, ServerConfig, WsConfig, parse_server_config,
+    parse_server_config_with_warnings,
+};
+
+#[cfg(feature = "server-config")]
+pub use self::alert_limits::{
+    MAX_ALERT_COOLDOWN_MINUTES, MAX_ALERT_WINDOW_MINUTES, MAX_INSPECTION_LOOKBACK_HOURS,
+    MAX_PERCENT_THRESHOLD, check_alerting_limits,
 };
 
 #[cfg(feature = "server-config")]
