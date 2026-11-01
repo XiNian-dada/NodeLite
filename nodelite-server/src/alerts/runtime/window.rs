@@ -152,9 +152,15 @@ async fn load_alert_history(
             continue;
         };
         let node_id = status.identity.node_id.clone();
-        let since = now - chrono::Duration::minutes(window_minutes as i64);
+        let since =
+            super::super::time_math::sub(now, super::super::time_math::minutes(window_minutes));
         match history
-            .query_history_range(&node_id, since, now, window_minutes as usize * 2)
+            .query_history_range(
+                &node_id,
+                since,
+                now,
+                usize::try_from(window_minutes.saturating_mul(2)).unwrap_or(usize::MAX),
+            )
             .await
         {
             Ok(points) => {
@@ -185,7 +191,10 @@ pub(super) fn evaluate_rule_with_history(
     now: DateTime<Utc>,
 ) -> Option<EvaluatedRule> {
     if rule_uses_history_average(rule) && rule_matches_scope(rule, status) {
-        let since = now - chrono::Duration::minutes(rule.window_minutes as i64);
+        let since = super::super::time_math::sub(
+            now,
+            super::super::time_math::minutes(rule.window_minutes),
+        );
         if let Some(value) = history_by_node
             .get(&status.identity.node_id)
             .and_then(|points| average_history_metric(&rule.metric, points, since))

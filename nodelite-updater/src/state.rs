@@ -112,6 +112,26 @@ impl Store {
         Ok(())
     }
 
+    pub(crate) fn reset_time_floor(
+        &self,
+        state: &mut Journal,
+        confirmed: bool,
+        now: u64,
+    ) -> Result<crate::clock::FloorReset> {
+        let outcome = crate::clock::plan(
+            confirmed,
+            state.phase.terminal(),
+            self.private().join("recovery-required.json").exists(),
+            state.time_high,
+            now,
+        )?;
+        if let crate::clock::FloorReset::Lowered { new, .. } = outcome {
+            state.time_high = new;
+            self.save(state)?;
+        }
+        Ok(outcome)
+    }
+
     pub(crate) fn initialize(&self, policy: &Policy, root: &[u8], baseline: &Path) -> Result<()> {
         if std::fs::read_dir(self.private())?
             .any(|entry| entry.map_or(true, |entry| entry.file_name() != "lock"))
@@ -388,6 +408,69 @@ mod tests {
         )
         .expect("corrupt");
         assert!(store.load(&policy, b"public-root").is_err());
+    }
+
+    #[test]
+    fn time_floor_reset_changes_only_the_time_floor() {
+        let (_directory, store, policy, mut journal) = fixture();
+        journal.seen_sequence = 7;
+        journal.hard_floor = 1;
+        journal.time_high = 9_000;
+        store.save(&journal).expect("save");
+        let mut expected = serde_json::to_value(&journal).expect("value");
+        expected["time_high"] = 1_000.into();
+
+        let outcome = store
+            .reset_time_floor(&mut journal, true, 1_000)
+            .expect("reset");
+
+        assert_eq!(
+            outcome,
+            crate::clock::FloorReset::Lowered {
+                old: 9_000,
+                new: 1_000
+            }
+        );
+        let reloaded = store.load(&policy, b"public-root").expect("reload");
+        assert_eq!(serde_json::to_value(&reloaded).expect("value"), expected);
+    }
+
+    #[test]
+    fn refused_time_floor_reset_leaves_the_journal_unwritten() {
+        let (_directory, store, _policy, mut journal) = fixture();
+        journal.time_high = 9_000;
+        store.save(&journal).expect("save");
+        let path = store.private().join("journal.json");
+        let before = std::fs::read(&path).expect("journal");
+
+        assert!(store.reset_time_floor(&mut journal, false, 1_000).is_err());
+        journal.phase = Phase::Trial;
+        assert!(store.reset_time_floor(&mut journal, true, 1_000).is_err());
+        journal.phase = Phase::Stable;
+        std::fs::write(store.private().join("recovery-required.json"), b"{}").expect("latch");
+        assert!(store.reset_time_floor(&mut journal, true, 1_000).is_err());
+
+        assert_eq!(journal.time_high, 9_000);
+        assert_eq!(std::fs::read(&path).expect("journal"), before);
+    }
+
+    // The reset only has to lower the journal floor because tough's own clock file never persists.
+    #[test]
+    fn committed_cache_never_carries_the_tuf_clock_floor() {
+        let (_directory, store, _policy, mut journal) = fixture();
+        let working = store.new_generation().expect("generation");
+        fs::atomic(&working.join("root.json"), b"{}", 0o600).expect("root");
+        fs::atomic(
+            &working.join("latest_known_time.json"),
+            b"\"2099-01-01T00:00:00Z\"",
+            0o600,
+        )
+        .expect("clock");
+
+        crate::download::publish_cache(&store, &mut journal, &working).expect("publish");
+
+        assert!(journal.inventory.contains_key("root.json"));
+        assert!(!journal.inventory.contains_key("latest_known_time.json"));
     }
 
     #[test]

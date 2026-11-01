@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, Subcommand};
 
 use crate::activate;
+use crate::clock::FloorReset;
 use crate::download;
 use crate::error::{Result, UpdateError};
 use crate::fs::Lock;
@@ -47,6 +48,11 @@ enum Action {
         boot: bool,
     },
     Status,
+    /// Lower the local time floor to now after a forward clock jump; refuses open transactions.
+    ResetTimeFloor {
+        #[arg(long)]
+        confirm_clock_correct: bool,
+    },
 }
 
 /// Runs only as the dedicated updater UID after explicit local provisioning.
@@ -60,7 +66,10 @@ pub async fn run() -> Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let policy = Policy::read()?;
     // Pausing stops new releases only; journal recovery must still run under the same checks.
-    if matches!(cli.action, Action::Reconcile { .. } | Action::Status) {
+    if matches!(
+        cli.action,
+        Action::Reconcile { .. } | Action::Status | Action::ResetTimeFloor { .. }
+    ) {
         policy.validate_paused()?;
     } else {
         policy.validate()?;
@@ -112,6 +121,13 @@ async fn dispatch(action: Action, store: &Store, policy: &Policy, bootstrap: &[u
     {
         return Err(UpdateError::Recovery("operator recovery required"));
     }
+    // Returns before the failure path below, which would latch manual recovery on a mere refusal.
+    if let Action::ResetTimeFloor {
+        confirm_clock_correct,
+    } = action
+    {
+        return reset_time_floor(store, &mut state, confirm_clock_correct);
+    }
     let result = match action {
         Action::Status => Ok(()),
         Action::Reconcile { boot } => {
@@ -137,7 +153,10 @@ async fn dispatch(action: Action, store: &Store, policy: &Policy, bootstrap: &[u
                 Ok(())
             }
         }
-        Action::Initialize { .. } | Action::VerifyEnrollment { .. } | Action::Remote => {
+        Action::Initialize { .. }
+        | Action::VerifyEnrollment { .. }
+        | Action::Remote
+        | Action::ResetTimeFloor { .. } => {
             Err(UpdateError::Recovery("initialization dispatch failed"))
         }
     };
@@ -182,6 +201,17 @@ fn idle(store: &Store, state: &Journal, policy: &Policy) -> Result<Gate> {
         installed: &state.installed.digest,
         from: from.filter(|_| !state.phase.terminal()),
     }))
+}
+
+fn reset_time_floor(store: &Store, state: &mut Journal, confirmed: bool) -> Result<()> {
+    match store.reset_time_floor(state, confirmed, crate::state::epoch()?)? {
+        FloorReset::Unchanged => println!(
+            "time floor {} is not ahead of the clock; nothing to reset",
+            state.time_high
+        ),
+        FloorReset::Lowered { old, new } => println!("time floor lowered from {old} to {new}"),
+    }
+    Ok(())
 }
 
 fn remove_pending(store: &Store) -> Result<()> {

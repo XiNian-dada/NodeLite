@@ -2,6 +2,8 @@
 
 #[cfg(target_os = "linux")]
 mod activate;
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod clock;
 #[cfg(target_os = "linux")]
 mod defaults;
 #[cfg(target_os = "linux")]
