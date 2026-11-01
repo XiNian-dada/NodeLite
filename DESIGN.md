@@ -109,6 +109,7 @@ loop {
 只有缓存 revision 不早于最后一批已发布增量、且不超过 1 秒时才复用，因此每个 tick 最多构建一次全量。
 不能只按 revision 相等复用，高频上报下 revision 每几毫秒变化一次，缓存永远不会命中。
 后续增量统一从集中任务接收。无订阅者时 tick 跳过 diff，并释放基线与全量帧。
+增量通道容量为 4：所有订阅者读过或退订后批次即被释放，只有停滞的会话才会驻留，上限为 4 个批次。
 `InitialState` 会返回本次全量快照对应的 `nodes_revision` baseline。会话只转发
 `revision > baseline` 的增量，丢弃已排队但不晚于 baseline 的旧 diff，避免旧增量在
 `InitialState` 后到达并覆盖新快照。`Lagged` 重同步也刷新同一个 baseline。

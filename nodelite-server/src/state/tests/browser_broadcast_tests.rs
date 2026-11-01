@@ -5,7 +5,11 @@ use std::collections::HashMap;
 use futures::future::join_all;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
-use super::super::browser_broadcast::run_tick;
+use axum::extract::ws::Utf8Bytes;
+
+use super::super::browser_broadcast::{
+    BROWSER_INCREMENTAL_CHANNEL_CAPACITY, BrowserIncrementalUpdate, run_tick,
+};
 use super::*;
 
 async fn register_nodes(shared: &SharedState, count: usize) {
@@ -182,4 +186,50 @@ async fn idle_tick_drops_the_shared_full_state() {
         .expect("rebuilt frame");
 
     assert_eq!(shared.browser_initial_state_build_count(), 2);
+}
+
+fn retained_bytes(batches: &[std::sync::Weak<[Utf8Bytes]>]) -> usize {
+    batches
+        .iter()
+        .filter_map(std::sync::Weak::upgrade)
+        .map(|frames| frames.iter().map(|frame| frame.len()).sum::<usize>())
+        .sum()
+}
+
+#[tokio::test]
+async fn buffered_batches_are_bounded_and_freed_without_replacing_the_channel() {
+    const BATCH_BYTES: usize = 1024;
+    let shared = SharedState::new(Arc::new(sample_config()));
+    let publish = |batches: &mut Vec<std::sync::Weak<[Utf8Bytes]>>| {
+        let frames: Arc<[Utf8Bytes]> = vec![Utf8Bytes::from("x".repeat(BATCH_BYTES))].into();
+        batches.push(Arc::downgrade(&frames));
+        let update = BrowserIncrementalUpdate {
+            revision: 1,
+            frames,
+        };
+        assert!(shared.browser_incremental_tx.send(update).is_ok());
+    };
+
+    let stalled = shared.subscribe_browser_incremental();
+    let mut batches = Vec::new();
+    for _ in 0..32 {
+        publish(&mut batches);
+    }
+    assert_eq!(
+        retained_bytes(&batches),
+        BROWSER_INCREMENTAL_CHANNEL_CAPACITY * BATCH_BYTES,
+        "a stalled session retains at most one channel's worth of batches"
+    );
+    drop(stalled);
+    assert_eq!(
+        retained_bytes(&batches),
+        0,
+        "last unsubscribe frees batches"
+    );
+
+    let mut reader = shared.subscribe_browser_incremental();
+    let mut batches = Vec::new();
+    publish(&mut batches);
+    drop(reader.try_recv().expect("batch"));
+    assert_eq!(retained_bytes(&batches), 0, "reading frees a batch");
 }

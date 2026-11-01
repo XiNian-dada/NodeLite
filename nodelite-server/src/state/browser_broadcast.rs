@@ -21,10 +21,10 @@ pub(crate) struct BrowserIncrementalUpdate {
     pub(crate) frames: Arc<[Utf8Bytes]>,
 }
 
-/// 一个槽位现在可能持有全部节点的增量,而慢会话会让已发送的批次继续驻留,
-/// 所以容量决定内存上限(容量 × 节点数)。16 个 tick 约等于落后 16 秒,
-/// 这样的会话走一次全量重同步比为它保留更多批次更划算。
-pub(super) const BROWSER_INCREMENTAL_CHANNEL_CAPACITY: usize = 16;
+/// 所有订阅者读过或退订后 tokio 即释放槽位,只有停滞的会话才会让批次继续驻留,
+/// 而一个批次可能包含全部节点,所以容量就是这部分内存的上限(容量 × 批次大小)。
+/// 落后约 4 秒的会话改走共享全量帧,比为它保留更多批次更划算。
+pub(super) const BROWSER_INCREMENTAL_CHANNEL_CAPACITY: usize = 4;
 
 /// 全量帧的复用时限。revision 在高频上报下每几毫秒就变一次,不能作为复用条件,
 /// 否则同一 tick 内落后的会话仍会各自重建。
