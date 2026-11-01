@@ -10,6 +10,10 @@ use tracing::warn;
 #[path = "collector/shared.rs"]
 mod shared;
 
+#[cfg(any(target_os = "linux", test))]
+#[path = "collector/mount_probe.rs"]
+mod mount_probe;
+
 #[cfg(target_os = "linux")]
 #[path = "collector_linux.rs"]
 mod collector_linux;

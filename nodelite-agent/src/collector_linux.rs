@@ -17,7 +17,8 @@ mod disks;
 #[path = "collector_linux/tests.rs"]
 mod tests;
 
-use self::disks::{StatvfsFn, collect_disks, real_statvfs};
+use self::disks::{FilesystemStats, StatvfsFn, collect_disks, real_statvfs};
+use super::mount_probe::MountProbes;
 use super::shared::{
     CpuSample, NetworkRateBaselines, NetworkSample, NetworkTotals, compute_cpu_usage,
     compute_network_metrics,
@@ -32,6 +33,7 @@ pub struct HostCollector {
     /// 磁盘容量探测函数。默认是真实的 `statvfs` 系统调用,测试可通过
     /// [`HostCollector::with_statvfs`] 注入桩实现。
     statvfs: StatvfsFn,
+    disk_probes: MountProbes<FilesystemStats>,
 }
 
 pub fn new_collector() -> HostCollector {
@@ -41,6 +43,7 @@ pub fn new_collector() -> HostCollector {
         previous_network: None,
         network_rate_baselines: NetworkRateBaselines::default(),
         statvfs: real_statvfs,
+        disk_probes: MountProbes::default(),
     }
 }
 
@@ -53,6 +56,7 @@ impl HostCollector {
             previous_network: None,
             network_rate_baselines: NetworkRateBaselines::default(),
             statvfs: real_statvfs,
+            disk_probes: MountProbes::default(),
         }
     }
 
@@ -142,7 +146,12 @@ impl HostCollector {
         let uptime_path = self.sys_root.join("proc/uptime");
         let uptime_secs = read_uptime(&uptime_path)?;
         let mounts_path = self.sys_root.join("proc/mounts");
-        let disks = collect_disks(&mounts_path, self.statvfs, ignored_filesystems)?;
+        let disks = collect_disks(
+            &mounts_path,
+            self.statvfs,
+            ignored_filesystems,
+            &mut self.disk_probes,
+        )?;
 
         Ok(NodeSnapshot {
             collected_at: Utc::now(),

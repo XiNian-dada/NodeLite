@@ -11,6 +11,7 @@ use super::{
     HostCollector, compute_cpu_usage, compute_network_metrics, parse_cpu_sample,
     parse_load_average, parse_memory_usage, parse_network_totals, real_statvfs,
 };
+use crate::collector::mount_probe::MountProbes;
 
 /// RAII 临时目录:构造时创建唯一目录,析构时递归删除。
 /// 即使断言 panic,Drop 仍会执行清理,避免临时目录泄漏。
@@ -266,14 +267,19 @@ fn disk_filter_override_controls_reported_filesystem_cardinality() {
     let temp = TempDir::new("nodelite-disk-filters");
     let mounts = temp.path().join("mounts");
     std::fs::write(&mounts,
-        "/dev/vda1 / ext4 rw 0 0\ntmpfs /dev/shm tmpfs rw 0 0\noverlay /docker overlay rw 0 0\n/dev/loop0 /snap squashfs ro 0 0\n")
+        "/dev/vda1 / ext4 rw 0 0\ntmpfs /dev/shm tmpfs rw 0 0\noverlay /docker overlay rw 0 0\n/dev/loop0 /snap squashfs ro 0 0\nnas:/export /mnt/nas nfs4 rw 0 0\n//nas/share /mnt/smb cifs rw 0 0\n")
         .expect("mount fixture");
     let defaults = nodelite_proto::config::DEFAULT_AGENT_IGNORED_FILESYSTEMS
         .iter()
         .map(|value| (*value).to_string())
         .collect::<Vec<_>>();
-    let disks =
-        super::disks::collect_disks(&mounts, mock_statvfs, &defaults).expect("default filtering");
+    let disks = super::disks::collect_disks(
+        &mounts,
+        mock_statvfs,
+        &defaults,
+        &mut MountProbes::default(),
+    )
+    .expect("default filtering");
     assert_eq!(
         disks
             .iter()
@@ -281,11 +287,47 @@ fn disk_filter_override_controls_reported_filesystem_cardinality() {
             .collect::<Vec<_>>(),
         vec!["/"]
     );
-    let disks = super::disks::collect_disks(&mounts, mock_statvfs, &[])
-        .expect("opt into all filesystem types");
-    assert_eq!(disks.len(), 4);
-    let disks = super::disks::collect_disks(&mounts, mock_statvfs, &["ext4".to_string()])
-        .expect("replace defaults with custom filter");
-    assert_eq!(disks.len(), 3);
+    let disks =
+        super::disks::collect_disks(&mounts, mock_statvfs, &[], &mut MountProbes::default())
+            .expect("opt into all filesystem types");
+    assert_eq!(disks.len(), 6);
+    let disks = super::disks::collect_disks(
+        &mounts,
+        mock_statvfs,
+        &["ext4".to_string()],
+        &mut MountProbes::default(),
+    )
+    .expect("replace defaults with custom filter");
+    assert_eq!(disks.len(), 5);
     assert!(disks.iter().all(|disk| disk.fs_type != "ext4"));
+}
+
+static FLAKY_STATVFS_FAILS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn flaky_statvfs(mount_point: &str) -> Result<FilesystemStats> {
+    if FLAKY_STATVFS_FAILS.load(Ordering::SeqCst) {
+        return Err(anyhow::anyhow!("statvfs failed for {mount_point}"));
+    }
+    mock_statvfs(mount_point)
+}
+
+#[test]
+fn failing_statvfs_reuses_last_capacity_instead_of_dropping_mount() {
+    let temp = TempDir::new("nodelite-disk-cooldown");
+    let mounts = temp.path().join("mounts");
+    std::fs::write(&mounts, "/dev/vda1 / ext4 rw 0 0\n").expect("mount fixture");
+    let mut probes = MountProbes::default();
+
+    FLAKY_STATVFS_FAILS.store(false, Ordering::SeqCst);
+    let first = super::disks::collect_disks(&mounts, flaky_statvfs, &[], &mut probes)
+        .expect("healthy collection");
+    FLAKY_STATVFS_FAILS.store(true, Ordering::SeqCst);
+    let second = super::disks::collect_disks(&mounts, flaky_statvfs, &[], &mut probes)
+        .expect("degraded collection");
+    FLAKY_STATVFS_FAILS.store(false, Ordering::SeqCst);
+
+    assert_eq!(first.len(), 1);
+    assert_eq!(second.len(), 1);
+    assert_eq!(second[0].total_bytes, first[0].total_bytes);
 }
