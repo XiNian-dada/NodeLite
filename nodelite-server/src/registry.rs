@@ -40,11 +40,13 @@ use self::auth::TokenVerifyProbe;
 pub use self::error::{RegistryError, RegistryResult};
 pub use self::issue::issue_node;
 pub(crate) use self::metrics::TokenVerifyMetrics;
-#[cfg(test)]
-pub use self::render::{build_agent_server_url, build_github_release_base_url};
 pub use self::render::{
-    build_install_script_url, default_agent_release_base_url, render_agent_config,
-    render_install_command, render_upgrade_command,
+    AgentReleaseSource, build_install_script_url, render_agent_config, render_install_command,
+    render_upgrade_command,
+};
+#[cfg(test)]
+pub use self::render::{
+    build_agent_server_url, build_github_release_base_url, default_agent_release_base_url,
 };
 #[cfg(test)]
 use self::storage::{

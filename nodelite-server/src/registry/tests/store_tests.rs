@@ -1,6 +1,7 @@
 //! 注册表原子持久化与文件锁测试模块。
 
 use super::*;
+use crate::registry::AgentReleaseSource;
 
 #[test]
 fn agent_server_url_uses_wss_for_https() {
@@ -50,7 +51,8 @@ fn issue_node_persists_registry_and_renders_install_command() {
         let command = render_install_command(
             "https://monitor.example.com",
             &issued.install_token,
-            "https://github.com/XiNian-dada/NodeLite/releases/latest/download",
+            &AgentReleaseSource::from_config(&super::render_tests::release_config(None))
+                .expect("default release source should build"),
         )
         .expect("install command should render");
         assert!(command.contains("--bootstrap-url"));
