@@ -287,6 +287,15 @@ impl RawServerConfigFile {
                 agent_release_base_url,
                 &["http", "https"],
             )?;
+            // Release binaries run as root on every node, so a remote plain-http
+            // mirror needs the same explicit opt-in as a remote http public URL.
+            if uses_insecure_remote_public_base_url(agent_release_base_url)
+                && !self.server.insecure_allow_http
+            {
+                return Err(ConfigError::new(
+                    "server.insecure_allow_http = true is required when install.agent_release_base_url uses remote http://",
+                ));
+            }
         }
 
         let agent_release_sha256_x86_64 = self

@@ -8,8 +8,7 @@ use tracing::error;
 
 use crate::AppState;
 use crate::registry::{
-    IssueNodeRequest, RegistryError, default_agent_release_base_url, issue_node,
-    render_install_command,
+    AgentReleaseSource, IssueNodeRequest, RegistryError, issue_node, render_install_command,
 };
 
 use super::security::settings_confirmation_error_for_sensitive_action;
@@ -60,10 +59,10 @@ pub(crate) async fn generate_agent_install(
             );
         }
     };
-    let agent_release_base_url = match default_agent_release_base_url() {
-        Ok(url) => url,
+    let release = match AgentReleaseSource::from_config(state.shared.config()) {
+        Ok(release) => release,
         Err(error) => {
-            error!(error = ?error, "failed to resolve the default agent release URL");
+            error!(error = ?error, "failed to resolve the agent release source");
             return settings_json_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "failed to generate agent installation command",
@@ -73,7 +72,7 @@ pub(crate) async fn generate_agent_install(
     let install_command = match render_install_command(
         &state.shared.config().public_base_url,
         &issued.install_token,
-        &agent_release_base_url,
+        &release,
     ) {
         Ok(command) => command,
         Err(error) => {
@@ -208,6 +207,53 @@ mod tests {
         let nodes = state.registry.list_registered_nodes().await;
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].tags, vec!["edge", "prod"]);
+        cleanup(state, temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn install_command_uses_configured_release_mirror_and_checksums() {
+        let temp_dir = unique_temp_dir("nodelite-agent-install-mirror-test");
+        std::fs::create_dir_all(&temp_dir).expect("test temp dir should be created");
+        let mut config = test_server_config(
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8080)),
+            "https://monitor.example.com".to_string(),
+            temp_dir.join("registry.json"),
+            temp_dir.join("history.sqlite3"),
+            temp_dir.join("snapshot.json"),
+        );
+        config.agent_release_base_url = Some("https://mirror.example.com/nodelite".to_string());
+        config.agent_release_sha256_x86_64 = Some("a".repeat(64));
+        config.agent_release_sha256_aarch64 = Some("b".repeat(64));
+        let state =
+            AppState::test_fixture(Arc::new(config), Arc::new(temp_dir.join("server.toml")))
+                .await
+                .expect("test state should be created");
+
+        let response = generate_agent_install(
+            State(state.clone()),
+            HeaderMap::new(),
+            Json(GenerateAgentInstallRequest {
+                node_id: "sg-02".to_string(),
+                node_label: None,
+                tags: Vec::new(),
+                current_password: Some("secret".to_string()),
+                code: None,
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body should collect");
+        let payload: Value = serde_json::from_slice(&body).expect("response body should be json");
+        let command = payload["install_command"]
+            .as_str()
+            .expect("install command should be a string");
+        assert!(command.contains("--base-url 'https://mirror.example.com/nodelite'"));
+        assert!(command.contains(&format!("--sha256-x86_64 '{}'", "a".repeat(64))));
+        assert!(command.contains(&format!("--sha256-aarch64 '{}'", "b".repeat(64))));
+        assert!(!command.contains("github.com"));
         cleanup(state, temp_dir).await;
     }
 

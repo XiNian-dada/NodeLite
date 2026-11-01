@@ -8,8 +8,8 @@ use thiserror::Error;
 
 use crate::load_server_config;
 use crate::registry::{
-    IssueNodeRequest, IssueNodeResult, build_install_script_url, default_agent_release_base_url,
-    issue_node, render_agent_config, render_install_command, render_upgrade_command,
+    AgentReleaseSource, IssueNodeRequest, IssueNodeResult, build_install_script_url, issue_node,
+    render_agent_config, render_install_command, render_upgrade_command,
 };
 
 /// 顶层 server CLI 对外暴露的稳定错误边界。
@@ -145,8 +145,8 @@ pub(crate) async fn upgrade_agent_command(config_path: &Path) -> std::result::Re
     let config = load_server_config(config_path)
         .await
         .map_err(|source| CliError::LoadConfig { source })?;
-    let agent_release_base_url = default_agent_release_base_url()?;
-    let upgrade_command = render_upgrade_command(&config.public_base_url, &agent_release_base_url)?;
+    let release = AgentReleaseSource::from_config(&config)?;
+    let upgrade_command = render_upgrade_command(&config.public_base_url, &release)?;
     println!("{upgrade_command}");
     Ok(())
 }
@@ -166,19 +166,16 @@ async fn issue_node_bundle(
     )
     .await?;
 
-    let agent_release_base_url = default_agent_release_base_url()?;
-    let install_command = render_install_command(
-        &config.public_base_url,
-        &issued.install_token,
-        &agent_release_base_url,
-    )?;
+    let release = AgentReleaseSource::from_config(config)?;
+    let install_command =
+        render_install_command(&config.public_base_url, &issued.install_token, &release)?;
     let install_script_url = build_install_script_url(&config.public_base_url)?;
 
     Ok(IssuedNodeBundle {
         issued,
         install_command,
         install_script_url,
-        agent_release_base_url,
+        agent_release_base_url: release.base_url().to_string(),
     })
 }
 
@@ -336,7 +333,40 @@ password = "StrongPassword!123"
                 .contains("/releases/latest/download")
         );
 
+        assert!(!bundle.install_command.contains("--sha256"));
+
         let _ = std::fs::remove_file(config.node_registry_path.as_path());
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn issue_node_bundle_uses_configured_release_mirror_and_checksums() {
+        let temp_dir = unique_temp_dir("nodelite-cli-mirror-test");
+        std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+        let mut config = test_server_config(&temp_dir);
+        config.agent_release_base_url = Some("https://mirror.example.com/nodelite".to_string());
+        config.agent_release_sha256_x86_64 = Some("a".repeat(64));
+        config.agent_release_sha256_aarch64 = Some("b".repeat(64));
+        let args = NodeCommandArgs {
+            node_id: "hk-02".to_string(),
+            node_label: None,
+            tags: Vec::new(),
+        };
+
+        let bundle = issue_node_bundle(&config, &args)
+            .await
+            .expect("node should be issued");
+
+        assert_eq!(
+            bundle.agent_release_base_url,
+            "https://mirror.example.com/nodelite"
+        );
+        let command = &bundle.install_command;
+        assert!(command.contains("--base-url 'https://mirror.example.com/nodelite'"));
+        assert!(command.contains(&format!("--sha256-x86_64 '{}'", "a".repeat(64))));
+        assert!(command.contains(&format!("--sha256-aarch64 '{}'", "b".repeat(64))));
+        assert!(!command.contains("github.com"));
+
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
