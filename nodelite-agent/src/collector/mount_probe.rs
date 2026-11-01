@@ -144,9 +144,18 @@ impl<T: Clone + Send + 'static> MountProbes<T> {
     }
 
     /// 丢弃本轮未出现的挂载点状态，避免卸载后的条目无限增长。
+    /// 仍有卡住探测的条目会保留到探测返回为止：若挂载点短暂消失后重现，
+    /// 不能为同一路径再派生第二个阻塞线程。
     pub(crate) fn retain_mounts(&mut self, present: &HashSet<String>) {
-        self.mounts
-            .retain(|mount_point, _| present.contains(mount_point));
+        self.mounts.retain(|mount_point, state| {
+            if present.contains(mount_point) {
+                return true;
+            }
+            state
+                .pending
+                .as_ref()
+                .is_some_and(|pending| matches!(pending.try_recv(), Err(TryRecvError::Empty)))
+        });
     }
 
     #[cfg(test)]
@@ -336,6 +345,47 @@ mod tests {
             "five hung mounts took {elapsed:?}, expected about one timeout"
         );
         drop(release);
+    }
+
+    #[test]
+    fn retain_mounts_keeps_stuck_probe_until_it_returns() {
+        let mut probes = probes();
+        let start = Instant::now();
+        let (release, gate) = mpsc::channel::<()>();
+        let spawned = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&spawned);
+        probes.probe("/nfs", start, move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            let _ = gate.recv();
+            Ok(1)
+        });
+        probes.retain_mounts(&HashSet::new());
+        assert!(
+            probes.is_pending("/nfs"),
+            "stuck probe must survive a missing mount"
+        );
+
+        let counted = Arc::clone(&spawned);
+        probes.probe("/nfs", start + Duration::from_secs(600), move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            Ok(2)
+        });
+        assert_eq!(
+            spawned.load(Ordering::SeqCst),
+            1,
+            "no second blocked thread"
+        );
+
+        release.send(()).expect("release hung probe");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while probes.mounts.contains_key("/nfs") && Instant::now() < deadline {
+            probes.retain_mounts(&HashSet::new());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            !probes.mounts.contains_key("/nfs"),
+            "entry dropped once probe returned"
+        );
     }
 
     #[test]
