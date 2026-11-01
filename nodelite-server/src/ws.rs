@@ -17,6 +17,7 @@ mod origin;
 mod protocol;
 mod refresh;
 mod session;
+mod traffic_quota;
 mod transport;
 
 pub use browser::ws_browser_handler;

@@ -15,7 +15,7 @@ NodeLite Server 提供两个无需认证的探针端点：
 | 类别 | JSON 位置或条件 | 当前判定语义 |
 | --- | --- | --- |
 | 硬就绪检查 | `checks.history_available`、`checks.registry_reload_healthy` | 任一失败时加入对应的 `problems`，返回 `status: "degraded"`、`ready: false` 和 `503 Service Unavailable` |
-| 降级诊断条件 | `signals.audit_enabled && !signals.audit_available`；三个写入计数器中的任一个大于 `0`；`signals.history_write_degraded` 为 `true` | 分别加入 `audit_unavailable`、`history_dropped_writes`、`audit_dropped_writes` 、`audit_write_failures` 或 `history_write_failed`，并返回 `status: "degraded"`；这些条件本身不参与 HTTP 状态码和 `ready` 的判定 |
+| 降级诊断条件 | `signals.audit_enabled && !signals.audit_available`；三个写入计数器中的任一个大于 `0`；`signals.history_write_degraded` 为 `true`；`signals.traffic_ledger_available` 为 `false`；`signals.traffic_write_degraded` 为 `true` | 分别加入 `audit_unavailable`、`history_dropped_writes`、`audit_dropped_writes` 、`audit_write_failures`、`history_write_failed`、`traffic_ledger_unavailable` 或 `traffic_write_failed`，并返回 `status: "degraded"`；这些条件本身不参与 HTTP 状态码和 `ready` 的判定 |
 | 原始观测字段 | `signals` 中 history/audit 队列深度与容量、Agent/Browser WebSocket 当前连接数、总容量及单 IP 限制 | 只报告当前值；服务端目前不为这些字段设置阈值，因此它们本身不会加入 `problems`，也不会改变 `status`、`ready` 或 HTTP 状态码 |
 
 审计日志是安全诊断能力，但不是 Server 接收 Agent、查询节点状态所需的硬依赖。因此，仅审计写入器不可用时，响应组合是：
@@ -40,6 +40,11 @@ Prometheus 对应指标为 `nodelite_history_write_failures_total`、`nodelite_h
 `nodelite_history_last_success_timestamp_seconds` 和 `nodelite_history_write_degraded`。
 入队失败继续由 `nodelite_history_dropped_writes_total` 单独统计；提交后文件权限加固失败会降级，
 但已持久化样本不会计入丢失数。
+
+流量账本有独立的 writer 和诊断：`signals.traffic_ledger_available`、`traffic_write_degraded`、
+`traffic_write_failures`、`traffic_last_success_at`、`traffic_pending_writes`，
+Prometheus 对应指标以 `nodelite_traffic_` 开头。账本更新不经过有界队列，因此没有入队丢弃信号。
+处理规则见[套餐账本](traffic-accounting.md)。
 
 ## 探针与告警配置
 
