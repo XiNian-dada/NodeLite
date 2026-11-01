@@ -42,6 +42,10 @@ fn shared_limits_back_server_defaults() {
         crate::config::DEFAULT_MAX_MESSAGE_BYTES,
         MAX_METRICS_FRAME_BYTES
     );
+    assert_eq!(
+        crate::config::DEFAULT_MAX_SANITIZED_STRING_BYTES,
+        MAX_SNAPSHOT_STRING_BYTES
+    );
 }
 
 #[test]
@@ -55,7 +59,10 @@ fn trims_excess_disks_to_shared_count_limit() {
 
 #[test]
 fn trims_long_disk_entries_to_shared_frame_limit() {
-    let mut snapshot = snapshot_with_disks(MAX_SNAPSHOT_DISKS, 2048);
+    let mut snapshot = snapshot_with_disks(MAX_SNAPSHOT_DISKS, 8);
+    for disk in &mut snapshot.disks {
+        disk.device.push_str(&"d".repeat(2048));
+    }
     assert!(wire_len(snapshot.clone()) > MAX_METRICS_FRAME_BYTES);
     let dropped = fit_snapshot_to_wire_limits(&mut snapshot).expect("fit snapshot");
     assert!(dropped > 0);
@@ -71,4 +78,35 @@ fn leaves_small_snapshots_untouched() {
         0
     );
     assert_eq!(snapshot.disks.len(), 3);
+}
+
+#[test]
+fn truncates_long_mount_points_at_a_char_boundary() {
+    let mut snapshot = snapshot_with_disks(1, 0);
+    // 奇数前缀让多字节字符跨过上限，验证不会切开 UTF-8 序列。
+    snapshot.disks[0].mount_point = format!("/{}", "目".repeat(MAX_SNAPSHOT_STRING_BYTES));
+    assert_eq!(
+        fit_snapshot_to_wire_limits(&mut snapshot).expect("fit snapshot"),
+        0
+    );
+    let mount_point = &snapshot.disks[0].mount_point;
+    assert!(mount_point.len() <= MAX_SNAPSHOT_STRING_BYTES);
+    assert!(mount_point.len() > MAX_SNAPSHOT_STRING_BYTES - 3);
+    assert!(mount_point.ends_with('目'));
+}
+
+#[test]
+fn drops_mount_points_that_collide_after_truncation() {
+    let mut snapshot = snapshot_with_disks(3, 0);
+    let shared = "m".repeat(MAX_SNAPSHOT_STRING_BYTES);
+    snapshot.disks[0].mount_point = format!("{shared}/first");
+    snapshot.disks[1].mount_point = format!("{shared}/second");
+    assert_eq!(
+        fit_snapshot_to_wire_limits(&mut snapshot).expect("fit snapshot"),
+        1
+    );
+    assert_eq!(snapshot.disks.len(), 2);
+    assert_eq!(snapshot.disks[0].device, "rpool/data/subvol-0");
+    assert_eq!(snapshot.disks[0].mount_point, shared);
+    assert_eq!(snapshot.disks[1].device, "rpool/data/subvol-2");
 }

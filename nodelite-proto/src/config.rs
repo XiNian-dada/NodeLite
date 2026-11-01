@@ -105,7 +105,7 @@ pub const DEFAULT_INSECURE_TRANSPORT_WARN_INTERVAL_SECS: u64 = 900;
 /// 最大磁盘数量限制。
 pub const DEFAULT_MAX_SANITIZED_DISKS: usize = crate::limits::MAX_SNAPSHOT_DISKS;
 /// 最大字符串字节数限制。
-pub const DEFAULT_MAX_SANITIZED_STRING_BYTES: usize = 256;
+pub const DEFAULT_MAX_SANITIZED_STRING_BYTES: usize = crate::limits::MAX_SNAPSHOT_STRING_BYTES;
 /// 指标异常会话限制。
 pub const DEFAULT_METRIC_ANOMALY_SESSION_LIMIT: usize = 5;
 /// SQLite 忙等待超时(秒)。

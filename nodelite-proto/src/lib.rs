@@ -43,7 +43,10 @@ pub use config::{
     MetricsConfig, ReadonlyAuthConfig, ServerConfig, WsConfig, normalize_totp_secret,
     parse_server_config,
 };
-pub use limits::{MAX_METRICS_FRAME_BYTES, MAX_SNAPSHOT_DISKS, fit_snapshot_to_wire_limits};
+pub use limits::{
+    MAX_METRICS_FRAME_BYTES, MAX_SNAPSHOT_DISKS, MAX_SNAPSHOT_STRING_BYTES,
+    fit_snapshot_to_wire_limits,
+};
 pub use message::{
     AgentLogEntry, AgentLogsMessage, BrowserMessage, HelloMessage,
     MIN_SUPPORTED_WIRE_PROTOCOL_VERSION, MetricsMessage, NetworkThrottleMessage, NoticeLevel,
