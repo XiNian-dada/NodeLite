@@ -246,6 +246,44 @@ async fn apply_linux_traffic_plan(plan: &policy::TcPlan) -> Result<(), TrafficCo
     Ok(())
 }
 
+/// Removes NodeLite's own filter from every interface once at startup, because a
+/// previous run may have left it on an interface that is no longer the default route.
+pub(crate) async fn cleanup_leftover_rules() {
+    #[cfg(target_os = "linux")]
+    {
+        if capability::unavailable_reason().is_some() {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir("/sys/class/net") else {
+            return;
+        };
+        let names = entries
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| entry.file_name().into_string().ok());
+        for interface in startup_cleanup_targets(names) {
+            // Why: NodeLite filters only exist under clsact; skipping other devices avoids
+            // tc errors on interfaces that never had a NodeLite rule.
+            let has_clsact = tc_output("reading qdisc configuration", qdisc_show_args(&interface))
+                .await
+                .is_ok_and(|qdisc| qdisc.contains("qdisc clsact"));
+            if !has_clsact {
+                continue;
+            }
+            if let Err(error) = remove_police_filters(&interface).await {
+                tracing::warn!(interface, error = %error, "failed to remove leftover traffic filter");
+            }
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn startup_cleanup_targets(names: impl Iterator<Item = String>) -> Vec<String> {
+    let mut targets: Vec<String> = names.filter(|name| valid_interface_name(name)).collect();
+    targets.sort();
+    targets.dedup();
+    targets
+}
+
 #[cfg(target_os = "linux")]
 async fn remove_police_filters(interface: &str) -> Result<(), TrafficControlError> {
     delete_police_filter_if_present(interface, "ingress").await?;
@@ -480,6 +518,15 @@ mod tests {
         assert_eq!(parse_default_route_interface(routes), None);
         assert!(valid_interface_name("enp0s3.100"));
         assert!(!valid_interface_name("bad name"));
+    }
+
+    #[test]
+    fn startup_cleanup_covers_every_valid_interface_once() {
+        let names = ["wg0", "eth0", "bad name", "lo", "eth0", ""].map(String::from);
+        assert_eq!(
+            super::startup_cleanup_targets(names.into_iter()),
+            ["eth0", "lo", "wg0"].map(String::from)
+        );
     }
 
     #[test]
