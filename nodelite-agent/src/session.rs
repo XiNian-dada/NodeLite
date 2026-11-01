@@ -276,7 +276,8 @@ async fn send_metrics(
     config: &AgentConfig,
     compressed: bool,
 ) -> Result<()> {
-    let snapshot = collect_snapshot_blocking(collector, &config.ignored_filesystems).await?;
+    let mut snapshot = collect_snapshot_blocking(collector, &config.ignored_filesystems).await?;
+    crate::snapshot_limits::fit_for_wire(&mut snapshot)?;
     let collected_at_ms = snapshot.collected_at.timestamp_millis().max(0) as u64;
     if compressed {
         let frame = nodelite_proto::compression::encode_metrics(&MetricsMessage { snapshot })?;
