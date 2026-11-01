@@ -151,7 +151,22 @@ fn rejects_agent_config_with_oversized_identity_text() {
 fn disk_filters_default_to_pseudo_filesystems_and_allow_explicit_overrides() {
     let base = "[agent]\nnode_id = 'test'\nnode_label = 'Test'\nserver = 'ws://127.0.0.1/ws'\ntoken = 'fixture'\n";
     let defaults = parse_agent_config(base).expect("default filters");
-    for fs in ["tmpfs", "overlay", "squashfs", "proc", "cgroup2", "devfs"] {
+    for fs in [
+        "tmpfs",
+        "overlay",
+        "squashfs",
+        "proc",
+        "cgroup2",
+        "devfs",
+        "nfs",
+        "nfs4",
+        "cifs",
+        "smb3",
+        "fuse.sshfs",
+        "ceph",
+        "glusterfs",
+        "9p",
+    ] {
         assert!(defaults.ignored_filesystems.iter().any(|value| value == fs));
     }
     assert!(

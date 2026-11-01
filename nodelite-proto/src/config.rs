@@ -142,26 +142,42 @@ pub const DEFAULT_AGENT_INBOUND_TIMEOUT_SECS: u64 = 90;
 /// Agent 最大接收消息字节数。
 pub const DEFAULT_MAX_INCOMING_MESSAGE_BYTES: usize = 64 * 1024;
 
-/// 采集时排除伪文件系统，以约束传输报文大小和 Prometheus 指标基数。
+/// 采集时排除伪文件系统，以约束传输报文大小和 Prometheus 指标基数；
+/// 网络文件系统在服务端无响应时会让 `statvfs` 无限期阻塞，因此也默认排除。
 pub const DEFAULT_AGENT_IGNORED_FILESYSTEMS: &[&str] = &[
+    "9p",
+    "afs",
     "autofs",
     "bpf",
+    "ceph",
     "cgroup",
     "cgroup2",
+    "cifs",
     "configfs",
     "debugfs",
     "devfs",
     "devpts",
     "devtmpfs",
     "fdesc",
+    "fuse.glusterfs",
+    "fuse.rclone",
+    "fuse.s3fs",
+    "fuse.sshfs",
     "fusectl",
+    "glusterfs",
+    "lustre",
     "mqueue",
+    "ncpfs",
+    "nfs",
+    "nfs4",
     "overlay",
     "proc",
     "procfs",
     "pstore",
     "ramfs",
     "securityfs",
+    "smb3",
+    "smbfs",
     "squashfs",
     "sysfs",
     "tmpfs",
