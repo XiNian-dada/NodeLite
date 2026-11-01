@@ -1,6 +1,9 @@
-//! Alert rule checks: uniqueness, metric ranges and duration ceilings.
+//! Alert rule bounds: values saved by earlier versions clamp on load, strict on new writes.
 
-use super::range_rules::{SERVER_SAMPLE, override_line, server_error, server_error_for};
+use super::super::{
+    AlertRuleConfig, ServerConfig, check_alerting_limits, parse_server_config_with_warnings,
+};
+use super::range_rules::{SERVER_SAMPLE, override_line};
 
 fn with_extra_rule(id: &str, metric: &str, threshold: u64) -> String {
     format!(
@@ -17,52 +20,125 @@ severity = "warning"
     )
 }
 
-#[test]
-fn rejects_duplicate_rule_ids() {
-    let error = server_error_for(&with_extra_rule("node-offline", "offline_minutes", 5));
-    assert!(error.contains("alerts.rules["), "{error}");
-    assert!(error.contains(".id duplicates"), "{error}");
+fn parse_with_warnings(input: &str) -> (ServerConfig, Vec<String>) {
+    parse_server_config_with_warnings(input).expect("existing out-of-range values should load")
+}
+
+fn last_rule(config: &ServerConfig) -> &AlertRuleConfig {
+    config
+        .alerting
+        .rules
+        .last()
+        .expect("sample should define rules")
 }
 
 #[test]
-fn rejects_percentage_thresholds_above_100() {
+fn duplicate_rule_ids_load_with_warning_but_fail_strict_check() {
+    let (config, warnings) =
+        parse_with_warnings(&with_extra_rule("node-offline", "offline_minutes", 5));
+    assert!(
+        warnings.iter().any(|w| w.contains("].id duplicates")),
+        "{warnings:?}"
+    );
+    let error = check_alerting_limits(&config.alerting).expect_err("strict check rejects dups");
+    assert!(error.to_string().contains("alerts.rules["));
+}
+
+#[test]
+fn percentage_thresholds_above_100_clamp_on_load_and_fail_strict_check() {
     for metric in [
         "cpu_usage_percent",
         "memory_usage_percent",
         "disk_usage_percent",
-        "traffic_usage_percent",
     ] {
-        let error = server_error_for(&with_extra_rule("extra-rule", metric, 101));
-        assert!(error.contains("].threshold"), "{metric}: {error}");
-    }
-    assert_parses(&with_extra_rule("extra-rule", "cpu_usage_percent", 100));
-    assert_parses(&with_extra_rule("extra-rule", "latency_ms", 5000));
-}
+        let (config, warnings) = parse_with_warnings(&with_extra_rule("extra-rule", metric, 150));
+        assert_eq!(last_rule(&config).threshold, 100, "{metric}");
+        assert!(
+            warnings.iter().any(|w| w.contains("].threshold")),
+            "{metric}"
+        );
+        check_alerting_limits(&config.alerting).expect("clamped config passes strict check");
 
-fn assert_parses(input: &str) {
-    super::super::parse_server_config(input).expect("in-range rule should parse");
+        let mut raw = config.alerting.clone();
+        if let Some(rule) = raw.rules.last_mut() {
+            rule.threshold = 101;
+        }
+        let error = check_alerting_limits(&raw).expect_err("new writes above 100 fail");
+        assert!(error.to_string().contains("].threshold"), "{metric}");
+    }
 }
 
 #[test]
-fn rejects_oversized_rule_durations() {
+fn traffic_usage_above_100_percent_is_valid() {
+    let (config, warnings) = parse_with_warnings(&with_extra_rule(
+        "traffic-overage",
+        "traffic_usage_percent",
+        120,
+    ));
+    assert_eq!(last_rule(&config).threshold, 120);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    check_alerting_limits(&config.alerting).expect("120% traffic rule is a valid write");
+}
+
+#[test]
+fn oversized_rule_durations_clamp_on_load() {
+    let input = override_line(SERVER_SAMPLE, "window_minutes", "20161");
+    let input = override_line(&input, "cooldown_minutes", "99999999");
+    let (config, warnings) = parse_with_warnings(&input);
+    assert_eq!(config.alerting.rules[0].window_minutes, 20160);
+    assert_eq!(config.alerting.rules[0].cooldown_minutes, 43200);
     assert!(
-        server_error("window_minutes", "20161").contains("alerts.rules[0].window_minutes"),
-        "window ceiling follows history retention"
+        warnings
+            .iter()
+            .any(|w| w.contains("alerts.rules[0].window_minutes"))
     );
-    assert!(server_error("cooldown_minutes", "43201").contains("alerts.rules[0].cooldown_minutes"));
     assert!(
-        server_error("cooldown_minutes", &u64::MAX.to_string())
+        warnings
+            .iter()
+            .any(|w| w.contains("alerts.rules[0].cooldown_minutes"))
+    );
+
+    let mut raw = config.alerting.clone();
+    raw.rules[0].cooldown_minutes = 43201;
+    let error = check_alerting_limits(&raw).expect_err("new writes above the cap fail");
+    assert!(
+        error
+            .to_string()
             .contains("alerts.rules[0].cooldown_minutes")
     );
-    assert_parses(&override_line(SERVER_SAMPLE, "window_minutes", "20160"));
-    assert_parses(&override_line(SERVER_SAMPLE, "cooldown_minutes", "43200"));
 }
 
 #[test]
-fn rejects_oversized_inspection_durations() {
-    assert!(server_error("lookback_hours", "337").contains("alerts.inspection.lookback_hours"));
+fn oversized_inspection_durations_clamp_on_load() {
+    let input = override_line(SERVER_SAMPLE, "lookback_hours", "720");
+    let input = override_line(&input, "offline_grace_minutes", "20161");
+    let (config, warnings) = parse_with_warnings(&input);
+    assert_eq!(config.alerting.inspection.lookback_hours, 336);
+    assert_eq!(config.alerting.inspection.offline_grace_minutes, 20160);
     assert!(
-        server_error("offline_grace_minutes", "20161")
-            .contains("alerts.inspection.offline_grace_minutes")
+        warnings
+            .iter()
+            .any(|w| w.contains("alerts.inspection.lookback_hours"))
     );
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("alerts.inspection.offline_grace_minutes"))
+    );
+
+    let mut raw = config.alerting.clone();
+    raw.inspection.lookback_hours = 337;
+    let error = check_alerting_limits(&raw).expect_err("new writes above 336 fail");
+    assert!(
+        error
+            .to_string()
+            .contains("alerts.inspection.lookback_hours")
+    );
+}
+
+#[test]
+fn shipped_example_loads_without_warnings() {
+    let (config, warnings) = parse_with_warnings(SERVER_SAMPLE);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    check_alerting_limits(&config.alerting).expect("example alerting passes strict check");
 }
