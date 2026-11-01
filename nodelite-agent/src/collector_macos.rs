@@ -19,9 +19,10 @@ use chrono::Utc;
 use nodelite_proto::{AgentConfig, LoadAverage, NetworkCounters, NodeIdentity, NodeSnapshot};
 use tracing::warn;
 
-use self::metrics::{NetworkInterfaceCache, NetworkInterfaceSignature, ObservedNetworkSample};
+use self::metrics::{NetworkInterfaceCache, ObservedNetworkSample};
 use super::shared::{
-    CpuSample, NetworkRateBaselines, NetworkSample, NetworkTotals, compute_cpu_usage,
+    CpuSample, NetworkMetrics, NetworkRateBaselines, NetworkSample, NetworkTotals,
+    compute_cpu_usage,
 };
 
 /// 采集器状态:为了计算 CPU/网络的"差分速率",需要保留上一次的采样值。
@@ -62,59 +63,20 @@ impl HostCollector {
             .map(|previous| compute_cpu_usage(previous, cpu_sample));
         self.previous_cpu = Some(cpu_sample);
 
-        let network_reading = match metrics::collect_network_totals(&mut self.network_interfaces) {
-            Ok(reading) => reading,
+        let (network_totals, network_metrics) = match metrics::collect_network_totals(
+            &mut self.network_interfaces,
+        ) {
+            Ok(reading) => self.observe_network_reading(reading),
             Err(error) => {
-                warn!(error = ?error, "failed to collect macOS network counters; using zeros");
-                metrics::NetworkReading {
-                    totals: NetworkTotals {
-                        rx_bytes: 0,
-                        tx_bytes: 0,
-                        rx_packets: 0,
-                        tx_packets: 0,
-                        rx_dropped_packets: 0,
-                        tx_dropped_packets: 0,
-                    },
-                    signature: NetworkInterfaceSignature::empty(),
-                }
+                // 累计计数是套餐账本的输入：伪造 0 会被下游当作计数器归零，所以读取失败时
+                // 只能沿用上一次真实值；从未读到过则与 Linux 一样放弃这一帧。
+                let Some(totals) = held_network_totals(self.previous_network.as_ref()) else {
+                    return Err(error);
+                };
+                warn!(error = ?error, "failed to collect macOS network counters; holding last totals");
+                (totals, Default::default())
             }
         };
-        let observed_at = Instant::now();
-        let network_totals = network_reading.totals;
-        let network_signature = network_reading.signature;
-        let interfaces_changed = self
-            .previous_network
-            .as_ref()
-            .is_some_and(|previous| previous.signature != network_signature);
-        let network_metrics = if let Some(previous) = &self.previous_network {
-            metrics::compute_network_metrics_if_same_interfaces(
-                previous,
-                observed_at,
-                network_totals,
-                &network_signature,
-            )
-        } else {
-            Default::default()
-        };
-        if interfaces_changed {
-            self.network_rate_baselines.clear();
-        }
-        super::log_network_rate_anomalies(self.network_rate_baselines.observe(
-            network_metrics.rx_bytes_per_sec,
-            network_metrics.tx_bytes_per_sec,
-        ));
-        self.previous_network = Some(ObservedNetworkSample {
-            sample: NetworkSample {
-                observed_at,
-                rx_bytes: network_totals.rx_bytes,
-                tx_bytes: network_totals.tx_bytes,
-                rx_packets: network_totals.rx_packets,
-                tx_packets: network_totals.tx_packets,
-                rx_dropped_packets: network_totals.rx_dropped_packets,
-                tx_dropped_packets: network_totals.tx_dropped_packets,
-            },
-            signature: network_signature,
-        });
 
         let load = match metrics::collect_load_average() {
             Ok(load) => load,
@@ -153,4 +115,58 @@ impl HostCollector {
             },
         })
     }
+
+    fn observe_network_reading(
+        &mut self,
+        reading: metrics::NetworkReading,
+    ) -> (NetworkTotals, NetworkMetrics) {
+        let observed_at = Instant::now();
+        let network_totals = reading.totals;
+        let network_signature = reading.signature;
+        let interfaces_changed = self
+            .previous_network
+            .as_ref()
+            .is_some_and(|previous| previous.signature != network_signature);
+        let network_metrics = if let Some(previous) = &self.previous_network {
+            metrics::compute_network_metrics_if_same_interfaces(
+                previous,
+                observed_at,
+                network_totals,
+                &network_signature,
+            )
+        } else {
+            Default::default()
+        };
+        if interfaces_changed {
+            self.network_rate_baselines.clear();
+        }
+        super::log_network_rate_anomalies(self.network_rate_baselines.observe(
+            network_metrics.rx_bytes_per_sec,
+            network_metrics.tx_bytes_per_sec,
+        ));
+        self.previous_network = Some(ObservedNetworkSample {
+            sample: NetworkSample {
+                observed_at,
+                rx_bytes: network_totals.rx_bytes,
+                tx_bytes: network_totals.tx_bytes,
+                rx_packets: network_totals.rx_packets,
+                tx_packets: network_totals.tx_packets,
+                rx_dropped_packets: network_totals.rx_dropped_packets,
+                tx_dropped_packets: network_totals.tx_dropped_packets,
+            },
+            signature: network_signature,
+        });
+        (network_totals, network_metrics)
+    }
+}
+
+fn held_network_totals(previous: Option<&ObservedNetworkSample>) -> Option<NetworkTotals> {
+    previous.map(|previous| NetworkTotals {
+        rx_bytes: previous.sample.rx_bytes,
+        tx_bytes: previous.sample.tx_bytes,
+        rx_packets: previous.sample.rx_packets,
+        tx_packets: previous.sample.tx_packets,
+        rx_dropped_packets: previous.sample.rx_dropped_packets,
+        tx_dropped_packets: previous.sample.tx_dropped_packets,
+    })
 }

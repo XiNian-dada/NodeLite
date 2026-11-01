@@ -300,3 +300,126 @@ async fn stored_zero_limit_does_not_block_edits_to_other_fields() -> Result<()> 
     harness.cleanup().await;
     Ok(())
 }
+
+async fn first_blocked_attempt(
+    harness: &SettingsHarness,
+    authorization: &str,
+    cookie: Option<&str>,
+    field: &str,
+) -> Result<Option<usize>> {
+    for attempt in 0..50 {
+        let body = with_confirmation(throttling_service_meta(), field, "000000-wrong");
+        let response = harness
+            .app
+            .clone()
+            .oneshot(json_request(SERVICE_META_URI, authorization, cookie, body))
+            .await?;
+        match response.status() {
+            StatusCode::FORBIDDEN => continue,
+            StatusCode::TOO_MANY_REQUESTS => return Ok(Some(attempt)),
+            other => anyhow::bail!("unexpected status {other} on attempt {attempt}"),
+        }
+    }
+    Ok(None)
+}
+
+#[tokio::test]
+async fn repeated_wrong_inline_passwords_hit_the_sensitive_failure_budget() -> Result<()> {
+    let harness = SettingsHarness::new(readonly_auth(false, None)).await?;
+    issue_guard_node(&harness).await?;
+    let blocked_at = first_blocked_attempt(
+        &harness,
+        &basic_auth_header("secret"),
+        None,
+        "current_password",
+    )
+    .await?;
+    assert!(
+        blocked_at.is_some(),
+        "inline password guesses must be limited"
+    );
+
+    let correct = with_confirmation(throttling_service_meta(), "current_password", "secret");
+    let response = harness
+        .app
+        .clone()
+        .oneshot(json_request(
+            SERVICE_META_URI,
+            &basic_auth_header("secret"),
+            None,
+            correct,
+        ))
+        .await?;
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_node_unchanged(&harness).await?;
+
+    harness.cleanup().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn signed_in_two_factor_session_cannot_keep_guessing_inline_codes() -> Result<()> {
+    let harness = SettingsHarness::new(readonly_auth(true, Some(TEST_TOTP_SECRET))).await?;
+    issue_guard_node(&harness).await?;
+    let token = harness.state.two_factor_sessions.create_authenticated()?;
+    harness
+        .state
+        .two_factor_sessions
+        .expire_sensitive_confirmation_for_test(&token);
+    let blocked_at =
+        first_blocked_attempt(&harness, "", Some(&auth_cookie(&token)), "code").await?;
+    assert!(blocked_at.is_some(), "inline TOTP guesses must be limited");
+    assert_node_unchanged(&harness).await?;
+
+    harness.cleanup().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn unconfirmed_successful_edits_do_not_reset_the_inline_budget() -> Result<()> {
+    let harness = SettingsHarness::new(readonly_auth(true, Some(TEST_TOTP_SECRET))).await?;
+    issue_guard_node(&harness).await?;
+    let token = harness.state.two_factor_sessions.create_authenticated()?;
+    let cookie = auth_cookie(&token);
+    harness
+        .state
+        .two_factor_sessions
+        .expire_sensitive_confirmation_for_test(&token);
+    let mut blocked = false;
+    for _ in 0..50 {
+        let wrong = with_confirmation(throttling_service_meta(), "code", "000000-wrong");
+        let response = harness
+            .app
+            .clone()
+            .oneshot(json_request(SERVICE_META_URI, "", Some(&cookie), wrong))
+            .await?;
+        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+            blocked = true;
+            break;
+        }
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        // A sensitive POST that needs no confirmation must not clear the count.
+        let harmless = harness
+            .app
+            .clone()
+            .oneshot(json_request(
+                "/api/settings/2fa/start",
+                "",
+                Some(&cookie),
+                json!({}),
+            ))
+            .await?;
+        if harmless.status() == StatusCode::TOO_MANY_REQUESTS {
+            blocked = true;
+            break;
+        }
+        assert!(harmless.status().is_success(), "{}", harmless.status());
+    }
+    assert!(
+        blocked,
+        "interleaved harmless edits must not reset the budget"
+    );
+
+    harness.cleanup().await;
+    Ok(())
+}

@@ -48,7 +48,7 @@ pub(crate) use self::query_limit::HistoryQueryRuntimeMetrics;
 use self::query_limit::{HistoryQueryLimiter, HistoryQueryPermit};
 #[cfg(test)]
 use self::test_probe::HistoryQueryProbe;
-pub(crate) use self::traffic::TrafficPersistenceError;
+pub(crate) use self::traffic::{TrafficLedgerHealth, TrafficPersistenceError, TrafficSample};
 use self::traffic::{TrafficTracker, TrafficUsage};
 #[cfg(test)]
 use self::writer::{
@@ -269,9 +269,9 @@ impl HistoryStore {
                 }
                 self.available.store(true, Ordering::Relaxed);
                 self.spawn_writer_task().await;
-                if let Err(error) = self.traffic.initialize().await {
-                    warn!(error = ?error, "traffic usage persistence unavailable; quota tracking will reset after restart");
-                }
+                self.traffic
+                    .start(traffic::TRAFFIC_LOAD_RETRY_INTERVAL)
+                    .await;
             }
             Ok(Err(error)) => {
                 error!(
@@ -365,17 +365,32 @@ impl HistoryStore {
     pub(crate) async fn record_traffic(
         &self,
         node_id: &str,
-        total_rx_bytes: u64,
-        total_tx_bytes: u64,
+        sample: TrafficSample,
         accounting: TrafficAccounting,
         enabled: bool,
-    ) -> Option<TrafficUsage> {
+    ) -> Result<Option<TrafficUsage>, TrafficPersistenceError> {
         if !self.is_available() {
-            return None;
+            return Err(TrafficPersistenceError::Unavailable);
         }
         self.traffic
-            .record(node_id, total_rx_bytes, total_tx_bytes, accounting, enabled)
+            .record(node_id, sample, accounting, enabled)
             .await
+    }
+
+    pub(crate) fn traffic_health(&self) -> TrafficLedgerHealth {
+        self.traffic.health()
+    }
+
+    pub(crate) fn take_traffic_recovered(&self) -> bool {
+        self.traffic.take_recovered_after_startup()
+    }
+
+    pub(crate) fn mark_traffic_recovered(&self) {
+        self.traffic.mark_recovered_after_startup();
+    }
+
+    pub(crate) fn traffic_throttle_hold_expired(&self) -> bool {
+        self.traffic.throttle_hold_expired(chrono::Utc::now())
     }
 
     pub(crate) async fn traffic_usages(&self) -> Vec<TrafficUsage> {

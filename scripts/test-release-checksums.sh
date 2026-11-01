@@ -31,16 +31,33 @@ printf '%s  release-assets/release-sbom/THIRD_PARTY_NOTICES.md\n' "$notice_sha25
 
 server_sha256="$(sha256sum "$ASSETS_DIR/release-scripts/install-server.sh" | sed 's/[[:space:]].*$//')"
 agent_sha256="$(sha256sum "$ASSETS_DIR/release-scripts/install-agent.sh" | sed 's/[[:space:]].*$//')"
-grep -Fx "$server_sha256  release-assets/release-scripts/install-server.sh" \
+grep -Fx "$server_sha256  install-server.sh" \
   "$ASSETS_DIR/SHA256SUMS.txt" >/dev/null
-grep -Fx "$agent_sha256  release-assets/release-scripts/install-agent.sh" \
+grep -Fx "$agent_sha256  install-agent.sh" \
   "$ASSETS_DIR/SHA256SUMS.txt" >/dev/null
-grep -Fx "$(printf '%064d' 0)  release-assets/release-test/nodelite-server-test" \
+grep -Fx "$(printf '%064d' 0)  nodelite-server-test" \
   "$ASSETS_DIR/SHA256SUMS.txt" >/dev/null
-grep -Fx "$notice_sha256  release-assets/release-sbom/THIRD_PARTY_NOTICES.md" \
+grep -Fx "$notice_sha256  THIRD_PARTY_NOTICES.md" \
   "$ASSETS_DIR/SHA256SUMS.txt" >/dev/null
 
-if [ "$(grep -Ec '^[0-9a-f]{64}  release-assets/release-scripts/install-(server|agent|server-config|server-upgrade|agent-signed)\.sh$' "$ASSETS_DIR/SHA256SUMS.txt")" -ne 5 ]; then
+if [ "$(grep -Ec '^[0-9a-f]{64}  install-(server|agent|server-config|server-upgrade|agent-signed)\.sh$' "$ASSETS_DIR/SHA256SUMS.txt")" -ne 5 ]; then
   printf '%s\n' "release installer checksum entries used an unexpected path or format" >&2
   exit 1
 fi
+
+# Every manifest entry must be a bare basename so users can verify a flat
+# download directory with the standard tool.
+if grep -q '/' "$ASSETS_DIR/SHA256SUMS.txt"; then
+  printf '%s\n' "release checksum manifest contains a directory prefix" >&2
+  exit 1
+fi
+
+FLAT_DIR="$TEST_ROOT/flat"
+mkdir -p "$FLAT_DIR"
+cp "$ASSETS_DIR"/release-scripts/install-*.sh "$ASSETS_DIR/release-sbom/THIRD_PARTY_NOTICES.md" \
+  "$ASSETS_DIR/SHA256SUMS.txt" "$FLAT_DIR/"
+grep -v '  nodelite-server-test$' "$FLAT_DIR/SHA256SUMS.txt" >"$FLAT_DIR/SHA256SUMS.check"
+(
+  cd "$FLAT_DIR"
+  sha256sum -c --strict --quiet SHA256SUMS.check
+)
