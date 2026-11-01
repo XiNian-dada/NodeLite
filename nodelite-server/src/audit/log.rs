@@ -17,6 +17,7 @@ use super::query::query_events;
 use super::storage::{
     AUDIT_CHANNEL_CAPACITY, AUDIT_PRUNE_INTERVAL, open_audit_connection, prune_expired_records,
 };
+use super::throttle::{RateLimitAuditThrottle, throttle_source};
 use super::writer::{AuditWriterCommand, AuditWriterContext, run_audit_writer};
 use super::{AuditEvent, AuditEventType, AuditLogError, AuditQuery, NewAuditEvent};
 
@@ -30,6 +31,7 @@ pub struct AuditLog {
     writer_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     dropped_writes: Arc<AtomicU64>,
     write_failures: Arc<AtomicU64>,
+    rate_limit_throttle: Arc<RateLimitAuditThrottle>,
 }
 
 impl AuditLog {
@@ -42,6 +44,7 @@ impl AuditLog {
             writer_handle: Arc::new(Mutex::new(None)),
             dropped_writes: Arc::new(AtomicU64::new(0)),
             write_failures: Arc::new(AtomicU64::new(0)),
+            rate_limit_throttle: Arc::default(),
         }
     }
 
@@ -54,7 +57,7 @@ impl AuditLog {
         let sqlite_busy_timeout_secs = self.sqlite_busy_timeout_secs;
         let connection = tokio::task::spawn_blocking(move || {
             let connection = open_audit_connection(&config.db_path, sqlite_busy_timeout_secs)?;
-            prune_expired_records(&connection, config.retention_days)?;
+            prune_expired_records(&connection, config.retention_days, config.max_rows)?;
             Ok::<Connection, anyhow::Error>(connection)
         })
         .await
@@ -89,6 +92,9 @@ impl AuditLog {
         if !self.should_record(event.event_type) {
             return Ok(());
         }
+        let Some(event) = self.throttle_rate_limit(event, std::time::Instant::now()) else {
+            return Ok(());
+        };
 
         let guard = self.writer_tx.read().await;
         let Some(tx) = guard.as_ref() else {
@@ -116,6 +122,9 @@ impl AuditLog {
         if !self.should_record(event.event_type) {
             return Ok(None);
         }
+        let Some(event) = self.throttle_rate_limit(event, std::time::Instant::now()) else {
+            return Ok(None);
+        };
 
         self.flush_pending().await?;
         let event = event.bounded();
@@ -130,6 +139,33 @@ impl AuditLog {
         .await
         .context("audit record task failed")??;
         Ok(Some(id))
+    }
+
+    /// Keyed by source and `reason`, not path, so varying the request path does not
+    /// bypass it. Suppressed counts are best-effort: the tail of a burst is only reported if
+    /// the same source is blocked again after the window.
+    pub(super) fn throttle_rate_limit(
+        &self,
+        mut event: NewAuditEvent,
+        now: std::time::Instant,
+    ) -> Option<NewAuditEvent> {
+        if event.event_type != AuditEventType::RateLimitExceeded {
+            return Some(event);
+        }
+        let reason = event
+            .details
+            .get("reason")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let suppressed =
+            self.rate_limit_throttle
+                .admit(&throttle_source(&event.ip_address), reason, now)?;
+        if suppressed > 0
+            && let Some(details) = event.details.as_object_mut()
+        {
+            details.insert("suppressed_repeats".to_string(), suppressed.into());
+        }
+        Some(event)
     }
 
     pub async fn record_best_effort(&self, event: NewAuditEvent) {
@@ -234,13 +270,14 @@ impl AuditLog {
         }
 
         let retention_days = self.config.retention_days;
+        let max_rows = self.config.max_rows;
         let connection = Arc::clone(&self.connection);
         tokio::task::spawn_blocking(move || {
             let guard = connection.blocking_lock();
             let Some(ref connection) = *guard else {
                 anyhow::bail!("audit connection not initialized");
             };
-            prune_expired_records(connection, retention_days)
+            prune_expired_records(connection, retention_days, max_rows)
         })
         .await
         .context("audit log prune task failed")?
