@@ -107,7 +107,6 @@ impl NodeRegistry {
             let state = self.state.read().await;
             (state.version, !state.entries.is_empty())
         };
-        let next_state = load_registry_state(self.path.as_path(), memory_version).await?;
         if fingerprint == RegistryFileFingerprint::Missing
             && (memory_version > 0 || memory_has_nodes)
         {
@@ -117,6 +116,7 @@ impl NodeRegistry {
                 memory_version,
             ));
         }
+        let next_state = load_registry_state(self.path.as_path(), memory_version).await?;
         if next_state.version < memory_version {
             // 本进程的写入可能在读取后提交并先行应用；文件指纹变化说明这是竞态而非回退，留给下一轮。
             if registry_file_fingerprint(self.path.as_path()).await? != fingerprint {
