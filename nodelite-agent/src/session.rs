@@ -14,8 +14,8 @@ use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tracing::{info, warn};
 
 use nodelite_proto::{
-    AgentConfig, AgentLogEntry, AgentLogsMessage, MetricsMessage, NoticeLevel, ServerNoticeCode,
-    WireMessage, truncate_to_byte_boundary,
+    AgentConfig, AgentLogEntry, AgentLogsMessage, NoticeLevel, ServerNoticeCode, WireMessage,
+    truncate_to_byte_boundary,
 };
 
 use crate::collector::{HostCollector, collect_snapshot_blocking};
@@ -276,16 +276,10 @@ async fn send_metrics(
     config: &AgentConfig,
     compressed: bool,
 ) -> Result<()> {
-    let mut snapshot = collect_snapshot_blocking(collector, &config.ignored_filesystems).await?;
-    crate::snapshot_limits::fit_for_wire(&mut snapshot)?;
+    let snapshot = collect_snapshot_blocking(collector, &config.ignored_filesystems).await?;
     let collected_at_ms = snapshot.collected_at.timestamp_millis().max(0) as u64;
-    if compressed {
-        let frame = nodelite_proto::compression::encode_metrics(&MetricsMessage { snapshot })?;
-        sender.send(Message::Binary(frame.into())).await?;
-        crate::update_health::publish(collected_at_ms).await;
-        return Ok(());
-    }
-    send_wire_message(sender, &WireMessage::Metrics(MetricsMessage { snapshot })).await?;
+    let frame = crate::snapshot_limits::metrics_frame(snapshot, compressed)?;
+    sender.send(frame).await.context("send metrics frame")?;
     crate::update_health::publish(collected_at_ms).await;
     Ok(())
 }

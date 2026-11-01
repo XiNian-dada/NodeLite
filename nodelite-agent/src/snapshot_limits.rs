@@ -6,7 +6,10 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
-use nodelite_proto::{MAX_METRICS_FRAME_BYTES, MAX_SNAPSHOT_DISKS, NodeSnapshot};
+use nodelite_proto::{
+    MAX_METRICS_FRAME_BYTES, MAX_SNAPSHOT_DISKS, MetricsMessage, NodeSnapshot, WireMessage,
+};
+use tokio_tungstenite::tungstenite::Message;
 use tracing::warn;
 
 /// 上一次告警时的裁剪条数；只在变化时告警，避免每个上报周期刷屏。
@@ -28,6 +31,20 @@ pub(crate) fn fit_for_wire(snapshot: &mut NodeSnapshot) -> Result<usize> {
     Ok(dropped)
 }
 
+/// 构造出站指标帧。裁剪放在这里，压缩与 JSON 两条发送路径就都不会绕过共享上限。
+pub(crate) fn metrics_frame(mut snapshot: NodeSnapshot, compressed: bool) -> Result<Message> {
+    fit_for_wire(&mut snapshot)?;
+    let message = MetricsMessage { snapshot };
+    if compressed {
+        let frame = nodelite_proto::compression::encode_metrics(&message)
+            .context("encode compressed metrics")?;
+        return Ok(Message::Binary(frame.into()));
+    }
+    let payload =
+        serde_json::to_string(&WireMessage::Metrics(message)).context("serialize metrics")?;
+    Ok(Message::Text(payload.into()))
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
@@ -36,7 +53,9 @@ mod tests {
         MetricsMessage, NetworkCounters, NodeSnapshot, WireMessage,
     };
 
-    use super::fit_for_wire;
+    use tokio_tungstenite::tungstenite::Message;
+
+    use super::{fit_for_wire, metrics_frame};
 
     fn snapshot(disks: usize) -> NodeSnapshot {
         NodeSnapshot {
@@ -85,6 +104,29 @@ mod tests {
         let wire = serde_json::to_vec(&WireMessage::Metrics(MetricsMessage { snapshot }))
             .expect("serialize metrics");
         assert!(wire.len() <= MAX_METRICS_FRAME_BYTES);
+    }
+
+    #[test]
+    fn outgoing_frames_carry_at_most_the_shared_disk_limit() {
+        let compressed =
+            metrics_frame(snapshot(MAX_SNAPSHOT_DISKS + 36), true).expect("compressed frame");
+        let Message::Binary(frame) = compressed else {
+            panic!("compressed metrics must be a binary frame");
+        };
+        let decoded = nodelite_proto::compression::decode_metrics(&frame, MAX_METRICS_FRAME_BYTES)
+            .expect("decode compressed frame");
+        assert_eq!(decoded.snapshot.disks.len(), MAX_SNAPSHOT_DISKS);
+
+        let plain = metrics_frame(snapshot(MAX_SNAPSHOT_DISKS + 36), false).expect("text frame");
+        let Message::Text(text) = plain else {
+            panic!("uncompressed metrics must be a text frame");
+        };
+        let WireMessage::Metrics(decoded) =
+            serde_json::from_str(text.as_str()).expect("decode text frame")
+        else {
+            panic!("expected a metrics message");
+        };
+        assert_eq!(decoded.snapshot.disks.len(), MAX_SNAPSHOT_DISKS);
     }
 
     #[test]
