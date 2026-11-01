@@ -19,6 +19,7 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 pub(super) fn mutate_registry_file_sync<T, F>(
     path: &Path,
+    min_version: u64,
     operation: F,
 ) -> RegistryResult<(T, RegistryFile)>
 where
@@ -28,6 +29,14 @@ where
     for _attempt in 0..MAX_REGISTRY_WRITE_RETRIES {
         let mut file = load_registry_file_sync(path)?;
         let base_version = file.version;
+        if base_version < min_version {
+            let disk_version = path
+                .try_exists()
+                .ok()
+                .filter(|exists| *exists)
+                .map(|_| base_version);
+            return Err(RegistryError::diverged(path, disk_version, min_version));
+        }
         let (value, should_persist) = operation(&mut file)?;
         if !should_persist {
             return Ok((value, file));

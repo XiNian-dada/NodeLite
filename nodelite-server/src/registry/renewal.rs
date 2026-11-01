@@ -42,7 +42,8 @@ impl NodeRegistry {
         let node_id = node_id.to_string();
         self.precheck_token_refresh(&node_id, generation).await?;
         let (token, refresh_id, token_hash) = self.hash_candidate_token().await?;
-        let (prepared, file) = mutate_registry_file(self.path.as_ref(), move |file| {
+        let min_version = self.committed_version().await;
+        let (prepared, file) = mutate_registry_file(self.path.as_ref(), min_version, move |file| {
             let node = file.nodes.iter_mut().find(|n| n.node_id == node_id)
                 .ok_or_else(|| RegistryError::NodeNotFound(node_id.clone()))?;
             let now = Utc::now();
@@ -122,34 +123,38 @@ impl NodeRegistry {
         crate::sanitize::validate_refresh_id(refresh_id).map_err(RegistryError::validation)?;
         let node_id = node_id.to_string();
         let refresh_id = refresh_id.to_string();
-        let (committed, file) = mutate_registry_file(self.path.as_ref(), move |file| {
-            let node = file
-                .nodes
-                .iter_mut()
-                .find(|n| n.node_id == node_id)
-                .ok_or(RegistryError::Unauthorized)?;
-            let now = Utc::now();
-            let candidate = node
-                .pending_tokens
-                .iter()
-                .find(|p| p.refresh_id == refresh_id && now < p.expires_at)
-                .cloned()
-                .ok_or(RegistryError::Unauthorized)?;
-            node.previous_token_hash =
-                std::mem::replace(&mut node.token_hash, candidate.token_hash);
-            node.previous_token_generation = Some(node.token_generation);
-            node.previous_token_valid_until = Some(
-                node.token_expires_at
-                    .map(|expiry| expiry.min(now + Duration::minutes(TOKEN_REFRESH_GRACE_MINUTES)))
-                    .unwrap_or(now + Duration::minutes(TOKEN_REFRESH_GRACE_MINUTES)),
-            );
-            node.token_generation = candidate.generation;
-            node.token_expires_at = Some(candidate.expires_at);
-            node.token.clear();
-            node.pending_tokens.clear();
-            Ok(((candidate.generation, candidate.expires_at), true))
-        })
-        .await?;
+        let min_version = self.committed_version().await;
+        let (committed, file) =
+            mutate_registry_file(self.path.as_ref(), min_version, move |file| {
+                let node = file
+                    .nodes
+                    .iter_mut()
+                    .find(|n| n.node_id == node_id)
+                    .ok_or(RegistryError::Unauthorized)?;
+                let now = Utc::now();
+                let candidate = node
+                    .pending_tokens
+                    .iter()
+                    .find(|p| p.refresh_id == refresh_id && now < p.expires_at)
+                    .cloned()
+                    .ok_or(RegistryError::Unauthorized)?;
+                node.previous_token_hash =
+                    std::mem::replace(&mut node.token_hash, candidate.token_hash);
+                node.previous_token_generation = Some(node.token_generation);
+                node.previous_token_valid_until = Some(
+                    node.token_expires_at
+                        .map(|expiry| {
+                            expiry.min(now + Duration::minutes(TOKEN_REFRESH_GRACE_MINUTES))
+                        })
+                        .unwrap_or(now + Duration::minutes(TOKEN_REFRESH_GRACE_MINUTES)),
+                );
+                node.token_generation = candidate.generation;
+                node.token_expires_at = Some(candidate.expires_at);
+                node.token.clear();
+                node.pending_tokens.clear();
+                Ok(((candidate.generation, candidate.expires_at), true))
+            })
+            .await?;
         self.replace_state_from_file(file).await?;
         Ok(committed)
     }

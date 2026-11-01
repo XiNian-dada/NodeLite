@@ -24,6 +24,22 @@ use super::{
 ///
 /// 同时为该节点签发一个一次性安装令牌。这是 CLI 命令的核心入口。
 pub async fn issue_node(path: &Path, request: IssueNodeRequest) -> RegistryResult<IssueNodeResult> {
+    issue_node_at_least(path, 0, request).await
+}
+
+impl super::NodeRegistry {
+    /// 运行中的服务端签发入口：磁盘缺失或回退时拒绝，避免写出只含新节点的注册表。
+    pub async fn issue_node(&self, request: IssueNodeRequest) -> RegistryResult<IssueNodeResult> {
+        let min_version = self.committed_version().await;
+        issue_node_at_least(self.path(), min_version, request).await
+    }
+}
+
+async fn issue_node_at_least(
+    path: &Path,
+    min_version: u64,
+    request: IssueNodeRequest,
+) -> RegistryResult<IssueNodeResult> {
     validate_identifier("node_id", &request.node_id).map_err(RegistryError::validation)?;
     if let Some(node_label) = request.node_label.as_deref() {
         validate_bounded_text("node_label", node_label, MAX_NODE_IDENTITY_TEXT_BYTES)
@@ -34,7 +50,7 @@ pub async fn issue_node(path: &Path, request: IssueNodeRequest) -> RegistryResul
         .map_err(RegistryError::validation)?;
 
     let request = request.clone();
-    let (result, _) = mutate_registry_file(path, move |file| {
+    let (result, _) = mutate_registry_file(path, min_version, move |file| {
         let now = Utc::now();
         prune_expired_install_sessions(file, now);
         let mut rotated_token = false;

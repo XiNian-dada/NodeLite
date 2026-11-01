@@ -9,13 +9,13 @@ use nodelite_proto::uses_insecure_remote_url;
 use tokio::task::JoinHandle;
 use tokio::time::{MissedTickBehavior, interval};
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use url::Url;
 
 use crate::agent_logs::AgentLogStore;
 use crate::app_state::ServerReadiness;
 use crate::history::HistoryStore;
-use crate::registry::NodeRegistry;
+use crate::registry::{NodeRegistry, RegistryError};
 use crate::state::SharedState;
 
 /// 后台任务:每秒扫描一次注册表,把超时节点标记为离线。
@@ -81,6 +81,14 @@ pub(crate) fn spawn_registry_reloader(
                         }
                         Ok(false) => {
                             readiness.mark_registry_reload_healthy(true);
+                        }
+                        Err(error @ RegistryError::Diverged { .. }) => {
+                            readiness.mark_registry_reload_healthy(false);
+                            error!(
+                                error = %error,
+                                registry_path = %registry.path().display(),
+                                "node registry on disk diverged from memory; serving in-memory snapshot and refusing writes until the file is restored",
+                            );
                         }
                         Err(error) => {
                             readiness.mark_registry_reload_healthy(false);
@@ -298,6 +306,50 @@ mod tests {
         })
         .await
         .expect("registry reload failure should degrade readiness");
+
+        shutdown.cancel();
+        timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("registry reloader should stop promptly")
+            .expect("registry reloader should stop cleanly");
+        let _ = tokio::fs::remove_dir_all(temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn registry_reloader_degrades_readiness_when_registry_file_is_deleted() {
+        use crate::registry::{IssueNodeRequest, issue_node};
+        let (state, temp_dir) = background_state_fixture("registry-deleted").await;
+        issue_node(
+            state.registry.path(),
+            IssueNodeRequest {
+                node_id: "hk-01".into(),
+                node_label: None,
+                tags: vec![],
+            },
+        )
+        .await
+        .expect("enroll node");
+        state.registry.reload().await.expect("load registry");
+        tokio::fs::remove_file(state.registry.path())
+            .await
+            .expect("registry file should be removable");
+
+        let shutdown = CancellationToken::new();
+        let handle = spawn_registry_reloader(
+            state.registry.clone(),
+            state.history.clone(),
+            state.agent_logs.clone(),
+            state.readiness.clone(),
+            shutdown.clone(),
+        );
+        timeout(Duration::from_secs(3), async {
+            while state.readiness.registry_reload_healthy() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("missing registry file should degrade readiness");
+        assert_eq!(state.registry.count().await, 1);
 
         shutdown.cancel();
         timeout(Duration::from_secs(1), handle)

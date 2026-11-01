@@ -130,7 +130,7 @@ pub(super) async fn load_registry_state(path: &Path) -> RegistryResult<RegistryS
 
 pub(super) async fn migrate_registry_file(path: &Path) -> RegistryResult<RegistryFile> {
     // Rebase migrations on the latest durable file using the same commit protection as edits.
-    let ((), file) = mutate_registry_file(path, |file| {
+    let ((), file) = mutate_registry_file(path, 0, |file| {
         prune_expired_install_sessions(file, Utc::now());
         migrate_legacy_tokens(file)?;
         // The synchronous loader has already normalized legacy display metadata.
@@ -240,8 +240,12 @@ pub(super) fn load_registry_state_from_file(
 /// 重的 JSON 解析 / 序列化 / tmp 文件写入都发生在锁外; 独占 flock 只覆盖
 /// "确认 registry 版本未变化 + rename 提交" 这一步。若发现版本冲突就丢弃
 /// 当前准备结果并基于最新文件重试。
+///
+/// `min_version` 是调用方内存中已提交的版本；磁盘文件缺失或低于它时拒绝写入，
+/// 否则会以回退后的文件为基线覆盖掉内存里仍在服务的节点。
 pub(super) async fn mutate_registry_file<T, F>(
     path: &Path,
+    min_version: u64,
     operation: F,
 ) -> RegistryResult<(T, RegistryFile)>
 where
@@ -249,7 +253,7 @@ where
     F: Fn(&mut RegistryFile) -> RegistryResult<(T, bool)> + Send + Clone + 'static,
 {
     let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || mutate_registry_file_sync(&path, operation))
+    tokio::task::spawn_blocking(move || mutate_registry_file_sync(&path, min_version, operation))
         .await
         .map_err(RegistryError::mutation_task)?
 }
