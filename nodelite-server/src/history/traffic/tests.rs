@@ -6,6 +6,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chrono::{TimeZone, Utc};
 
+use super::counters::COUNTER_REGRESSION_HOLD_SECS;
 use super::{
     TrafficFlushBarrier, TrafficLedgerHealth, TrafficPersistenceError, TrafficSample,
     TrafficTracker, counted_bytes, run_traffic_writer, utc_month_start,
@@ -487,5 +488,26 @@ async fn shutdown_stops_a_pending_ledger_load_retry() {
         .expect("row should be repaired");
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(!tracker.health().available);
+    remove_db(&db_path);
+}
+
+#[tokio::test]
+async fn recovery_after_a_rebaseline_is_not_billed_across_a_server_restart() {
+    let db_path = test_db_path("high-water-restart");
+    let tracker = started_tracker(&db_path).await;
+    used(&tracker, sample(0, 0, 100)).await;
+    assert_eq!(used(&tracker, sample(2_000_000, 0, 110)).await, 2_000_000);
+    used(&tracker, sample(10, 0, 120)).await;
+    used(&tracker, sample(20, 0, 120 + COUNTER_REGRESSION_HOLD_SECS)).await;
+    tracker.shutdown().await;
+
+    let restarted = started_tracker(&db_path).await;
+    let recovered = used(
+        &restarted,
+        sample(2_000_100, 0, 130 + COUNTER_REGRESSION_HOLD_SECS),
+    )
+    .await;
+    assert_eq!(recovered, 2_000_100);
+    restarted.shutdown().await;
     remove_db(&db_path);
 }

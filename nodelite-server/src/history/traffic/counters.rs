@@ -6,6 +6,10 @@
 /// 后续用量会一直不被计入，因此回退只能短暂保持。
 pub(super) const COUNTER_REGRESSION_HOLD_SECS: u64 = 300;
 
+/// 重置后单帧增量的上限（100 Gbit/s）。超过它的跳变不可能是真实流量，只能是
+/// 部分接口恢复后累计值跳回，不应计费。
+const MAX_PLAUSIBLE_BYTES_PER_SEC: u64 = 12_500_000_000;
+
 /// 一个 metrics 帧里与套餐计费有关的读数。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TrafficSample {
@@ -20,31 +24,67 @@ pub(super) struct CounterBaseline {
     pub(super) tx_bytes: u64,
     /// `None` 表示来自尚未记录 uptime 的旧账本行，此时无法确认主机没有重启。
     pub(super) uptime_secs: Option<u64>,
+    /// 无重启重置前的读数。低读数持续超过保持窗口后又恢复时（如接口下线再上线），
+    /// 这段字节已经计过费，需要靠它识别。必须落盘，否则重启后恢复会被重复计费。
+    pub(super) rx_high_water: Option<u64>,
+    pub(super) tx_high_water: Option<u64>,
     regressed_since_uptime: Option<u64>,
 }
 
 impl CounterBaseline {
     pub(super) fn new(sample: TrafficSample) -> Self {
-        Self::restored(sample.rx_bytes, sample.tx_bytes, Some(sample.uptime_secs))
+        Self::restored(
+            sample.rx_bytes,
+            sample.tx_bytes,
+            Some(sample.uptime_secs),
+            None,
+            None,
+        )
     }
 
-    pub(super) fn restored(rx_bytes: u64, tx_bytes: u64, uptime_secs: Option<u64>) -> Self {
+    pub(super) fn restored(
+        rx_bytes: u64,
+        tx_bytes: u64,
+        uptime_secs: Option<u64>,
+        rx_high_water: Option<u64>,
+        tx_high_water: Option<u64>,
+    ) -> Self {
         Self {
             rx_bytes,
             tx_bytes,
             uptime_secs,
+            rx_high_water,
+            tx_high_water,
             regressed_since_uptime: None,
         }
     }
 
-    /// 推进基线并返回可计费的收发增量。回退永远不产生增量。
+    /// 推进基线并返回可计费的收发增量。回退本身不产生增量。
     pub(super) fn advance(&mut self, sample: TrafficSample) -> (u64, u64) {
-        let rx_delta = sample.rx_bytes.saturating_sub(self.rx_bytes);
-        let tx_delta = sample.tx_bytes.saturating_sub(self.tx_bytes);
         let regressed = sample.rx_bytes < self.rx_bytes || sample.tx_bytes < self.tx_bytes;
         let rebooted = self
             .uptime_secs
             .is_none_or(|last| sample.uptime_secs < last);
+        if rebooted {
+            self.rx_high_water = None;
+            self.tx_high_water = None;
+        }
+        let interval_secs = sample
+            .uptime_secs
+            .saturating_sub(self.uptime_secs.unwrap_or(sample.uptime_secs))
+            .max(1);
+        let rx_delta = billable_delta(
+            sample.rx_bytes,
+            self.rx_bytes,
+            &mut self.rx_high_water,
+            interval_secs,
+        );
+        let tx_delta = billable_delta(
+            sample.tx_bytes,
+            self.tx_bytes,
+            &mut self.tx_high_water,
+            interval_secs,
+        );
         self.rx_bytes = self.rx_bytes.max(sample.rx_bytes);
         self.tx_bytes = self.tx_bytes.max(sample.tx_bytes);
         self.uptime_secs = Some(sample.uptime_secs);
@@ -57,6 +97,10 @@ impl CounterBaseline {
             .regressed_since_uptime
             .get_or_insert(sample.uptime_secs);
         if rebooted || sample.uptime_secs.saturating_sub(since) >= COUNTER_REGRESSION_HOLD_SECS {
+            if !rebooted {
+                raise_high_water(&mut self.rx_high_water, sample.rx_bytes, self.rx_bytes);
+                raise_high_water(&mut self.tx_high_water, sample.tx_bytes, self.tx_bytes);
+            }
             self.rx_bytes = sample.rx_bytes;
             self.tx_bytes = sample.tx_bytes;
             self.regressed_since_uptime = None;
@@ -65,9 +109,37 @@ impl CounterBaseline {
     }
 }
 
+fn billable_delta(
+    current: u64,
+    last: u64,
+    high_water: &mut Option<u64>,
+    interval_secs: u64,
+) -> u64 {
+    let delta = current.saturating_sub(last);
+    let Some(mark) = *high_water else {
+        return delta;
+    };
+    if current >= mark {
+        *high_water = None;
+        return delta.min(current - mark);
+    }
+    if delta > MAX_PLAUSIBLE_BYTES_PER_SEC.saturating_mul(interval_secs) {
+        return 0;
+    }
+    delta
+}
+
+fn raise_high_water(high_water: &mut Option<u64>, current: u64, last: u64) {
+    if current < last {
+        *high_water = Some(high_water.map_or(last, |mark| mark.max(last)));
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{COUNTER_REGRESSION_HOLD_SECS, CounterBaseline, TrafficSample};
+    use super::{
+        COUNTER_REGRESSION_HOLD_SECS, CounterBaseline, MAX_PLAUSIBLE_BYTES_PER_SEC, TrafficSample,
+    };
 
     fn sample(rx_bytes: u64, tx_bytes: u64, uptime_secs: u64) -> TrafficSample {
         TrafficSample {
@@ -129,8 +201,60 @@ mod tests {
 
     #[test]
     fn legacy_row_without_uptime_treats_a_drop_as_a_reboot() {
-        let mut baseline = CounterBaseline::restored(2_000, 1_000, None);
+        let mut baseline = CounterBaseline::restored(2_000, 1_000, None, None, None);
         assert_eq!(baseline.advance(sample(5, 3, 500)), (0, 0));
         assert_eq!(baseline.advance(sample(15, 8, 510)), (10, 5));
+    }
+
+    fn rebaselined_low(high: u64) -> (CounterBaseline, u64) {
+        let mut baseline = CounterBaseline::new(sample(high, 0, 100));
+        baseline.advance(sample(10, 0, 110));
+        let expiry = 110 + COUNTER_REGRESSION_HOLD_SECS;
+        baseline.advance(sample(20, 0, expiry));
+        (baseline, expiry)
+    }
+
+    #[test]
+    fn recovery_after_the_hold_window_bills_only_bytes_above_the_old_reading() {
+        let (mut baseline, expiry) = rebaselined_low(2_000_000);
+        assert_eq!(
+            baseline.advance(sample(2_000_500, 0, expiry + 10)),
+            (500, 0)
+        );
+        assert_eq!(baseline.rx_high_water, None);
+        assert_eq!(
+            baseline.advance(sample(2_000_600, 0, expiry + 20)),
+            (100, 0)
+        );
+    }
+
+    #[test]
+    fn traffic_on_a_genuinely_reset_counter_is_still_billed() {
+        let (mut baseline, expiry) = rebaselined_low(2_000_000);
+        assert_eq!(baseline.advance(sample(1_020, 0, expiry + 10)), (1_000, 0));
+        assert_eq!(baseline.rx_high_water, Some(2_000_000));
+    }
+
+    #[test]
+    fn implausible_jump_below_the_old_reading_is_not_billed() {
+        let high = MAX_PLAUSIBLE_BYTES_PER_SEC * 100;
+        let (mut baseline, expiry) = rebaselined_low(high);
+        let partial = MAX_PLAUSIBLE_BYTES_PER_SEC * 50;
+        assert_eq!(baseline.advance(sample(partial, 0, expiry + 10)), (0, 0));
+        assert_eq!(
+            baseline.advance(sample(partial + 7, 0, expiry + 20)),
+            (7, 0)
+        );
+    }
+
+    #[test]
+    fn reboot_forgets_the_old_reading() {
+        let (mut baseline, expiry) = rebaselined_low(2_000_000);
+        baseline.advance(sample(5, 0, expiry - 100));
+        assert_eq!(baseline.rx_high_water, None);
+        assert_eq!(
+            baseline.advance(sample(3_000_000, 0, expiry)),
+            (2_999_995, 0)
+        );
     }
 }

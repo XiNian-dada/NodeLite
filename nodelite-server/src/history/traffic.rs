@@ -314,9 +314,9 @@ fn load_traffic_state(
     sqlite_busy_timeout_secs: u64,
 ) -> Result<HashMap<String, TrafficUsageState>> {
     let connection = open_traffic_connection(db_path, sqlite_busy_timeout_secs)?;
-    ensure_uptime_column(&connection)?;
+    ensure_baseline_columns(&connection)?;
     let mut statement = connection.prepare(
-        "SELECT node_id, cycle_started_at, accounting, used_bytes, last_rx_bytes, last_tx_bytes, last_uptime_secs FROM traffic_usage",
+        "SELECT node_id, cycle_started_at, accounting, used_bytes, last_rx_bytes, last_tx_bytes, last_uptime_secs, rx_high_water, tx_high_water FROM traffic_usage",
     )?;
     let rows = statement.query_map([], |row| {
         let node_id: String = row.get(0)?;
@@ -326,6 +326,8 @@ fn load_traffic_state(
         let last_rx_bytes: i64 = row.get(4)?;
         let last_tx_bytes: i64 = row.get(5)?;
         let last_uptime_secs: Option<i64> = row.get(6)?;
+        let rx_high_water: Option<i64> = row.get(7)?;
+        let tx_high_water: Option<i64> = row.get(8)?;
         Ok((
             node_id,
             cycle_started_at,
@@ -334,6 +336,8 @@ fn load_traffic_state(
             last_rx_bytes,
             last_tx_bytes,
             last_uptime_secs,
+            rx_high_water,
+            tx_high_water,
         ))
     })?;
     let mut states = HashMap::new();
@@ -346,6 +350,8 @@ fn load_traffic_state(
             last_rx_bytes,
             last_tx_bytes,
             last_uptime_secs,
+            rx_high_water,
+            tx_high_water,
         ) = row?;
         // 跳过坏行等于把该节点的用量清零，下一次写入还会覆盖原值，所以整体判定为不可用。
         let cycle_started_at = Utc
@@ -368,6 +374,12 @@ fn load_traffic_state(
                     stored_counter(last_tx_bytes, &node_id)?,
                     last_uptime_secs
                         .map(|uptime| stored_counter(uptime, &node_id))
+                        .transpose()?,
+                    rx_high_water
+                        .map(|mark| stored_counter(mark, &node_id))
+                        .transpose()?,
+                    tx_high_water
+                        .map(|mark| stored_counter(mark, &node_id))
                         .transpose()?,
                 ),
             },
@@ -512,7 +524,7 @@ fn write_traffic_states(
         match write {
             TrafficWrite::Upsert(state) => {
                 tx.execute(
-                    "INSERT INTO traffic_usage (node_id, cycle_started_at, accounting, used_bytes, last_rx_bytes, last_tx_bytes, last_uptime_secs) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(node_id) DO UPDATE SET cycle_started_at = excluded.cycle_started_at, accounting = excluded.accounting, used_bytes = excluded.used_bytes, last_rx_bytes = excluded.last_rx_bytes, last_tx_bytes = excluded.last_tx_bytes, last_uptime_secs = excluded.last_uptime_secs",
+                    "INSERT INTO traffic_usage (node_id, cycle_started_at, accounting, used_bytes, last_rx_bytes, last_tx_bytes, last_uptime_secs, rx_high_water, tx_high_water) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) ON CONFLICT(node_id) DO UPDATE SET cycle_started_at = excluded.cycle_started_at, accounting = excluded.accounting, used_bytes = excluded.used_bytes, last_rx_bytes = excluded.last_rx_bytes, last_tx_bytes = excluded.last_tx_bytes, last_uptime_secs = excluded.last_uptime_secs, rx_high_water = excluded.rx_high_water, tx_high_water = excluded.tx_high_water",
                     params![
                         state.usage.node_id,
                         state.usage.cycle_started_at.timestamp(),
@@ -521,6 +533,8 @@ fn write_traffic_states(
                         u64_to_sqlite_integer(state.baseline.rx_bytes),
                         u64_to_sqlite_integer(state.baseline.tx_bytes),
                         state.baseline.uptime_secs.map(u64_to_sqlite_integer),
+                        state.baseline.rx_high_water.map(u64_to_sqlite_integer),
+                        state.baseline.tx_high_water.map(u64_to_sqlite_integer),
                     ],
                 )?;
             }
@@ -555,22 +569,38 @@ fn open_traffic_connection(db_path: &Path, sqlite_busy_timeout_secs: u64) -> Res
              used_bytes INTEGER NOT NULL,\
              last_rx_bytes INTEGER NOT NULL,\
              last_tx_bytes INTEGER NOT NULL,\
-             last_uptime_secs INTEGER\
+             last_uptime_secs INTEGER,\
+             rx_high_water INTEGER,\
+             tx_high_water INTEGER\
          );",
     )?;
     Ok(connection)
 }
 
-fn ensure_uptime_column(connection: &Connection) -> Result<()> {
-    let has_column = connection
-        .prepare(
-            "SELECT 1 FROM pragma_table_info('traffic_usage') WHERE name = 'last_uptime_secs'",
-        )?
-        .exists([])?;
-    if !has_column {
-        connection
-            .execute_batch("ALTER TABLE traffic_usage ADD COLUMN last_uptime_secs INTEGER;")
-            .context("failed to add uptime column to traffic usage table")?;
+fn ensure_baseline_columns(connection: &Connection) -> Result<()> {
+    const COLUMNS: [(&str, &str); 3] = [
+        (
+            "last_uptime_secs",
+            "ALTER TABLE traffic_usage ADD COLUMN last_uptime_secs INTEGER;",
+        ),
+        (
+            "rx_high_water",
+            "ALTER TABLE traffic_usage ADD COLUMN rx_high_water INTEGER;",
+        ),
+        (
+            "tx_high_water",
+            "ALTER TABLE traffic_usage ADD COLUMN tx_high_water INTEGER;",
+        ),
+    ];
+    for (name, add_column) in COLUMNS {
+        let exists = connection
+            .prepare("SELECT 1 FROM pragma_table_info('traffic_usage') WHERE name = ?1")?
+            .exists([name])?;
+        if !exists {
+            connection
+                .execute_batch(add_column)
+                .with_context(|| format!("failed to add {name} to traffic usage table"))?;
+        }
     }
     Ok(())
 }
