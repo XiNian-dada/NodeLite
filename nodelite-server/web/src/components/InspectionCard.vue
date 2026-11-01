@@ -2,6 +2,10 @@
 import { computed, ref, useId } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { InspectionSettingsView } from '@/api';
+import {
+  MAX_INSPECTION_LOOKBACK_HOURS,
+  MAX_INSPECTION_OFFLINE_GRACE_MINUTES,
+} from '@/lib/alertLimits';
 import DeliveryCheckboxes from './DeliveryCheckboxes.vue';
 import NativeDialog from './NativeDialog.vue';
 
@@ -97,7 +101,7 @@ const summary = computed(() => {
                 v-model.number="inspection.lookback_hours"
                 type="number"
                 min="1"
-                max="720"
+                :max="MAX_INSPECTION_LOOKBACK_HOURS"
                 data-test="inspection-lookback"
               />
             </label>
@@ -113,6 +117,7 @@ const summary = computed(() => {
                 v-model.number="inspection.offline_grace_minutes"
                 type="number"
                 min="1"
+                :max="MAX_INSPECTION_OFFLINE_GRACE_MINUTES"
                 data-test="inspection-offline-grace"
               />
             </label>

@@ -194,9 +194,10 @@ pub(crate) async fn fetch(
     policy: &Policy,
     bootstrap: &[u8],
 ) -> Result<Artifact> {
-    if epoch()?.saturating_add(5) < state.time_high {
+    if epoch()?.saturating_add(crate::clock::SKEW_SECS) < state.time_high {
         return Err(UpdateError::Policy(
-            "wall clock precedes accepted time floor",
+            "wall clock precedes accepted time floor; after verifying the clock run \
+             `nodelite-updater reset-time-floor --confirm-clock-correct`",
         ));
     }
     let working = stage(store, state)?;

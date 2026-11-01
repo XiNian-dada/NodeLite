@@ -28,7 +28,7 @@ auth_timeout_secs = 20
 send_timeout_secs = 20
 # 认证后最长入站静默。建议至少为 Server ping_interval_secs 的三倍。
 inbound_timeout_secs = 90
-# Agent 最大接收消息字节数。
+# Agent 最大接收消息字节数，至少 1024。
 max_incoming_message_bytes = 65536
-# 不安全传输警告间隔(秒)。
+# 不安全传输警告间隔(秒)，至少为 1。
 insecure_transport_warn_interval_secs = 900

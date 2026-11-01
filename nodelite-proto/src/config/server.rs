@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 
+use super::alert_limits::clamp_alerting_limits;
 use super::defaults::{
     default_agent_logs_max_entries, default_agent_logs_max_estimated_bytes, default_audit_max_rows,
     default_audit_writer_batch_max, default_audit_writer_flush_interval_ms,
@@ -234,12 +235,21 @@ pub enum GeoIpEdition {
     CityLite,
 }
 
-/// 从 TOML 文本中解析并校验出 `ServerConfig`。
+/// 从 TOML 文本中解析并校验出 `ServerConfig`，越界的历史取值按上限截断。
 pub fn parse_server_config(input: &str) -> Result<ServerConfig, ConfigError> {
+    parse_server_config_with_warnings(input).map(|(config, _)| config)
+}
+
+/// 与 [`parse_server_config`] 相同，另外返回被截断或需要人工处理的字段说明，供启动日志输出。
+pub fn parse_server_config_with_warnings(
+    input: &str,
+) -> Result<(ServerConfig, Vec<String>), ConfigError> {
     let raw: RawServerConfigFile = toml::from_str(input).map_err(|error: toml::de::Error| {
         ConfigError::from_toml_diagnostic(input, error.message(), error.span())
     })?;
-    raw.validate()
+    let mut config = raw.validate()?;
+    let warnings = clamp_alerting_limits(&mut config.alerting);
+    Ok((config, warnings))
 }
 
 config_section! {

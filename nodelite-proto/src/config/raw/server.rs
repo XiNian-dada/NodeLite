@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use serde::Deserialize;
+use url::Url;
 
 use super::super::defaults::{
     default_audit_db_path, default_audit_enabled, default_audit_log_failed_auth,
@@ -206,6 +207,7 @@ impl RawServerConfigFile {
         let geoip = self.validate_geoip()?;
         let alerting = self.validate_alerting()?;
         self.validate_server_limits()?;
+        self.validate_session_timers()?;
         self.validate_sanitization_limits()?;
         self.validate_ws_limits()?;
         self.validate_ui_limits()?;
@@ -273,6 +275,15 @@ impl RawServerConfigFile {
             &self.server.public_base_url,
             &["http", "https"],
         )?;
+        // 安装脚本、bootstrap 与 /ws 地址都用 set_path 覆盖路径，子路径前缀会被
+        // 静默丢弃；在这些地址支持前缀之前，宁可启动失败也不下发错误地址。
+        if let Ok(url) = Url::parse(&self.server.public_base_url)
+            && (url.path() != "/" || url.query().is_some() || url.fragment().is_some())
+        {
+            return Err(ConfigError::new(
+                "server.public_base_url must be an origin without a sub-path, query or fragment (e.g. https://monitor.example.com); serving NodeLite under a path prefix is not supported",
+            ));
+        }
         if uses_insecure_remote_public_base_url(&self.server.public_base_url)
             && !self.server.insecure_allow_http
         {
@@ -530,6 +541,22 @@ impl RawServerConfigFile {
             return Err(ConfigError::new(format!(
                 "server.history_writer_flush_interval_ms must be at least {MIN_WRITER_FLUSH_INTERVAL_MS} ms"
             )));
+        }
+        Ok(())
+    }
+
+    fn validate_session_timers(&self) -> Result<(), ConfigError> {
+        // 零握手超时会让每个 Agent 认证失败并累积到 IP 封禁；超大值由 tokio
+        // timeout 饱和处理，旧配置里的大值继续可用，因此只设下限。
+        if self.server.hello_timeout_secs == 0 {
+            return Err(ConfigError::new(
+                "server.hello_timeout_secs must be at least 1 second",
+            ));
+        }
+        if self.server.insecure_transport_warn_interval_secs == 0 {
+            return Err(ConfigError::new(
+                "server.insecure_transport_warn_interval_secs must be at least 1 second",
+            ));
         }
         Ok(())
     }
