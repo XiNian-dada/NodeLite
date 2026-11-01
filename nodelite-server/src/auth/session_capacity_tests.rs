@@ -4,7 +4,11 @@ use super::*;
 
 fn session_count(sessions: &TwoFactorSessions) -> usize {
     let store = lock_mutex(&sessions.inner);
-    store.pending.len() + store.authenticated.len() + store.basic_auth_sessions.len()
+    store.authenticated.len() + store.basic_auth_sessions.len()
+}
+
+fn pending_count(sessions: &TwoFactorSessions) -> usize {
+    lock_mutex(&sessions.inner).pending.len()
 }
 
 #[test]
@@ -37,16 +41,11 @@ fn full_store_preserves_existing_sessions_and_allows_pending_exchanges() {
     let sessions = TwoFactorSessions::new();
     let basic = sessions.create_basic_auth_session(Some(42)).expect("basic");
     assert!(sessions.confirm_sensitive_action(&basic, false));
-    let authenticated = sessions.create_authenticated().expect("authenticated");
     let totp_pending = sessions.create_pending().expect("TOTP pending");
     let passkey_pending = sessions.create_pending().expect("Passkey pending");
-    for _ in 4..MAX_AUTH_SESSIONS {
-        sessions.create_pending().expect("fill store");
+    for _ in 1..MAX_AUTH_SESSIONS {
+        sessions.create_authenticated().expect("fill store");
     }
-    assert!(matches!(
-        sessions.create_pending(),
-        Err(AuthSessionError::Capacity)
-    ));
     assert!(matches!(
         sessions.create_authenticated(),
         Err(AuthSessionError::Capacity)
@@ -58,7 +57,9 @@ fn full_store_preserves_existing_sessions_and_allows_pending_exchanges() {
     assert!(sessions.is_basic_auth_session_valid(&basic));
     assert_eq!(sessions.get_basic_auth_login_event_id(&basic), Some(42));
     assert!(sessions.sensitive_action_confirmed(&basic, false));
-    assert!(sessions.is_authenticated(&authenticated));
+    sessions
+        .create_pending()
+        .expect("pending sessions do not use the shared budget");
     let totp = sessions
         .exchange_pending(&totp_pending, &[123])
         .expect("exchange TOTP")
@@ -69,13 +70,37 @@ fn full_store_preserves_existing_sessions_and_allows_pending_exchanges() {
         .expect("authenticated Passkey");
     assert!(sessions.is_authenticated(&totp));
     assert!(sessions.is_authenticated(&passkey));
-    assert_eq!(session_count(&sessions), MAX_AUTH_SESSIONS);
     sessions.remove_basic_auth_session(&basic);
     assert!(!sessions.is_basic_auth_session_valid(&basic));
-    sessions.create_pending().expect("reuse released slot");
-    assert_eq!(session_count(&sessions), MAX_AUTH_SESSIONS);
     sessions.clear_authenticated();
     assert_eq!(session_count(&sessions), 0);
+}
+
+#[test]
+fn pending_sessions_have_their_own_budget_and_evict_the_oldest() {
+    let sessions = TwoFactorSessions::new();
+    let oldest = sessions.create_pending().expect("first pending");
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    let newer = sessions.create_pending().expect("second pending");
+    for _ in 2..MAX_PENDING_SESSIONS {
+        sessions.create_pending().expect("fill pending budget");
+    }
+    assert_eq!(pending_count(&sessions), MAX_PENDING_SESSIONS);
+
+    let latest = sessions
+        .create_pending()
+        .expect("a new login always gets a pending slot");
+    assert_eq!(pending_count(&sessions), MAX_PENDING_SESSIONS);
+    assert!(
+        !sessions.pending_exists(&oldest),
+        "the oldest pending is evicted"
+    );
+    assert!(sessions.pending_exists(&newer));
+    assert!(sessions.pending_exists(&latest));
+    assert_eq!(session_count(&sessions), 0);
+    sessions
+        .create_authenticated()
+        .expect("pending sessions never block authenticated ones");
 }
 
 #[test]
@@ -87,7 +112,7 @@ fn expired_entries_free_capacity_without_expanding_the_cleanup_budget() {
     assert!(lifetime.expires_at >= before + Duration::from_secs(BASIC_AUTH_SESSION_SECS));
     assert!(lifetime.expires_at <= Instant::now() + Duration::from_secs(BASIC_AUTH_SESSION_SECS));
     for _ in 1..MAX_AUTH_SESSIONS {
-        sessions.create_pending().expect("fill store");
+        sessions.create_authenticated().expect("fill store");
     }
     {
         let mut store = lock_mutex(&sessions.inner);
