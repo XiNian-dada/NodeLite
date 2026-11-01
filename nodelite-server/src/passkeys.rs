@@ -28,6 +28,8 @@ pub(crate) struct PasskeyService {
     credentials: Arc<Mutex<PasskeyFile>>,
     ceremonies: Arc<Mutex<PasskeyCeremonies>>,
     mutation_lock: Arc<tokio::sync::Mutex<()>>,
+    #[cfg(test)]
+    before_write: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -126,6 +128,8 @@ impl PasskeyService {
                 authentications: HashMap::new(),
             })),
             mutation_lock: Arc::new(tokio::sync::Mutex::new(())),
+            #[cfg(test)]
+            before_write: None,
         })
     }
 
@@ -194,33 +198,40 @@ impl PasskeyService {
             .webauthn()?
             .finish_passkey_registration(response, &pending.state)
             .map_err(|_| PasskeyError::Operation)?;
-        let _mutation_guard = self.mutation_lock.lock().await;
-        let mut next = self.credentials_snapshot()?;
-        if next.credentials.len() >= MAX_PASSKEYS {
-            return Err(PasskeyError::CredentialLimit);
-        }
-        if next
-            .credentials
-            .iter()
-            .any(|credential| credential.passkey.cred_id() == passkey.cred_id())
-        {
-            return Err(PasskeyError::DuplicateCredential);
-        }
-        let stored = StoredPasskey {
-            id: Uuid::new_v4(),
-            label: pending.label,
-            created_at: Utc::now(),
-            passkey,
-        };
-        let summary = PasskeySummary {
-            id: stored.id,
-            label: stored.label.clone(),
-            created_at: stored.created_at,
-        };
-        next.credentials.push(stored);
-        self.persist(&next).await?;
-        *lock(&self.credentials)? = next;
-        Ok(summary)
+        self.add_credential(pending.label, passkey).await
+    }
+
+    async fn add_credential(
+        &self,
+        label: String,
+        passkey: Passkey,
+    ) -> Result<PasskeySummary, PasskeyError> {
+        self.commit(move |next| {
+            if next.credentials.len() >= MAX_PASSKEYS {
+                return Err(PasskeyError::CredentialLimit);
+            }
+            if next
+                .credentials
+                .iter()
+                .any(|credential| credential.passkey.cred_id() == passkey.cred_id())
+            {
+                return Err(PasskeyError::DuplicateCredential);
+            }
+            let stored = StoredPasskey {
+                id: Uuid::new_v4(),
+                label,
+                created_at: Utc::now(),
+                passkey,
+            };
+            let summary = PasskeySummary {
+                id: stored.id,
+                label: stored.label.clone(),
+                created_at: stored.created_at,
+            };
+            next.credentials.push(stored);
+            Ok((summary, true))
+        })
+        .await
     }
 
     pub(crate) fn start_authentication(
@@ -262,39 +273,56 @@ impl PasskeyService {
             .webauthn()?
             .finish_passkey_authentication(response, &pending.state)
             .map_err(|_| PasskeyError::Operation)?;
-        let _mutation_guard = self.mutation_lock.lock().await;
-        let mut next = self.credentials_snapshot()?;
-        let mut updated = None;
-        for credential in &mut next.credentials {
-            if let Some(changed) = credential.passkey.update_credential(&result) {
-                updated = Some(changed);
-                break;
+        self.commit(move |next| {
+            for credential in &mut next.credentials {
+                if let Some(changed) = credential.passkey.update_credential(&result) {
+                    return Ok(((), changed));
+                }
             }
-        }
-        let Some(updated) = updated else {
-            return Err(PasskeyError::CredentialNotFound);
-        };
-        if updated {
-            self.persist(&next).await?;
-            *lock(&self.credentials)? = next;
-        }
-        Ok(())
+            Err(PasskeyError::CredentialNotFound)
+        })
+        .await
     }
 
     pub(crate) async fn delete(&self, id: Uuid) -> Result<(), PasskeyError> {
-        let _mutation_guard = self.mutation_lock.lock().await;
-        let mut next = self.credentials_snapshot()?;
-        let Some(index) = next
-            .credentials
-            .iter()
-            .position(|credential| credential.id == id)
-        else {
-            return Err(PasskeyError::CredentialNotFound);
-        };
-        next.credentials.remove(index);
-        self.persist(&next).await?;
-        *lock(&self.credentials)? = next;
-        Ok(())
+        self.commit(move |next| {
+            let Some(index) = next
+                .credentials
+                .iter()
+                .position(|credential| credential.id == id)
+            else {
+                return Err(PasskeyError::CredentialNotFound);
+            };
+            next.credentials.remove(index);
+            Ok(((), true))
+        })
+        .await
+    }
+
+    /// Runs one credential mutation end to end in a detached task.
+    ///
+    /// The blocking write cannot be cancelled once started, so if the caller's
+    /// future owned the lock and the in-memory publish, dropping it mid-write
+    /// would release the lock with disk ahead of memory and let the next
+    /// mutation rewrite stale state (e.g. resurrect a revoked passkey). Owning
+    /// lock, write and publish in one task keeps them a single unit.
+    async fn commit<R, F>(&self, mutate: F) -> Result<R, PasskeyError>
+    where
+        R: Send + 'static,
+        F: FnOnce(&mut PasskeyFile) -> Result<(R, bool), PasskeyError> + Send + 'static,
+    {
+        let service = self.clone();
+        tokio::spawn(async move {
+            let _mutation_guard = service.mutation_lock.clone().lock_owned().await;
+            let mut next = service.credentials_snapshot()?;
+            let (output, changed) = mutate(&mut next)?;
+            if changed {
+                service.persist(&next).await?;
+                *lock(&service.credentials)? = next;
+            }
+            Ok(output)
+        })
+        .await?
     }
 
     fn webauthn(&self) -> Result<&Webauthn, PasskeyError> {
@@ -334,7 +362,16 @@ impl PasskeyService {
     async fn persist(&self, credentials: &PasskeyFile) -> Result<(), PasskeyError> {
         let payload = serde_json::to_vec(credentials)?;
         let path = self.path.as_ref().clone();
-        tokio::task::spawn_blocking(move || atomic_write_private(&path, &payload)).await??;
+        #[cfg(test)]
+        let before_write = self.before_write.clone();
+        tokio::task::spawn_blocking(move || {
+            #[cfg(test)]
+            if let Some(hook) = before_write {
+                hook();
+            }
+            atomic_write_private(&path, &payload)
+        })
+        .await??;
         Ok(())
     }
 }
@@ -379,6 +416,10 @@ fn normalize_label(label: &str) -> Result<String, PasskeyError> {
 fn lock<T>(mutex: &Mutex<T>) -> Result<MutexGuard<'_, T>, PasskeyError> {
     mutex.lock().map_err(|_| PasskeyError::StateUnavailable)
 }
+
+#[cfg(test)]
+#[path = "passkeys_cancel_tests.rs"]
+mod cancel_tests;
 
 #[cfg(test)]
 mod tests {
