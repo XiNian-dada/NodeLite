@@ -272,8 +272,10 @@ fn readonly_auth_unauthorized_response() -> Response {
         .into_response()
 }
 
+/// Node metadata writes reach the agent's traffic rules, so they count as settings writes.
 fn is_sensitive_readonly_path(path: &str, request: &Request) -> bool {
-    request.method() != axum::http::Method::GET && path.starts_with("/api/settings/")
+    request.method() != axum::http::Method::GET
+        && (path.starts_with("/api/settings/") || path.starts_with("/api/nodes/"))
 }
 
 fn starts_browser_session(request: &Request) -> bool {
@@ -441,3 +443,39 @@ mod revocation_tests;
 #[cfg(test)]
 #[path = "basic_session_tests.rs"]
 mod basic_session_tests;
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Body;
+    use axum::http::Method;
+
+    use super::*;
+
+    fn request(method: Method, path: &str) -> Request {
+        Request::builder()
+            .method(method)
+            .uri(path)
+            .body(Body::empty())
+            .expect("request should build")
+    }
+
+    #[test]
+    fn settings_and_node_writes_are_sensitive_but_reads_are_not() {
+        for (method, path, sensitive) in [
+            (Method::POST, "/api/settings/password", true),
+            (Method::POST, "/api/nodes/edge-01/service-meta", true),
+            (Method::POST, "/api/nodes/edge-01/location-override", true),
+            (Method::DELETE, "/api/nodes/edge-01", true),
+            (Method::GET, "/api/nodes/edge-01/history", false),
+            (Method::GET, "/api/settings", false),
+            (Method::POST, "/api/overview", false),
+        ] {
+            let request = request(method.clone(), path);
+            assert_eq!(
+                is_sensitive_readonly_path(path, &request),
+                sensitive,
+                "{method} {path}"
+            );
+        }
+    }
+}
