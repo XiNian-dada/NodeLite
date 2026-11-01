@@ -29,6 +29,16 @@ pub(super) struct MemoryStatistics {
 
 pub(super) struct IfAddrsGuard(*mut libc::ifaddrs);
 
+/// 每次 `mach_host_self` 都会给 host port 增加一个发送权限引用，必须成对释放。
+pub(super) struct HostPort(libc::mach_port_t);
+
+unsafe extern "C" {
+    fn mach_port_deallocate(
+        task: libc::mach_port_t,
+        name: libc::mach_port_t,
+    ) -> libc::kern_return_t;
+}
+
 const IFDATA_GENERAL: libc::c_int = 1;
 const IFMIB_IFDATA: libc::c_int = 2;
 const NETLINK_GENERIC: libc::c_int = 0;
@@ -114,9 +124,7 @@ pub(super) fn read_uptime_secs() -> Result<u64> {
 
 /// 使用 `host_processor_info` 汇总所有逻辑核心的累计 tick。
 pub(super) fn collect_cpu_sample() -> Result<CpuSample> {
-    #[allow(deprecated)]
-    // SAFETY: mach_host_self 无前置条件，按值返回当前任务的 host port。
-    let host = unsafe { libc::mach_host_self() };
+    let host = HostPort::acquire();
     let mut cpu_count: libc::natural_t = 0;
     let mut cpu_info: libc::processor_cpu_load_info_t = ptr::null_mut();
     let mut info_count: libc::mach_msg_type_number_t = 0;
@@ -124,7 +132,7 @@ pub(super) fn collect_cpu_sample() -> Result<CpuSample> {
     // SAFETY: 所有输出指针均指向栈上有效变量，cpu_info 为 Mach 成功时填充的内核缓冲区指针。
     let status = unsafe {
         libc::host_processor_info(
-            host,
+            host.raw(),
             libc::PROCESSOR_CPU_LOAD_INFO,
             &mut cpu_count,
             (&mut cpu_info as *mut libc::processor_cpu_load_info_t).cast(),
@@ -185,16 +193,14 @@ pub(super) fn read_memory_statistics() -> Result<MemoryStatistics> {
         ));
     }
 
-    #[allow(deprecated)]
-    // SAFETY: mach_host_self 无前置条件，按值返回当前任务的 host port。
-    let host = unsafe { libc::mach_host_self() };
+    let host = HostPort::acquire();
     let mut count = libc::HOST_VM_INFO64_COUNT;
     // SAFETY: vm_statistics64 为纯 C 输出结构体；全零字节是 host_statistics64 写入前的有效初始值。
     let mut stats = unsafe { mem::zeroed::<libc::vm_statistics64>() };
     // SAFETY: stats 和 count 为合法可写输出，count 以内核文档规定的 HOST_VM_INFO64 元素数量初始化。
     let status = unsafe {
         libc::host_statistics64(
-            host,
+            host.raw(),
             libc::HOST_VM_INFO64,
             (&mut stats as *mut libc::vm_statistics64).cast(),
             &mut count,
@@ -341,6 +347,34 @@ impl Drop for IfAddrsGuard {
         // SAFETY: IfAddrsGuard 仅在 getifaddrs 成功后构造，self.0 是需要单次释放的匹配链表头。
         unsafe {
             libc::freeifaddrs(self.0);
+        }
+    }
+}
+
+impl HostPort {
+    pub(super) fn acquire() -> Self {
+        #[allow(deprecated)]
+        // SAFETY: mach_host_self 无前置条件，按值返回 host port 并转移一个发送权限引用给调用方。
+        Self(unsafe { libc::mach_host_self() })
+    }
+
+    pub(super) fn raw(&self) -> libc::mach_port_t {
+        self.0
+    }
+}
+
+impl Drop for HostPort {
+    fn drop(&mut self) {
+        if self.0 == libc::MACH_PORT_NULL as libc::mach_port_t {
+            return;
+        }
+        // SAFETY: self.0 是 acquire 取得且仅由本 guard 持有的一个发送权限引用，这里只释放一次。
+        unsafe {
+            mach_port_deallocate(
+                #[allow(deprecated)]
+                libc::mach_task_self(),
+                self.0,
+            );
         }
     }
 }
