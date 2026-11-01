@@ -4,11 +4,14 @@ use std::collections::HashSet;
 use std::ffi::CString;
 use std::fs;
 use std::path::Path;
+use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow};
 use tracing::warn;
 
 use nodelite_proto::{DiskUsage, percentage};
+
+use crate::collector::mount_probe::MountProbes;
 
 /// `statvfs` 探测函数的签名。生产环境指向真正的 libc 系统调用,
 /// 测试时可注入桩实现,从而避免对宿主机真实根文件系统的依赖。
@@ -18,10 +21,12 @@ pub(super) type StatvfsFn = fn(&str) -> Result<FilesystemStats>;
 /// 同一挂载点重复出现时只保留第一条;特殊虚拟文件系统会被忽略。
 ///
 /// `statvfs_fn` 由调用方注入,生产环境是真实系统调用,测试时为桩实现。
+/// 每个挂载点的探测经 `probes` 限时执行,超时或失败时复用上次容量。
 pub(super) fn collect_disks(
     mounts_path: &std::path::Path,
     statvfs_fn: StatvfsFn,
     ignored_filesystems: &[String],
+    probes: &mut MountProbes<FilesystemStats>,
 ) -> Result<Vec<DiskUsage>> {
     let content = fs::read_to_string(mounts_path)
         .with_context(|| format!("read {}", mounts_path.display()))?;
@@ -48,17 +53,16 @@ pub(super) fn collect_disks(
             continue;
         }
 
-        let stats = match statvfs_fn(&mount_point) {
-            Ok(stats) => stats,
-            Err(error) => {
-                warn!(
-                    mount_point = %mount_point,
-                    fs_type = %fs_type,
-                    error = ?error,
-                    "skipping disk mount after statvfs failure",
-                );
-                continue;
-            }
+        let probe_path = mount_point.clone();
+        let Some(stats) = probes.probe(&mount_point, Instant::now(), move || {
+            statvfs_fn(&probe_path)
+        }) else {
+            warn!(
+                mount_point = %mount_point,
+                fs_type = %fs_type,
+                "skipping disk mount without available capacity",
+            );
+            continue;
         };
         if stats.total_bytes == 0 {
             continue;
@@ -79,6 +83,7 @@ pub(super) fn collect_disks(
         });
     }
 
+    probes.retain_mounts(&seen_mounts);
     disks.sort_by(|left, right| left.mount_point.cmp(&right.mount_point));
     Ok(disks)
 }
@@ -88,6 +93,7 @@ fn unescape_mount_field(value: &str) -> String {
     value.replace("\\040", " ")
 }
 
+#[derive(Clone)]
 pub(super) struct FilesystemStats {
     pub(super) total_bytes: u64,
     pub(super) available_bytes: u64,
