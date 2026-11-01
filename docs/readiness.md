@@ -42,8 +42,8 @@ Prometheus 对应指标为 `nodelite_history_write_failures_total`、`nodelite_h
 但已持久化样本不会计入丢失数。
 
 流量账本有独立的 writer 和诊断：`signals.traffic_ledger_available`、`traffic_write_degraded`、
-`traffic_write_failures`、`traffic_dropped_writes`、`traffic_last_success_at`、`traffic_pending_writes`，
-Prometheus 对应指标以 `nodelite_traffic_` 开头。入队丢弃会由 writer 补写，因此只计数，不进入 `problems`。
+`traffic_write_failures`、`traffic_last_success_at`、`traffic_pending_writes`，
+Prometheus 对应指标以 `nodelite_traffic_` 开头。账本更新不经过有界队列，因此没有入队丢弃信号。
 处理规则见[套餐账本](traffic-accounting.md)。
 
 ## 探针与告警配置
