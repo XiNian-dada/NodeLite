@@ -20,6 +20,7 @@ use super::{
 mod init_tests;
 mod migration_tests;
 mod reader_tests;
+mod retention_tests;
 mod write_diagnostics;
 mod writer_tests;
 

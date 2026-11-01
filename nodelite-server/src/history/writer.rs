@@ -91,7 +91,7 @@ pub(super) async fn run_history_writer(
     debug!("history writer task exited");
 }
 
-/// 把 batch 里的所有样本 + 可能的清理任务,放进一个 SQLite 事务里提交。
+/// 把 batch 里的所有样本放进一个 SQLite 事务提交，必要时随后分批清理过期记录。
 async fn flush_history_batch(batch: &mut Vec<HistoryPoint>, context: &WriterContext) {
     if batch.is_empty() {
         return;
@@ -151,10 +151,10 @@ fn should_prune_now(last_pruned_at: &AtomicI64) -> Option<DateTime<Utc>> {
     Some(Utc::now() - chrono::Duration::hours(DEFAULT_HISTORY_RETENTION_HOURS as i64))
 }
 
-/// 写入一批历史记录,同时按需删除过期记录。
+/// 写入一批历史记录,提交后按需分批删除过期记录。
 ///
 /// 关键点:
-/// - 所有 INSERT 与可选 DELETE 都在同一个 `BEGIN ... COMMIT` 内,
+/// - 所有 INSERT 都在同一个 `BEGIN ... COMMIT` 内,
 ///   把 N 次 fsync 折叠成 1 次 — 这是 #32 修复的核心改进;
 /// - 失败时整个事务回滚,不会留下部分写入的状态;
 /// - 沿用 `with_sqlite_busy_retry` 来吸收 BUSY/LOCKED 冲突。
@@ -206,21 +206,50 @@ fn write_history_batch(
                 ])?;
             }
         }
-        if let Some(cutoff) = prune_before {
-            tx.execute(
-                "DELETE FROM history_points WHERE recorded_at < ?1",
-                params![cutoff.timestamp()],
-            )?;
-        }
         tx.commit()?;
         Ok(())
     })?;
+    if let Some(cutoff) = prune_before {
+        // 样本已提交；清理失败只影响磁盘占用，下个周期会重试，不应把已落盘的批次记为失败。
+        if let Err(error) = prune_history_before(connection, cutoff) {
+            warn!(error = ?error, "failed to prune expired history points");
+        }
+    }
     if !artifacts_hardened_after_write.load(Ordering::Relaxed) {
         harden_database_artifacts(db_path).map_err(BatchWriteError::Permissions)?;
         artifacts_hardened_after_write.store(true, Ordering::Relaxed);
     }
 
     Ok(())
+}
+
+/// 每批删除的最大行数；单批事务短，writer 不会因一次大淘汰长时间占用写锁。
+pub(super) const HISTORY_PRUNE_BATCH_ROWS: i64 = 5_000;
+
+/// 分批删除 `cutoff` 之前的历史点，每批一个独立的自动提交语句。返回删除总行数。
+pub(super) fn prune_history_before(
+    connection: &Connection,
+    cutoff: DateTime<Utc>,
+) -> Result<usize> {
+    let mut statement = connection.prepare_cached(
+        "DELETE FROM history_points WHERE rowid IN (
+            SELECT rowid FROM history_points
+            INDEXED BY idx_history_points_recorded_at
+            WHERE recorded_at < ?1 LIMIT ?2
+        )",
+    )?;
+    let mut total = 0_usize;
+    loop {
+        let mut deleted = 0_usize;
+        with_sqlite_busy_retry(|| {
+            deleted = statement.execute(params![cutoff.timestamp(), HISTORY_PRUNE_BATCH_ROWS])?;
+            Ok(())
+        })?;
+        total = total.saturating_add(deleted);
+        if (deleted as i64) < HISTORY_PRUNE_BATCH_ROWS {
+            return Ok(total);
+        }
+    }
 }
 
 /// 单点写入,仅用于单元测试中"绕过 writer task 直接验证 SQL 行为"的场景。

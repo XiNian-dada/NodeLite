@@ -194,6 +194,11 @@ fn ensure_history_indexes(connection: &Connection) -> Result<()> {
         "CREATE INDEX IF NOT EXISTS idx_history_points_node_time ON history_points (node_id, recorded_at)",
         [],
     )?;
+    // 保留清理只按 recorded_at 跨节点淘汰；node_id 前导索引无法服务该谓词，会退化为全表扫描。
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_history_points_recorded_at ON history_points (recorded_at)",
+        [],
+    )?;
 
     let expected_covering_columns = [
         "node_id",
