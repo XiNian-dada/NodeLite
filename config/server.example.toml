@@ -4,6 +4,7 @@
 # 进程监听地址。生产部署通常监听 127.0.0.1,由前置 Nginx / Caddy 终止 TLS。
 listen = "127.0.0.1:8080"
 # 对外可访问的基地址,供前端与 Agent 推导 ws/wss、安装脚本 URL。
+# 只能是 origin(协议+主机+可选端口),不支持子路径、查询串或片段。
 public_base_url = "https://monitor.example.com"
 # 仅当你确实需要让面板以明文 HTTP 暴露(例如没有 TLS 终止的隔离测试环境)时
 # 才设置为 true。生产环境务必保持 false。

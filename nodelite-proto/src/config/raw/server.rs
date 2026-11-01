@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use serde::Deserialize;
+use url::Url;
 
 use super::super::defaults::{
     default_audit_db_path, default_audit_enabled, default_audit_log_failed_auth,
@@ -274,6 +275,15 @@ impl RawServerConfigFile {
             &self.server.public_base_url,
             &["http", "https"],
         )?;
+        // 安装脚本、bootstrap 与 /ws 地址都用 set_path 覆盖路径，子路径前缀会被
+        // 静默丢弃；在这些地址支持前缀之前，宁可启动失败也不下发错误地址。
+        if let Ok(url) = Url::parse(&self.server.public_base_url)
+            && (url.path() != "/" || url.query().is_some() || url.fragment().is_some())
+        {
+            return Err(ConfigError::new(
+                "server.public_base_url must be an origin without a sub-path, query or fragment (e.g. https://monitor.example.com); serving NodeLite under a path prefix is not supported",
+            ));
+        }
         if uses_insecure_remote_public_base_url(&self.server.public_base_url)
             && !self.server.insecure_allow_http
         {
