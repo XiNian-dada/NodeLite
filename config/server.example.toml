@@ -122,7 +122,7 @@ update_interval_days = 30
 # 可选:覆盖 install-agent / upgrade-agent 与设置页安装命令使用的 release 基地址,
 # 生成的命令会携带 --sha256-x86_64 / --sha256-aarch64 固定校验和。
 # 远程 http:// 地址需要 server.insecure_allow_http = true;本机回环地址除外。
-# 已登记签名更新器的节点拒绝安装器覆盖参数,镜像升级命令不适用于这类节点。
+# 两个 SHA256 只固定 Linux musl 产物;macOS Agent 仍读取镜像中的 SHA256SUMS.txt。
 agent_release_base_url = "https://downloads.example.com/nodelite/releases/latest/download"
 # 当配置了 agent_release_base_url 时,两个架构的 SHA256 都必须同时提供。
 agent_release_sha256_x86_64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"

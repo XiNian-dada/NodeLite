@@ -117,7 +117,22 @@ awk '
   }
 ' "$INSTALLER"
 
+SHA256_X86_64=pinned-x86 SHA256_AARCH64=pinned-arm
+select_release_target amd64
+[ "$TARGET" = x86_64-unknown-linux-musl ] && [ "$EXPECTED_SHA256" = pinned-x86 ]
+select_release_target aarch64
+[ "$TARGET" = aarch64-unknown-linux-musl ] && [ "$EXPECTED_SHA256" = pinned-arm ]
+if (select_release_target riscv64) >/dev/null 2>&1; then
+  printf '%s\n' 'Unsupported architectures must be rejected' >&2
+  exit 1
+fi
+
 SERVICE_KIND=launchd
+# Linux musl pins must not be applied to macOS artifacts.
+select_release_target x86_64
+[ "$TARGET" = x86_64-apple-darwin ] && [ -z "$EXPECTED_SHA256" ]
+select_release_target arm64
+[ "$TARGET" = aarch64-apple-darwin ] && [ -z "$EXPECTED_SHA256" ]
 configure_agent_config_paths
 [ "$CONFIG_PATH" = "$CONFIG_DIR/agent.toml" ]
 printf '%s\n' 'Agent config migration, permissions and upgrade preflight: ok'
