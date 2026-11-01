@@ -67,13 +67,12 @@ pub(crate) fn trusted_file(path: &Path, limit: usize) -> Result<Vec<u8>> {
 }
 
 impl Policy {
-    pub(crate) fn load() -> Result<Self> {
+    /// Parses without validation so unattended commands can see a paused policy.
+    pub(crate) fn read() -> Result<Self> {
         let bytes = trusted_file(Path::new(POLICY), 16384)?;
         let text =
             std::str::from_utf8(&bytes).map_err(|_| UpdateError::Policy("non-UTF8 policy"))?;
-        let policy: Self = toml::from_str(text)?;
-        policy.validate()?;
-        Ok(policy)
+        Ok(toml::from_str(text)?)
     }
 
     pub(crate) fn validate(&self) -> Result<()> {

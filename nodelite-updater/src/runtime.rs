@@ -8,6 +8,7 @@ use crate::activate;
 use crate::download;
 use crate::error::{Result, UpdateError};
 use crate::fs::Lock;
+use crate::gate::{self, Gate, Unattended};
 use crate::policy::{Policy, ROOT, trusted_file};
 use crate::state::Store;
 use crate::system;
@@ -57,7 +58,17 @@ pub async fn run() -> Result<()> {
     }
     let cli = Cli::parse();
     let _ = rustls::crypto::ring::default_provider().install_default();
-    let policy = Policy::load()?;
+    let policy = Policy::read()?;
+    let command = match &cli.action {
+        Action::Reconcile { .. } => Some(Unattended::Reconcile),
+        Action::Status => Some(Unattended::Status),
+        _ => None,
+    };
+    if let Gate::Idle(reason) = gate::unattended(command, policy.enabled, false) {
+        println!("{reason}");
+        return Ok(());
+    }
+    policy.validate()?;
     let bootstrap = trusted_file(Path::new(ROOT), 262144)?;
     system::guard(!matches!(&cli.action, Action::VerifyEnrollment { .. })).await?;
     let store = Store::system();
@@ -88,6 +99,16 @@ async fn dispatch(action: Action, store: &Store, policy: &Policy, bootstrap: &[u
             return Err(error);
         }
     };
+    let command = matches!(action, Action::Reconcile { .. }).then_some(Unattended::Reconcile);
+    let recovery_required = store.private().join("recovery-required.json").exists();
+    if let Gate::Idle(reason) = gate::unattended(command, policy.enabled, recovery_required) {
+        if matches!(action, Action::Reconcile { boot: true }) {
+            // Markers from the previous boot must not replay against an idle Agent.
+            system::clear_markers()?;
+        }
+        println!("{reason}");
+        return Ok(());
+    }
     if !matches!(action, Action::Status) && store.private().join("recovery-required.json").exists()
     {
         return Err(UpdateError::Recovery("operator recovery required"));
