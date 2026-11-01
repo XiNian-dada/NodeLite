@@ -135,7 +135,7 @@ async fn dispatch(action: Action, store: &Store, policy: &Policy, bootstrap: &[u
                 system::clear_markers()?;
             }
             crate::remote::recover_download(store, &mut state)?;
-            activate::reconcile(store, &mut state, policy).await
+            activate::reconcile(&activate::SystemHost, store, &mut state, policy).await
         }
         Action::Download | Action::Apply => {
             if !state.phase.terminal() {
@@ -144,7 +144,7 @@ async fn dispatch(action: Action, store: &Store, policy: &Policy, bootstrap: &[u
             crate::maintenance::collect(store, &state)?;
             let candidate = download::fetch(store, &mut state, policy, bootstrap).await?;
             if matches!(action, Action::Apply) && candidate != state.installed {
-                activate::prepare(store, &mut state, policy, candidate).await
+                activate::prepare(&activate::SystemHost, store, &mut state, policy, candidate).await
             } else {
                 if matches!(action, Action::Apply) {
                     crate::remote::up_to_date(&mut state);
@@ -161,11 +161,7 @@ async fn dispatch(action: Action, store: &Store, policy: &Policy, bootstrap: &[u
         }
     };
     if let Err(error) = result {
-        if !state.phase.terminal() || matches!(error, UpdateError::Recovery(_)) {
-            state.phase = crate::state::Phase::ManualRecovery;
-            let _ = store.save(&state);
-            let _ = system::manual(store, "activation could not be safely reconciled");
-        }
+        latch_failure(store, &mut state, &error);
         return Err(error);
     }
     if state.phase.terminal() {
@@ -180,6 +176,15 @@ async fn dispatch(action: Action, store: &Store, policy: &Policy, bootstrap: &[u
         }))?
     );
     Ok(())
+}
+
+/// Latches operator recovery when a failure leaves an unfinished transaction.
+pub(crate) fn latch_failure(store: &Store, state: &mut Journal, error: &UpdateError) {
+    if !state.phase.terminal() || matches!(error, UpdateError::Recovery(_)) {
+        state.phase = crate::state::Phase::ManualRecovery;
+        let _ = store.save(state);
+        let _ = system::manual(store, "activation could not be safely reconciled");
+    }
 }
 
 fn idle(store: &Store, state: &Journal, policy: &Policy) -> Result<Gate> {
