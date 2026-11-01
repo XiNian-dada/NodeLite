@@ -301,7 +301,7 @@ async fn delayed_legacy_migration_preserves_later_removal() {
         .remove_node("fixture-node")
         .await
         .expect("remove legacy node");
-    let migrated = migrate_registry_file(&fixture.path)
+    let migrated = migrate_registry_file(&fixture.path, 0)
         .await
         .expect("finish delayed migration");
     assert!(migrated.version > legacy.version);
@@ -365,7 +365,7 @@ async fn delayed_legacy_migration_preserves_later_credentials() {
     let rotated = issue_node(&fixture.path, request())
         .await
         .expect("rotate legacy credential");
-    let migrated = migrate_registry_file(&fixture.path)
+    let migrated = migrate_registry_file(&fixture.path, 0)
         .await
         .expect("finish delayed migration");
     assert!(migrated.version > legacy.version);

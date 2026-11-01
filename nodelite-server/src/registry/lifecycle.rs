@@ -103,11 +103,11 @@ impl NodeRegistry {
     ) -> RegistryResult<bool> {
         use super::storage::RegistryFileFingerprint;
 
-        let next_state = load_registry_state(self.path.as_path()).await?;
         let (memory_version, memory_has_nodes) = {
             let state = self.state.read().await;
             (state.version, !state.entries.is_empty())
         };
+        let next_state = load_registry_state(self.path.as_path(), memory_version).await?;
         if fingerprint == RegistryFileFingerprint::Missing
             && (memory_version > 0 || memory_has_nodes)
         {

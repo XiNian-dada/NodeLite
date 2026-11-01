@@ -188,3 +188,118 @@ fn first_deploy_without_registry_file_stays_writable() {
         cleanup(&path);
     });
 }
+
+fn expire_install_sessions_on_disk(path: &Path, version_bump: u64) {
+    let content = std::fs::read_to_string(path).expect("registry file should be readable");
+    let mut value: serde_json::Value =
+        serde_json::from_str(&content).expect("registry file should parse");
+    let past = serde_json::to_value(Utc::now() - ChronoDuration::hours(1))
+        .expect("timestamp should serialize");
+    for session in value["install_sessions"]
+        .as_array_mut()
+        .expect("install sessions should be present")
+    {
+        session["expires_at"] = past.clone();
+    }
+    let version = value["version"]
+        .as_u64()
+        .expect("version should be numeric");
+    value["version"] = (version + version_bump).into();
+    std::fs::write(path, value.to_string()).expect("registry file should be writable");
+}
+
+fn disk_install_sessions(path: &Path) -> usize {
+    let content = std::fs::read_to_string(path).expect("registry file should be readable");
+    serde_json::from_str::<RegistryFile>(&content)
+        .expect("registry file should parse")
+        .install_sessions
+        .len()
+}
+
+#[test]
+fn expired_install_sessions_pruned_at_load_are_persisted() {
+    let runtime = Runtime::new().expect("runtime should build");
+    runtime.block_on(async {
+        let path = temp_registry_path("prune-load");
+        issue_node(&path, request("hk-01"))
+            .await
+            .expect("issue hk-01");
+        expire_install_sessions_on_disk(&path, 0);
+        let version = disk_version(&path);
+
+        NodeRegistry::load(&path)
+            .await
+            .expect("registry should load");
+
+        assert_eq!(
+            disk_install_sessions(&path),
+            0,
+            "expired plaintext must leave disk"
+        );
+        assert_eq!(disk_version(&path), version + 1);
+        cleanup(&path);
+    });
+}
+
+#[test]
+fn expired_install_sessions_pruned_at_reload_are_persisted() {
+    let runtime = Runtime::new().expect("runtime should build");
+    runtime.block_on(async {
+        let path = temp_registry_path("prune-reload");
+        let registry = NodeRegistry::load(&path)
+            .await
+            .expect("empty registry should load");
+        issue_node(&path, request("hk-01"))
+            .await
+            .expect("issue hk-01");
+        expire_install_sessions_on_disk(&path, 1);
+
+        assert!(registry.reload().await.expect("reload should succeed"));
+
+        assert_eq!(
+            disk_install_sessions(&path),
+            0,
+            "expired plaintext must leave disk"
+        );
+        assert_eq!(registry.count().await, 1);
+        cleanup(&path);
+    });
+}
+
+#[test]
+fn rolled_back_file_with_expired_sessions_is_not_rewritten() {
+    let runtime = Runtime::new().expect("runtime should build");
+    runtime.block_on(async {
+        let path = temp_registry_path("prune-rollback");
+        issue_node(&path, request("hk-01"))
+            .await
+            .expect("issue hk-01");
+        let backup = std::fs::read(&path).expect("backup should be readable");
+        issue_node(&path, request("hk-02"))
+            .await
+            .expect("issue hk-02");
+        issue_node(&path, request("hk-03"))
+            .await
+            .expect("issue hk-03");
+        let registry = NodeRegistry::load(&path)
+            .await
+            .expect("registry should load");
+
+        std::fs::write(&path, &backup).expect("old backup should overwrite registry");
+        expire_install_sessions_on_disk(&path, 0);
+        let old_version = disk_version(&path);
+
+        let result = registry.reload().await;
+        assert!(
+            matches!(result, Err(RegistryError::Diverged { .. })),
+            "{result:?}"
+        );
+        assert_eq!(
+            disk_version(&path),
+            old_version,
+            "guard must block the prune write"
+        );
+        assert_eq!(registry.count().await, 3);
+        cleanup(&path);
+    });
+}

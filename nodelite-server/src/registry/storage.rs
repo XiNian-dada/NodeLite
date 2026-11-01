@@ -92,7 +92,7 @@ pub(super) async fn load_registry_state_with_fingerprint(
     path: &Path,
 ) -> RegistryResult<(RegistryState, RegistryFileFingerprint)> {
     let fingerprint = registry_file_fingerprint(path).await?;
-    let state = load_registry_state(path).await?;
+    let state = load_registry_state(path, 0).await?;
     Ok((state, fingerprint))
 }
 
@@ -109,9 +109,14 @@ impl RegistryFileFingerprint {
     }
 }
 
-pub(super) async fn load_registry_state(path: &Path) -> RegistryResult<RegistryState> {
+/// `min_version` 是内存已提交版本；加载期间的回写同样受分叉保护，不会把回退文件“修复”成新版本。
+pub(super) async fn load_registry_state(
+    path: &Path,
+    min_version: u64,
+) -> RegistryResult<RegistryState> {
     let mut file = load_registry_file(path).await?;
-    prune_expired_install_sessions(&mut file, Utc::now());
+    // 过期安装会话仍带明文 session token，只在内存里丢弃会让它留在磁盘上直到下一次写入。
+    let pruned_sessions = prune_expired_install_sessions(&mut file, Utc::now());
 
     // 展示字段先迁移到当前安全边界，再执行严格校验；通过后才做昂贵的
     // Argon2 token 迁移，避免损坏的注册表在拒绝前消耗额外资源。
@@ -121,16 +126,19 @@ pub(super) async fn load_registry_state(path: &Path) -> RegistryResult<RegistryS
         .nodes
         .iter()
         .any(|node| node.token_hash.is_empty() && !node.token.is_empty());
-    if metadata_migrated || legacy_tokens {
-        file = migrate_registry_file(path).await?;
+    if metadata_migrated || legacy_tokens || pruned_sessions {
+        file = migrate_registry_file(path, min_version).await?;
     }
 
     load_registry_state_from_file(path, file)
 }
 
-pub(super) async fn migrate_registry_file(path: &Path) -> RegistryResult<RegistryFile> {
+pub(super) async fn migrate_registry_file(
+    path: &Path,
+    min_version: u64,
+) -> RegistryResult<RegistryFile> {
     // Rebase migrations on the latest durable file using the same commit protection as edits.
-    let ((), file) = mutate_registry_file(path, 0, |file| {
+    let ((), file) = mutate_registry_file(path, min_version, |file| {
         prune_expired_install_sessions(file, Utc::now());
         migrate_legacy_tokens(file)?;
         // The synchronous loader has already normalized legacy display metadata.
