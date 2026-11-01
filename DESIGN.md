@@ -64,7 +64,7 @@ impl SharedState {
   1. `list_node_summaries` 一次
   2. `diff_node_lists(&last_snapshot, &current)`
   3. 在同一个 registry 读锁窗口内记录当前 `nodes_revision`
-  4. 把增量(`NodeUpsert`/`NodeRemoved`)+ `OverviewUpdate` 包装为 `BrowserIncrementalUpdate`
+  4. 把增量(`NodeUpsert`/`NodeRemoved`)+ `OverviewUpdate` 预序列化后合成一条 `BrowserIncrementalUpdate`(每 tick 只占一个通道槽位)
   5. `browser_incremental_tx.send(update)` 广播
 
 **生命周期**：任务持有 `SharedState` weak ref，在最后一个 `SharedState` drop 时自然结束(脏信号 channel 关闭 → task 退出)。
@@ -87,7 +87,7 @@ loop {
         incremental = incremental_rx.recv() => {
             match incremental {
                 Ok(update) if update.revision > baseline_revision => {
-                    send_browser_message(&mut sender, &update.message).await?;
+                    // 逐帧转发 update.frames(已预序列化,所有会话共享)
                 }
                 Ok(_) => {}
                 Err(RecvError::Lagged(_)) => {
@@ -103,9 +103,12 @@ loop {
 
 去抖 interval 删除(集中任务已去抖)；客户端 Ping/Pong 保持不变。
 
-### 4. `InitialState` 仍由各会话独立发送
+### 4. `InitialState` 共享单份全量帧
 
-连接建立时立即发送全量 `InitialState`(各会话时机不同，无法集中)；后续增量统一从集中任务接收。
+连接建立或 `Lagged` 时发送全量 `InitialState`。全量帧由 `browser_initial_state_frame` 单飞构建并缓存：
+只有缓存 revision 不早于最后一批已发布增量、且不超过 1 秒时才复用，因此每个 tick 最多构建一次全量。
+不能只按 revision 相等复用，高频上报下 revision 每几毫秒变化一次，缓存永远不会命中。
+后续增量统一从集中任务接收。无订阅者时 tick 跳过 diff，并释放基线与全量帧。
 `InitialState` 会返回本次全量快照对应的 `nodes_revision` baseline。会话只转发
 `revision > baseline` 的增量，丢弃已排队但不晚于 baseline 的旧 diff，避免旧增量在
 `InitialState` 后到达并覆盖新快照。`Lagged` 重同步也刷新同一个 baseline。
