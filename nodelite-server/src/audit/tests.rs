@@ -449,3 +449,37 @@ fn repeated_rate_limit_events_from_one_source_store_one_row() {
         let _ = std::fs::remove_dir_all(&temp_dir);
     });
 }
+
+#[test]
+fn the_next_stored_rate_limit_event_reports_skipped_repeats() {
+    let audit = AuditLog::new(sample_config(unique_temp_dir("unused").join("a.db")), 5);
+    let blocked = || {
+        let mut event =
+            NewAuditEvent::now(AuditEventType::RateLimitExceeded, "2001:db8:5::1", false);
+        event.details = json!({ "reason": "websocket_auth_block" });
+        event
+    };
+    let start = std::time::Instant::now();
+    let first = audit
+        .throttle_rate_limit(blocked(), start)
+        .expect("first event is stored");
+    assert!(first.details.get("suppressed_repeats").is_none());
+    for second in 1..=3 {
+        let at = start + std::time::Duration::from_secs(second);
+        assert!(audit.throttle_rate_limit(blocked(), at).is_none());
+    }
+    let mut rotated = blocked();
+    rotated.ip_address = "2001:db8:5::ffff".to_string();
+    assert!(
+        audit
+            .throttle_rate_limit(rotated, start + std::time::Duration::from_secs(4))
+            .is_none(),
+        "another address in the same /64 shares the window"
+    );
+
+    let next = audit
+        .throttle_rate_limit(blocked(), start + std::time::Duration::from_secs(60))
+        .expect("event after the window is stored");
+    assert_eq!(next.details["suppressed_repeats"], 4);
+    assert_eq!(next.details["reason"], "websocket_auth_block");
+}

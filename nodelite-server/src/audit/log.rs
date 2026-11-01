@@ -17,7 +17,7 @@ use super::query::query_events;
 use super::storage::{
     AUDIT_CHANNEL_CAPACITY, AUDIT_PRUNE_INTERVAL, open_audit_connection, prune_expired_records,
 };
-use super::throttle::RateLimitAuditThrottle;
+use super::throttle::{RateLimitAuditThrottle, throttle_source};
 use super::writer::{AuditWriterCommand, AuditWriterContext, run_audit_writer};
 use super::{AuditEvent, AuditEventType, AuditLogError, AuditQuery, NewAuditEvent};
 
@@ -92,7 +92,7 @@ impl AuditLog {
         if !self.should_record(event.event_type) {
             return Ok(());
         }
-        let Some(event) = self.throttle_rate_limit(event) else {
+        let Some(event) = self.throttle_rate_limit(event, std::time::Instant::now()) else {
             return Ok(());
         };
 
@@ -122,7 +122,7 @@ impl AuditLog {
         if !self.should_record(event.event_type) {
             return Ok(None);
         }
-        let Some(event) = self.throttle_rate_limit(event) else {
+        let Some(event) = self.throttle_rate_limit(event, std::time::Instant::now()) else {
             return Ok(None);
         };
 
@@ -142,8 +142,13 @@ impl AuditLog {
     }
 
     /// Keyed by source and `reason`, not path, so varying the request path does not
-    /// bypass it.
-    fn throttle_rate_limit(&self, mut event: NewAuditEvent) -> Option<NewAuditEvent> {
+    /// bypass it. Suppressed counts are best-effort: the tail of a burst is only reported if
+    /// the same source is blocked again after the window.
+    pub(super) fn throttle_rate_limit(
+        &self,
+        mut event: NewAuditEvent,
+        now: std::time::Instant,
+    ) -> Option<NewAuditEvent> {
         if event.event_type != AuditEventType::RateLimitExceeded {
             return Some(event);
         }
@@ -154,7 +159,7 @@ impl AuditLog {
             .unwrap_or_default();
         let suppressed =
             self.rate_limit_throttle
-                .admit(&event.ip_address, reason, std::time::Instant::now())?;
+                .admit(&throttle_source(&event.ip_address), reason, now)?;
         if suppressed > 0
             && let Some(details) = event.details.as_object_mut()
         {

@@ -4,12 +4,24 @@
 //! 同一来源与原因在窗口内只写一条，下一条记录带上期间省略的次数。
 
 use std::collections::HashMap;
+use std::net::{IpAddr, Ipv6Addr};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 pub(super) const RATE_LIMIT_AUDIT_WINDOW: Duration = Duration::from_secs(60);
 /// Tracking stays bounded even when many sources are blocked at once.
 const MAX_TRACKED_SOURCES: usize = 4096;
+
+/// One IPv6 client usually controls a whole /64, so per-address keys would not throttle it.
+pub(super) fn throttle_source(ip_address: &str) -> String {
+    match ip_address.parse::<IpAddr>() {
+        Ok(IpAddr::V6(address)) if address.to_ipv4_mapped().is_none() => {
+            let prefix = u128::from(address) & !((1u128 << 64) - 1);
+            format!("{}/64", Ipv6Addr::from(prefix))
+        }
+        _ => ip_address.to_string(),
+    }
+}
 
 struct Entry {
     last_recorded: Instant,
@@ -84,6 +96,25 @@ mod tests {
         let later = start + RATE_LIMIT_AUDIT_WINDOW;
         assert_eq!(throttle.admit("198.51.100.1", "ws", later), Some(5));
         assert_eq!(throttle.admit("198.51.100.1", "ws", later), None);
+    }
+
+    #[test]
+    fn ipv6_sources_are_grouped_by_their_64_prefix() {
+        assert_eq!(throttle_source("2001:db8:1:2:aaaa::1"), "2001:db8:1:2::/64");
+        assert_eq!(
+            throttle_source("2001:db8:1:2:bbbb::9"),
+            throttle_source("2001:db8:1:2:aaaa::1")
+        );
+        assert_ne!(
+            throttle_source("2001:db8:1:3::1"),
+            throttle_source("2001:db8:1:2::1")
+        );
+        assert_eq!(throttle_source("198.51.100.7"), "198.51.100.7");
+        assert_eq!(
+            throttle_source("::ffff:198.51.100.7"),
+            "::ffff:198.51.100.7"
+        );
+        assert_eq!(throttle_source("not-an-ip"), "not-an-ip");
     }
 
     #[test]
