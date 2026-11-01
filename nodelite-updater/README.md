@@ -140,6 +140,26 @@ cargo build -p nodelite-updater --release --locked
 cargo test -p nodelite-updater --all-features --locked
 ```
 
+### 激活与回滚故障验收
+
+`src/activate_tests.rs` 是不依赖 systemd 的确定性验收 harness：用假 host 模拟三个固定单元、
+桥接标记、boot ID、单调时钟和健康证据；每个 tick 都像一次新的 updater 进程那样从磁盘
+重新加载 journal。在 `prepared`、`stopping`、`trial_journal`、`active_pointer`、
+`rollback_intent` 切点模拟崩溃，并覆盖健康确认失败回滚、回滚健康未确认后的人工恢复锁存、
+旧进程不退出时的停止屏障、各阶段重启以及事务互斥；每个 tick 后断言 `active` 指针与
+journal 阶段一致。
+
+这些测试只在 Linux 编译运行（模块按 `target_os = "linux"` 启用），CI 的
+`cargo test --workspace --locked` 已覆盖。在 macOS 等非 Linux 开发机上可借助容器运行：
+
+```sh
+docker run --rm -v "$PWD":/src -w /src rust:1-bookworm \
+  cargo test -p nodelite-updater --locked activate::tests
+```
+
+真实 systemd、进程残留与 SIGSTOP 切点仍需 `lab-faults` 构建在带标记的隔离 KVM 客机中验证，
+不进入普通 CI。
+
 正常二进制没有故障注入能力。`lab-faults` 仅供带专用标记的隔离客机使用，必须单独构建，
 不得作为发布二进制，组包工具也会拒绝它。
 
