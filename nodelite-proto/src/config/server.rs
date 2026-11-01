@@ -7,7 +7,7 @@ use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 
 use super::defaults::{
-    default_agent_logs_max_entries, default_agent_logs_max_estimated_bytes,
+    default_agent_logs_max_entries, default_agent_logs_max_estimated_bytes, default_audit_max_rows,
     default_audit_writer_batch_max, default_audit_writer_flush_interval_ms,
     default_hello_timeout_secs, default_history_query_concurrency, default_history_read_cache_kib,
     default_history_writer_batch_max, default_history_writer_flush_interval_ms,
@@ -173,6 +173,9 @@ pub struct AuditConfig {
     pub db_path: PathBuf,
     /// 审计记录保留天数。
     pub retention_days: u64,
+    #[serde(default = "default_audit_max_rows")]
+    /// 审计记录最多保留的行数,超出时删除最旧的记录。
+    pub max_rows: u64,
     #[serde(default = "default_audit_writer_batch_max")]
     /// 审计写入器单次事务最多写入的记录数。
     pub writer_batch_max: usize,

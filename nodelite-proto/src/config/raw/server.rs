@@ -8,18 +8,19 @@ use serde::Deserialize;
 use super::super::defaults::{
     default_audit_db_path, default_audit_enabled, default_audit_log_failed_auth,
     default_audit_log_rate_limit, default_audit_log_successful_auth,
-    default_audit_log_token_events, default_audit_retention_days, default_audit_writer_batch_max,
-    default_audit_writer_flush_interval_ms, default_geoip_auto_update, default_geoip_database_path,
-    default_geoip_edition, default_geoip_enabled, default_geoip_provider,
-    default_geoip_update_interval_days, default_hello_timeout_secs, default_history_db_path,
-    default_history_query_concurrency, default_history_read_cache_kib,
-    default_history_writer_batch_max, default_history_writer_flush_interval_ms,
-    default_ignored_filesystems, default_insecure_transport_warn_interval_secs,
-    default_max_message_bytes, default_max_outstanding_pings, default_max_sanitized_disks,
-    default_max_sanitized_string_bytes, default_metric_anomaly_session_limit,
-    default_metrics_export_node_disk_metrics, default_metrics_export_node_resource_metrics,
-    default_node_registry_path, default_ping_interval_secs, default_refresh_interval_secs,
-    default_snapshot_path, default_sqlite_busy_timeout_secs, default_stale_after_secs,
+    default_audit_log_token_events, default_audit_max_rows, default_audit_retention_days,
+    default_audit_writer_batch_max, default_audit_writer_flush_interval_ms,
+    default_geoip_auto_update, default_geoip_database_path, default_geoip_edition,
+    default_geoip_enabled, default_geoip_provider, default_geoip_update_interval_days,
+    default_hello_timeout_secs, default_history_db_path, default_history_query_concurrency,
+    default_history_read_cache_kib, default_history_writer_batch_max,
+    default_history_writer_flush_interval_ms, default_ignored_filesystems,
+    default_insecure_transport_warn_interval_secs, default_max_message_bytes,
+    default_max_outstanding_pings, default_max_sanitized_disks, default_max_sanitized_string_bytes,
+    default_metric_anomaly_session_limit, default_metrics_export_node_disk_metrics,
+    default_metrics_export_node_resource_metrics, default_node_registry_path,
+    default_ping_interval_secs, default_refresh_interval_secs, default_snapshot_path,
+    default_sqlite_busy_timeout_secs, default_stale_after_secs,
     default_token_verify_max_parallelism, default_trusted_proxies, default_ws_auth_block_secs,
     default_ws_auth_fail_max_attempts, default_ws_auth_fail_window_secs,
     default_ws_max_connections_per_ip, default_ws_max_total_connections,
@@ -31,9 +32,9 @@ use super::super::helpers::{
 use super::super::{
     AgentLogsConfig, AlertingConfig, AuditConfig, ConfigError, GeoIpConfig, GeoIpEdition,
     GeoIpProvider, MAX_HISTORY_QUERY_CONCURRENCY, MAX_HISTORY_READ_CACHE_KIB,
-    MAX_TOKEN_VERIFY_MAX_PARALLELISM, MAX_WRITER_BATCH_SIZE, MIN_HISTORY_QUERY_CONCURRENCY,
-    MIN_HISTORY_READ_CACHE_KIB, MIN_TOKEN_VERIFY_MAX_PARALLELISM, MIN_WRITER_FLUSH_INTERVAL_MS,
-    MetricsConfig, ReadonlyAuthConfig, ServerConfig, WsConfig,
+    MAX_TOKEN_VERIFY_MAX_PARALLELISM, MAX_WRITER_BATCH_SIZE, MIN_AUDIT_MAX_ROWS,
+    MIN_HISTORY_QUERY_CONCURRENCY, MIN_HISTORY_READ_CACHE_KIB, MIN_TOKEN_VERIFY_MAX_PARALLELISM,
+    MIN_WRITER_FLUSH_INTERVAL_MS, MetricsConfig, ReadonlyAuthConfig, ServerConfig, WsConfig,
 };
 use super::alerts::RawAlertsSection;
 use crate::validation::{normalize_string_list, validate_non_empty};
@@ -139,6 +140,7 @@ config_section! {
         enabled: bool = default_audit_enabled(),
         db_path: PathBuf = default_audit_db_path(),
         retention_days: u64 = default_audit_retention_days(),
+        max_rows: u64 = default_audit_max_rows(),
         writer_batch_max: usize = default_audit_writer_batch_max(),
         writer_flush_interval_ms: u64 = default_audit_writer_flush_interval_ms(),
         log_successful_auth: bool = default_audit_log_successful_auth(),
@@ -326,6 +328,11 @@ impl RawServerConfigFile {
                 "audit.retention_days must be greater than 0",
             ));
         }
+        if self.audit.max_rows < MIN_AUDIT_MAX_ROWS {
+            return Err(ConfigError::new(format!(
+                "audit.max_rows must be at least {MIN_AUDIT_MAX_ROWS}"
+            )));
+        }
         if !(1..=MAX_WRITER_BATCH_SIZE).contains(&self.audit.writer_batch_max) {
             return Err(ConfigError::new(format!(
                 "audit.writer_batch_max must be between 1 and {MAX_WRITER_BATCH_SIZE}"
@@ -341,6 +348,7 @@ impl RawServerConfigFile {
             enabled: self.audit.enabled,
             db_path: self.audit.db_path.clone(),
             retention_days: self.audit.retention_days,
+            max_rows: self.audit.max_rows,
             writer_batch_max: self.audit.writer_batch_max,
             writer_flush_interval_ms: self.audit.writer_flush_interval_ms,
             log_successful_auth: self.audit.log_successful_auth,

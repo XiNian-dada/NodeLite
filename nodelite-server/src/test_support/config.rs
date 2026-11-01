@@ -39,6 +39,7 @@ pub fn test_server_config(
             enabled: true,
             db_path: history_path.with_file_name("audit.sqlite3"),
             retention_days: 90,
+            max_rows: nodelite_proto::DEFAULT_AUDIT_MAX_ROWS,
             writer_batch_max: nodelite_proto::DEFAULT_AUDIT_WRITER_BATCH_MAX,
             writer_flush_interval_ms: nodelite_proto::DEFAULT_AUDIT_WRITER_FLUSH_INTERVAL_MS,
             log_successful_auth: true,

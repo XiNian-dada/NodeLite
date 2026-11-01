@@ -153,6 +153,23 @@ fn rejects_invalid_server_listen_address() {
 }
 
 #[test]
+fn rejects_audit_row_limit_below_minimum() {
+    let error = parse_server_config(
+        r#"
+        [server]
+        listen = "127.0.0.1:8080"
+        public_base_url = "https://monitor.example.com"
+
+        [audit]
+        max_rows = 10
+        "#,
+    )
+    .expect_err("tiny audit row limit should fail");
+
+    assert!(error.to_string().contains("audit.max_rows"));
+}
+
+#[test]
 fn rejects_invalid_trusted_proxy_cidr() {
     let error = parse_server_config(
         r#"
@@ -225,6 +242,7 @@ fn parses_server_config_with_audit_overrides() {
         enabled = true
         db_path = "/var/lib/nodelite/audit.sqlite3"
         retention_days = 30
+        max_rows = 20000
         log_successful_auth = false
         log_failed_auth = true
         log_token_events = true
@@ -239,6 +257,7 @@ fn parses_server_config_with_audit_overrides() {
         PathBuf::from("/var/lib/nodelite/audit.sqlite3")
     );
     assert_eq!(config.audit.retention_days, 30);
+    assert_eq!(config.audit.max_rows, 20_000);
     assert!(!config.audit.log_successful_auth);
     assert!(config.audit.log_failed_auth);
     assert!(config.audit.log_token_events);

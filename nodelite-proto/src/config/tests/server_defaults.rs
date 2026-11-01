@@ -168,6 +168,7 @@ fn parses_server_config_with_defaults() {
     assert!(config.audit.enabled);
     assert_eq!(config.audit.db_path, PathBuf::from("./data/audit.sqlite3"));
     assert_eq!(config.audit.retention_days, DEFAULT_AUDIT_RETENTION_DAYS);
+    assert_eq!(config.audit.max_rows, crate::DEFAULT_AUDIT_MAX_ROWS);
     assert_eq!(
         config.audit.writer_batch_max,
         DEFAULT_AUDIT_WRITER_BATCH_MAX
