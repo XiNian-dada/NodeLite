@@ -369,12 +369,13 @@ impl Drop for HostPort {
             return;
         }
         // SAFETY: self.0 是 acquire 取得且仅由本 guard 持有的一个发送权限引用，这里只释放一次。
-        unsafe {
+        let status = unsafe {
             mach_port_deallocate(
                 #[allow(deprecated)]
                 libc::mach_task_self(),
                 self.0,
-            );
-        }
+            )
+        };
+        debug_assert_eq!(status, libc::KERN_SUCCESS, "mach_port_deallocate failed");
     }
 }
