@@ -16,10 +16,6 @@ void (async () => {
   const app = createApp(App);
   app.use(createPinia());
   app.use(router);
-  try {
-    await setupI18n(app);
-  } catch (e) {
-    console.error('i18n load failed, continuing with empty dictionary', e);
-  }
+  await setupI18n(app);
   app.mount('#app');
 })();

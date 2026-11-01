@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from 'vue';
-import { createI18n, type Composer } from 'vue-i18n';
+import { createApp, defineComponent, h } from 'vue';
+import { createI18n, useI18n, type Composer } from 'vue-i18n';
 import {
   FALLBACK_LOCALE,
   LANGUAGE_STORAGE_KEY,
@@ -131,6 +131,58 @@ describe('useLanguage', () => {
 
     setLocale('en');
     expect(composer.t('common.theme_toggle')).toBe('Toggle theme');
+  });
+});
+
+describe('setupI18n dictionary failure', () => {
+  const UsesI18n = defineComponent({
+    setup() {
+      const { t } = useI18n();
+      const { currentLocale } = useLanguage();
+      return () => h('p', `${currentLocale.value}:${t('common.theme_toggle')}`);
+    },
+  });
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    mockNavigatorLanguage('en-US');
+    __resetI18nForTest();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    __resetI18nForTest();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    ['network failure', () => vi.fn().mockRejectedValue(new Error('offline'))],
+    ['HTTP 500', () => vi.fn().mockResolvedValue({ ok: false, status: 500 })],
+    [
+      'corrupt JSON',
+      () =>
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: () => Promise.reject(new SyntaxError('bad json')),
+        }),
+    ],
+    [
+      'JSON null',
+      () => vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve(null) }),
+    ],
+  ])('mounts a useI18n component after %s', async (_name, makeFetch) => {
+    vi.stubGlobal('fetch', makeFetch());
+    const app = createApp(UsesI18n);
+    await setupI18n(app);
+
+    const host = document.createElement('div');
+    app.mount(host);
+
+    expect(host.textContent).toBe('en:common.theme_toggle');
+    expect(console.error).toHaveBeenCalled();
+    app.unmount();
   });
 });
 

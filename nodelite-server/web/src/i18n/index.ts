@@ -68,11 +68,17 @@ async function fetchDictionary(): Promise<Dictionary> {
 
 /**
  * Build the vue-i18n instance, fetch the dictionary, register it on the app.
- * Errors propagate — main.ts wraps this in try/catch so the SPA still mounts
- * with an empty dictionary if the network fetch fails.
+ * A failed fetch still installs the plugin with an empty dictionary: components
+ * call useI18n during setup, so mounting without it would leave a blank page.
  */
 export async function setupI18n(app: App): Promise<AppI18n> {
-  const messages = await fetchDictionary();
+  let messages: Dictionary;
+  try {
+    messages = await fetchDictionary();
+  } catch (e) {
+    console.error('i18n load failed, continuing with empty dictionary', e);
+    messages = { en: {}, 'zh-CN': {} };
+  }
   const instance = createI18n({
     legacy: false,
     globalInjection: true,
