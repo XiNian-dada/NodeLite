@@ -200,7 +200,6 @@ async fn send_browser_message(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
     use std::convert::Infallible;
     use std::net::IpAddr;
     use std::pin::Pin;
@@ -210,7 +209,7 @@ mod tests {
     use std::time::Duration;
 
     use futures::Sink;
-    use nodelite_proto::{BrowserMessage, NodeListIdentity, NodeListItem, WsConfig};
+    use nodelite_proto::{BrowserMessage, WsConfig};
 
     use super::*;
     use crate::admission::WsAdmissionController;
@@ -263,150 +262,6 @@ mod tests {
             auth_fail_max_attempts: 2,
             auth_block_secs: 60,
         })
-    }
-
-    /// 一次重算相对上次发送快照的增量:新增/变更的行 + 消失的行 id。
-    struct NodeListDiff<'a> {
-        upserts: Vec<&'a NodeListItem>,
-        removed: Vec<String>,
-    }
-
-    /// 与上次发送的快照逐行对比:内容不同(或新出现)的行进 `upserts`,
-    /// 上次有、这次没有的 id 进 `removed`。行内容未变时不产生任何输出。
-    fn diff_node_lists<'a>(
-        last_nodes: &HashMap<String, NodeListItem>,
-        current: &'a [NodeListItem],
-    ) -> NodeListDiff<'a> {
-        let mut seen: HashSet<&str> = HashSet::with_capacity(current.len());
-        let mut upserts = Vec::new();
-        for node in current {
-            seen.insert(node.identity.node_id.as_str());
-            if last_nodes.get(&node.identity.node_id) != Some(node) {
-                upserts.push(node);
-            }
-        }
-        let removed = last_nodes
-            .keys()
-            .filter(|id| !seen.contains(id.as_str()))
-            .cloned()
-            .collect();
-        NodeListDiff { upserts, removed }
-    }
-
-    fn index_by_node_id(nodes: Vec<NodeListItem>) -> HashMap<String, NodeListItem> {
-        nodes
-            .into_iter()
-            .map(|node| (node.identity.node_id.clone(), node))
-            .collect()
-    }
-
-    fn list_item(node_id: &str) -> NodeListItem {
-        NodeListItem {
-            identity: NodeListIdentity {
-                node_id: node_id.to_string(),
-                node_label: format!("{node_id} label"),
-                hostname: format!("{node_id}.internal"),
-                tags: Vec::new(),
-            },
-            geoip_country: None,
-            geoip_city: None,
-            geoip_latitude: None,
-            geoip_longitude: None,
-            location_override_country: None,
-            location_override_city: None,
-            location_override_latitude: None,
-            location_override_longitude: None,
-            snapshot: None,
-            latency_ms: None,
-            online: true,
-        }
-    }
-
-    fn upsert_ids<'a>(diff: &NodeListDiff<'a>) -> Vec<&'a str> {
-        diff.upserts
-            .iter()
-            .map(|node| node.identity.node_id.as_str())
-            .collect()
-    }
-
-    #[test]
-    fn diff_reports_new_node_as_upsert() {
-        let last = HashMap::new();
-        let current = vec![list_item("hk-01")];
-
-        let diff = diff_node_lists(&last, &current);
-
-        assert_eq!(upsert_ids(&diff), vec!["hk-01"]);
-        assert!(diff.removed.is_empty());
-    }
-
-    #[test]
-    fn diff_reports_changed_node_as_upsert() {
-        let last = index_by_node_id(vec![list_item("hk-01")]);
-        let mut changed = list_item("hk-01");
-        changed.latency_ms = Some(42);
-        let current = vec![changed];
-
-        let diff = diff_node_lists(&last, &current);
-
-        assert_eq!(upsert_ids(&diff), vec!["hk-01"]);
-        assert!(diff.removed.is_empty());
-    }
-
-    #[test]
-    fn diff_skips_unchanged_node() {
-        let last = index_by_node_id(vec![list_item("hk-01")]);
-        let current = vec![list_item("hk-01")];
-
-        let diff = diff_node_lists(&last, &current);
-
-        assert!(diff.upserts.is_empty());
-        assert!(diff.removed.is_empty());
-    }
-
-    #[test]
-    fn diff_reports_missing_node_as_removed() {
-        let last = index_by_node_id(vec![list_item("hk-01"), list_item("jp-01")]);
-        let current = vec![list_item("hk-01")];
-
-        let diff = diff_node_lists(&last, &current);
-
-        assert!(diff.upserts.is_empty());
-        assert_eq!(diff.removed, vec!["jp-01".to_string()]);
-    }
-
-    #[test]
-    fn diff_handles_mixed_changes_in_one_pass() {
-        let last = index_by_node_id(vec![
-            list_item("unchanged"),
-            list_item("changed"),
-            list_item("removed"),
-        ]);
-        let mut changed = list_item("changed");
-        changed.online = false;
-        let current = vec![list_item("unchanged"), changed, list_item("added")];
-
-        let diff = diff_node_lists(&last, &current);
-
-        assert_eq!(upsert_ids(&diff), vec!["changed", "added"]);
-        assert_eq!(diff.removed, vec!["removed".to_string()]);
-    }
-
-    #[test]
-    fn diff_of_two_empty_lists_is_empty() {
-        let diff = diff_node_lists(&HashMap::new(), &[]);
-
-        assert!(diff.upserts.is_empty());
-        assert!(diff.removed.is_empty());
-    }
-
-    #[test]
-    fn index_by_node_id_keys_each_item_by_its_id() {
-        let indexed = index_by_node_id(vec![list_item("hk-01"), list_item("jp-01")]);
-
-        assert_eq!(indexed.len(), 2);
-        assert_eq!(indexed["hk-01"].identity.node_id, "hk-01");
-        assert_eq!(indexed["jp-01"].identity.node_id, "jp-01");
     }
 
     #[test]
