@@ -282,6 +282,20 @@ fn inspection_retry_skips_channels_that_already_sent_today() {
         ChannelSet::ALL,
         "a new day goes to every channel"
     );
+
+    state.record_sent_channels(next_day, webhook_only);
+    state.record_sent_channels(date, ChannelSet::ALL);
+    assert_eq!(
+        state.channels_due(next_day),
+        ChannelSet {
+            webhook: false,
+            smtp: true
+        },
+        "a late result for yesterday keeps today's record"
+    );
+
+    state.clear();
+    assert_eq!(state.channels_due(next_day), ChannelSet::ALL);
 }
 
 #[test]
@@ -413,7 +427,7 @@ fn alert_delivery_failure_result_allows_retry() {
         &config,
         &first[0],
         DeliveryOutcome {
-            done: ChannelSet::NONE,
+            delivered: ChannelSet::NONE,
             error: Some(AlertDeliveryError::Timeout),
         },
     );
@@ -518,7 +532,7 @@ fn process_delivery_result_enqueues_resolved_after_trigger_success() {
                 config,
                 event: first[0].clone(),
                 outcome: DeliveryOutcome {
-                    done: ChannelSet::ALL,
+                    delivered: ChannelSet::ALL,
                     error: None,
                 },
             },

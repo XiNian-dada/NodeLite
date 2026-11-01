@@ -567,7 +567,8 @@ fn handle_alert_delivery_result(
     outcome: DeliveryOutcome,
 ) {
     let failed = outcome.error.is_some();
-    if let Some(resolved) = tracker.record_delivery_outcome(event, outcome.done, failed, Utc::now())
+    if let Some(resolved) =
+        tracker.record_delivery_outcome(event, outcome.delivered, failed, Utc::now())
     {
         log_alert_event(&resolved);
         enqueue_alert_delivery(delivery_tx, tracker, config, &resolved, Utc::now());
@@ -591,7 +592,7 @@ fn handle_inspection_delivery_result(
     report: &InspectionReport,
     outcome: DeliveryOutcome,
 ) {
-    inspection_dispatch.record_sent_channels(local_date, outcome.done);
+    inspection_dispatch.record_sent_channels(local_date, outcome.delivered);
     match outcome.into_result() {
         Ok(()) => {
             inspection_dispatch.mark_sent(local_date);
@@ -660,6 +661,7 @@ impl InspectionDispatchState {
         self.last_sent_date = None;
         self.pending_date = None;
         self.last_failed_at = None;
+        self.sent_channels = None;
     }
 
     fn due_date(
@@ -716,10 +718,12 @@ impl InspectionDispatchState {
         }
     }
 
-    fn record_sent_channels(&mut self, local_date: NaiveDate, done: ChannelSet) {
+    fn record_sent_channels(&mut self, local_date: NaiveDate, delivered: ChannelSet) {
         let sent = match self.sent_channels {
-            Some((date, sent)) if date == local_date => sent.union(done),
-            _ => done,
+            Some((date, sent)) if date == local_date => sent.union(delivered),
+            // A result for an earlier day that finishes after midnight must not reset today's.
+            Some((date, _)) if date > local_date => return,
+            _ => delivered,
         };
         self.sent_channels = Some((local_date, sent));
     }

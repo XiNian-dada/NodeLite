@@ -34,7 +34,7 @@ fn succeeded(job: DeliveryJob) -> DeliveryResult {
             config,
             event,
             outcome: crate::alerts::DeliveryOutcome {
-                done: crate::alerts::ChannelSet::ALL,
+                delivered: crate::alerts::ChannelSet::ALL,
                 error: None,
             },
         },
