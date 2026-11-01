@@ -235,9 +235,15 @@ load_existing_server_defaults() {
   [ -n "$value" ] && AGENT_LOGS_MAX_ESTIMATED_BYTES="$value"
 
   value="$(trim_whitespace "$(toml_get_raw "$config_path" geoip enabled)")"
+  geoip_enabled_raw="$value"
   [ -n "$value" ] && GEOIP_ENABLED="$value"
   value="$(strip_toml_string_quotes "$(toml_get_raw "$config_path" geoip provider)")"
   [ -n "$value" ] && GEOIP_PROVIDER="$value"
+  # The server parser treats an explicit provider without `enabled` as opt-in;
+  # mirror that so writing the missing key does not silently disable GeoIP.
+  if [ -z "$geoip_enabled_raw" ] && [ -n "$value" ]; then
+    GEOIP_ENABLED="true"
+  fi
   value="$(strip_toml_string_quotes "$(toml_get_raw "$config_path" geoip edition)")"
   [ -n "$value" ] && GEOIP_EDITION="$value"
   value="$(strip_toml_string_quotes "$(toml_get_raw "$config_path" geoip database_path)")"
