@@ -1,14 +1,16 @@
 //! 告警运行时:把配置规则转换为可复用的触发与巡检摘要视图。
 
+mod channels;
 mod delivery;
 mod delivery_metrics;
 mod evaluator;
 mod runtime;
 mod tracker;
 
+pub(crate) use channels::ChannelSet;
 pub(crate) use delivery::{
-    InspectionSummary, InspectionTrendPoint, deliver_alert_event, deliver_inspection_summary,
-    smtp_endpoint_label, webhook_endpoint_label,
+    DeliveryOutcome, InspectionSummary, InspectionTrendPoint, deliver_alert_event,
+    deliver_inspection_summary, smtp_endpoint_label, webhook_endpoint_label,
 };
 pub(crate) use delivery_metrics::{
     AlertDeliveryMetrics, AlertDeliverySnapshot, DELIVERY_QUEUE_CAPACITY, DELIVERY_RESULT_CAPACITY,

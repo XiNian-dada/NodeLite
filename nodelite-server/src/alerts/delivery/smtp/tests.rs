@@ -401,5 +401,6 @@ fn sample_event() -> AlertEvent {
             value: 91,
             threshold: 90,
         }),
+        channels: crate::alerts::ChannelSet::ALL,
     }
 }

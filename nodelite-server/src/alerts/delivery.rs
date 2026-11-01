@@ -10,6 +10,7 @@ use nodelite_proto::{AlertChannel, AlertSmtpConfig, AlertingConfig};
 use thiserror::Error;
 use tokio::time::sleep;
 
+use super::channels::ChannelSet;
 use super::{AlertEvent, AlertEventKind, InspectionReport};
 
 mod smtp;
@@ -120,45 +121,69 @@ pub(crate) struct InspectionTrendPoint {
     pub(crate) latency_ms: Option<u64>,
 }
 
+/// Per-channel result. `delivered` lists only channels that accepted the message; a channel
+/// that does not apply under the current config is neither delivered nor failed.
+#[derive(Debug)]
+pub(crate) struct DeliveryOutcome {
+    pub(crate) delivered: ChannelSet,
+    pub(crate) error: Option<AlertDeliveryError>,
+}
+
+impl DeliveryOutcome {
+    pub(crate) fn into_result(self) -> Result<(), AlertDeliveryError> {
+        self.error.map_or(Ok(()), Err)
+    }
+}
+
 pub(crate) async fn deliver_alert_event(
     config: &AlertingConfig,
     event: &AlertEvent,
-) -> Result<(), AlertDeliveryError> {
+) -> DeliveryOutcome {
     let mut errors = DeliveryErrors::default();
-    if should_send_webhook(config, event)
-        && let Err(error) =
-            retry_delivery(|| webhook::send_alert_event(&config.webhook, event)).await
-    {
-        errors.record_webhook(error);
+    let mut delivered = ChannelSet::NONE;
+    if event.channels.webhook && should_send_webhook(config, event) {
+        match retry_delivery(|| webhook::send_alert_event(&config.webhook, event)).await {
+            Ok(()) => delivered.webhook = true,
+            Err(error) => errors.record_webhook(error),
+        }
     }
-    if should_send_smtp(config, event)
-        && let Err(error) = retry_delivery(|| smtp::send_alert_event(&config.smtp, event)).await
-    {
-        errors.record_smtp(error);
+    if event.channels.smtp && should_send_smtp(config, event) {
+        match retry_delivery(|| smtp::send_alert_event(&config.smtp, event)).await {
+            Ok(()) => delivered.smtp = true,
+            Err(error) => errors.record_smtp(error),
+        }
     }
 
-    errors.into_result()
+    DeliveryOutcome {
+        delivered,
+        error: errors.into_result().err(),
+    }
 }
 
 pub(crate) async fn deliver_inspection_summary(
     config: &AlertingConfig,
     summary: &InspectionSummary<'_>,
-) -> Result<(), AlertDeliveryError> {
+    channels: ChannelSet,
+) -> DeliveryOutcome {
     let mut errors = DeliveryErrors::default();
-    if should_send_inspection_webhook(config)
-        && let Err(error) =
-            retry_delivery(|| webhook::send_inspection_summary(&config.webhook, summary)).await
-    {
-        errors.record_webhook(error);
+    let mut delivered = ChannelSet::NONE;
+    if channels.webhook && should_send_inspection_webhook(config) {
+        match retry_delivery(|| webhook::send_inspection_summary(&config.webhook, summary)).await {
+            Ok(()) => delivered.webhook = true,
+            Err(error) => errors.record_webhook(error),
+        }
     }
-    if should_send_inspection_smtp(config)
-        && let Err(error) =
-            retry_delivery(|| smtp::send_inspection_summary(&config.smtp, summary)).await
-    {
-        errors.record_smtp(error);
+    if channels.smtp && should_send_inspection_smtp(config) {
+        match retry_delivery(|| smtp::send_inspection_summary(&config.smtp, summary)).await {
+            Ok(()) => delivered.smtp = true,
+            Err(error) => errors.record_smtp(error),
+        }
     }
 
-    errors.into_result()
+    DeliveryOutcome {
+        delivered,
+        error: errors.into_result().err(),
+    }
 }
 
 async fn retry_delivery<F, Fut>(mut operation: F) -> Result<(), AlertDeliveryError>
@@ -233,7 +258,9 @@ mod tests {
         AlertDeliveryError, InspectionSummary, deliver_alert_event, deliver_inspection_summary,
         retry_delivery, webhook_endpoint_label,
     };
-    use crate::alerts::{AlertEvent, AlertEventKind, AlertMetricReading, InspectionReport};
+    use crate::alerts::{
+        AlertEvent, AlertEventKind, AlertMetricReading, ChannelSet, InspectionReport,
+    };
 
     #[tokio::test]
     async fn deliver_alert_event_posts_signed_webhook_payload() {
@@ -265,6 +292,7 @@ mod tests {
 
         deliver_alert_event(&config, &event)
             .await
+            .into_result()
             .expect("webhook should send");
         let request = server.await.expect("server task should join");
 
@@ -322,8 +350,9 @@ mod tests {
             trends: &trends,
         };
 
-        deliver_inspection_summary(&config, &summary)
+        deliver_inspection_summary(&config, &summary, ChannelSet::ALL)
             .await
+            .into_result()
             .expect("webhook should send");
         let request = server.await.expect("server task should join");
 
@@ -331,6 +360,62 @@ mod tests {
         assert!(request.contains("\"event\":\"inspection_summary\""));
         assert!(request.contains("\"local_date\":\"2026-05-27\""));
         assert!(request.contains("\"offline_nodes\":1"));
+    }
+
+    #[tokio::test]
+    async fn deliver_alert_event_only_attempts_requested_channels() {
+        let mut event = sample_event();
+        event.rule.delivery = vec![AlertChannel::Webhook, AlertChannel::Smtp];
+        event.channels = ChannelSet {
+            webhook: false,
+            smtp: true,
+        };
+        let config = AlertingConfig {
+            enabled: true,
+            smtp: invalid_smtp_config(),
+            webhook: AlertWebhookConfig {
+                enabled: true,
+                url: "://bad-url".to_string(),
+                secret: None,
+                send_resolved: true,
+            },
+            ..AlertingConfig::default()
+        };
+
+        let outcome = deliver_alert_event(&config, &event).await;
+        assert_eq!(outcome.delivered, ChannelSet::NONE);
+        assert!(
+            matches!(outcome.error, Some(AlertDeliveryError::InvalidMailHeader)),
+            "the broken webhook was not requested, so only smtp fails"
+        );
+    }
+
+    #[tokio::test]
+    async fn channels_that_do_not_apply_are_not_reported_as_delivered() {
+        let mut event = sample_event();
+        event.rule.delivery = vec![AlertChannel::Webhook, AlertChannel::Smtp];
+        let config = AlertingConfig {
+            enabled: true,
+            webhook: AlertWebhookConfig {
+                enabled: true,
+                url: "://bad-url".to_string(),
+                secret: None,
+                send_resolved: true,
+            },
+            ..AlertingConfig::default()
+        };
+        assert!(!config.smtp.enabled);
+
+        let outcome = deliver_alert_event(&config, &event).await;
+        assert_eq!(
+            outcome.delivered,
+            ChannelSet::NONE,
+            "disabled smtp must not count as having the trigger"
+        );
+        assert!(matches!(
+            outcome.error,
+            Some(AlertDeliveryError::InvalidWebhookUrl(_))
+        ));
     }
 
     #[tokio::test]
@@ -351,6 +436,7 @@ mod tests {
 
         let error = deliver_alert_event(&config, &event)
             .await
+            .into_result()
             .expect_err("both channel failures should be returned");
 
         match error {
@@ -376,6 +462,7 @@ mod tests {
 
         deliver_alert_event(&config, &event)
             .await
+            .into_result()
             .expect("resolved smtp delivery should be skipped when rule disables it");
     }
 
@@ -395,6 +482,7 @@ mod tests {
 
         deliver_alert_event(&config, &event)
             .await
+            .into_result()
             .expect("resolved smtp delivery should be skipped when channel disables it");
     }
 
@@ -433,8 +521,9 @@ mod tests {
             ..AlertingConfig::default()
         };
 
-        let error = deliver_inspection_summary(&config, &summary)
+        let error = deliver_inspection_summary(&config, &summary, ChannelSet::ALL)
             .await
+            .into_result()
             .expect_err("both inspection channel failures should be returned");
 
         match error {
@@ -552,6 +641,7 @@ mod tests {
                 value: 91,
                 threshold: 90,
             }),
+            channels: crate::alerts::ChannelSet::ALL,
         }
     }
 

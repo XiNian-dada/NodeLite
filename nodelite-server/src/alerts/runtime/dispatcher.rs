@@ -99,11 +99,11 @@ where
 async fn deliver_job(job: DeliveryJob) -> DeliveryResult {
     match job {
         DeliveryJob::Alert { config, event } => {
-            let result = deliver_alert_event(&config, &event).await;
+            let outcome = deliver_alert_event(&config, &event).await;
             DeliveryResult::Alert {
                 config,
                 event,
-                result,
+                outcome,
             }
         }
         DeliveryJob::Inspection {
@@ -113,6 +113,7 @@ async fn deliver_job(job: DeliveryJob) -> DeliveryResult {
             lookback_hours,
             report,
             trends,
+            channels,
         } => {
             let summary = InspectionSummary {
                 occurred_at,
@@ -121,12 +122,12 @@ async fn deliver_job(job: DeliveryJob) -> DeliveryResult {
                 report: &report,
                 trends: &trends,
             };
-            let result = deliver_inspection_summary(&config, &summary).await;
+            let outcome = deliver_inspection_summary(&config, &summary, channels).await;
             DeliveryResult::Inspection {
                 config,
                 local_date,
                 report,
-                result,
+                outcome,
             }
         }
     }

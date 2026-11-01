@@ -25,6 +25,7 @@ use crate::alerts::{
     AlertDeliveryMetrics, AlertEventKind, AlertMetricReading, AlertStateTracker, EvaluatedRule,
     InspectionHighlight, InspectionHighlightEvent, InspectionReport,
 };
+use crate::alerts::{ChannelSet, DeliveryOutcome};
 use crate::test_support::{fake_snapshot, synthetic_identity};
 
 pub(super) fn rule() -> AlertRuleConfig {
@@ -256,6 +257,48 @@ fn inspection_dispatch_delays_retry_after_failure() {
 }
 
 #[test]
+fn inspection_retry_skips_channels_that_already_sent_today() {
+    let mut state = InspectionDispatchState::new();
+    let date = NaiveDate::from_ymd_opt(2026, 5, 27).expect("date should be valid");
+    let webhook_only = ChannelSet {
+        webhook: true,
+        smtp: false,
+    };
+    assert_eq!(state.channels_due(date), ChannelSet::ALL);
+
+    state.record_sent_channels(date, webhook_only);
+    state.mark_failed(Utc::now());
+    assert_eq!(
+        state.channels_due(date),
+        ChannelSet {
+            webhook: false,
+            smtp: true
+        }
+    );
+
+    let next_day = date.succ_opt().expect("next day should exist");
+    assert_eq!(
+        state.channels_due(next_day),
+        ChannelSet::ALL,
+        "a new day goes to every channel"
+    );
+
+    state.record_sent_channels(next_day, webhook_only);
+    state.record_sent_channels(date, ChannelSet::ALL);
+    assert_eq!(
+        state.channels_due(next_day),
+        ChannelSet {
+            webhook: false,
+            smtp: true
+        },
+        "a late result for yesterday keeps today's record"
+    );
+
+    state.clear();
+    assert_eq!(state.channels_due(next_day), ChannelSet::ALL);
+}
+
+#[test]
 fn inspection_dispatch_suppresses_duplicate_while_pending() {
     let mut state = InspectionDispatchState::new();
     let date = NaiveDate::from_ymd_opt(2026, 5, 27).expect("date should be valid");
@@ -383,7 +426,10 @@ fn alert_delivery_failure_result_allows_retry() {
         &delivery_tx,
         &config,
         &first[0],
-        Err(AlertDeliveryError::Timeout),
+        DeliveryOutcome {
+            delivered: ChannelSet::NONE,
+            error: Some(AlertDeliveryError::Timeout),
+        },
     );
     let retry = tracker.update(&rules, &[matched(93)], now + Duration::minutes(6));
 
@@ -449,7 +495,7 @@ async fn delivery_dispatcher_drains_in_flight_jobs_after_queue_closes() {
     let result = result_rx.recv().await.expect("delivery result should send");
 
     match result.0 {
-        DeliveryResult::Alert { result, .. } => assert!(result.is_ok()),
+        DeliveryResult::Alert { outcome, .. } => assert!(outcome.error.is_none()),
         DeliveryResult::Inspection { .. } => panic!("expected alert delivery result"),
     }
     server.await.expect("test server should join");
@@ -485,7 +531,10 @@ fn process_delivery_result_enqueues_resolved_after_trigger_success() {
             DeliveryResult::Alert {
                 config,
                 event: first[0].clone(),
-                result: Ok(()),
+                outcome: DeliveryOutcome {
+                    delivered: ChannelSet::ALL,
+                    error: None,
+                },
             },
             metrics.track_outstanding(),
         ))
@@ -571,6 +620,7 @@ fn enqueue_inspection_delivery_marks_retry_when_queue_is_full() {
             lookback_hours: config.inspection.lookback_hours,
             report: report(),
             trends: Vec::new(),
+            channels: ChannelSet::ALL,
         })
         .expect("prefill should fit in queue");
 
