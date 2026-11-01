@@ -195,6 +195,15 @@ fn ensure_history_indexes(connection: &Connection) -> Result<()> {
         [],
     )?;
     // 保留清理只按 recorded_at 跨节点淘汰；node_id 前导索引无法服务该谓词，会退化为全表扫描。
+    // Building it on a large existing database delays startup once, so say why it is waiting.
+    let has_retention_index: bool = connection.query_row(
+        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1)",
+        ["idx_history_points_recorded_at"],
+        |row| row.get(0),
+    )?;
+    if !has_retention_index {
+        tracing::info!("building history retention index; this runs once and may take a while");
+    }
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_history_points_recorded_at ON history_points (recorded_at)",
         [],
