@@ -50,6 +50,11 @@ export function resolveInitialLocale(): SupportedLocale {
   return FALLBACK_LOCALE;
 }
 
+/** Keeps assistive tech and browser translation in step with the rendered language. */
+export function applyDocumentLanguage(locale: SupportedLocale): void {
+  document.documentElement.lang = locale;
+}
+
 async function fetchDictionary(): Promise<Dictionary> {
   const res = await fetch(I18N_ASSET_PATH, {
     credentials: 'same-origin',
@@ -79,16 +84,18 @@ export async function setupI18n(app: App): Promise<AppI18n> {
     console.error('i18n load failed, continuing with empty dictionary', e);
     messages = { en: {}, 'zh-CN': {} };
   }
+  const locale = resolveInitialLocale();
   const instance = createI18n({
     legacy: false,
     globalInjection: true,
-    locale: resolveInitialLocale(),
+    locale,
     fallbackLocale: FALLBACK_LOCALE,
     flatJson: true,
     messages,
   }) as unknown as AppI18n;
   i18nInstance = instance;
   app.use(instance);
+  applyDocumentLanguage(locale);
   return instance;
 }
 

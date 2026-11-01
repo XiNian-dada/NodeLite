@@ -134,6 +134,49 @@ describe('useLanguage', () => {
   });
 });
 
+describe('document language', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    mockNavigatorLanguage('en-US');
+    document.documentElement.lang = 'en';
+    __resetI18nForTest();
+    stubDictionaryFetch();
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+    document.documentElement.lang = 'en';
+    __resetI18nForTest();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('applies the resolved initial locale', async () => {
+    window.localStorage.setItem(LANGUAGE_STORAGE_KEY, 'zh-CN');
+    await setupI18n(createApp(TestRoot));
+    expect(document.documentElement.lang).toBe('zh-CN');
+  });
+
+  it('applies the initial locale when the dictionary fails to load', async () => {
+    window.localStorage.setItem(LANGUAGE_STORAGE_KEY, 'zh-CN');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+    await setupI18n(createApp(TestRoot));
+    expect(document.documentElement.lang).toBe('zh-CN');
+  });
+
+  it('updates immediately on setLocale, including the fallback for unknown locales', async () => {
+    await setupI18n(createApp(TestRoot));
+    const { setLocale } = useLanguage();
+
+    setLocale('zh-CN');
+    expect(document.documentElement.lang).toBe('zh-CN');
+
+    setLocale('klingon');
+    expect(document.documentElement.lang).toBe('en');
+  });
+});
+
 describe('setupI18n dictionary failure', () => {
   const UsesI18n = defineComponent({
     setup() {
