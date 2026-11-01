@@ -9,6 +9,7 @@ import NodeDetailView from './NodeDetailView.vue';
 import { useRealtimeData } from '@/composables/useRealtimeData';
 import { setupI18n, getI18n, __resetI18nForTest } from '@/i18n';
 import { apiClient } from '@/api';
+import { useNodeStatusStore } from '@/stores/nodeStatus';
 import { makeNode, makeNodeStatus } from '@/api/__fixtures__/nodes';
 
 const wsMock = vi.hoisted(() => {
@@ -380,7 +381,7 @@ describe('NodeDetailView', () => {
     expect(mockLogs).toHaveBeenCalledWith('srv-1', 200);
   });
 
-  it('applies websocket node updates without polling the full status', async () => {
+  it('applies websocket node updates between full status refreshes', async () => {
     vi.useFakeTimers();
     const { wrapper } = await mountDetail('srv-1');
     expect(mockStatus).toHaveBeenCalledTimes(1);
@@ -413,17 +414,51 @@ describe('NodeDetailView', () => {
 
     await vi.advanceTimersByTimeAsync(5000);
     await flushPromises();
-    expect(mockStatus).toHaveBeenCalledTimes(1);
+    expect(mockStatus).toHaveBeenCalledTimes(2);
   });
 
-  it('does not poll the full status while waiting for websocket reconnects', async () => {
+  it('refreshes full-status-only metrics on each poll tick', async () => {
     vi.useFakeTimers();
     await mountDetail('srv-1');
     expect(mockStatus).toHaveBeenCalledTimes(1);
 
+    const base = await mockStatus.mock.results[0]!.value;
+    mockStatus.mockResolvedValueOnce({
+      ...base,
+      snapshot: {
+        ...base.snapshot!,
+        uptime_secs: base.snapshot!.uptime_secs + 3600,
+        network: { ...base.snapshot!.network, rx_bytes_per_sec: 123_456 },
+      },
+    });
     await vi.advanceTimersByTimeAsync(5000);
     await flushPromises();
+
+    expect(mockStatus).toHaveBeenCalledTimes(2);
+    const store = useNodeStatusStore();
+    expect(store.data?.snapshot?.uptime_secs).toBe(base.snapshot!.uptime_secs + 3600);
+    expect(store.data?.snapshot?.network.rx_bytes_per_sec).toBe(123_456);
+  });
+
+  it('keeps one full status request in flight and skips hidden pages', async () => {
+    vi.useFakeTimers();
+    await mountDetail('srv-1');
     expect(mockStatus).toHaveBeenCalledTimes(1);
+
+    mockStatus.mockReturnValueOnce(new Promise(() => {}));
+    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(mockStatus).toHaveBeenCalledTimes(2);
+
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+    try {
+      // Drop the hung request so only the hidden check can suppress a fetch.
+      useNodeStatusStore().markRemoved('srv-1');
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(mockStatus).toHaveBeenCalledTimes(2);
+    } finally {
+      hidden.mockRestore();
+    }
   });
 
   it('shows not-found when the active node is removed over websocket', async () => {

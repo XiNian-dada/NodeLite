@@ -145,6 +145,11 @@ watch([activeTab, activeHistoryWindow], ([tab]) => {
 });
 
 usePolling(() => {
+  // The WS summary only carries CPU/load/memory; network rates, traffic
+  // totals, uptime and disks come solely from the full status, so re-fetch
+  // it each tick. The store dedupes in-flight requests and drops late
+  // responses for a node we've since left.
+  void store.refresh();
   if (historyNeeded.value) void historyStore.refresh();
   if (monitorNeeded.value && nodeId.value) {
     void monitorStore.refresh(nodeId.value, activeHistoryWindow.value);
