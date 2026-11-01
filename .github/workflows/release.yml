@@ -48,11 +48,40 @@ jobs:
           cache: pnpm
           cache-dependency-path: nodelite-server/web/pnpm-lock.yaml
 
+      - name: Install web dependencies
+        working-directory: nodelite-server/web
+        run: pnpm install --frozen-lockfile
+
+      # 以下前端门禁与 ci.yml 的 Web Lint and Test 保持一致,任一失败都阻止发布。
+      - name: Audit web dependencies
+        working-directory: nodelite-server/web
+        run: pnpm audit --audit-level high
+
+      - name: Lint web
+        working-directory: nodelite-server/web
+        run: pnpm lint
+
+      - name: Type-check web
+        working-directory: nodelite-server/web
+        run: pnpm typecheck
+
+      - name: Unit test web
+        working-directory: nodelite-server/web
+        run: pnpm test
+
       - name: Build web assets
         working-directory: nodelite-server/web
+        run: pnpm build
+
+      - name: Guard against bulk inline scripts (CSP)
+        working-directory: nodelite-server/web
         run: |
-          pnpm install --frozen-lockfile
-          pnpm build
+          if perl -ne 'BEGIN{$/=undef} exit 1 if /<script>[^<]{800,}/' dist/index.html; then
+            echo "inline-script guard: ok"
+          else
+            echo "::error::dist/index.html contains an inline <script> longer than 800 chars"
+            exit 1
+          fi
 
       - name: Set up Rust
         # 发布前和 CI 一样要求 rustfmt / clippy 都通过。
