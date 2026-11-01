@@ -357,6 +357,9 @@ impl TwoFactorSessions {
         if !store.pending.contains_key(pending_token) {
             return Ok(None);
         }
+        // Checked before consuming the pending token or TOTP step, so a full store leaves the
+        // login retryable.
+        ensure_session_capacity(&store)?;
         let token = generate_session_token()?;
         if !mark_unused_totp_steps(&mut store, matching_steps, now) {
             return Ok(None);
@@ -380,6 +383,7 @@ impl TwoFactorSessions {
         if !store.pending.contains_key(pending_token) {
             return Ok(None);
         }
+        ensure_session_capacity(&store)?;
         let token = generate_session_token()?;
         store.pending.remove(pending_token);
         insert_authenticated_session(&mut store, &token, now);

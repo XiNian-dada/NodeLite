@@ -37,14 +37,15 @@ fn concurrent_session_creation_cannot_exceed_the_shared_budget() {
 }
 
 #[test]
-fn full_store_preserves_existing_sessions_and_allows_pending_exchanges() {
+fn full_store_preserves_existing_sessions_and_admits_exchanges_once_room_frees() {
     let sessions = TwoFactorSessions::new();
     let basic = sessions.create_basic_auth_session(Some(42)).expect("basic");
     assert!(sessions.confirm_sensitive_action(&basic, false));
     let totp_pending = sessions.create_pending().expect("TOTP pending");
     let passkey_pending = sessions.create_pending().expect("Passkey pending");
+    let mut filler = Vec::new();
     for _ in 1..MAX_AUTH_SESSIONS {
-        sessions.create_authenticated().expect("fill store");
+        filler.push(sessions.create_authenticated().expect("fill store"));
     }
     assert!(matches!(
         sessions.create_authenticated(),
@@ -60,6 +61,9 @@ fn full_store_preserves_existing_sessions_and_allows_pending_exchanges() {
     sessions
         .create_pending()
         .expect("pending sessions do not use the shared budget");
+    for token in filler.iter().take(2) {
+        sessions.remove_authenticated(token);
+    }
     let totp = sessions
         .exchange_pending(&totp_pending, &[123])
         .expect("exchange TOTP")
@@ -135,4 +139,32 @@ fn expired_entries_free_capacity_without_expanding_the_cleanup_budget() {
             .basic_auth_sessions
             .contains_key(&basic)
     );
+}
+
+#[test]
+fn full_store_rejects_pending_exchanges_without_consuming_them() {
+    let sessions = TwoFactorSessions::new();
+    let totp_pending = sessions.create_pending().expect("TOTP pending");
+    let passkey_pending = sessions.create_pending().expect("Passkey pending");
+    for _ in 0..MAX_AUTH_SESSIONS {
+        sessions.create_authenticated().expect("fill store");
+    }
+    assert!(matches!(
+        sessions.exchange_pending(&totp_pending, &[7]),
+        Err(AuthSessionError::Capacity)
+    ));
+    assert!(matches!(
+        sessions.exchange_pending_for_passkey(&passkey_pending),
+        Err(AuthSessionError::Capacity)
+    ));
+    assert!(sessions.pending_exists(&totp_pending));
+    assert!(sessions.pending_exists(&passkey_pending));
+    assert_eq!(session_count(&sessions), MAX_AUTH_SESSIONS);
+
+    sessions.clear_authenticated();
+    let totp_pending = sessions.create_pending().expect("pending after clear");
+    sessions
+        .exchange_pending(&totp_pending, &[7])
+        .expect("exchange")
+        .expect("the TOTP step was not consumed by the rejected attempt");
 }
