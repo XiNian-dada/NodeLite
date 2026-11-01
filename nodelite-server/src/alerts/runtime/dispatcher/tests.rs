@@ -33,7 +33,10 @@ fn succeeded(job: DeliveryJob) -> DeliveryResult {
         DeliveryJob::Alert { config, event } => DeliveryResult::Alert {
             config,
             event,
-            result: Ok(()),
+            outcome: crate::alerts::DeliveryOutcome {
+                done: crate::alerts::ChannelSet::ALL,
+                error: None,
+            },
         },
         DeliveryJob::Inspection { .. } => panic!("test queues only alert jobs"),
     }
@@ -141,7 +144,10 @@ async fn completed_results_are_bounded_and_consumption_releases_every_job() {
         while let Some((result, _outstanding)) = results.recv().await {
             assert!(matches!(
                 result,
-                DeliveryResult::Alert { result: Ok(()), .. }
+                DeliveryResult::Alert {
+                    outcome: crate::alerts::DeliveryOutcome { error: None, .. },
+                    ..
+                }
             ));
             delivered += 1;
             assert!(metrics.snapshot().outstanding <= DELIVERY_TOTAL_CAPACITY as u64);
