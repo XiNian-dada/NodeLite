@@ -208,8 +208,7 @@ impl NodeRegistry {
     }
 
     async fn verify_hashed_token(&self, input: &str, token_hash: &str) -> RegistryResult<bool> {
-        // 构造缓存键:使用 token 的 SHA256 哈希 + registry_revision。
-        // 使用哈希避免在缓存中存储明文 token。
+        // 缓存键为 token 与存储哈希串的 SHA256,避免在缓存中存储明文 token。
         let cache_key_hash = {
             let mut hasher = Sha256::new();
             hasher.update(input.as_bytes());
@@ -217,7 +216,7 @@ impl NodeRegistry {
             hasher.update(token_hash.as_bytes());
             hex::encode(hasher.finalize())
         };
-        let cache_key = (cache_key_hash.clone(), self.registry_revision());
+        let cache_key = cache_key_hash;
 
         if let Some(verified) = self.cached_token_result(&cache_key) {
             return Ok(verified);

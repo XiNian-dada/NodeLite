@@ -305,3 +305,58 @@ async fn token_cache_fixture(
         .with_token_cache_capacity_for_tests(capacity);
     (registry, credentials, temp_dir)
 }
+
+#[tokio::test]
+async fn unrelated_token_refresh_keeps_other_sessions_on_the_cache() {
+    let (registry, credentials, temp_dir) =
+        token_cache_fixture("unrelated-refresh", &["stay-01", "rotate-01"], 4).await;
+    let (identity, token) = &credentials[0];
+    let authorized = registry
+        .authorize(identity, token)
+        .await
+        .expect("cold token should authorize");
+
+    registry
+        .refresh_token("rotate-01", 1)
+        .await
+        .expect("other node should rotate");
+    registry
+        .session_token_status("stay-01", token, authorized.generation)
+        .await
+        .expect("unchanged session should stay valid");
+
+    let metrics = registry.token_verify_metrics();
+    assert_eq!(metrics.token_cache_misses_total, 1, "no Argon2 rerun");
+    assert_eq!(metrics.token_cache_hits_total, 1);
+
+    drop(registry);
+    std::fs::remove_dir_all(temp_dir).expect("cache temp dir should be removable");
+}
+
+#[tokio::test]
+async fn cached_results_for_retired_hashes_do_not_authorize() {
+    let (registry, credentials, temp_dir) =
+        token_cache_fixture("retired-hash", &["retire-01"], 4).await;
+    let (identity, original) = &credentials[0];
+    registry
+        .authorize(identity, original)
+        .await
+        .expect("original token should authorize");
+
+    let (_, _, generation) = registry
+        .refresh_token("retire-01", 1)
+        .await
+        .expect("first rotation");
+    registry
+        .refresh_token("retire-01", generation)
+        .await
+        .expect("second rotation retires the original token");
+
+    assert!(
+        registry.authorize(identity, original).await.is_err(),
+        "a cached match against a retired hash must not authorize"
+    );
+
+    drop(registry);
+    std::fs::remove_dir_all(temp_dir).expect("cache temp dir should be removable");
+}

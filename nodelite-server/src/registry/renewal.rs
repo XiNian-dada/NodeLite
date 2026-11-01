@@ -104,7 +104,6 @@ impl NodeRegistry {
         })
         .await?;
         self.replace_state_from_file(file).await?;
-        self.token_cache.lock().clear();
         Ok(committed)
     }
 
