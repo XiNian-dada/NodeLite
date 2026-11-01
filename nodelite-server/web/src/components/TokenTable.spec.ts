@@ -253,4 +253,100 @@ describe('TokenTable', () => {
     expect(wrapper.find('[data-test="reauth-password"]').exists()).toBe(false);
     expect(mockDeleteAgent).toHaveBeenCalledWith('a', {});
   });
+
+  describe('unsaved drafts across list refreshes', () => {
+    const agents = () => [
+      agent({ node_id: 'a', renewal_price: '10.00' }),
+      agent({ node_id: 'b', renewal_price: '20.00' }),
+    ];
+
+    function row(wrapper: ReturnType<typeof mountTable>, index: number) {
+      const found = wrapper.findAll('[data-test="token-row"]')[index];
+      if (!found) throw new Error(`missing row ${index}`);
+      return found;
+    }
+
+    function price(wrapper: ReturnType<typeof mountTable>, index: number): string {
+      const input = row(wrapper, index).find('[data-test="renewal-price-input"]');
+      return (input.element as HTMLInputElement).value;
+    }
+
+    it('keeps B draft when saving A refreshes the list, and adopts server values for A', async () => {
+      const wrapper = mountTable(agents());
+      await row(wrapper, 0).find('[data-test="renewal-price-input"]').setValue('  11.00 ');
+      await row(wrapper, 1).find('[data-test="renewal-price-input"]').setValue('99.00');
+
+      await row(wrapper, 0).find('[data-test="service-meta-save"]').trigger('click');
+      await flushPromises();
+      await wrapper.setProps({
+        agents: [
+          agent({ node_id: 'a', renewal_price: '11.00 USD' }),
+          agent({ node_id: 'b', renewal_price: '20.00' }),
+        ],
+      });
+
+      expect(price(wrapper, 0)).toBe('11.00 USD');
+      expect(price(wrapper, 1)).toBe('99.00');
+      expect(row(wrapper, 0).find('[data-test="service-meta-message"]').text()).toBe('Saved');
+    });
+
+    it('still updates untouched rows from the server', async () => {
+      const wrapper = mountTable(agents());
+      await wrapper.setProps({
+        agents: [
+          agent({ node_id: 'a', renewal_price: '12.00' }),
+          agent({ node_id: 'b', renewal_price: '22.00' }),
+        ],
+      });
+
+      expect(price(wrapper, 0)).toBe('12.00');
+      expect(price(wrapper, 1)).toBe('22.00');
+    });
+
+    it('keeps both drafts when saving A fails', async () => {
+      mockUpdateMeta.mockRejectedValueOnce(new Error('nope'));
+      const wrapper = mountTable(agents());
+      await row(wrapper, 0).find('[data-test="renewal-price-input"]').setValue('11.00');
+      await row(wrapper, 1).find('[data-test="renewal-price-input"]').setValue('99.00');
+
+      await row(wrapper, 0).find('[data-test="service-meta-save"]').trigger('click');
+      await flushPromises();
+      await wrapper.setProps({ agents: agents() });
+
+      expect(price(wrapper, 0)).toBe('11.00');
+      expect(price(wrapper, 1)).toBe('99.00');
+      expect(wrapper.emitted('saved')).toBeUndefined();
+    });
+
+    it('keeps edits typed while the save of that row is in flight', async () => {
+      let finish: (value: { ok: boolean; message: string }) => void = () => {};
+      mockUpdateMeta.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+      const wrapper = mountTable(agents());
+      const input = row(wrapper, 0).find('[data-test="renewal-price-input"]');
+      await input.setValue('11.00');
+      await row(wrapper, 0).find('[data-test="service-meta-save"]').trigger('click');
+      await input.setValue('12.00');
+
+      finish({ ok: true, message: 'Saved' });
+      await flushPromises();
+      await wrapper.setProps({
+        agents: [
+          agent({ node_id: 'a', renewal_price: '11.00' }),
+          agent({ node_id: 'b', renewal_price: '20.00' }),
+        ],
+      });
+
+      expect(price(wrapper, 0)).toBe('12.00');
+    });
+
+    it('removes only the deleted node and keeps the other draft', async () => {
+      const wrapper = mountTable(agents());
+      await row(wrapper, 1).find('[data-test="renewal-price-input"]').setValue('99.00');
+
+      await wrapper.setProps({ agents: [agent({ node_id: 'b', renewal_price: '20.00' })] });
+
+      expect(wrapper.findAll('[data-test="token-row"]')).toHaveLength(1);
+      expect(price(wrapper, 0)).toBe('99.00');
+    });
+  });
 });
