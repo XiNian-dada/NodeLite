@@ -393,6 +393,7 @@ jobs:
     # 这里编译并运行其单测与有界 smoke,确保协议解析入口的编译错误或 panic 让 CI 失败。
     name: Fuzz Smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: [workflow-guards]
 
     steps:
