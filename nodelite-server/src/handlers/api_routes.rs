@@ -127,6 +127,7 @@ pub(crate) async fn metrics(State(state): State<AppState>) -> Response {
     let writer_metrics = render_writer_metrics(WriterMetrics {
         alert_delivery: state.shared.alert_delivery.snapshot(),
         history_write: state.history.write_metrics(),
+        traffic_ledger: state.history.traffic_health(),
         history_dropped_writes: state.history.dropped_writes(),
         history_queue_depth,
         history_queue_capacity,
