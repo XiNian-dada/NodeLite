@@ -206,3 +206,97 @@ async fn node_service_metadata_accepts_inline_totp_confirmation() -> Result<()> 
     harness.cleanup().await;
     Ok(())
 }
+
+async fn post_service_meta(harness: &SettingsHarness, body: Value) -> Result<()> {
+    let body = with_confirmation(body, "current_password", "secret");
+    let response = harness
+        .app
+        .clone()
+        .oneshot(json_request(
+            SERVICE_META_URI,
+            &basic_auth_header("secret"),
+            None,
+            body,
+        ))
+        .await?;
+    assert_status(response.status(), StatusCode::OK, response).await
+}
+
+#[tokio::test]
+async fn service_metadata_omitted_fields_keep_stored_values() -> Result<()> {
+    let harness = SettingsHarness::new(readonly_auth(false, None)).await?;
+    issue_guard_node(&harness).await?;
+    post_service_meta(
+        &harness,
+        json!({
+            "service_unlimited": false,
+            "service_expires_at": "2027-01-01T00:00:00Z",
+            "renewal_price": "$5/mo",
+            "traffic_limit_bytes": 4096,
+            "traffic_accounting": "outbound",
+            "traffic_throttle_kbps": 16,
+        }),
+    )
+    .await?;
+
+    post_service_meta(
+        &harness,
+        json!({ "service_expires_at": "2027-06-01T00:00:00Z" }),
+    )
+    .await?;
+    let node = registered_node(&harness, "edge-guard-01").await?;
+    assert_eq!(
+        node.service_expires_at.map(|at| at.to_rfc3339()),
+        Some("2027-06-01T00:00:00+00:00".to_string())
+    );
+    assert_eq!(node.renewal_price.as_deref(), Some("$5/mo"));
+    assert_eq!(node.traffic_limit_bytes, Some(4096));
+    assert_eq!(
+        node.traffic_accounting,
+        crate::registry::TrafficAccounting::Outbound
+    );
+    assert_eq!(node.traffic_throttle_kbps, Some(16));
+
+    post_service_meta(&harness, json!({ "traffic_throttle_kbps": null })).await?;
+    let node = registered_node(&harness, "edge-guard-01").await?;
+    assert_eq!(node.traffic_throttle_kbps, None, "explicit null clears");
+    assert_eq!(node.traffic_limit_bytes, Some(4096));
+
+    harness.cleanup().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn stored_zero_limit_does_not_block_edits_to_other_fields() -> Result<()> {
+    let harness = SettingsHarness::new(readonly_auth(false, None)).await?;
+    issue_guard_node(&harness).await?;
+    let path = harness.state.registry.path().to_path_buf();
+    let mut file: Value = serde_json::from_str(&tokio::fs::read_to_string(&path).await?)?;
+    file["nodes"][0]["traffic_limit_bytes"] = json!(0);
+    tokio::fs::write(&path, serde_json::to_string_pretty(&file)?).await?;
+    harness.state.registry.reload().await?;
+
+    post_service_meta(&harness, json!({ "renewal_price": "$7/mo" })).await?;
+    let node = registered_node(&harness, "edge-guard-01").await?;
+    assert_eq!(node.renewal_price.as_deref(), Some("$7/mo"));
+    assert_eq!(node.traffic_limit_bytes, Some(0));
+
+    let rejected = harness
+        .app
+        .clone()
+        .oneshot(json_request(
+            SERVICE_META_URI,
+            &basic_auth_header("secret"),
+            None,
+            with_confirmation(
+                json!({ "traffic_limit_bytes": 0 }),
+                "current_password",
+                "secret",
+            ),
+        ))
+        .await?;
+    assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+
+    harness.cleanup().await;
+    Ok(())
+}
