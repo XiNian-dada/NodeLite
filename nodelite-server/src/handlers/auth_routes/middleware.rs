@@ -37,6 +37,30 @@ pub(crate) async fn require_readonly_auth(
     request: Request,
     next: Next,
 ) -> Response {
+    let meta = readonly_auth_meta(&state, &headers, &request);
+    let response = authorize_readonly_request(&state, headers, request, next, &meta).await;
+    // Handlers check inline passwords and codes without knowing the client address; their
+    // rejections count toward the same budget as /api/settings/confirm.
+    if response
+        .extensions()
+        .get::<crate::handlers::settings::InlineConfirmationRejected>()
+        .is_some()
+    {
+        state
+            .sensitive_readonly_auth_admission
+            .record_auth_failure(meta.client_ip);
+    }
+    response
+}
+
+async fn authorize_readonly_request(
+    state: &AppState,
+    headers: HeaderMap,
+    request: Request,
+    next: Next,
+    meta: &ReadonlyAuthMeta,
+) -> Response {
+    let state = state.clone();
     // Reject before authentication so foreign-origin handshakes never create browser
     // sessions or login audit records.
     if request.uri().path() == "/ws/browser"
@@ -45,18 +69,25 @@ pub(crate) async fn require_readonly_auth(
     {
         return cross_origin_rejected_response(&headers);
     }
-    let meta = readonly_auth_meta(&state, &headers, &request);
     let auth = state.readonly_auth.read().await;
     let evaluated = evaluate_readonly_auth(&state, &auth, &headers, &request);
     drop(auth);
     let Some((basic_authorized, two_factor_enabled)) = evaluated else {
+        // A signed-in 2FA session still cannot keep guessing inline confirmations.
+        if meta.sensitive_path
+            && let Err(retry_after_secs) = state
+                .sensitive_readonly_auth_admission
+                .check(meta.client_ip)
+        {
+            return readonly_auth_block_response(retry_after_secs);
+        }
         return next.run(request).await;
     };
-    if let Some(response) = enforce_readonly_auth_limits(&state, &meta).await {
+    if let Some(response) = enforce_readonly_auth_limits(&state, meta).await {
         return response;
     }
     if basic_authorized {
-        clear_readonly_auth_failures(&state, &meta);
+        clear_readonly_auth_failures(&state, meta);
         if two_factor_enabled {
             // WebSocket 升级握手无法跟随 302 重定向(浏览器 `new WebSocket()` 不暴露
             // redirect),返回 401 + JSON。WS 客户端据此 fallback 到一次 `/api/bootstrap`
@@ -87,14 +118,14 @@ pub(crate) async fn require_readonly_auth(
             .as_deref()
             .is_some_and(|token| state.two_factor_sessions.is_basic_auth_session_valid(token));
         if !has_valid_session {
-            return issue_basic_auth_session_and_continue(&state, &meta, request, next).await;
+            return issue_basic_auth_session_and_continue(&state, meta, request, next).await;
         }
         return next.run(request).await;
     }
 
     record_readonly_login_failure(
         &state,
-        &meta,
+        meta,
         headers.contains_key(header::AUTHORIZATION),
         two_factor_enabled,
     )
