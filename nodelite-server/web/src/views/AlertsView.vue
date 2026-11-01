@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AppLayout from '@/components/AppLayout.vue';
 import AlertOverviewCard from '@/components/AlertOverviewCard.vue';
@@ -18,22 +18,40 @@ const { t } = useI18n();
 const store = useAlertsStore();
 
 // The reactive draft is the single source of truth (no DOM-as-state). Seeded
-// from the server config on load and re-seeded after each successful save.
+// from the cached config, then from each load unless the user has edited it, and
+// re-seeded after each successful save.
 const draft = reactive(emptyAlertsConfig());
 const message = reactive<{ state: 'ok' | 'error' | null; text: string }>({ state: null, text: '' });
 const deliveryOpen = ref(true);
 const inspectionOpen = ref(true);
 
+const draftReady = ref(false);
+let seededDraft = '';
+
+// The server replaces the whole config on save, so an unseeded draft would wipe it,
+// and after a failed load the draft cannot be trusted to reflect the server.
+const canSave = computed(() => draftReady.value && !store.saving && !store.error);
+
 function seedDraft(): void {
-  if (store.config) Object.assign(draft, viewToDraft(store.config));
+  if (!store.config) return;
+  Object.assign(draft, viewToDraft(store.config));
+  seededDraft = JSON.stringify(draft);
+  draftReady.value = true;
 }
+
+function isDraftDirty(): boolean {
+  return draftReady.value && JSON.stringify(draft) !== seededDraft;
+}
+
+seedDraft();
 
 onMounted(async () => {
   await store.load();
-  seedDraft();
+  if (!isDraftDirty()) seedDraft();
 });
 
 async function save(): Promise<void> {
+  if (!canSave.value) return;
   message.state = null;
   message.text = t('alerts.saving');
   try {
@@ -162,12 +180,18 @@ async function save(): Promise<void> {
                 <button
                   type="button"
                   class="btn btn--primary"
-                  :disabled="store.saving"
+                  :disabled="!canSave"
                   data-test="alerts-save"
                   @click="save"
                 >
                   {{ t('alerts.save') }}
                 </button>
+                <SettingsMessage
+                  v-if="store.error"
+                  state="error"
+                  :text="store.error.message"
+                  data-test="alerts-refresh-error"
+                />
                 <SettingsMessage :state="message.state" :text="message.text" />
               </div>
             </article>

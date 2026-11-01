@@ -4,8 +4,10 @@ import { createPinia, setActivePinia } from 'pinia';
 import { createMemoryHistory, createRouter, type Router } from 'vue-router';
 import { createApp, defineComponent, h } from 'vue';
 import { setupI18n, getI18n, __resetI18nForTest } from '@/i18n';
-import { apiClient } from '@/api';
+import { apiClient, type AlertSettingsResponse } from '@/api';
 import { makeAlertSettings } from '@/api/__fixtures__/nodes';
+import AlertOverviewCard from '@/components/AlertOverviewCard.vue';
+import { useAlertsStore } from '@/stores/alerts';
 import AlertsView from './AlertsView.vue';
 
 vi.mock('@/api', async () => {
@@ -97,9 +99,30 @@ describe('AlertsView', () => {
     vi.clearAllMocks();
   });
 
-  async function mountView() {
+  function deferredLoad() {
+    let resolve: (value: AlertSettingsResponse) => void = () => {};
+    let reject: (error: Error) => void = () => {};
+    const promise = new Promise<AlertSettingsResponse>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    mockLoad.mockReset();
+    mockLoad.mockReturnValueOnce(promise);
+    return { resolve, reject };
+  }
+
+  function preparePinia(cached?: AlertSettingsResponse) {
     const pinia = createPinia();
     setActivePinia(pinia);
+    if (cached) {
+      const store = useAlertsStore();
+      store.config = cached.config;
+      store.preview = cached.preview;
+    }
+    return pinia;
+  }
+
+  async function mountView(pinia = preparePinia()) {
     const router = makeRouter();
     await router.push('/alerts');
     await router.isReady();
@@ -193,5 +216,81 @@ describe('AlertsView', () => {
     expect(inspectionSummary.element.tagName).toBe('BUTTON');
     await inspectionSummary.trigger('click');
     expect(inspectionToggle.text()).toBe('Collapse');
+  });
+
+  describe('draft initialization', () => {
+    const cached = makeAlertSettings({ config: { enabled: true } });
+    const fresher = makeAlertSettings({ config: { enabled: false, rules: [] } });
+
+    function savedPayload() {
+      return mockSave.mock.calls[0]?.[0];
+    }
+
+    it('saves the cached config, not an empty draft, while the GET is pending', async () => {
+      deferredLoad();
+      const wrapper = await mountView(preparePinia(cached));
+      await wrapper.find('[data-test="alerts-save"]').trigger('click');
+      await flushPromises();
+
+      expect(savedPayload()?.enabled).toBe(true);
+      expect(savedPayload()?.rules).toHaveLength(cached.config.rules.length);
+      expect(cached.config.rules.length).toBeGreaterThan(0);
+    });
+
+    it('seeds from a load that a previous visit left in flight', async () => {
+      const pinia = preparePinia();
+      const get = deferredLoad();
+      const pending = useAlertsStore().load();
+      const wrapper = await mountView(pinia);
+      get.resolve(cached);
+      await pending;
+      await flushPromises();
+
+      await wrapper.find('[data-test="alerts-save"]').trigger('click');
+      await flushPromises();
+      expect(savedPayload()?.rules).toHaveLength(cached.config.rules.length);
+    });
+
+    it('applies a refresh to an untouched draft', async () => {
+      const get = deferredLoad();
+      const wrapper = await mountView(preparePinia(cached));
+      get.resolve(fresher);
+      await flushPromises();
+
+      await wrapper.find('[data-test="alerts-save"]').trigger('click');
+      await flushPromises();
+      expect(savedPayload()?.enabled).toBe(false);
+      expect(savedPayload()?.rules).toEqual([]);
+    });
+
+    it('keeps user edits when a refresh arrives', async () => {
+      const get = deferredLoad();
+      const wrapper = await mountView(preparePinia(cached));
+      const overview = wrapper.findComponent(AlertOverviewCard);
+      overview.vm.$emit('update:modelValue', { ...overview.props('modelValue'), enabled: false });
+      await flushPromises();
+      get.resolve(makeAlertSettings({ config: { enabled: true, rules: [] } }));
+      await flushPromises();
+
+      await wrapper.find('[data-test="alerts-save"]').trigger('click');
+      await flushPromises();
+      expect(savedPayload()?.enabled).toBe(false);
+      expect(savedPayload()?.rules).toHaveLength(cached.config.rules.length);
+    });
+
+    it('disables saving when the refresh of a cached config fails', async () => {
+      const { ApiError } = await import('@/api/client');
+      const get = deferredLoad();
+      const wrapper = await mountView(preparePinia(cached));
+      get.reject(new ApiError(503, 'service unavailable'));
+      await flushPromises();
+
+      const save = wrapper.find('[data-test="alerts-save"]');
+      expect(save.attributes('disabled')).toBeDefined();
+      expect(wrapper.find('[data-test="alerts-refresh-error"]').exists()).toBe(true);
+      await save.trigger('click');
+      await flushPromises();
+      expect(mockSave).not.toHaveBeenCalled();
+    });
   });
 });
