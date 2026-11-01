@@ -10,6 +10,7 @@ mod health;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -31,6 +32,7 @@ const TRAFFIC_WRITER_CHANNEL_CAPACITY: usize = 1024;
 const TRAFFIC_WRITER_FLUSH_MILLIS: u64 = 200;
 const TRAFFIC_RETRY_INITIAL_DELAY: Duration = Duration::from_secs(1);
 const TRAFFIC_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
+pub(super) const TRAFFIC_LOAD_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TrafficUsage {
@@ -89,6 +91,8 @@ pub(super) struct TrafficTracker {
     /// 入队被拒绝的节点。写入内容是累计值，所以只需记下节点，由 writer 读取最新状态补写。
     dirty: Arc<ParkingLotMutex<HashSet<String>>>,
     health: Arc<ParkingLotMutex<TrafficLedgerHealth>>,
+    load_retry_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
+    recovered_after_startup: Arc<AtomicBool>,
 }
 
 impl TrafficTracker {
@@ -101,11 +105,45 @@ impl TrafficTracker {
             writer_handle: Arc::new(Mutex::new(None)),
             dirty: Arc::new(ParkingLotMutex::new(HashSet::new())),
             health: Arc::new(ParkingLotMutex::new(TrafficLedgerHealth::default())),
+            load_retry_handle: Arc::new(Mutex::new(None)),
+            recovered_after_startup: Arc::new(AtomicBool::new(false)),
         }
     }
 
     pub(super) fn health(&self) -> TrafficLedgerHealth {
         *self.health.lock()
+    }
+
+    /// 加载账本；失败时后台重试，让锁库或被修复的数据不必重启服务就能恢复。
+    pub(super) async fn start(&self, retry_interval: Duration) {
+        let Err(error) = self.initialize().await else {
+            return;
+        };
+        warn!(error = ?error, "traffic usage ledger unavailable; quota enforcement holds until it loads");
+        let tracker = self.clone();
+        let handle = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(retry_interval).await;
+                match tracker.initialize().await {
+                    Ok(()) => {
+                        info!("traffic usage ledger loaded after retry");
+                        tracker
+                            .recovered_after_startup
+                            .store(true, Ordering::Release);
+                        return;
+                    }
+                    Err(error) => {
+                        warn!(error = ?error, "traffic usage ledger still unavailable");
+                    }
+                }
+            }
+        });
+        *self.load_retry_handle.lock().await = Some(handle);
+    }
+
+    /// 启动时的孤立账本清理在账本未加载时无法生效，恢复后调用方需要重新清理一次。
+    pub(super) fn take_recovered_after_startup(&self) -> bool {
+        self.recovered_after_startup.swap(false, Ordering::AcqRel)
     }
 
     pub(super) async fn initialize(&self) -> Result<()> {
@@ -256,6 +294,10 @@ impl TrafficTracker {
     }
 
     pub(super) async fn shutdown(&self) {
+        if let Some(handle) = self.load_retry_handle.lock().await.take() {
+            handle.abort();
+            let _ = handle.await;
+        }
         let sender = self.writer_tx.write().await.take();
         drop(sender);
         self.health.lock().available = false;
@@ -335,25 +377,28 @@ fn load_traffic_state(
             last_tx_bytes,
             last_uptime_secs,
         ) = row?;
-        let Some(cycle_started_at) = Utc.timestamp_opt(cycle_started_at, 0).single() else {
-            continue;
-        };
-        let Some(accounting) = accounting_from_db(&accounting) else {
-            continue;
-        };
+        // 跳过坏行等于把该节点的用量清零，下一次写入还会覆盖原值，所以整体判定为不可用。
+        let cycle_started_at = Utc
+            .timestamp_opt(cycle_started_at, 0)
+            .single()
+            .with_context(|| format!("invalid traffic cycle start for node {node_id}"))?;
+        let accounting = accounting_from_db(&accounting)
+            .with_context(|| format!("invalid traffic accounting for node {node_id}"))?;
         states.insert(
             node_id.clone(),
             TrafficUsageState {
                 usage: TrafficUsage {
-                    node_id,
+                    node_id: node_id.clone(),
                     cycle_started_at,
-                    used_bytes: sqlite_integer_to_u64(used_bytes),
+                    used_bytes: stored_counter(used_bytes, &node_id)?,
                     accounting,
                 },
                 baseline: CounterBaseline::restored(
-                    sqlite_integer_to_u64(last_rx_bytes),
-                    sqlite_integer_to_u64(last_tx_bytes),
-                    last_uptime_secs.map(sqlite_integer_to_u64),
+                    stored_counter(last_rx_bytes, &node_id)?,
+                    stored_counter(last_tx_bytes, &node_id)?,
+                    last_uptime_secs
+                        .map(|uptime| stored_counter(uptime, &node_id))
+                        .transpose()?,
                 ),
             },
         );
@@ -588,8 +633,8 @@ fn u64_to_sqlite_integer(value: u64) -> i64 {
     i64::try_from(value).unwrap_or(i64::MAX)
 }
 
-fn sqlite_integer_to_u64(value: i64) -> u64 {
-    u64::try_from(value).unwrap_or_default()
+fn stored_counter(value: i64, node_id: &str) -> Result<u64> {
+    u64::try_from(value).with_context(|| format!("negative traffic counter for node {node_id}"))
 }
 
 #[cfg(test)]

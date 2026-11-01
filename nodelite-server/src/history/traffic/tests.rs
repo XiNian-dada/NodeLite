@@ -342,3 +342,85 @@ async fn shutdown_reports_writes_that_could_not_be_persisted() {
     restarted.shutdown().await;
     remove_db(&db_path);
 }
+
+fn seed_ledger_row(db_path: &Path, accounting: &str, used_bytes: &str) {
+    let connection = rusqlite::Connection::open(db_path).expect("db should open");
+    connection
+        .execute_batch(
+            "CREATE TABLE IF NOT EXISTS traffic_usage (node_id TEXT PRIMARY KEY NOT NULL, cycle_started_at INTEGER NOT NULL, accounting TEXT NOT NULL, used_bytes INTEGER NOT NULL, last_rx_bytes INTEGER NOT NULL, last_tx_bytes INTEGER NOT NULL);",
+        )
+        .expect("schema should apply");
+    connection
+        .execute(
+            "INSERT INTO traffic_usage VALUES ('node-a', ?1, ?2, ?3, 0, 0)",
+            rusqlite::params![
+                utc_month_start(Utc::now()).timestamp(),
+                accounting,
+                used_bytes
+            ],
+        )
+        .expect("row should insert");
+}
+
+#[tokio::test]
+async fn invalid_ledger_rows_make_the_ledger_unavailable() {
+    for (accounting, used_bytes) in [
+        ("bidirectional", "not-a-number"),
+        ("bidirectional", "-1"),
+        ("sideways", "1"),
+    ] {
+        let db_path = test_db_path("invalid-row");
+        seed_ledger_row(&db_path, accounting, used_bytes);
+        let tracker = TrafficTracker::new(Arc::new(db_path.clone()), 0);
+        assert!(
+            tracker.initialize().await.is_err(),
+            "{accounting}/{used_bytes}"
+        );
+        assert!(!tracker.health().available);
+        remove_db(&db_path);
+    }
+}
+
+#[tokio::test]
+async fn ledger_load_is_retried_and_preserves_repaired_usage() {
+    let db_path = test_db_path("load-retry");
+    seed_ledger_row(&db_path, "bidirectional", "not-a-number");
+    let tracker = TrafficTracker::new(Arc::new(db_path.clone()), 0);
+    tracker.start(Duration::from_millis(20)).await;
+    assert!(!tracker.health().available);
+    assert!(!tracker.take_recovered_after_startup());
+    assert!(
+        tracker
+            .record("node-a", sample(1, 1, 1), BIDI, true)
+            .await
+            .is_err()
+    );
+
+    rusqlite::Connection::open(&db_path)
+        .expect("db should open")
+        .execute("UPDATE traffic_usage SET used_bytes = 700", [])
+        .expect("row should be repaired");
+    wait_for_health(&tracker, |health| health.available).await;
+    assert!(tracker.take_recovered_after_startup());
+    assert!(!tracker.take_recovered_after_startup());
+    assert_eq!(tracker.usages().await[0].used_bytes, 700);
+
+    tracker.shutdown().await;
+    remove_db(&db_path);
+}
+
+#[tokio::test]
+async fn shutdown_stops_a_pending_ledger_load_retry() {
+    let db_path = test_db_path("load-retry-stop");
+    seed_ledger_row(&db_path, "sideways", "1");
+    let tracker = TrafficTracker::new(Arc::new(db_path.clone()), 0);
+    tracker.start(Duration::from_millis(5)).await;
+    tracker.shutdown().await;
+    rusqlite::Connection::open(&db_path)
+        .expect("db should open")
+        .execute("UPDATE traffic_usage SET accounting = 'inbound'", [])
+        .expect("row should be repaired");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!tracker.health().available);
+    remove_db(&db_path);
+}

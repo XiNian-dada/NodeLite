@@ -267,9 +267,9 @@ impl HistoryStore {
                 }
                 self.available.store(true, Ordering::Relaxed);
                 self.spawn_writer_task().await;
-                if let Err(error) = self.traffic.initialize().await {
-                    warn!(error = ?error, "traffic usage persistence unavailable; quota tracking will reset after restart");
-                }
+                self.traffic
+                    .start(traffic::TRAFFIC_LOAD_RETRY_INTERVAL)
+                    .await;
             }
             Ok(Err(error)) => {
                 error!(
@@ -377,6 +377,10 @@ impl HistoryStore {
 
     pub(crate) fn traffic_health(&self) -> TrafficLedgerHealth {
         self.traffic.health()
+    }
+
+    pub(crate) fn take_traffic_recovered(&self) -> bool {
+        self.traffic.take_recovered_after_startup()
     }
 
     pub(crate) async fn traffic_usages(&self) -> Vec<TrafficUsage> {
