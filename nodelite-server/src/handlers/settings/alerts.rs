@@ -63,6 +63,13 @@ async fn update_alert_settings_inner(
         let current = state.alerting.read().await;
         merge_alerting_request(&current, request)
     };
+    // 加载时为兼容旧文件会截断越界值，新写入则直接拒绝，避免 UI 静默改写用户输入。
+    if let Err(error) = nodelite_proto::check_alerting_limits(&next_config) {
+        return settings_json_error(
+            StatusCode::BAD_REQUEST,
+            format!("updated server config would be invalid: {error}"),
+        );
+    }
 
     if let Err(error) = persist_alerting_change(&state.config_path, &next_config).await {
         error!(error = ?error, path = %state.config_path.display(), "failed to persist alerting settings");
