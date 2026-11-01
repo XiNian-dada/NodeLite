@@ -34,7 +34,20 @@ pub(super) async fn record_and_decide(
                 .then_some(quota.throttle_kbps)
                 .flatten()
         })),
-        Err(_) => ThrottleDecision::Hold,
+        Err(_) => decide_without_ledger(
+            quota.throttle_kbps,
+            state.history.traffic_throttle_hold_expired(),
+        ),
+    }
+}
+
+/// 保持只针对“可能已超额”。已取消限速配置或已跨月时不再需要账本就能判断，必须解除，
+/// 否则账本长期故障会让限速永远无法结束。
+fn decide_without_ledger(throttle_kbps: Option<u64>, hold_expired: bool) -> ThrottleDecision {
+    if throttle_kbps.is_none() || hold_expired {
+        ThrottleDecision::Apply(None)
+    } else {
+        ThrottleDecision::Hold
     }
 }
 
@@ -49,7 +62,10 @@ mod tests {
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{ThrottleDecision, record_and_decide, usage_reached_throttle_threshold};
+    use super::{
+        ThrottleDecision, decide_without_ledger, record_and_decide,
+        usage_reached_throttle_threshold,
+    };
     use crate::AppState;
     use crate::history::TrafficSample;
     use crate::registry::{IssueNodeRequest, NodeServiceMetadataPatch, issue_node};
@@ -120,6 +136,22 @@ mod tests {
         assert!(!usage_reached_throttle_threshold(949, 1_000));
         assert!(usage_reached_throttle_threshold(950, 1_000));
         assert!(usage_reached_throttle_threshold(u64::MAX, u64::MAX));
+    }
+
+    #[test]
+    fn hold_ends_on_month_rollover_or_when_throttling_is_no_longer_configured() {
+        assert_eq!(
+            decide_without_ledger(Some(64), false),
+            ThrottleDecision::Hold
+        );
+        assert_eq!(
+            decide_without_ledger(Some(64), true),
+            ThrottleDecision::Apply(None)
+        );
+        assert_eq!(
+            decide_without_ledger(None, false),
+            ThrottleDecision::Apply(None)
+        );
     }
 
     #[tokio::test]

@@ -387,6 +387,10 @@ impl HistoryStore {
         self.traffic.mark_recovered_after_startup();
     }
 
+    pub(crate) fn traffic_throttle_hold_expired(&self) -> bool {
+        self.traffic.throttle_hold_expired(chrono::Utc::now())
+    }
+
     pub(crate) async fn traffic_usages(&self) -> Vec<TrafficUsage> {
         self.traffic.usages().await
     }

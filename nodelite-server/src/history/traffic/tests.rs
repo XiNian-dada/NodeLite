@@ -513,6 +513,16 @@ async fn recovery_after_a_rebaseline_is_not_billed_across_a_server_restart() {
 }
 
 #[test]
+fn throttle_hold_expires_only_after_the_month_the_process_started_in() {
+    let tracker = TrafficTracker::new(Arc::new(test_db_path("hold-expiry")), 0);
+    let now = Utc::now();
+    let next_month = utc_month_start(now) + chrono::Duration::days(32);
+    assert!(!tracker.throttle_hold_expired(now));
+    assert!(!tracker.throttle_hold_expired(now - chrono::Duration::days(40)));
+    assert!(tracker.throttle_hold_expired(next_month));
+}
+
+#[test]
 fn recovery_marker_can_be_restored_after_a_failed_reconcile() {
     let tracker = TrafficTracker::new(Arc::new(test_db_path("recovery-marker")), 0);
     tracker.mark_recovered_after_startup();

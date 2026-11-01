@@ -91,6 +91,7 @@ pub(super) struct TrafficTracker {
     health: Arc<ParkingLotMutex<TrafficLedgerHealth>>,
     load_retry_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     recovered_after_startup: Arc<AtomicBool>,
+    started_cycle: DateTime<Utc>,
 }
 
 impl TrafficTracker {
@@ -105,6 +106,7 @@ impl TrafficTracker {
             health: Arc::new(ParkingLotMutex::new(TrafficLedgerHealth::default())),
             load_retry_handle: Arc::new(Mutex::new(None)),
             recovered_after_startup: Arc::new(AtomicBool::new(false)),
+            started_cycle: utc_month_start(Utc::now()),
         }
     }
 
@@ -147,6 +149,12 @@ impl TrafficTracker {
     /// 对账失败时恢复标记，让下一轮继续清理。
     pub(super) fn mark_recovered_after_startup(&self) {
         self.recovered_after_startup.store(true, Ordering::Release);
+    }
+
+    /// 账本只在进程启动后加载失败时才不可用，此前的用量未知。进入新自然月后用量必然已经
+    /// 清零，继续保持上月的限速没有依据。
+    pub(super) fn throttle_hold_expired(&self, now: DateTime<Utc>) -> bool {
+        utc_month_start(now) > self.started_cycle
     }
 
     pub(super) async fn initialize(&self) -> Result<()> {
