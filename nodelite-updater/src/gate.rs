@@ -67,4 +67,13 @@ mod tests {
             Gate::Proceed
         );
     }
+
+    #[test]
+    fn reconcile_timer_never_spawns_during_manual_recovery() {
+        let unit = include_str!("../systemd/nodelite-updater-reconcile.service");
+        assert!(unit.contains("ConditionPathExists=/var/lib/nodelite-updater/private/pending"));
+        assert!(unit.contains(
+            "ConditionPathExists=!/var/lib/nodelite-updater/private/recovery-required.json"
+        ));
+    }
 }
