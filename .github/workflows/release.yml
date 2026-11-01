@@ -427,8 +427,43 @@ jobs:
           path: release-assets
 
       - name: Merge checksums
-        # 对即将上传的 installer 本体取摘要,再与二进制/SBOM 摘要合并。
+        # 对即将上传的 installer 本体取摘要,再与二进制/SBOM 摘要合并;清单只写资产 basename。
         run: sh release-assets/release-scripts/merge-release-checksums.sh release-assets
+
+      - name: Stage and verify release assets
+        # 把所有待发布资产平铺到同一目录,并按用户下载后的布局执行 sha256sum -c 自检;
+        # 同时要求每个资产都在清单里、清单里没有多余条目。
+        run: |
+          mkdir -p publish
+          cp \
+            release-assets/release-x86_64-unknown-linux-musl/nodelite-server-x86_64-unknown-linux-musl \
+            release-assets/release-x86_64-unknown-linux-musl/nodelite-agent-x86_64-unknown-linux-musl \
+            release-assets/release-x86_64-unknown-linux-musl/nodelite-updater-x86_64-unknown-linux-musl \
+            release-assets/release-aarch64-unknown-linux-musl/nodelite-server-aarch64-unknown-linux-musl \
+            release-assets/release-aarch64-unknown-linux-musl/nodelite-agent-aarch64-unknown-linux-musl \
+            release-assets/release-aarch64-unknown-linux-musl/nodelite-updater-aarch64-unknown-linux-musl \
+            release-assets/release-agent-x86_64-apple-darwin/nodelite-agent-x86_64-apple-darwin \
+            release-assets/release-agent-aarch64-apple-darwin/nodelite-agent-aarch64-apple-darwin \
+            release-assets/release-scripts/install-server.sh \
+            release-assets/release-scripts/install-server-config.sh \
+            release-assets/release-scripts/install-server-upgrade.sh \
+            release-assets/release-scripts/install-agent.sh \
+            release-assets/release-scripts/install-agent-signed.sh \
+            release-assets/release-sbom/nodelite-proto.cdx.json \
+            release-assets/release-sbom/nodelite-agent.cdx.json \
+            release-assets/release-sbom/nodelite-server.cdx.json \
+            release-assets/release-sbom/nodelite-updater.cdx.json \
+            release-assets/release-sbom/THIRD_PARTY_NOTICES.md \
+            release-assets/SHA256SUMS.txt \
+            publish/
+          cd publish
+          sha256sum -c --strict SHA256SUMS.txt
+          ls -1 | grep -vx SHA256SUMS.txt | sort > ../published.list
+          awk '{print $2}' SHA256SUMS.txt | sort > ../manifest.list
+          if ! diff -u ../published.list ../manifest.list; then
+            echo "::error::SHA256SUMS.txt does not cover exactly the published assets"
+            exit 1
+          fi
 
       - name: Create or update GitHub release
         env:
@@ -455,23 +490,5 @@ jobs:
 
           gh release upload "$TAG_NAME" \
             --repo "$GH_REPO" \
-            release-assets/release-x86_64-unknown-linux-musl/nodelite-server-x86_64-unknown-linux-musl \
-            release-assets/release-x86_64-unknown-linux-musl/nodelite-agent-x86_64-unknown-linux-musl \
-            release-assets/release-x86_64-unknown-linux-musl/nodelite-updater-x86_64-unknown-linux-musl \
-            release-assets/release-aarch64-unknown-linux-musl/nodelite-server-aarch64-unknown-linux-musl \
-            release-assets/release-aarch64-unknown-linux-musl/nodelite-agent-aarch64-unknown-linux-musl \
-            release-assets/release-aarch64-unknown-linux-musl/nodelite-updater-aarch64-unknown-linux-musl \
-            release-assets/release-agent-x86_64-apple-darwin/nodelite-agent-x86_64-apple-darwin \
-            release-assets/release-agent-aarch64-apple-darwin/nodelite-agent-aarch64-apple-darwin \
-            release-assets/release-scripts/install-server.sh \
-            release-assets/release-scripts/install-server-config.sh \
-            release-assets/release-scripts/install-server-upgrade.sh \
-            release-assets/release-scripts/install-agent.sh \
-            release-assets/release-scripts/install-agent-signed.sh \
-            release-assets/release-sbom/nodelite-proto.cdx.json \
-            release-assets/release-sbom/nodelite-agent.cdx.json \
-            release-assets/release-sbom/nodelite-server.cdx.json \
-            release-assets/release-sbom/nodelite-updater.cdx.json \
-            release-assets/release-sbom/THIRD_PARTY_NOTICES.md \
-            release-assets/SHA256SUMS.txt \
+            publish/* \
             --clobber
