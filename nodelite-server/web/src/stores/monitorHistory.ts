@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { ref, shallowRef } from 'vue';
 import { apiClient, type HistoryPoint } from '@/api';
 import { ApiAbortError } from '@/api/client';
+import { useDedupeAsync } from '@/composables/useDedupeAsync';
 
 /** High-res monitor history (node.html fetchDetailHistory max_points=720). */
 export const MONITOR_MAX_POINTS = 720;
@@ -17,7 +18,8 @@ function keyOf(id: string, window: HistoryWindow): string {
  * High-res history for the active node and live window or explicit range.
  * The complete query is part of the cache key — switching
  * window or node clears stale points and refetches; same key only refetches
- * once >=15s stale. id/key-aware in-flight guard (the #182 lesson).
+ * once >=15s stale. Writes are owned per request, not per key: after A→B→A the
+ * key matches again, so comparing keys would revive the first A response.
  */
 export const useMonitorHistoryStore = defineStore('monitorHistory', () => {
   const currentKey = ref<string | null>(null);
@@ -25,32 +27,31 @@ export const useMonitorHistoryStore = defineStore('monitorHistory', () => {
   const loading = ref(false);
   const error = ref<Error | null>(null);
   const fetchedAt = ref(0);
-  const inFlightKey = ref<string | null>(null);
+  const requests = useDedupeAsync<string>();
 
   async function fetchFor(id: string, window: HistoryWindow, key: string): Promise<void> {
-    if (inFlightKey.value === key) return;
-    inFlightKey.value = key;
-    loading.value = true;
-    error.value = null;
-    try {
-      const query = typeof window === 'number' ? { windowHours: window } : window;
-      const result = await apiClient.nodeHistory(id, { ...query, maxPoints: MONITOR_MAX_POINTS });
-      if (currentKey.value === key) {
-        points.value = result;
-        fetchedAt.value = Date.now();
+    await requests.run(key, async ({ isCurrent }) => {
+      loading.value = true;
+      error.value = null;
+      try {
+        const query = typeof window === 'number' ? { windowHours: window } : window;
+        const result = await apiClient.nodeHistory(id, { ...query, maxPoints: MONITOR_MAX_POINTS });
+        if (isCurrent()) {
+          points.value = result;
+          fetchedAt.value = Date.now();
+        }
+      } catch (e) {
+        if (e instanceof ApiAbortError) return;
+        if (isCurrent()) {
+          error.value = e instanceof Error ? e : new Error(String(e));
+          fetchedAt.value = Date.now();
+        }
+      } finally {
+        if (isCurrent()) {
+          loading.value = false;
+        }
       }
-    } catch (e) {
-      if (e instanceof ApiAbortError) return;
-      if (currentKey.value === key) {
-        error.value = e instanceof Error ? e : new Error(String(e));
-        fetchedAt.value = Date.now();
-      }
-    } finally {
-      if (inFlightKey.value === key) {
-        inFlightKey.value = null;
-        loading.value = false;
-      }
-    }
+    });
   }
 
   function switchTo(key: string): boolean {

@@ -3,6 +3,7 @@ import {
   FALLBACK_LOCALE,
   LANGUAGE_STORAGE_KEY,
   SUPPORTED_LOCALES,
+  applyDocumentLanguage,
   getI18n,
   isSupportedLocale,
   type SupportedLocale,
@@ -27,6 +28,7 @@ export function useLanguage(): {
   function setLocale(locale: string): void {
     const next = isSupportedLocale(locale) ? locale : FALLBACK_LOCALE;
     localeRef.value = next;
+    applyDocumentLanguage(next);
     try {
       window.localStorage.setItem(LANGUAGE_STORAGE_KEY, next);
     } catch {
