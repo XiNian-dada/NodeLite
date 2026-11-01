@@ -48,7 +48,7 @@ pub(crate) use self::query_limit::HistoryQueryRuntimeMetrics;
 use self::query_limit::{HistoryQueryLimiter, HistoryQueryPermit};
 #[cfg(test)]
 use self::test_probe::HistoryQueryProbe;
-pub(crate) use self::traffic::{TrafficPersistenceError, TrafficSample};
+pub(crate) use self::traffic::{TrafficLedgerHealth, TrafficPersistenceError, TrafficSample};
 use self::traffic::{TrafficTracker, TrafficUsage};
 use self::writer::{WriterContext, build_history_point, run_history_writer};
 #[cfg(test)]
@@ -373,6 +373,10 @@ impl HistoryStore {
         self.traffic
             .record(node_id, sample, accounting, enabled)
             .await
+    }
+
+    pub(crate) fn traffic_health(&self) -> TrafficLedgerHealth {
+        self.traffic.health()
     }
 
     pub(crate) async fn traffic_usages(&self) -> Vec<TrafficUsage> {

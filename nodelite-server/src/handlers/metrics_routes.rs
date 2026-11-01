@@ -74,6 +74,7 @@ impl<'a> PrometheusNode<'a> {
 pub(crate) struct WriterMetrics {
     pub(crate) alert_delivery: crate::alerts::AlertDeliverySnapshot,
     pub(crate) history_write: HistoryWriteMetrics,
+    pub(crate) traffic_ledger: crate::history::TrafficLedgerHealth,
     pub(crate) history_dropped_writes: u64,
     pub(crate) history_queue_depth: u64,
     pub(crate) history_queue_capacity: u64,
@@ -88,6 +89,7 @@ pub(crate) fn render_writer_metrics(metrics: WriterMetrics) -> String {
     let mut emitter = MetricEmitter::default();
     alerts::render_alert_delivery_metrics(&mut emitter, metrics.alert_delivery);
     render_history_write_metrics(&mut emitter, metrics.history_write);
+    render_traffic_ledger_metrics(&mut emitter, metrics.traffic_ledger);
     render_bounded_queue_metrics(
         &mut emitter,
         BoundedQueueMetrics {
@@ -155,6 +157,48 @@ fn render_history_write_metrics(emitter: &mut MetricEmitter, metrics: HistoryWri
         "Whether the latest history write failed; cleared after successful persistence.",
         &[],
         u8::from(metrics.degraded),
+    );
+}
+
+fn render_traffic_ledger_metrics(
+    emitter: &mut MetricEmitter,
+    health: crate::history::TrafficLedgerHealth,
+) {
+    emitter.gauge(
+        "nodelite_traffic_ledger_available",
+        "Whether the traffic plan ledger is loaded and its writer is running.",
+        &[],
+        u8::from(health.available),
+    );
+    emitter.gauge(
+        "nodelite_traffic_write_degraded",
+        "Whether the latest traffic ledger write failed; cleared after successful persistence.",
+        &[],
+        u8::from(health.write_degraded),
+    );
+    emitter.counter(
+        "nodelite_traffic_dropped_writes_total",
+        "Number of traffic ledger updates rejected by the writer queue and deferred for catch-up.",
+        &[],
+        health.dropped_writes,
+    );
+    emitter.counter(
+        "nodelite_traffic_write_failures_total",
+        "Number of failed traffic ledger persistence operations.",
+        &[],
+        health.write_failures,
+    );
+    emitter.gauge(
+        "nodelite_traffic_last_success_timestamp_seconds",
+        "Unix timestamp of the last committed traffic ledger batch, or zero before the first commit.",
+        &[],
+        health.last_success_at,
+    );
+    emitter.gauge(
+        "nodelite_traffic_pending_writes",
+        "Number of nodes whose latest traffic ledger state is not yet persisted.",
+        &[],
+        health.pending_writes,
     );
 }
 

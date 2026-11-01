@@ -5,26 +5,32 @@
 //! 自然月变化时重建基线，避免把不同套餐的字节数混合在同一个使用量中。
 
 mod counters;
+mod health;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Datelike, TimeZone, Utc};
+use parking_lot::Mutex as ParkingLotMutex;
 use rusqlite::{Connection, params};
 use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use tokio::task::JoinHandle;
-use tokio::time::{MissedTickBehavior, interval};
-use tracing::warn;
+use tokio::time::{Instant, MissedTickBehavior, interval};
+use tracing::{error, info, warn};
 
 use self::counters::CounterBaseline;
 pub(crate) use self::counters::TrafficSample;
+pub(crate) use self::health::TrafficLedgerHealth;
 use crate::queue::{bounded_mpsc_channel, try_enqueue};
 use crate::registry::TrafficAccounting;
 
 const TRAFFIC_WRITER_CHANNEL_CAPACITY: usize = 1024;
 const TRAFFIC_WRITER_FLUSH_MILLIS: u64 = 200;
+const TRAFFIC_RETRY_INITIAL_DELAY: Duration = Duration::from_secs(1);
+const TRAFFIC_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TrafficUsage {
@@ -44,6 +50,15 @@ struct TrafficUsageState {
 enum TrafficWrite {
     Upsert(TrafficUsageState),
     Delete(String),
+}
+
+impl TrafficWrite {
+    fn node_id(&self) -> &str {
+        match self {
+            Self::Upsert(state) => &state.usage.node_id,
+            Self::Delete(node_id) => node_id,
+        }
+    }
 }
 
 enum TrafficCommand {
@@ -71,6 +86,9 @@ pub(super) struct TrafficTracker {
     state: Arc<Mutex<HashMap<String, TrafficUsageState>>>,
     writer_tx: Arc<RwLock<Option<mpsc::Sender<TrafficCommand>>>>,
     writer_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
+    /// 入队被拒绝的节点。写入内容是累计值，所以只需记下节点，由 writer 读取最新状态补写。
+    dirty: Arc<ParkingLotMutex<HashSet<String>>>,
+    health: Arc<ParkingLotMutex<TrafficLedgerHealth>>,
 }
 
 impl TrafficTracker {
@@ -81,7 +99,13 @@ impl TrafficTracker {
             state: Arc::new(Mutex::new(HashMap::new())),
             writer_tx: Arc::new(RwLock::new(None)),
             writer_handle: Arc::new(Mutex::new(None)),
+            dirty: Arc::new(ParkingLotMutex::new(HashSet::new())),
+            health: Arc::new(ParkingLotMutex::new(TrafficLedgerHealth::default())),
         }
+    }
+
+    pub(super) fn health(&self) -> TrafficLedgerHealth {
+        *self.health.lock()
     }
 
     pub(super) async fn initialize(&self) -> Result<()> {
@@ -95,12 +119,8 @@ impl TrafficTracker {
 
         let (tx, rx) = bounded_mpsc_channel(TRAFFIC_WRITER_CHANNEL_CAPACITY);
         *self.writer_tx.write().await = Some(tx);
-        let db_path = Arc::clone(&self.db_path);
-        let handle = tokio::spawn(run_traffic_writer(
-            rx,
-            db_path,
-            self.sqlite_busy_timeout_secs,
-        ));
+        self.health.lock().available = true;
+        let handle = tokio::spawn(run_traffic_writer(rx, self.clone()));
         *self.writer_handle.lock().await = Some(handle);
         Ok(())
     }
@@ -238,6 +258,7 @@ impl TrafficTracker {
     pub(super) async fn shutdown(&self) {
         let sender = self.writer_tx.write().await.take();
         drop(sender);
+        self.health.lock().available = false;
         if let Some(handle) = self.writer_handle.lock().await.take()
             && let Err(error) = handle.await
         {
@@ -248,7 +269,12 @@ impl TrafficTracker {
     async fn try_enqueue(&self, write: TrafficWrite) {
         let tx = self.writer_tx.read().await.as_ref().cloned();
         if let Some(tx) = tx {
-            let _ = try_enqueue(&tx, TrafficCommand::Write(write));
+            let node_id = write.node_id().to_string();
+            if try_enqueue(&tx, TrafficCommand::Write(write)).is_err() {
+                self.dirty.lock().insert(node_id);
+                let mut health = self.health.lock();
+                health.dropped_writes = health.dropped_writes.saturating_add(1);
+            }
         }
     }
 }
@@ -335,15 +361,35 @@ fn load_traffic_state(
     Ok(states)
 }
 
-async fn run_traffic_writer(
-    mut rx: mpsc::Receiver<TrafficCommand>,
-    db_path: Arc<PathBuf>,
-    sqlite_busy_timeout_secs: u64,
-) {
+/// 失败重试的退避状态。待写内容按节点合并，内存受节点数约束，因此可以一直重试。
+#[derive(Default)]
+struct RetryBackoff {
+    delay: Option<Duration>,
+    next_attempt_at: Option<Instant>,
+}
+
+impl RetryBackoff {
+    fn ready(&self) -> bool {
+        self.next_attempt_at.is_none_or(|at| Instant::now() >= at)
+    }
+
+    fn record_failure(&mut self) {
+        let delay = self.delay.map_or(TRAFFIC_RETRY_INITIAL_DELAY, |delay| {
+            delay.saturating_mul(2).min(TRAFFIC_RETRY_MAX_DELAY)
+        });
+        self.delay = Some(delay);
+        self.next_attempt_at = Some(Instant::now() + delay);
+    }
+
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
+async fn run_traffic_writer(mut rx: mpsc::Receiver<TrafficCommand>, tracker: TrafficTracker) {
     let mut pending = HashMap::new();
-    let mut ticker = interval(std::time::Duration::from_millis(
-        TRAFFIC_WRITER_FLUSH_MILLIS,
-    ));
+    let mut backoff = RetryBackoff::default();
+    let mut ticker = interval(Duration::from_millis(TRAFFIC_WRITER_FLUSH_MILLIS));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
     ticker.tick().await;
     loop {
@@ -354,60 +400,107 @@ async fn run_traffic_writer(
                     for id in node_ids {
                         record_pending(&mut pending, TrafficWrite::Delete(id));
                     }
-                    let result = flush_traffic_writes(&mut pending, db_path.as_ref(), sqlite_busy_timeout_secs).await;
+                    let result = flush_traffic_writes(&mut pending, &tracker, &mut backoff).await;
                     let _ = completed.send(result.map_err(TrafficPersistenceError::Write));
                 }
                 None => break,
             },
-            _ = ticker.tick(), if !pending.is_empty() => {
-                if let Err(error) = flush_traffic_writes(&mut pending, db_path.as_ref(), sqlite_busy_timeout_secs).await {
-                    warn!(error = ?error, "failed to persist traffic usage state");
+            _ = ticker.tick() => {
+                collect_dirty_writes(&mut pending, &tracker).await;
+                if !pending.is_empty()
+                    && backoff.ready()
+                    && let Err(error) = flush_traffic_writes(&mut pending, &tracker, &mut backoff).await
+                {
+                    warn!(error = ?error, pending = pending.len(), "failed to persist traffic usage state; will retry");
                 }
             },
         }
+        tracker.health.lock().pending_writes = pending.len() as u64;
     }
+    collect_dirty_writes(&mut pending, &tracker).await;
     if !pending.is_empty()
-        && let Err(error) = flush_traffic_writes(
-            &mut pending,
-            db_path.as_ref().as_path(),
-            sqlite_busy_timeout_secs,
-        )
-        .await
+        && let Err(error) = flush_traffic_writes(&mut pending, &tracker, &mut backoff).await
     {
-        warn!(error = ?error, "failed to persist traffic usage state on shutdown");
+        error!(
+            error = ?error,
+            unpersisted_nodes = pending.len(),
+            "traffic usage state not persisted at shutdown; usage since the last commit is recovered from counters on reconnect",
+        );
+    }
+    tracker.health.lock().pending_writes = pending.len() as u64;
+}
+
+/// 从内存状态取补写内容：节点若已被移除则写删除，迟到的标记不会让账本复活。
+async fn collect_dirty_writes(
+    pending: &mut HashMap<String, TrafficWrite>,
+    tracker: &TrafficTracker,
+) {
+    let dirty = std::mem::take(&mut *tracker.dirty.lock());
+    if dirty.is_empty() {
+        return;
+    }
+    let state = tracker.state.lock().await;
+    for node_id in dirty {
+        let write = match state.get(&node_id) {
+            Some(usage) => TrafficWrite::Upsert(usage.clone()),
+            None => TrafficWrite::Delete(node_id),
+        };
+        record_pending(pending, write);
     }
 }
 
 fn record_pending(pending: &mut HashMap<String, TrafficWrite>, write: TrafficWrite) {
-    let node_id = match &write {
-        TrafficWrite::Upsert(state) => state.usage.node_id.clone(),
-        TrafficWrite::Delete(node_id) => node_id.clone(),
-    };
-    pending.insert(node_id, write);
+    pending.insert(write.node_id().to_string(), write);
 }
 
 async fn flush_traffic_writes(
     pending: &mut HashMap<String, TrafficWrite>,
-    db_path: &Path,
-    sqlite_busy_timeout_secs: u64,
+    tracker: &TrafficTracker,
+    backoff: &mut RetryBackoff,
 ) -> Result<()> {
     let writes = std::mem::take(pending);
-    let db_path = db_path.to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        write_traffic_states(&db_path, sqlite_busy_timeout_secs, writes)
+    let db_path = Arc::clone(&tracker.db_path);
+    let timeout_secs = tracker.sqlite_busy_timeout_secs;
+    let outcome = tokio::task::spawn_blocking(move || {
+        let result = write_traffic_states(db_path.as_ref(), timeout_secs, &writes);
+        (result, writes)
     })
     .await
-    .context("traffic writer task failed")?
+    .context("traffic writer task failed");
+    let result = match outcome {
+        Ok((Ok(()), _)) => Ok(()),
+        Ok((Err(error), writes)) => {
+            // 写入的是绝对值，重试幂等；flush 期间 pending 不会变化，无需与新内容合并。
+            *pending = writes;
+            Err(error)
+        }
+        Err(error) => Err(error),
+    };
+    match &result {
+        Ok(()) => {
+            let recovered = tracker.health.lock().write_degraded;
+            tracker.health.lock().record_success();
+            backoff.reset();
+            if recovered {
+                info!("traffic usage persistence recovered");
+            }
+        }
+        Err(_) => {
+            tracker.health.lock().record_failure();
+            backoff.record_failure();
+        }
+    }
+    result
 }
 
 fn write_traffic_states(
     db_path: &Path,
     sqlite_busy_timeout_secs: u64,
-    writes: HashMap<String, TrafficWrite>,
+    writes: &HashMap<String, TrafficWrite>,
 ) -> Result<()> {
     let mut connection = open_traffic_connection(db_path, sqlite_busy_timeout_secs)?;
     let tx = connection.transaction()?;
-    for write in writes.into_values() {
+    for write in writes.values() {
         match write {
             TrafficWrite::Upsert(state) => {
                 tx.execute(

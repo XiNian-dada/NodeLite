@@ -113,7 +113,123 @@ fn readyz_returns_200_for_audit_only_degradation() {
     });
 }
 
+#[tokio::test]
+async fn readyz_reports_an_unreadable_traffic_ledger_without_failing_readiness() {
+    let (state, temp_dir) = readyz_test_state_with("traffic-unreadable", |db_path, _| {
+        let connection = rusqlite::Connection::open(db_path).expect("db should open");
+        connection
+            .execute_batch(
+                "CREATE TABLE traffic_usage (node_id TEXT PRIMARY KEY NOT NULL, cycle_started_at INTEGER NOT NULL, accounting TEXT NOT NULL, used_bytes INTEGER NOT NULL, last_rx_bytes INTEGER NOT NULL, last_tx_bytes INTEGER NOT NULL);\
+                 INSERT INTO traffic_usage VALUES ('node-a', 0, 'bidirectional', 'not-a-number', 0, 0);",
+            )
+            .expect("invalid ledger row should be seeded");
+    })
+    .await;
+
+    let (status, payload) = readyz_payload(state.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["ready"], Value::Bool(true));
+    assert_eq!(payload["status"], Value::String("degraded".to_string()));
+    assert_eq!(
+        payload["problems"],
+        Value::Array(vec![Value::String(
+            "traffic_ledger_unavailable".to_string()
+        )])
+    );
+    assert_eq!(
+        payload["signals"]["traffic_ledger_available"],
+        Value::Bool(false)
+    );
+
+    state.history.shutdown().await;
+    state.audit_log.shutdown().await;
+    drop(state);
+    std::fs::remove_dir_all(temp_dir).expect("readyz temp dir should be removable");
+}
+
+#[tokio::test]
+async fn readyz_reports_traffic_write_failure_and_recovery() {
+    let (state, temp_dir) = readyz_test_state_with("traffic-write", |_, config| {
+        config.sqlite_busy_timeout_secs = 0;
+    })
+    .await;
+    let frame = |rx_bytes| crate::history::TrafficSample {
+        rx_bytes,
+        tx_bytes: 0,
+        uptime_secs: 10,
+    };
+    let record = |rx_bytes| {
+        state.history.record_traffic(
+            "node-a",
+            frame(rx_bytes),
+            crate::registry::TrafficAccounting::Bidirectional,
+            true,
+        )
+    };
+    let wait_for = |problem_expected: bool| {
+        let state = state.clone();
+        async move {
+            tokio::time::timeout(std::time::Duration::from_secs(20), async {
+                loop {
+                    let (_, payload) = readyz_payload(state.clone()).await;
+                    let present = payload["problems"]
+                        .as_array()
+                        .expect("problems should be an array")
+                        .contains(&Value::String("traffic_write_failed".to_string()));
+                    if present == problem_expected {
+                        return payload;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .expect("readiness should reach the expected state")
+        }
+    };
+
+    let lock =
+        rusqlite::Connection::open(temp_dir.join("history.sqlite3")).expect("db should open");
+    lock.execute_batch("BEGIN EXCLUSIVE;")
+        .expect("lock should be acquired");
+    record(1).await.expect("ledger should be available");
+    let degraded = wait_for(true).await;
+    assert_eq!(degraded["ready"], Value::Bool(true));
+    assert_eq!(
+        degraded["signals"]["traffic_write_degraded"],
+        Value::Bool(true)
+    );
+    assert_eq!(
+        degraded["signals"]["traffic_pending_writes"],
+        Value::from(1)
+    );
+
+    drop(lock);
+    let recovered = wait_for(false).await;
+    assert_eq!(recovered["status"], Value::String("ok".to_string()));
+    assert_eq!(
+        recovered["signals"]["traffic_pending_writes"],
+        Value::from(0)
+    );
+    assert!(
+        recovered["signals"]["traffic_write_failures"]
+            .as_u64()
+            .is_some_and(|failures| failures >= 1)
+    );
+
+    state.history.shutdown().await;
+    state.audit_log.shutdown().await;
+    drop(state);
+    std::fs::remove_dir_all(temp_dir).expect("readyz temp dir should be removable");
+}
+
 async fn readyz_test_state(test_name: &str) -> (AppState, PathBuf) {
+    readyz_test_state_with(test_name, |_, _| {}).await
+}
+
+async fn readyz_test_state_with(
+    test_name: &str,
+    prepare: impl FnOnce(&std::path::Path, &mut nodelite_proto::ServerConfig),
+) -> (AppState, PathBuf) {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock should be monotonic enough")
@@ -129,6 +245,7 @@ async fn readyz_test_state(test_name: &str) -> (AppState, PathBuf) {
     );
     config.readonly_auth = None;
     config.ws = test_ws_config(32, 8);
+    prepare(&temp_dir.join("history.sqlite3"), &mut config);
     let state = AppState::test_fixture(
         Arc::new(config),
         Arc::new(PathBuf::from("config/server.toml")),

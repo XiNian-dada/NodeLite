@@ -2,12 +2,13 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chrono::{TimeZone, Utc};
 
 use super::{
-    TrafficPersistenceError, TrafficSample, TrafficTracker, counted_bytes, utc_month_start,
+    TrafficCommand, TrafficLedgerHealth, TrafficPersistenceError, TrafficSample, TrafficTracker,
+    counted_bytes, run_traffic_writer, utc_month_start,
 };
 use crate::registry::TrafficAccounting;
 
@@ -172,5 +173,172 @@ async fn record_reports_unavailable_when_the_ledger_never_loaded() {
     let result = tracker.record("node-a", sample(1, 1, 1), BIDI, true).await;
     assert!(matches!(result, Err(TrafficPersistenceError::Unavailable)));
     assert!(tracker.usages().await.is_empty());
+    remove_db(&db_path);
+}
+
+fn lock_database(db_path: &Path) -> rusqlite::Connection {
+    let connection = rusqlite::Connection::open(db_path).expect("db should open");
+    connection
+        .execute_batch("BEGIN EXCLUSIVE;")
+        .expect("exclusive lock should be acquired");
+    connection
+}
+
+fn persisted_usage(db_path: &Path) -> Option<i64> {
+    rusqlite::Connection::open(db_path)
+        .expect("db should open")
+        .query_row(
+            "SELECT used_bytes FROM traffic_usage WHERE node_id = 'node-a'",
+            [],
+            |row| row.get(0),
+        )
+        .ok()
+}
+
+async fn wait_for_health(
+    tracker: &TrafficTracker,
+    condition: impl Fn(TrafficLedgerHealth) -> bool,
+) -> TrafficLedgerHealth {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let health = tracker.health();
+            if condition(health) {
+                return health;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("health condition should be reached")
+}
+
+#[tokio::test]
+async fn failed_writes_are_observable_retried_and_recovered_after_restart() {
+    let db_path = test_db_path("write-failure");
+    let tracker = started_tracker(&db_path).await;
+    assert!(tracker.health().available);
+    used(&tracker, sample(100, 0, 10)).await;
+    wait_for_health(&tracker, |health| health.last_success_at > 0).await;
+
+    let lock = lock_database(&db_path);
+    assert_eq!(used(&tracker, sample(400, 0, 20)).await, 300);
+    let degraded = wait_for_health(&tracker, |health| health.write_degraded).await;
+    assert!(degraded.write_failures >= 1);
+    assert_eq!(degraded.pending_writes, 1);
+    // 重试期间新的累计值覆盖旧值，而不是叠加。
+    assert_eq!(used(&tracker, sample(500, 0, 30)).await, 400);
+
+    drop(lock);
+    wait_for_health(&tracker, |health| {
+        !health.write_degraded && health.pending_writes == 0
+    })
+    .await;
+    assert_eq!(persisted_usage(&db_path), Some(400));
+    tracker.shutdown().await;
+
+    let restarted = started_tracker(&db_path).await;
+    assert_eq!(restarted.usages().await[0].used_bytes, 400);
+    assert_eq!(used(&restarted, sample(510, 0, 40)).await, 410);
+    restarted.shutdown().await;
+    remove_db(&db_path);
+}
+
+#[tokio::test]
+async fn removal_supersedes_a_retained_upsert() {
+    let db_path = test_db_path("retained-remove");
+    let tracker = started_tracker(&db_path).await;
+    used(&tracker, sample(100, 0, 10)).await;
+    wait_for_health(&tracker, |health| health.last_success_at > 0).await;
+
+    let lock = lock_database(&db_path);
+    used(&tracker, sample(400, 0, 20)).await;
+    wait_for_health(&tracker, |health| health.write_degraded).await;
+    assert!(
+        tracker
+            .remove_nodes(vec!["node-a".to_string()])
+            .await
+            .is_err()
+    );
+    drop(lock);
+    wait_for_health(&tracker, |health| {
+        health.pending_writes == 0 && !health.write_degraded
+    })
+    .await;
+    assert_eq!(persisted_usage(&db_path), None);
+
+    tracker.shutdown().await;
+    let restarted = started_tracker(&db_path).await;
+    assert!(restarted.usages().await.is_empty());
+    restarted.shutdown().await;
+    remove_db(&db_path);
+}
+
+#[tokio::test]
+async fn rejected_enqueue_is_counted_and_written_later_with_the_latest_value() {
+    let db_path = test_db_path("dropped-enqueue");
+    let tracker = started_tracker(&db_path).await;
+    tracker.shutdown().await;
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<TrafficCommand>(1);
+    *tracker.writer_tx.write().await = Some(tx);
+    used(&tracker, sample(100, 0, 10)).await;
+    assert_eq!(used(&tracker, sample(300, 0, 20)).await, 200);
+    assert_eq!(tracker.health().dropped_writes, 1);
+    assert!(tracker.dirty.lock().contains("node-a"));
+
+    let writer = tokio::spawn(run_traffic_writer(rx, tracker.clone()));
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while persisted_usage(&db_path) != Some(200) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("dropped write should be caught up");
+    assert!(tracker.dirty.lock().is_empty());
+
+    *tracker.writer_tx.write().await = None;
+    writer.await.expect("writer should stop");
+    remove_db(&db_path);
+}
+
+#[tokio::test]
+async fn rejected_enqueue_of_a_removed_node_does_not_recreate_its_ledger() {
+    let db_path = test_db_path("dropped-removed");
+    let tracker = started_tracker(&db_path).await;
+    used(&tracker, sample(100, 0, 10)).await;
+    wait_for_health(&tracker, |health| health.last_success_at > 0).await;
+    tracker.state.lock().await.remove("node-a");
+    tracker.dirty.lock().insert("node-a".to_string());
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while persisted_usage(&db_path).is_some() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("stale marker should resolve to a delete");
+    tracker.shutdown().await;
+    remove_db(&db_path);
+}
+
+#[tokio::test]
+async fn shutdown_reports_writes_that_could_not_be_persisted() {
+    let db_path = test_db_path("shutdown-unpersisted");
+    let tracker = started_tracker(&db_path).await;
+    used(&tracker, sample(100, 0, 10)).await;
+    wait_for_health(&tracker, |health| health.last_success_at > 0).await;
+
+    let lock = lock_database(&db_path);
+    used(&tracker, sample(400, 0, 20)).await;
+    tracker.shutdown().await;
+    let health = tracker.health();
+    assert!(!health.available);
+    assert_eq!(health.pending_writes, 1);
+    drop(lock);
+
+    // 账本回到最后一次提交的值，但基线也一起回退，所以下一帧能把差额补回。
+    let restarted = started_tracker(&db_path).await;
+    assert_eq!(restarted.usages().await[0].used_bytes, 0);
+    assert_eq!(used(&restarted, sample(450, 0, 30)).await, 350);
+    restarted.shutdown().await;
     remove_db(&db_path);
 }
