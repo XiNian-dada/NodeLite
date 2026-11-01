@@ -61,6 +61,27 @@ fn configured_mirror_is_used_with_pinned_checksums() {
 }
 
 #[test]
+fn http_sources_carry_the_installer_insecure_opt_in() {
+    let https = AgentReleaseSource::from_config(&release_config(None)).expect("default source");
+    let install = render_install_command("https://monitor.example.com", "tok", &https)
+        .expect("install command renders");
+    assert!(!install.contains("--insecure-allow-http"), "{install}");
+
+    let upgrade =
+        render_upgrade_command("http://monitor.example.com", &https).expect("upgrade renders");
+    assert!(upgrade.contains("  --insecure-allow-http"), "{upgrade}");
+    assert!(!upgrade.ends_with('\\'), "{upgrade}");
+
+    let http_mirror = AgentReleaseSource::from_config(&release_config(Some(
+        "http://mirror.example.com/nodelite",
+    )))
+    .expect("mirror source builds");
+    let install = render_install_command("https://monitor.example.com", "tok", &http_mirror)
+        .expect("install command renders");
+    assert!(install.contains("  --insecure-allow-http \\"), "{install}");
+}
+
+#[test]
 fn mirror_without_checksums_is_refused() {
     let mut config = release_config(Some("https://mirror.example.com/nodelite"));
     config.agent_release_sha256_aarch64 = None;
