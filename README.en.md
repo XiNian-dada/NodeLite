@@ -392,7 +392,7 @@ sudo systemctl restart nodelite-server.service
 - **Agent blocked by `/ws` rate limiter?**
   - If behind a remote proxy or CDN WAF, add the proxy CIDR to `trusted_proxies` in `server.toml`.
 - **Prometheus Scrape Config?**
-  - `/metrics` shares Basic Auth with the dashboard. See [`ops/prometheus/prometheus.yml`](ops/prometheus/prometheus.yml).
+  - `/metrics` shares Basic Auth with the dashboard. See [`ops/prometheus/prometheus.yml`](ops/prometheus/prometheus.yml). With 2FA enabled, set `allow_basic_scrape_with_2fa = true` under `[metrics]` so Prometheus can scrape with Basic Auth alone.
 
 ---
 

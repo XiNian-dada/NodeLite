@@ -59,6 +59,9 @@ token_verify_max_parallelism = 4
 export_node_resource_metrics = false
 # 开启后会按节点和挂载点导出磁盘字节数与使用率;节点多或挂载点多时 series/body 会快速增长。
 export_node_disk_metrics = false
+# 开启 2FA 后 Prometheus 无法完成二次验证,/metrics 默认返回 401。设为 true 时只对 /metrics
+# 放宽为仅需 Basic 认证;其他页面与 API 仍要求 2FA。
+allow_basic_scrape_with_2fa = false
 
 [auth]
 # 前端只读访问用的基本认证用户名;生产建议由安装脚本生成或通过受控配置注入。

@@ -2,6 +2,8 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# 开启 2FA 时需要在 server.toml 的 [metrics] 中设置 allow_basic_scrape_with_2fa = true,
+# 否则 /metrics 返回 401。
 scrape_configs:
   - job_name: nodelite
     metrics_path: /metrics

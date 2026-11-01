@@ -423,7 +423,7 @@ sudo systemctl restart nodelite-server.service
 - **Agent 被 `/ws` 限流拦截？**
   - 如果使用了远端反代或 CDN/WAF，请在 `server.toml` 的 `trusted_proxies` 中添加代理 IP 网段，否则多台 Agent 会被识别为同一个代理 IP 并触发频率限制。
 - **Prometheus 抓取与 Series 膨胀控制？**
-  - `/metrics` 与控制台共享只读认证，详见 [`ops/prometheus/prometheus.yml`](ops/prometheus/prometheus.yml)。Agent 默认排除了 `overlay`、`tmpfs` 等挂载，可在 `[agent].ignored_filesystems` 中自定。
+  - `/metrics` 与控制台共享只读认证，详见 [`ops/prometheus/prometheus.yml`](ops/prometheus/prometheus.yml)。开启 2FA 后需在 `[metrics]` 中设置 `allow_basic_scrape_with_2fa = true`，Prometheus 才能仅凭 Basic 认证抓取。Agent 默认排除了 `overlay`、`tmpfs` 等挂载，可在 `[agent].ignored_filesystems` 中自定。
 
 ---
 
