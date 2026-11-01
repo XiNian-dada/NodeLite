@@ -367,14 +367,15 @@ async fn enable_two_factor_inner(
     {
         let mut auth = state.readonly_auth.write().await;
         auth.revoked.cancel();
+        if rotating {
+            // Marked under the write lock, before the swap, so no login can use the code that
+            // proved the new secret.
+            state
+                .two_factor_sessions
+                .try_mark_unused_totp_steps(&new_secret_steps);
+        }
         *auth = ReadonlyRouteAuth::from_config(Some(next_auth));
         state.two_factor_sessions.clear_authenticated();
-    }
-    if rotating {
-        // The code that proved the new secret cannot sign in once it is active.
-        state
-            .two_factor_sessions
-            .try_mark_unused_totp_steps(&new_secret_steps);
     }
     let auth_token = match state.two_factor_sessions.create_authenticated() {
         Ok(token) => token,
