@@ -123,3 +123,50 @@ async fn compressed_metrics_cannot_bypass_the_plaintext_size_limit() -> Result<(
     expect_closed(&mut socket).await?;
     server.shutdown().await
 }
+
+#[tokio::test]
+async fn disk_limit_notice_is_sent_once_per_session() -> Result<()> {
+    let server = TestServer::start().await?;
+    let node = server.issue_node("notice-once", "Notice once").await?;
+    let mut socket = connect(&server, &node, false).await?;
+    for sequence in 1..=3 {
+        let mut snapshot = fake_snapshot(sequence);
+        snapshot.disks = (0..68)
+            .map(|index| nodelite_proto::DiskUsage {
+                device: format!("rpool/subvol-{index}"),
+                mount_point: format!("/subvol-{index}"),
+                fs_type: "zfs".to_string(),
+                total_bytes: 100,
+                used_bytes: 50,
+                available_bytes: 50,
+                used_percent: 50.0,
+            })
+            .collect();
+        send_wire_message(
+            &mut socket,
+            &WireMessage::Metrics(MetricsMessage { snapshot }),
+        )
+        .await?;
+        server
+            .wait_for_node_uptime(&node.node_id, sequence, TEST_TIMEOUT)
+            .await?;
+    }
+    let mut notices = Vec::new();
+    while let Ok(Some(frame)) =
+        tokio::time::timeout(std::time::Duration::from_millis(300), socket.next()).await
+    {
+        if let Message::Text(text) = frame?
+            && let WireMessage::ServerNotice(notice) = serde_json::from_str(&text)?
+        {
+            notices.push(notice);
+        }
+    }
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert_eq!(notices[0].level, nodelite_proto::NoticeLevel::Warn);
+    assert_eq!(
+        notices[0].message,
+        "4 disks over the limit of 64 were dropped"
+    );
+    socket.close(None).await?;
+    server.shutdown().await
+}

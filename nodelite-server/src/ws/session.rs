@@ -33,6 +33,7 @@ pub(crate) struct SessionLoopState {
     next_ping_nonce: u64,
     metric_anomaly_window: VecDeque<Instant>,
     last_sent_throttle_kbps: Option<Option<u64>>,
+    disk_limit_notified: bool,
 }
 
 impl SessionLoopState {
@@ -48,6 +49,7 @@ impl SessionLoopState {
             next_ping_nonce: 1,
             metric_anomaly_window: VecDeque::new(),
             last_sent_throttle_kbps: None,
+            disk_limit_notified: false,
         }
     }
 }
@@ -278,15 +280,23 @@ async fn handle_metrics_message(
         return Ok(LoopAction::Break);
     }
     let (snapshot, report) = sanitize_snapshot(shared.config(), snapshot);
-    if report.trimmed_disks > 0 {
+    if report.trimmed_disks > 0 || report.deduplicated_disks > 0 {
         debug!(
             node_id = %session.node_id,
             session_id = session.session_id,
             trimmed_disks = report.trimmed_disks,
+            deduplicated_disks = report.deduplicated_disks,
             max_disks = shared.config().max_sanitized_disks,
             "trimmed duplicate or excess disks from agent snapshot",
         );
     }
+    super::disk_limit_notice::notify_disks_over_limit_once(
+        sender,
+        &mut loop_state.disk_limit_notified,
+        report.trimmed_disks,
+        shared.config().max_sanitized_disks,
+    )
+    .await?;
     if report.modified() {
         update_metric_anomaly_window(
             &mut loop_state.metric_anomaly_window,

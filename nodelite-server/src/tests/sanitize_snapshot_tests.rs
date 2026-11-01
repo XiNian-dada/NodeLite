@@ -569,7 +569,8 @@ fn sanitize_snapshot_deduplicates_repeated_disk_devices() {
     assert_eq!(sanitized.disks.len(), 2);
     assert_eq!(sanitized.disks[0].mount_point, "/");
     assert_eq!(sanitized.disks[1].mount_point, "/ssd");
-    assert_eq!(report.trimmed_disks, 1);
+    assert_eq!(report.deduplicated_disks, 1);
+    assert_eq!(report.trimmed_disks, 0);
     assert_eq!(report.dropped_disks, 0);
     assert!(!report.modified());
 }
