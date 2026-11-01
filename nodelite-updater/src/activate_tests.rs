@@ -400,6 +400,53 @@ async fn failed_health_confirmation_rolls_back_once() {
     let transaction = journal.transaction.as_ref().expect("transaction kept");
     assert!(transaction.rollback_consumed);
     assert!(transaction.recovery_requested);
+    // Boot start, candidate trial start and exactly one rollback restart.
+    assert_eq!(lab.fake.invocations.get(), 3);
+    assert_eq!(journal.failed, vec![lab.to.digest.clone()]);
+    for _ in 0..5 {
+        lab.fake.advance(60_000);
+        lab.tick().await.expect("settled reconcile");
+    }
+    assert_eq!(lab.fake.invocations.get(), 3, "rollback was repeated");
+    assert_eq!(lab.journal().failed, vec![lab.to.digest.clone()]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn revoked_rollback_baseline_latches_without_moving_the_pointer() {
+    let lab = Lab::new();
+    lab.fake
+        .unhealthy
+        .borrow_mut()
+        .insert(lab.to.digest.clone());
+    lab.start().await.expect("prepare");
+    lab.tick().await.expect("preflight confirmed");
+    lab.tick().await.expect("stop confirmed");
+    assert_eq!(lab.journal().phase, Phase::Trial);
+    lab.fake.advance(lab.policy.trial_seconds * 1000 + 1000);
+
+    // A signed floor raise revoking `from` mid-trial exists only in memory: a
+    // journal carrying it is already rejected on load (asserted below).
+    let mut journal = lab.journal();
+    journal.hard_floor = lab.to.sequence;
+    let outcome = reconcile(&lab.fake, &lab.store, &mut journal, &lab.policy).await;
+    let error = outcome.expect_err("revoked baseline must not be restored");
+    assert!(matches!(
+        error,
+        UpdateError::Recovery("rollback baseline revoked")
+    ));
+    crate::runtime::latch_failure(&lab.store, &mut journal, &error);
+
+    assert_eq!(
+        lab.active(),
+        lab.to.digest,
+        "pointer moved to a revoked object"
+    );
+    assert!(
+        lab.fake.markers.borrow().is_empty(),
+        "restart was requested"
+    );
+    assert!(lab.store.private().join("recovery-required.json").exists());
+    assert!(lab.store.load(&lab.policy, ROOT).is_err());
 }
 
 #[tokio::test(flavor = "current_thread")]
