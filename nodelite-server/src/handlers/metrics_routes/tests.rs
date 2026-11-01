@@ -93,6 +93,7 @@ fn exporter_omits_snapshot_resource_metrics_by_default() {
         MetricsConfig {
             export_node_resource_metrics: true,
             export_node_disk_metrics: true,
+            allow_basic_scrape_with_2fa: false,
         },
         None,
     );

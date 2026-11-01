@@ -37,7 +37,8 @@ async fn pending_issuance_rechecks_credentials_and_two_factor_mode() {
         rotate_credentials(&state, &mut auth, disable);
         drop(auth);
 
-        let response = issue_two_factor_redirect(&state, request).await;
+        let headers = request.headers().clone();
+        let response = issue_two_factor_redirect(&state, &headers, request).await;
         let status = response.status();
         let cookie = response_cookie(&response, TWO_FACTOR_PENDING_COOKIE);
         cleanup(state, temp_dir).await;

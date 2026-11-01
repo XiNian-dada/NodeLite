@@ -38,6 +38,14 @@ pub(crate) async fn two_factor_auth_test_state(
     label: &str,
     enable_2fa: bool,
 ) -> (AppState, PathBuf) {
+    two_factor_auth_test_state_with(label, enable_2fa, |_| {}).await
+}
+
+pub(crate) async fn two_factor_auth_test_state_with(
+    label: &str,
+    enable_2fa: bool,
+    configure: impl FnOnce(&mut nodelite_proto::ServerConfig),
+) -> (AppState, PathBuf) {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock should be monotonic enough")
@@ -57,6 +65,7 @@ pub(crate) async fn two_factor_auth_test_state(
         enable_2fa,
         totp_secret: enable_2fa.then(|| "JBSWY3DPEHPK3PXP".to_string()),
     });
+    configure(&mut config);
     let state = AppState::test_fixture(config.into(), Arc::new(temp_dir.join("server.toml")))
         .await
         .expect("state fixture should build");

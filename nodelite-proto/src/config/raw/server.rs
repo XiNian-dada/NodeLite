@@ -133,6 +133,7 @@ config_section! {
     struct RawMetricsSection {
         export_node_resource_metrics: bool = default_metrics_export_node_resource_metrics(),
         export_node_disk_metrics: bool = default_metrics_export_node_disk_metrics(),
+        allow_basic_scrape_with_2fa: bool = false,
     }
 }
 
@@ -225,6 +226,7 @@ impl RawServerConfigFile {
             metrics: MetricsConfig {
                 export_node_resource_metrics: self.metrics.export_node_resource_metrics,
                 export_node_disk_metrics: self.metrics.export_node_disk_metrics,
+                allow_basic_scrape_with_2fa: self.metrics.allow_basic_scrape_with_2fa,
             },
             audit,
             agent_logs: self.agent_logs,

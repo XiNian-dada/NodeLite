@@ -216,14 +216,7 @@ fn exchange_pending_two_factor_session(
     state
         .two_factor_sessions
         .exchange_pending(pending_token, matching_steps)
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(Verify2FAError {
-                    error: "Failed to create authenticated session".to_string(),
-                }),
-            )
-        })
+        .map_err(session_exchange_error)
 }
 
 pub(super) async fn record_second_factor_success(
@@ -303,6 +296,22 @@ pub(super) fn second_factor_unauthorized_error() -> (StatusCode, Json<Verify2FAE
         StatusCode::UNAUTHORIZED,
         Json(Verify2FAError {
             error: "Verification failed".to_string(),
+        }),
+    )
+}
+
+/// A full session store is temporary, so it answers 503 like other session creation paths.
+pub(super) fn session_exchange_error(
+    error: crate::auth::AuthSessionError,
+) -> (StatusCode, Json<Verify2FAError>) {
+    let status = match error {
+        crate::auth::AuthSessionError::Capacity => StatusCode::SERVICE_UNAVAILABLE,
+        crate::auth::AuthSessionError::Entropy(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (
+        status,
+        Json(Verify2FAError {
+            error: "Failed to create authenticated session".to_string(),
         }),
     )
 }
