@@ -105,15 +105,20 @@ async fn compressed_metrics_require_authenticated_negotiation() -> Result<()> {
 
 #[tokio::test]
 async fn compressed_metrics_cannot_bypass_the_plaintext_size_limit() -> Result<()> {
-    let server = TestServer::start().await?;
+    // 编码端已拒绝超过共享帧上限的快照，因此调低服务端上限来构造仍能编码的超限帧。
+    const CONFIGURED_LIMIT: usize = 4096;
+    let server = TestServer::start_with_config(|config| {
+        config.max_message_bytes = CONFIGURED_LIMIT;
+    })
+    .await?;
     let node = server
         .issue_node("oversized-compressed", "Oversized")
         .await?;
     let mut socket = connect(&server, &node, true).await?;
     let mut snapshot = fake_snapshot(1);
-    snapshot.disks[0].device = "x".repeat(MAX_MESSAGE_BYTES + 1);
+    snapshot.disks[0].device = "x".repeat(CONFIGURED_LIMIT + 1);
     let encoded = encode_metrics(&MetricsMessage { snapshot })?;
-    assert!(encoded.len() < MAX_MESSAGE_BYTES);
+    assert!(encoded.len() < CONFIGURED_LIMIT);
     socket.send(Message::Binary(encoded.into())).await?;
     expect_closed(&mut socket).await?;
     server.shutdown().await

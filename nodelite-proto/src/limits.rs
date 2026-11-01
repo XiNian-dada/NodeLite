@@ -27,7 +27,7 @@ pub fn fit_snapshot_to_wire_limits(
         let Some(disk) = snapshot.disks.pop() else {
             break;
         };
-        // 加 1 计入数组分隔逗号；略高估只会多裁一条，不会超限。
+        // 加 1 计入数组分隔逗号；末条没有逗号造成的 1 字节偏差由信封预留吸收。
         size = size.saturating_sub(serde_json::to_vec(&disk)?.len() + 1);
     }
     Ok(original - snapshot.disks.len())

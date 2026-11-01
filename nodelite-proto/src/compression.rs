@@ -10,6 +10,7 @@ use thiserror::Error;
 use crate::MetricsMessage;
 
 const MAGIC: &[u8] = b"NLMZ1";
+/// 解压硬上限。运维可调高 `max_message_bytes`，因此解码端宽于发送端的共享帧上限。
 pub const MAX_METRICS_JSON_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Error)]
@@ -27,7 +28,7 @@ pub enum CompressionError {
 /// 带有格式标记，单帧自包含，可独立解码而无需依赖前序帧上下文。
 pub fn encode_metrics(message: &MetricsMessage) -> Result<Vec<u8>, CompressionError> {
     let json = serde_json::to_vec(message)?;
-    if json.len() > MAX_METRICS_JSON_BYTES {
+    if json.len() > crate::limits::MAX_METRICS_FRAME_BYTES {
         return Err(CompressionError::TooLarge);
     }
     let mut encoder = ZlibEncoder::new(MAGIC.to_vec(), Compression::default());
