@@ -4,23 +4,26 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Context;
+use axum::extract::ws::Utf8Bytes;
 use nodelite_proto::{BrowserMessage, NodeListItem};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
 use super::SharedState;
 
-/// 集中 diff 任务广播给浏览器会话的增量消息。
+/// 集中 diff 任务一个 tick 的全部增量。整批只占一个通道槽位,节点数量再大也不会
+/// 单独把订阅者挤到 `Lagged`;帧只序列化一次,所有会话共享同一份字节。
 #[derive(Clone)]
 pub(crate) struct BrowserIncrementalUpdate {
     pub(crate) revision: u64,
-    pub(crate) message: Arc<BrowserMessage>,
+    pub(crate) frames: Arc<[Utf8Bytes]>,
 }
 
-/// 浏览器增量消息广播通道容量。集中 diff 任务每秒最多广播 ~400 条消息(200 节点
-/// 全变 × 每节点 1 upsert + 1 overview),慢连接若落后超过 256 条会收到 Lagged,
-/// 届时重发 InitialState 全量同步。
-pub(super) const BROWSER_INCREMENTAL_CHANNEL_CAPACITY: usize = 256;
+/// 一个槽位现在可能持有全部节点的增量,而慢会话会让已发送的批次继续驻留,
+/// 所以容量决定内存上限(容量 × 节点数)。16 个 tick 约等于落后 16 秒,
+/// 这样的会话走一次全量重同步比为它保留更多批次更划算。
+pub(super) const BROWSER_INCREMENTAL_CHANNEL_CAPACITY: usize = 16;
 
 /// 启动集中 diff 后台任务,订阅脏信号、去抖并广播增量消息给所有浏览器会话。
 /// 返回 JoinHandle 供调用者纳入 shutdown 生命周期。
@@ -56,10 +59,7 @@ async fn run_browser_incremental_task(shared: SharedState, shutdown: Cancellatio
                 }
             }
             _ = debounce.tick() => {
-                if dirty {
-                    dirty = false;
-                    broadcast_incremental_updates(&shared, &mut last_nodes).await;
-                }
+                run_tick(&shared, &mut last_nodes, &mut dirty).await;
             }
         }
     }
@@ -98,45 +98,73 @@ fn index_by_node_id(nodes: Vec<NodeListItem>) -> HashMap<String, NodeListItem> {
         .collect()
 }
 
+pub(super) fn browser_frame(message: &BrowserMessage) -> anyhow::Result<Utf8Bytes> {
+    serde_json::to_string(message)
+        .map(Utf8Bytes::from)
+        .context("failed to serialize browser message")
+}
+
+pub(super) async fn run_tick(
+    shared: &SharedState,
+    last_nodes: &mut HashMap<String, NodeListItem>,
+    dirty: &mut bool,
+) {
+    if shared.browser_incremental_tx.receiver_count() == 0 {
+        // 不能保留旧基线:节点在无人订阅期间变化后又变回基线值时,diff 判定为未变,
+        // 新会话手里的中间值就再也得不到修正。清空后首批增量等于全量,结果总是收敛。
+        *last_nodes = HashMap::new();
+        *dirty = false;
+        return;
+    }
+    if !*dirty {
+        return;
+    }
+    match broadcast_incremental_updates(shared, last_nodes).await {
+        Ok(()) => *dirty = false,
+        Err(error) => {
+            // 基线未推进且保持 dirty,下个 tick 会重新计算这批变化。
+            tracing::warn!(error = %error, "browser incremental task failed to broadcast updates");
+        }
+    }
+}
+
 async fn broadcast_incremental_updates(
     shared: &SharedState,
     last_nodes: &mut HashMap<String, NodeListItem>,
-) {
+) -> anyhow::Result<()> {
     let snapshot = shared.browser_snapshot().await;
     let generated_at = snapshot.generated_at;
     let revision = snapshot.revision;
     let current = snapshot.nodes;
 
     let diff = diff_node_lists(last_nodes, &current);
-    let mut messages: Vec<BrowserMessage> =
-        Vec::with_capacity(diff.upserts.len() + diff.removed.len() + 1);
-    messages.extend(diff.upserts.iter().map(|node| BrowserMessage::NodeUpsert {
-        generated_at,
-        node: Box::new((*node).clone()),
-    }));
-    messages.extend(
-        diff.removed
-            .into_iter()
-            .map(|node_id| BrowserMessage::NodeRemoved {
-                generated_at,
-                node_id,
-            }),
-    );
-    messages.push(BrowserMessage::OverviewUpdate {
+    let mut frames = Vec::with_capacity(diff.upserts.len() + diff.removed.len() + 1);
+    for node in &diff.upserts {
+        frames.push(browser_frame(&BrowserMessage::NodeUpsert {
+            generated_at,
+            node: Box::new((*node).clone()),
+        })?);
+    }
+    for node_id in diff.removed {
+        frames.push(browser_frame(&BrowserMessage::NodeRemoved {
+            generated_at,
+            node_id,
+        })?);
+    }
+    frames.push(browser_frame(&BrowserMessage::OverviewUpdate {
         generated_at,
         overview: snapshot.overview,
-    });
+    })?);
 
     *last_nodes = index_by_node_id(current);
 
-    for message in messages {
-        let _ = shared
-            .browser_incremental_tx
-            .send(BrowserIncrementalUpdate {
-                revision,
-                message: Arc::new(message),
-            });
-    }
+    let _ = shared
+        .browser_incremental_tx
+        .send(BrowserIncrementalUpdate {
+            revision,
+            frames: frames.into(),
+        });
+    Ok(())
 }
 
 #[cfg(test)]

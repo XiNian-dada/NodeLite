@@ -114,7 +114,14 @@ async fn run_browser_session(shared: SharedState, socket: WebSocket) -> anyhow::
                     Ok(update) => {
                         // 集中任务已计算好的增量消息,直接转发(零锁、零 diff)
                         if should_forward_incremental(update.revision, baseline_revision) {
-                            send_browser_message(&mut sender, &update.message).await?;
+                            for frame in update.frames.iter() {
+                                send_message(
+                                    &mut sender,
+                                    Message::Text(frame.clone()),
+                                    "failed to send browser message",
+                                )
+                                .await?;
+                            }
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
