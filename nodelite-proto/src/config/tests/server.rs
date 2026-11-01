@@ -653,3 +653,81 @@ fn allows_remote_http_with_explicit_opt_in() {
 
     assert!(config.insecure_allow_http);
 }
+
+fn install_mirror_config(server_extra: &str, base_url: &str) -> String {
+    format!(
+        r#"
+        [server]
+        listen = "127.0.0.1:8080"
+        public_base_url = "https://monitor.example.com"
+        {server_extra}
+
+        [install]
+        agent_release_base_url = "{base_url}"
+        agent_release_sha256_x86_64 = "{x86}"
+        agent_release_sha256_aarch64 = "{arm}"
+        "#,
+        x86 = "a".repeat(64),
+        arm = "b".repeat(64),
+    )
+}
+
+#[test]
+fn rejects_remote_http_install_release_base_without_opt_in() {
+    let error = parse_server_config(&install_mirror_config(
+        "",
+        "http://mirror.example.com/nodelite",
+    ))
+    .expect_err("remote http release mirror without opt-in should fail");
+
+    let message = error.to_string();
+    assert!(message.contains("server.insecure_allow_http"), "{message}");
+    assert!(
+        message.contains("install.agent_release_base_url"),
+        "{message}"
+    );
+}
+
+#[test]
+fn allows_remote_http_install_release_base_with_opt_in() {
+    let config = parse_server_config(&install_mirror_config(
+        "insecure_allow_http = true",
+        "http://mirror.example.com/nodelite",
+    ))
+    .expect("remote http release mirror should parse with explicit opt-in");
+
+    assert_eq!(
+        config.agent_release_base_url.as_deref(),
+        Some("http://mirror.example.com/nodelite")
+    );
+}
+
+#[test]
+fn allows_loopback_http_install_release_base_without_opt_in() {
+    let config = parse_server_config(&install_mirror_config("", "http://127.0.0.1:9000/nodelite"))
+        .expect("loopback http release mirror should parse");
+
+    assert_eq!(
+        config.agent_release_base_url.as_deref(),
+        Some("http://127.0.0.1:9000/nodelite")
+    );
+}
+
+#[test]
+fn rejects_install_release_base_with_only_one_checksum() {
+    let error = parse_server_config(&format!(
+        r#"
+        [server]
+        listen = "127.0.0.1:8080"
+        public_base_url = "https://monitor.example.com"
+
+        [install]
+        agent_release_base_url = "https://mirror.example.com/nodelite"
+        agent_release_sha256_x86_64 = "{}"
+        "#,
+        "a".repeat(64)
+    ))
+    .expect_err("release base with a single checksum should fail");
+
+    assert!(error.to_string().contains("agent_release_sha256_aarch64"));
+}
