@@ -15,16 +15,17 @@
 //! "重算 + diff" 推导出变化行并广播给所有会话 —— 既无需注册表暴露细粒度变更钩子,
 //! 也天然覆盖节点移除(diff 发现某 id 消失即发 `NodeRemoved`)。
 
+use std::fmt::Display;
 use std::net::SocketAddr;
 
 use anyhow::anyhow;
 use axum::Extension;
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{Message, Utf8Bytes, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use futures::StreamExt;
 use futures::stream::SplitSink;
+use futures::{FutureExt, Sink, Stream, StreamExt};
 use nodelite_proto::BrowserMessage;
 use tokio::sync::broadcast;
 use tracing::warn;
@@ -100,28 +101,18 @@ async fn run_browser_session(shared: SharedState, socket: WebSocket) -> anyhow::
         tokio::select! {
             biased;
             incoming = receiver.next() => {
-                match incoming {
-                    None | Some(Err(_)) => return Ok(()), // 客户端关闭或传输错误 → 结束会话
-                    Some(Ok(message)) => {
-                        if handle_client_message(&mut sender, message).await? {
-                            return Ok(());
-                        }
-                    }
+                if handle_incoming(&mut sender, incoming).await? {
+                    return Ok(());
                 }
             }
             incremental = incremental_rx.recv() => {
                 match incremental {
                     Ok(update) => {
                         // 集中任务已计算好的增量消息,直接转发(零锁、零 diff)
-                        if should_forward_incremental(update.revision, baseline_revision) {
-                            for frame in update.frames.iter() {
-                                send_message(
-                                    &mut sender,
-                                    Message::Text(frame.clone()),
-                                    "failed to send browser message",
-                                )
-                                .await?;
-                            }
+                        if should_forward_incremental(update.revision, baseline_revision)
+                            && forward_frames(&mut sender, &mut receiver, &update.frames).await?
+                        {
+                            return Ok(());
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
@@ -132,6 +123,55 @@ async fn run_browser_session(shared: SharedState, socket: WebSocket) -> anyhow::
                 }
             }
         }
+    }
+}
+
+/// 大批次转发期间不回到主循环,每隔这么多帧处理一次入站消息并让出调度,
+/// 否则千节点批次会让 Ping 和关闭一直等到整批发完。
+const FRAMES_BETWEEN_INCOMING_CHECKS: usize = 64;
+
+/// 逐帧转发一批增量。返回 `true` 表示应结束会话。
+async fn forward_frames<S, R, E>(
+    sender: &mut S,
+    receiver: &mut R,
+    frames: &[Utf8Bytes],
+) -> anyhow::Result<bool>
+where
+    S: Sink<Message> + Unpin,
+    S::Error: Display,
+    R: Stream<Item = Result<Message, E>> + Unpin,
+{
+    for (index, frame) in frames.iter().enumerate() {
+        if index > 0 && index % FRAMES_BETWEEN_INCOMING_CHECKS == 0 {
+            tokio::task::yield_now().await;
+            if let Some(incoming) = receiver.next().now_or_never()
+                && handle_incoming(sender, incoming).await?
+            {
+                return Ok(true);
+            }
+        }
+        send_message(
+            sender,
+            Message::Text(frame.clone()),
+            "failed to send browser message",
+        )
+        .await?;
+    }
+    Ok(false)
+}
+
+/// 处理一次入站结果。流结束或传输错误同样结束会话。返回 `true` 表示应结束会话。
+async fn handle_incoming<S, E>(
+    sender: &mut S,
+    incoming: Option<Result<Message, E>>,
+) -> anyhow::Result<bool>
+where
+    S: Sink<Message> + Unpin,
+    S::Error: Display,
+{
+    match incoming {
+        None | Some(Err(_)) => Ok(true),
+        Some(Ok(message)) => handle_client_message(sender, message).await,
     }
 }
 
@@ -164,7 +204,11 @@ fn classify_client_message(message: &Message) -> ClientAction {
 }
 
 /// 处理客户端发来的消息。返回 `true` 表示应结束会话。
-async fn handle_client_message(sender: &mut BrowserSink, message: Message) -> anyhow::Result<bool> {
+async fn handle_client_message<S>(sender: &mut S, message: Message) -> anyhow::Result<bool>
+where
+    S: Sink<Message> + Unpin,
+    S::Error: Display,
+{
     match classify_client_message(&message) {
         ClientAction::ReplyPong => {
             send_browser_message(sender, &BrowserMessage::Pong).await?;
@@ -191,10 +235,11 @@ fn should_forward_incremental(update_revision: u64, baseline_revision: u64) -> b
     update_revision > baseline_revision
 }
 
-async fn send_browser_message(
-    sender: &mut BrowserSink,
-    message: &BrowserMessage,
-) -> anyhow::Result<()> {
+async fn send_browser_message<S>(sender: &mut S, message: &BrowserMessage) -> anyhow::Result<()>
+where
+    S: Sink<Message> + Unpin,
+    S::Error: Display,
+{
     let payload = serde_json::to_string(message)
         .map_err(|error| anyhow!("failed to serialize browser message: {error}"))?;
     send_message(
@@ -269,6 +314,59 @@ mod tests {
             auth_fail_max_attempts: 2,
             auth_block_secs: 60,
         })
+    }
+
+    fn numbered_frames(count: usize) -> Vec<Utf8Bytes> {
+        (0..count)
+            .map(|index| Utf8Bytes::from(index.to_string()))
+            .collect()
+    }
+
+    fn drain_sent(sent: &mut futures::channel::mpsc::UnboundedReceiver<Message>) -> Vec<Message> {
+        let mut messages = Vec::new();
+        while let Ok(message) = sent.try_recv() {
+            messages.push(message);
+        }
+        messages
+    }
+
+    #[tokio::test]
+    async fn forwarding_a_large_batch_answers_ping_between_frames() {
+        let (mut sink, mut sent) = futures::channel::mpsc::unbounded::<Message>();
+        let ping = serde_json::to_string(&BrowserMessage::Ping).expect("ping should serialize");
+        let mut incoming = futures::stream::iter([Ok::<_, Infallible>(Message::Text(ping.into()))])
+            .chain(futures::stream::pending());
+        let frames = numbered_frames(FRAMES_BETWEEN_INCOMING_CHECKS + 1);
+
+        let ended = forward_frames(&mut sink, &mut incoming, &frames)
+            .await
+            .expect("forward batch");
+
+        assert!(!ended);
+        let messages = drain_sent(&mut sent);
+        assert_eq!(messages.len(), frames.len() + 1, "all frames plus one pong");
+        let Message::Text(pong) = &messages[FRAMES_BETWEEN_INCOMING_CHECKS] else {
+            panic!("expected a text pong");
+        };
+        assert!(matches!(
+            serde_json::from_str::<BrowserMessage>(pong.as_str()),
+            Ok(BrowserMessage::Pong)
+        ));
+    }
+
+    #[tokio::test]
+    async fn forwarding_a_large_batch_stops_when_the_client_closes() {
+        let (mut sink, mut sent) = futures::channel::mpsc::unbounded::<Message>();
+        let mut incoming = futures::stream::iter([Ok::<_, Infallible>(Message::Close(None))])
+            .chain(futures::stream::pending());
+        let frames = numbered_frames(FRAMES_BETWEEN_INCOMING_CHECKS * 2);
+
+        let ended = forward_frames(&mut sink, &mut incoming, &frames)
+            .await
+            .expect("forward batch");
+
+        assert!(ended);
+        assert_eq!(drain_sent(&mut sent).len(), FRAMES_BETWEEN_INCOMING_CHECKS);
     }
 
     #[test]
