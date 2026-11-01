@@ -275,17 +275,23 @@ pub(crate) async fn start_two_factor_setup(State(state): State<AppState>) -> Res
 }
 
 /// 启用 2FA:要求当前密码 + 新 secret 对应的 6 位 TOTP 验证码。
+/// 已启用时替换 secret 还需要用现有第二因素完成确认。
 pub(crate) async fn enable_two_factor(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<EnableTwoFactorRequest>,
 ) -> Response {
     super::config_edit::with_settings_write(state, move |state| {
-        enable_two_factor_inner(state, request)
+        enable_two_factor_inner(state, headers, request)
     })
     .await
 }
 
-async fn enable_two_factor_inner(state: AppState, request: EnableTwoFactorRequest) -> Response {
+async fn enable_two_factor_inner(
+    state: AppState,
+    headers: HeaderMap,
+    request: EnableTwoFactorRequest,
+) -> Response {
     let current_auth = {
         let auth = state.readonly_auth.read().await;
         auth.config.clone()
@@ -299,6 +305,19 @@ async fn enable_two_factor_inner(state: AppState, request: EnableTwoFactorReques
     ) {
         return inline_confirmation_rejected("current password is incorrect");
     }
+    let rotating = current_auth.enable_2fa;
+    // A password and a live session must not be enough to swap in a different second factor.
+    if rotating
+        && let Some(response) = settings_confirmation_error_for_sensitive_action(
+            &state,
+            &current_auth,
+            &headers,
+            None,
+            request.current_code.as_deref(),
+        )
+    {
+        return response;
+    }
     let secret = request.secret.replace(' ', "").to_ascii_uppercase();
     let Some(secret_bytes) = decode_totp_secret(&secret) else {
         return settings_json_error(StatusCode::BAD_REQUEST, "invalid TOTP secret");
@@ -306,13 +325,25 @@ async fn enable_two_factor_inner(state: AppState, request: EnableTwoFactorReques
     if secret_bytes.len() < 10 {
         return settings_json_error(StatusCode::BAD_REQUEST, "invalid TOTP secret");
     }
-    match verify_and_consume_totp_steps(&state, &secret_bytes, &request.code) {
-        Ok(()) => {}
-        Err(TotpVerificationError::Invalid) => {
-            return inline_confirmation_rejected("invalid verification code");
+    // Replay state is tracked per time step, not per secret, so during a rotation the
+    // confirmation with the old factor would mark the step the new code also falls in.
+    let new_secret_steps = matching_totp_steps(Some(&secret_bytes), &request.code);
+    if rotating {
+        if new_secret_steps.is_empty() {
+            return settings_json_error(StatusCode::FORBIDDEN, "invalid verification code");
         }
-        Err(TotpVerificationError::AlreadyUsed) => {
-            return inline_confirmation_rejected("verification code already used");
+    } else {
+        match verify_and_consume_totp_steps(&state, &secret_bytes, &request.code) {
+            Ok(()) => {}
+            Err(TotpVerificationError::Invalid) => {
+                return settings_json_error(StatusCode::FORBIDDEN, "invalid verification code");
+            }
+            Err(TotpVerificationError::AlreadyUsed) => {
+                return settings_json_error(
+                    StatusCode::FORBIDDEN,
+                    "verification code already used",
+                );
+            }
         }
     }
 
@@ -331,6 +362,13 @@ async fn enable_two_factor_inner(state: AppState, request: EnableTwoFactorReques
     {
         let mut auth = state.readonly_auth.write().await;
         auth.revoked.cancel();
+        if rotating {
+            // Marked under the write lock, before the swap, so no login can use the code that
+            // proved the new secret.
+            state
+                .two_factor_sessions
+                .try_mark_unused_totp_steps(&new_secret_steps);
+        }
         *auth = ReadonlyRouteAuth::from_config(Some(next_auth));
         state.two_factor_sessions.clear_authenticated();
     }

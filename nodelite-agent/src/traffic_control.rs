@@ -4,6 +4,7 @@
 //! police filter；绝不替换 root qdisc，也不会删除不属于 NodeLite 的规则。这样
 //! 即使限速配置被撤销，主机原有的整形策略仍保持不变。
 
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use thiserror::Error;
@@ -16,6 +17,7 @@ use nodelite_proto::{TrafficControlState, TrafficControlStatus, TrafficControlUn
 mod capability;
 #[cfg(all(test, target_os = "linux"))]
 mod linux_system_tests;
+mod policy;
 #[cfg(test)]
 mod retry_tests;
 
@@ -38,7 +40,8 @@ pub(crate) enum TrafficControlOutcome {
 /// Agent 只跟踪自身已确认过的配置，避免重复执行 `tc`。
 #[derive(Default)]
 pub(crate) struct TrafficController {
-    last_applied_rate_kbps: Option<Option<u64>>,
+    applied: Option<policy::AppliedPolicy>,
+    owned_interfaces: BTreeSet<String>,
     status: Option<TrafficControlStatus>,
     desired_rate_kbps: Option<Option<u64>>,
     retry_at: Option<Instant>,
@@ -102,27 +105,47 @@ impl TrafficController {
         &mut self,
         rate_kbps: Option<u64>,
     ) -> Result<TrafficControlOutcome, TrafficControlError> {
-        self.apply_with(rate_kbps, capability::unavailable_reason(), || async {
-            #[cfg(target_os = "linux")]
-            {
-                apply_linux_traffic_rate(rate_kbps).await
-            }
-            #[cfg(not(target_os = "linux"))]
-            {
-                Ok(())
-            }
-        })
+        self.apply_with(
+            rate_kbps,
+            capability::unavailable_reason(),
+            current_interface,
+            |plan| async move {
+                #[cfg(target_os = "linux")]
+                {
+                    apply_linux_traffic_plan(&plan).await
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    let _ = plan;
+                    Ok(())
+                }
+            },
+        )
         .await
     }
 
-    async fn apply_with<F, Fut>(
+    /// Returns the active limit when the default route moved away from the interface
+    /// that holds it, so the caller can reapply it once per route change.
+    pub(crate) fn route_drift(&self) -> Option<Option<u64>> {
+        if self.retry_at.is_some() {
+            return None;
+        }
+        let applied = self.applied.as_ref()?;
+        applied.rate_kbps?;
+        let current = current_interface().ok();
+        policy::route_drifted(Some(applied), current.as_deref()).then_some(applied.rate_kbps)
+    }
+
+    async fn apply_with<R, F, Fut>(
         &mut self,
         rate_kbps: Option<u64>,
         unavailable: Option<TrafficControlUnavailableReason>,
+        resolve_interface: R,
         operation: F,
     ) -> Result<TrafficControlOutcome, TrafficControlError>
     where
-        F: FnOnce() -> Fut,
+        R: FnOnce() -> Result<String, TrafficControlError>,
+        F: FnOnce(policy::TcPlan) -> Fut,
         Fut: std::future::Future<Output = Result<(), TrafficControlError>>,
     {
         if rate_kbps.is_some_and(|rate| rate == 0 || rate > MAX_TRAFFIC_RATE_KBPS) {
@@ -145,27 +168,45 @@ impl TrafficController {
             }
             return Ok(TrafficControlOutcome::Unavailable);
         }
-        if self.last_applied_rate_kbps == Some(rate_kbps) {
+        let interface = match resolve_interface() {
+            Ok(interface) => interface,
+            Err(error) => return Err(self.fail(error)),
+        };
+        let Some(plan) = policy::plan(
+            self.applied.as_ref(),
+            &self.owned_interfaces,
+            rate_kbps,
+            interface,
+        ) else {
             self.record_applied(rate_kbps);
             return Ok(TrafficControlOutcome::Applied);
+        };
+        let result = operation(plan.clone()).await;
+        policy::record_outcome(&mut self.owned_interfaces, &plan, result.is_ok());
+        if let Err(error) = result {
+            return Err(self.fail(error));
         }
-        if let Err(error) = operation().await {
-            // Why: 部分生效的内核策略不再与最后确认的值匹配，清除缓存迫使下次重试时全量重新下发。
-            self.last_applied_rate_kbps = None;
-            self.schedule_retry();
-            if let Some(status) = &mut self.status {
-                status.state = if self.retry_at.is_some() {
-                    TrafficControlState::Retrying
-                } else {
-                    TrafficControlState::Failed
-                };
-            }
-            return Err(error);
-        }
-        self.last_applied_rate_kbps = Some(rate_kbps);
+        self.applied = Some(policy::AppliedPolicy {
+            rate_kbps,
+            interface: plan.interface,
+        });
         self.attempts = 0;
         self.record_applied(rate_kbps);
         Ok(TrafficControlOutcome::Applied)
+    }
+
+    fn fail(&mut self, error: TrafficControlError) -> TrafficControlError {
+        // Why: 部分生效的内核策略不再与最后确认的值匹配，清除缓存迫使下次重试时全量重新下发。
+        self.applied = None;
+        self.schedule_retry();
+        if let Some(status) = &mut self.status {
+            status.state = if self.retry_at.is_some() {
+                TrafficControlState::Retrying
+            } else {
+                TrafficControlState::Failed
+            };
+        }
+        error
     }
 
     fn schedule_retry(&mut self) {
@@ -185,20 +226,79 @@ impl TrafficController {
 }
 
 #[cfg(target_os = "linux")]
-async fn apply_linux_traffic_rate(rate_kbps: Option<u64>) -> Result<(), TrafficControlError> {
-    let interface = default_route_interface()?;
-    match rate_kbps {
+async fn apply_linux_traffic_plan(plan: &policy::TcPlan) -> Result<(), TrafficControlError> {
+    let interface = plan.interface.as_str();
+    match plan.rate_kbps {
         Some(rate_kbps) => {
-            ensure_clsact(&interface).await?;
-            replace_police_filter(&interface, "ingress", rate_kbps).await?;
-            replace_police_filter(&interface, "egress", rate_kbps).await?;
+            ensure_clsact(interface).await?;
+            replace_police_filter(interface, "ingress", rate_kbps).await?;
+            replace_police_filter(interface, "egress", rate_kbps).await?;
         }
-        None => {
-            delete_police_filter_if_present(&interface, "ingress").await?;
-            delete_police_filter_if_present(&interface, "egress").await?;
+        None => remove_police_filters(interface).await?,
+    }
+    for stale in &plan.stale_interfaces {
+        // Why: 设备消失时内核已随之删除其 filter，对不存在的设备执行 tc 只会让收敛永久失败。
+        if !std::path::Path::new("/sys/class/net").join(stale).exists() {
+            continue;
         }
+        remove_police_filters(stale).await?;
     }
     Ok(())
+}
+
+/// Removes NodeLite's own filter from every interface once at startup, because a
+/// previous run may have left it on an interface that is no longer the default route.
+pub(crate) async fn cleanup_leftover_rules() {
+    #[cfg(target_os = "linux")]
+    {
+        if capability::unavailable_reason().is_some() {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir("/sys/class/net") else {
+            return;
+        };
+        let names = entries
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| entry.file_name().into_string().ok());
+        for interface in startup_cleanup_targets(names) {
+            // Why: NodeLite filters only exist under clsact; skipping other devices avoids
+            // tc errors on interfaces that never had a NodeLite rule.
+            let has_clsact = tc_output("reading qdisc configuration", qdisc_show_args(&interface))
+                .await
+                .is_ok_and(|qdisc| qdisc.contains("qdisc clsact"));
+            if !has_clsact {
+                continue;
+            }
+            if let Err(error) = remove_police_filters(&interface).await {
+                tracing::warn!(interface, error = %error, "failed to remove leftover traffic filter");
+            }
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn startup_cleanup_targets(names: impl Iterator<Item = String>) -> Vec<String> {
+    let mut targets: Vec<String> = names.filter(|name| valid_interface_name(name)).collect();
+    targets.sort();
+    targets.dedup();
+    targets
+}
+
+#[cfg(target_os = "linux")]
+async fn remove_police_filters(interface: &str) -> Result<(), TrafficControlError> {
+    delete_police_filter_if_present(interface, "ingress").await?;
+    delete_police_filter_if_present(interface, "egress").await
+}
+
+fn current_interface() -> Result<String, TrafficControlError> {
+    #[cfg(target_os = "linux")]
+    {
+        default_route_interface()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(String::new())
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -418,6 +518,15 @@ mod tests {
         assert_eq!(parse_default_route_interface(routes), None);
         assert!(valid_interface_name("enp0s3.100"));
         assert!(!valid_interface_name("bad name"));
+    }
+
+    #[test]
+    fn startup_cleanup_covers_every_valid_interface_once() {
+        let names = ["wg0", "eth0", "bad name", "lo", "eth0", ""].map(String::from);
+        assert_eq!(
+            super::startup_cleanup_targets(names.into_iter()),
+            ["eth0", "lo", "wg0"].map(String::from)
+        );
     }
 
     #[test]

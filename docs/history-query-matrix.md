@@ -42,6 +42,18 @@ entry overhead, and a 12.5% safety margin for allocator size classes and alignme
 portable conservative estimate rather than an allocator-reported exact heap measurement; Linux
 PSS/RssAnon is still the final production validation source.
 
+## Query and retention semantics
+
+A history query selects samples with `start <= recorded_at <= end`. The bucket width is
+`ceil((end - start + 1) / max_points)` seconds, so the inclusive range splits into at most
+`max_points` half-open buckets `[start + k*w, start + (k+1)*w)`. The sample at `end` always lands in
+the last bucket and is never removed by `LIMIT max_points`.
+
+Retention cleanup uses the `idx_history_points_recorded_at` index (created idempotently on startup
+for new and existing databases). It runs after the insert transaction commits, deleting at most
+`HISTORY_PRUNE_BATCH_ROWS` rows per autocommit statement, so a large backlog does not hold one long
+write transaction.
+
 ## 2026-07-10 Linux result
 
 Environment: Debian Bookworm container on Colima Linux, 4 vCPU, 6 GiB RAM, Rust 1.88.0, release

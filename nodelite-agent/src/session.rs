@@ -121,6 +121,7 @@ where
     let mut token_expired_attempt = 0_u32;
 
     tokio::pin!(shutdown);
+    crate::traffic_control::cleanup_leftover_rules().await;
 
     loop {
         let next = async {

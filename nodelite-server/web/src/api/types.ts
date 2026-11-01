@@ -388,6 +388,8 @@ export interface EnableTwoFactorRequest {
   current_password: string;
   secret: string;
   code: string;
+  /** Code from the enrolled factor; required to replace it unless the session just confirmed. */
+  current_code?: string;
 }
 
 /** POST /api/settings/2fa/disable */

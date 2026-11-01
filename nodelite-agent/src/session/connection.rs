@@ -179,6 +179,9 @@ impl Session<'_> {
                 self.handle_frame(frame).await
             }
             SessionEvent::Report => {
+                if let Some(rate) = self.traffic.route_drift() {
+                    self.throttle(rate).await?;
+                }
                 self.report_update_status()
                     .await
                     .map_err(|error| session_error(true, error))?;
