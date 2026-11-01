@@ -13,9 +13,7 @@ fail() {
   exit 1
 }
 
-need_value() {
-  [ "$#" -ge 2 ] || fail "$1 requires a value"
-}
+need_value() { [ "$#" -ge 2 ] || fail "$1 requires a value"; }
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
@@ -83,12 +81,13 @@ BOOTSTRAP_TMP=""
 CURL_AUTH_CONFIG=""
 CHECKSUMS_TMP=""
 
-# 退出时清理临时文件,确保不会残留含 token 的内容。
-# 服务停止后若异常退出(set -e 失败或信号),先恢复旧二进制/服务定义并重启,再清理临时文件。
+# 退出时清理含 token 的临时文件;服务已停止则先恢复旧 Agent。每步都不可因 set -e(如 stderr 已关闭)中断,且屏蔽重入信号。
 cleanup() {
+  trap '' HUP INT TERM
   if [ "$ROLLBACK_ARMED" = 1 ]; then
-    printf '%s\n' 'install-agent: aborted after stopping the service; restoring the previous agent' >&2
-    restore_previous_install || printf '%s\n' 'install-agent: previous agent is NOT running; inspect the service manually' >&2
+    printf '%s\n' 'install-agent: aborted after stopping the service; restoring the previous agent' >&2 || true
+    restore_previous_install || [ ! -f "$ROLLBACK_DIR/binary" ] ||
+      printf '%s\n' 'install-agent: previous agent is NOT running; inspect the service manually' >&2 || true
   fi
   [ -z "$SIGNED_STAGE" ] || rm -rf -- "$SIGNED_STAGE"
   for cleanup_path in "$TMP_PATH" "$BOOTSTRAP_TMP" "$CURL_AUTH_CONFIG" "$CHECKSUMS_TMP"; do
@@ -709,6 +708,8 @@ require_secure_url 'agent download URL' "$DOWNLOAD_URL"
 [ -n "$EXPECTED_SHA256" ] || require_secure_url 'checksums URL' "${CHECKSUMS_URL:-$BASE_URL/SHA256SUMS.txt}"
 BIN_PATH="$INSTALL_DIR/nodelite-agent"
 configure_agent_config_paths
+# Before the bootstrap fetch, so a refused upgrade does not consume the one-time token.
+refuse_install_dir_change
 
 existing_install=0
 if [ -e "$CONFIG_PATH" ] || [ -e "$LEGACY_CONFIG_PATH" ] || [ -e "$SERVICE_DEFINITION_PATH" ] || [ -e "$BIN_PATH" ]; then
@@ -773,7 +774,6 @@ else
 fi
 
 check_saved_credentials
-refuse_install_dir_change
 backup_previous_install
 ROLLBACK_ARMED=1
 if [ "$SERVICE_KIND" = "systemd" ] && systemctl is-active --quiet nodelite-agent.service; then

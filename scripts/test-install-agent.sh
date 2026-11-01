@@ -234,6 +234,33 @@ if (
 ) 2>/dev/null; then exit 1; fi
 grep -qx old-binary "$BIN_PATH" && [ ! -e "$TEMP_DIR/after-signal" ]
 if ls -d "$INSTALL_DIR"/.nodelite-agent-rollback.* >/dev/null 2>&1; then exit 1; fi
+# A closed stderr (SSH hang-up) must not stop the restore under set -e.
+backup_previous_install
+if (
+  eval "$cleanup_and_traps"
+  SIGNED_STAGE='' TMP_PATH='' BOOTSTRAP_TMP='' CURL_AUTH_CONFIG='' CHECKSUMS_TMP=''
+  ROLLBACK_ARMED=1
+  printf '%s\n' new-binary >"$BIN_PATH"
+  exec 2>&-
+  false
+); then exit 1; fi
+grep -qx old-binary "$BIN_PATH"
+# A second signal during the restore must not re-enter and delete the backup mid-way.
+backup_previous_install
+if (
+  eval "$cleanup_and_traps"
+  # shellcheck disable=SC2016,SC2317
+  restart_service() {
+    kill -HUP "$(exec sh -c 'printf %s "$PPID"')"
+    ls "$INSTALL_DIR"/.nodelite-agent-rollback.*/binary >/dev/null && printf '%s\n' finished >"$TEMP_DIR/restore-finished"
+  }
+  SIGNED_STAGE='' TMP_PATH='' BOOTSTRAP_TMP='' CURL_AUTH_CONFIG='' CHECKSUMS_TMP=''
+  ROLLBACK_ARMED=1
+  printf '%s\n' new-binary >"$BIN_PATH"
+  # shellcheck disable=SC2016
+  kill -TERM "$(exec sh -c 'printf %s "$PPID"')"
+) 2>/dev/null; then exit 1; fi
+grep -qx old-binary "$BIN_PATH" && [ -e "$TEMP_DIR/restore-finished" ]
 
 # launchd restart failures must return so the rollback runs instead of exiting.
 awk '/^restart_launchd_service\(\)/ { p=1 } p && /fail / { exit 1 } p && /^}/ { exit 0 }' "$INSTALLER"
@@ -245,7 +272,8 @@ printf '%s\n' 'ExecStart=/opt/elsewhere/nodelite-agent --config x' >"$UNIT_PATH"
 if refuse_install_dir_change 2>/dev/null; then exit 1; fi
 cp "$TEMP_DIR/original-unit" "$UNIT_PATH"
 awk '
-  /^refuse_install_dir_change$/ { c=1 } /^backup_previous_install$/ { if (!c) exit 1; b=1 }
+  /^refuse_install_dir_change$/ { c=1 } /^  fetch_bootstrap_config$/ { if (!c) exit 1 }
+  /^backup_previous_install$/ { if (!c) exit 1; b=1 }
   /^ROLLBACK_ARMED=1$/ { if (!b) exit 1; a=1 }
   /systemctl stop nodelite-agent.service/ { if (!a) exit 1 }
   /^backup_previous_install$/ { b=1 } /^install .*\$TMP_PATH.*\$BIN_PATH/ { if (!b) exit 1 }
