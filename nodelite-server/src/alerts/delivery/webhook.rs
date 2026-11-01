@@ -8,7 +8,7 @@ use std::time::Duration;
 use chrono::{DateTime, NaiveDate, Utc};
 use hmac::{Hmac, Mac};
 use nodelite_proto::{AlertMetric, AlertSeverity, AlertWebhookConfig};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -22,6 +22,8 @@ use crate::alerts::AlertEvent;
 
 const WEBHOOK_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_RESPONSE_HEADER_BYTES: usize = 32 * 1024;
+/// WeCom answers with a few dozen bytes of JSON; anything longer is not a valid reply.
+const MAX_RESPONSE_BODY_BYTES: usize = 16 * 1024;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -313,11 +315,47 @@ async fn send_http_post(
     let request = build_webhook_request(&url, &host, payload, secret)?;
     stream.write_all(&request).await?;
     stream.flush().await?;
-    let status = read_response_status(&mut stream).await?;
+    check_response(&mut stream, is_wecom_robot_webhook(&url)).await
+}
+
+/// WeCom reports delivery failures such as an invalid robot key or the rate limit inside an
+/// HTTP 200 body, so its replies also need `errcode == 0`. Other webhooks keep 2xx semantics.
+async fn check_response<S>(stream: &mut S, wecom: bool) -> Result<(), AlertDeliveryError>
+where
+    S: AsyncRead + Unpin + ?Sized,
+{
+    let (status, headers, mut body) = read_response_head(stream).await?;
     if !(200..300).contains(&status) {
         return Err(AlertDeliveryError::HttpStatus { status });
     }
-    Ok(())
+    if !wecom {
+        return Ok(());
+    }
+    let chunked = is_chunked(&headers);
+    let framing = if chunked {
+        BodyFraming::Chunked
+    } else {
+        content_length(&headers)?.map_or(BodyFraming::UntilClose, BodyFraming::Length)
+    };
+    read_remaining_body(stream, &mut body, framing).await?;
+    let body = if chunked {
+        decode_chunked(&body)?
+    } else {
+        body
+    };
+    #[derive(Deserialize)]
+    struct WeComResponse {
+        errcode: i64,
+    }
+    let reply: WeComResponse =
+        serde_json::from_slice(&body).map_err(|_| AlertDeliveryError::InvalidResponse)?;
+    if reply.errcode == 0 {
+        Ok(())
+    } else {
+        Err(AlertDeliveryError::WeComRejected {
+            errcode: reply.errcode,
+        })
+    }
 }
 
 trait AsyncReadWrite: AsyncRead + AsyncWrite + Unpin + Send {}
@@ -404,7 +442,8 @@ fn webhook_signature(secret: &str, payload: &[u8]) -> Result<String, AlertDelive
     ))
 }
 
-async fn read_response_status<S>(stream: &mut S) -> Result<u16, AlertDeliveryError>
+/// Returns the status, the raw header block and any body bytes read past the headers.
+async fn read_response_head<S>(stream: &mut S) -> Result<(u16, String, Vec<u8>), AlertDeliveryError>
 where
     S: AsyncRead + Unpin + ?Sized,
 {
@@ -425,8 +464,131 @@ where
         response.extend_from_slice(&buffer[..read]);
     };
     let headers = std::str::from_utf8(&response[..header_end])
-        .map_err(|_| AlertDeliveryError::InvalidResponse)?;
-    parse_status(headers)
+        .map_err(|_| AlertDeliveryError::InvalidResponse)?
+        .to_string();
+    let status = parse_status(&headers)?;
+    let body = response.get(header_end + 4..).unwrap_or_default().to_vec();
+    Ok((status, headers, body))
+}
+
+#[derive(Debug, Clone, Copy)]
+enum BodyFraming {
+    Length(usize),
+    Chunked,
+    UntilClose,
+}
+
+impl BodyFraming {
+    fn complete(self, body: &[u8]) -> bool {
+        match self {
+            Self::Length(length) => body.len() >= length,
+            Self::Chunked => chunked_body_complete(body),
+            Self::UntilClose => false,
+        }
+    }
+}
+
+/// Stops at the declared end of the body: a peer that ignores `Connection: close` would
+/// otherwise hold the request until the timeout and turn a delivered message into a retry.
+async fn read_remaining_body<S>(
+    stream: &mut S,
+    body: &mut Vec<u8>,
+    framing: BodyFraming,
+) -> Result<(), AlertDeliveryError>
+where
+    S: AsyncRead + Unpin + ?Sized,
+{
+    if let BodyFraming::Length(length) = framing
+        && length > MAX_RESPONSE_BODY_BYTES
+    {
+        return Err(AlertDeliveryError::ResponseTooLarge);
+    }
+    let mut buffer = [0_u8; 1024];
+    while !framing.complete(body) {
+        if body.len() > MAX_RESPONSE_BODY_BYTES {
+            return Err(AlertDeliveryError::ResponseTooLarge);
+        }
+        let read = match stream.read(&mut buffer).await {
+            Ok(read) => read,
+            // TLS peers often close without close_notify; for a close-delimited body that is
+            // the end, and a truncated reply still fails JSON parsing below.
+            Err(error)
+                if matches!(framing, BodyFraming::UntilClose)
+                    && error.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                0
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if read == 0 {
+            return match framing {
+                BodyFraming::UntilClose => Ok(()),
+                // The peer closed before the declared end of the body.
+                BodyFraming::Length(_) | BodyFraming::Chunked => {
+                    Err(AlertDeliveryError::InvalidResponse)
+                }
+            };
+        }
+        body.extend_from_slice(&buffer[..read]);
+    }
+    if let BodyFraming::Length(length) = framing {
+        body.truncate(length);
+    }
+    Ok(())
+}
+
+fn content_length(headers: &str) -> Result<Option<usize>, AlertDeliveryError> {
+    let Some(value) = headers.lines().skip(1).find_map(|line| {
+        line.split_once(':')
+            .filter(|(name, _)| name.trim().eq_ignore_ascii_case("content-length"))
+            .map(|(_, value)| value.trim())
+    }) else {
+        return Ok(None);
+    };
+    value
+        .parse::<usize>()
+        .map(Some)
+        .map_err(|_| AlertDeliveryError::InvalidResponse)
+}
+
+fn chunked_body_complete(body: &[u8]) -> bool {
+    body.starts_with(b"0\r\n\r\n") || body.windows(7).any(|window| window == b"\r\n0\r\n\r\n")
+}
+
+fn is_chunked(headers: &str) -> bool {
+    headers.lines().skip(1).any(|line| {
+        line.split_once(':').is_some_and(|(name, value)| {
+            name.trim().eq_ignore_ascii_case("transfer-encoding")
+                && value
+                    .split(',')
+                    .any(|coding| coding.trim().eq_ignore_ascii_case("chunked"))
+        })
+    })
+}
+
+fn decode_chunked(mut body: &[u8]) -> Result<Vec<u8>, AlertDeliveryError> {
+    let mut decoded = Vec::new();
+    loop {
+        let line_end = body
+            .windows(2)
+            .position(|window| window == b"\r\n")
+            .ok_or(AlertDeliveryError::InvalidResponse)?;
+        let size_line = std::str::from_utf8(&body[..line_end])
+            .map_err(|_| AlertDeliveryError::InvalidResponse)?;
+        let size_text = size_line.split(';').next().unwrap_or_default().trim();
+        let size = usize::from_str_radix(size_text, 16)
+            .map_err(|_| AlertDeliveryError::InvalidResponse)?;
+        body = &body[line_end + 2..];
+        if size == 0 {
+            return Ok(decoded);
+        }
+        let chunk_end = size
+            .checked_add(2)
+            .filter(|end| *end <= body.len())
+            .ok_or(AlertDeliveryError::InvalidResponse)?;
+        decoded.extend_from_slice(&body[..size]);
+        body = &body[chunk_end..];
+    }
 }
 
 fn header_end_index(bytes: &[u8]) -> Option<usize> {
@@ -446,6 +608,9 @@ fn parse_status(response_headers: &str) -> Result<u16, AlertDeliveryError> {
         .map_err(|_| AlertDeliveryError::InvalidResponse)?;
     Ok(status)
 }
+
+#[cfg(test)]
+mod response_tests;
 
 #[cfg(test)]
 mod tests {

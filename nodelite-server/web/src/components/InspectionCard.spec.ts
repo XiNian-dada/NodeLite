@@ -56,6 +56,8 @@ describe('InspectionCard', () => {
     await wrapper.find('[data-test="open-inspection-config"]').trigger('click');
     expect(wrapper.find('[data-test="inspection-modal"]').exists()).toBe(true);
 
+    expect(wrapper.find('[data-test="inspection-lookback"]').attributes('max')).toBe('336');
+    expect(wrapper.find('[data-test="inspection-offline-grace"]').attributes('max')).toBe('20160');
     await wrapper.find('[data-test="inspection-lookback"]').setValue('48');
     expect(inspection.lookback_hours).toBe(48);
     expect(typeof inspection.lookback_hours).toBe('number');

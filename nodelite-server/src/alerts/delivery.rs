@@ -45,6 +45,8 @@ pub(crate) enum AlertDeliveryError {
     ResponseTooLarge,
     #[error("webhook returned HTTP {status}")]
     HttpStatus { status: u16 },
+    #[error("wecom webhook rejected the message with errcode {errcode}")]
+    WeComRejected { errcode: i64 },
     #[error("smtp delivery timed out")]
     SmtpTimeout,
     #[error("smtp server rejected command: {0}")]
@@ -63,6 +65,8 @@ impl AlertDeliveryError {
         match self {
             Self::Timeout | Self::Io(_) | Self::Tls(_) | Self::InvalidResponse => true,
             Self::HttpStatus { status } => *status == 429 || *status >= 500,
+            // -1 is "system busy" and 45009 the rate limit; other codes need operator action.
+            Self::WeComRejected { errcode } => matches!(errcode, -1 | 45009),
             Self::SmtpTimeout | Self::Smtp(_) => true,
             Self::InvalidWebhookUrl(_)
             | Self::MissingWebhookHost

@@ -8,6 +8,11 @@ import type {
   AlertSeverity,
 } from '@/api';
 import type { RuleDraft } from '@/lib/alertsDraft';
+import {
+  MAX_ALERT_COOLDOWN_MINUTES,
+  MAX_ALERT_WINDOW_MINUTES,
+  maxThresholdFor,
+} from '@/lib/alertLimits';
 import CsvField from './CsvField.vue';
 import DeliveryCheckboxes from './DeliveryCheckboxes.vue';
 
@@ -68,6 +73,8 @@ function scopeLabel(): string {
   return t(`alerts.scope.${r.scope_mode}`);
 }
 
+const thresholdMax = computed(() => maxThresholdFor(rule.value.metric));
+
 const title = computed(() => rule.value.name || rule.value.id || t('alerts.rules.name'));
 
 const expression = computed(() => {
@@ -124,15 +131,36 @@ const expression = computed(() => {
         </label>
         <label class="field">
           <span>{{ t('alerts.rules.threshold') }}</span>
-          <input v-model.number="rule.threshold" type="number" min="0" step="1" data-test="rule-threshold" />
+          <input
+            v-model.number="rule.threshold"
+            type="number"
+            min="0"
+            :max="thresholdMax"
+            step="1"
+            data-test="rule-threshold"
+          />
         </label>
         <label class="field">
           <span>{{ t('alerts.rules.window_minutes') }}</span>
-          <input v-model.number="rule.window_minutes" type="number" min="1" step="1" data-test="rule-window" />
+          <input
+            v-model.number="rule.window_minutes"
+            type="number"
+            min="1"
+            :max="MAX_ALERT_WINDOW_MINUTES"
+            step="1"
+            data-test="rule-window"
+          />
         </label>
         <label class="field">
           <span>{{ t('alerts.rules.cooldown_minutes') }}</span>
-          <input v-model.number="rule.cooldown_minutes" type="number" min="1" step="1" data-test="rule-cooldown" />
+          <input
+            v-model.number="rule.cooldown_minutes"
+            type="number"
+            min="1"
+            :max="MAX_ALERT_COOLDOWN_MINUTES"
+            step="1"
+            data-test="rule-cooldown"
+          />
         </label>
         <label class="field">
           <span>{{ t('alerts.rules.severity') }}</span>

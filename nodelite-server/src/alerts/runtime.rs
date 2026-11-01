@@ -279,7 +279,10 @@ async fn build_inspection_history_analysis(
     now: DateTime<Utc>,
 ) -> InspectionHistoryAnalysis {
     let bucket_count = inspection_trend_bucket_count(inspection.lookback_hours);
-    let since = now - chrono::Duration::hours(inspection.lookback_hours.max(1) as i64);
+    let since = super::time_math::sub(
+        now,
+        super::time_math::hours(inspection.lookback_hours.max(1)),
+    );
     let span_seconds = (now.timestamp() - since.timestamp()).max(1);
     let bucket_seconds = ((span_seconds as usize).div_ceil(bucket_count)).max(1) as i64;
     let mut buckets = (0..bucket_count)

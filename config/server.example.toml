@@ -4,13 +4,18 @@
 # 进程监听地址。生产部署通常监听 127.0.0.1,由前置 Nginx / Caddy 终止 TLS。
 listen = "127.0.0.1:8080"
 # 对外可访问的基地址,供前端与 Agent 推导 ws/wss、安装脚本 URL。
+# 只能是 origin(协议+主机+可选端口),不支持子路径、查询串或片段。
 public_base_url = "https://monitor.example.com"
 # 仅当你确实需要让面板以明文 HTTP 暴露(例如没有 TLS 终止的隔离测试环境)时
 # 才设置为 true。生产环境务必保持 false。
 insecure_allow_http = false
 # 远端反向代理/WAF 的可信 CIDR。只有当直连 peer 命中这里(或是 loopback)
 # 时,NodeLite 才会解析 X-Forwarded-For / X-Real-IP。留空表示仅信任本机反代。
+# 不接受前缀长度为 0 的网段(如 0.0.0.0/0、::/0)。
 trusted_proxies = []
+# 下列相对路径按进程工作目录(systemd WorkingDirectory)解析,而不是本文件所在目录;
+# CLI 与服务的工作目录不同时会读写不同文件,生产部署请改用绝对路径(启动时会对相对路径告警)。
+# 本文件含凭据,建议 chmod 600,组/其他用户可读时启动会告警。
 # 节点凭证文件;Server 与 CLI 都会读写它。
 node_registry_path = "./config/server.json"
 # 历史数据 SQLite 文件,缺失时会在启动时自动创建。
@@ -33,11 +38,11 @@ stale_after_secs = 20
 ping_interval_secs = 10
 # WebSocket 单帧最大字节数,防止异常 Agent 发巨型负载。不得低于 Agent 的发送上限 65536。
 max_message_bytes = 65536
-# WebSocket Hello 握手超时(秒)。
+# WebSocket Hello 握手超时(秒)，至少为 1。
 hello_timeout_secs = 10
 # 最大未响应 Ping 数量。
 max_outstanding_pings = 32
-# 不安全传输警告间隔(秒)。
+# 不安全传输警告间隔(秒)，至少为 1。
 insecure_transport_warn_interval_secs = 900
 # 最大磁盘数量限制，允许 1..=1024。
 max_sanitized_disks = 64
@@ -158,6 +163,8 @@ send_resolved = true
 # 每日巡检摘要配置。默认关闭。
 enabled = false
 local_time = "09:00"
+# lookback_hours 允许 1..=336（历史保留期），offline_grace_minutes 最大 20160；
+# 旧文件中更大的值会在启动时截断到上限并告警，设置页保存时直接拒绝。
 lookback_hours = 24
 delivery = ["smtp"]
 offline_grace_minutes = 10
@@ -166,7 +173,9 @@ cpu_warn_percent = 85
 memory_warn_percent = 90
 
 [[alerts.rules]]
-# 规则 ID 需要稳定且唯一，便于后续调整和审计。
+# 规则 ID 需要稳定且唯一（重复 ID 启动时告警、设置页保存时拒绝），便于后续调整和审计。
+# window_minutes 允许 1..=20160，cooldown_minutes 允许 1..=43200；CPU/内存/磁盘
+# 百分比指标的 threshold 不超过 100（流量使用率可超过 100）。越界值启动时截断并告警。
 id = "node-offline"
 name = "Node offline over 10 minutes"
 enabled = true

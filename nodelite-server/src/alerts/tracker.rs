@@ -8,6 +8,7 @@ use chrono::{DateTime, Duration, Utc};
 use nodelite_proto::AlertRuleConfig;
 
 use super::channels::ChannelSet;
+use super::time_math;
 use super::{AlertMetricReading, EvaluatedRule};
 
 const DELIVERY_FAILURE_RETRY_DELAY_MINUTES: i64 = 5;
@@ -257,14 +258,13 @@ fn should_repeat_alert(
     cooldown_minutes: u64,
     now: DateTime<Utc>,
 ) -> bool {
-    let cooldown_minutes = i64::try_from(cooldown_minutes).unwrap_or(i64::MAX);
-    now.signed_duration_since(last_notified_at) >= Duration::minutes(cooldown_minutes)
+    now.signed_duration_since(last_notified_at) >= time_math::minutes(cooldown_minutes)
 }
 
 fn retry_notified_at(cooldown_minutes: u64, now: DateTime<Utc>) -> DateTime<Utc> {
-    let cooldown_minutes = i64::try_from(cooldown_minutes).unwrap_or(i64::MAX);
-    let retry_offset = cooldown_minutes.saturating_sub(DELIVERY_FAILURE_RETRY_DELAY_MINUTES);
-    now - Duration::minutes(retry_offset)
+    let retry_offset = time_math::minutes(cooldown_minutes)
+        - Duration::minutes(DELIVERY_FAILURE_RETRY_DELAY_MINUTES);
+    time_math::sub(now, retry_offset)
 }
 
 fn triggered_event(
