@@ -20,6 +20,7 @@ use super::refresh::{
 use super::transport::send_message;
 use super::{ActiveSession, LoopAction};
 use crate::AppState;
+use crate::history::TrafficSample;
 use crate::sanitize::{
     METRIC_ANOMALY_WINDOW_SECS, sanitize_snapshot, should_disconnect_for_metric_anomalies,
     update_metric_anomaly_window,
@@ -336,11 +337,12 @@ async fn handle_metrics_message(
         return Ok(LoopAction::Break);
     };
     state.history.record_status(&status).await;
-    let (total_rx_bytes, total_tx_bytes) = match status.snapshot.as_ref() {
-        Some(snapshot) => (
-            snapshot.network.total_rx_bytes,
-            snapshot.network.total_tx_bytes,
-        ),
+    let traffic_sample = match status.snapshot.as_ref() {
+        Some(snapshot) => TrafficSample {
+            rx_bytes: snapshot.network.total_rx_bytes,
+            tx_bytes: snapshot.network.total_tx_bytes,
+            uptime_secs: snapshot.uptime_secs,
+        },
         None => return Ok(LoopAction::Continue),
     };
     let traffic_guard = state.history.traffic_lifecycle_lock.lock().await;
@@ -354,13 +356,7 @@ async fn handle_metrics_message(
         if let Some(quota) = state.registry.traffic_quota(&session.node_id).await {
             state
                 .history
-                .record_traffic(
-                    &session.node_id,
-                    total_rx_bytes,
-                    total_tx_bytes,
-                    quota.accounting,
-                    true,
-                )
+                .record_traffic(&session.node_id, traffic_sample, quota.accounting, true)
                 .await
                 .and_then(|usage| {
                     (quota.throttle_kbps.is_some()
@@ -376,8 +372,7 @@ async fn handle_metrics_message(
                 .history
                 .record_traffic(
                     &session.node_id,
-                    total_rx_bytes,
-                    total_tx_bytes,
+                    traffic_sample,
                     crate::registry::TrafficAccounting::Bidirectional,
                     false,
                 )

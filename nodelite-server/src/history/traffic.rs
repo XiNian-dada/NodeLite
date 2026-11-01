@@ -1,8 +1,10 @@
 //! 按自然月累计节点套餐流量，并把计数器状态异步写入历史 SQLite 数据库。
 //!
 //! Agent 的网卡累计字节会在重启时归零，因此这里保存每个节点上一次看到的
-//! 收发计数；只累加单调递增的差值。计费口径或自然月变化时重建基线，避免把
-//! 不同套餐的字节数混合在同一个使用量中。
+//! 收发计数与 uptime；只累加单调递增的差值，回退规则见 `counters`。计费口径或
+//! 自然月变化时重建基线，避免把不同套餐的字节数混合在同一个使用量中。
+
+mod counters;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -16,6 +18,8 @@ use tokio::task::JoinHandle;
 use tokio::time::{MissedTickBehavior, interval};
 use tracing::warn;
 
+use self::counters::CounterBaseline;
+pub(crate) use self::counters::TrafficSample;
 use crate::queue::{bounded_mpsc_channel, try_enqueue};
 use crate::registry::TrafficAccounting;
 
@@ -33,8 +37,7 @@ pub(crate) struct TrafficUsage {
 #[derive(Debug, Clone)]
 struct TrafficUsageState {
     usage: TrafficUsage,
-    last_rx_bytes: u64,
-    last_tx_bytes: u64,
+    baseline: CounterBaseline,
 }
 
 #[derive(Debug, Clone)]
@@ -105,8 +108,7 @@ impl TrafficTracker {
     pub(super) async fn record(
         &self,
         node_id: &str,
-        total_rx_bytes: u64,
-        total_tx_bytes: u64,
+        sample: TrafficSample,
         accounting: TrafficAccounting,
         enabled: bool,
     ) -> Option<TrafficUsage> {
@@ -141,31 +143,21 @@ impl TrafficTracker {
                         used_bytes: 0,
                         accounting,
                     },
-                    last_rx_bytes: total_rx_bytes,
-                    last_tx_bytes: total_tx_bytes,
+                    baseline: CounterBaseline::new(sample),
                 });
+            // 周期切换也经过 advance：临时回退期间不能把低读数当作新周期的基线。
+            let (rx_delta, tx_delta) = entry.baseline.advance(sample);
             if entry.usage.cycle_started_at != cycle_started_at
                 || entry.usage.accounting != accounting
             {
-                *entry = TrafficUsageState {
-                    usage: TrafficUsage {
-                        node_id: node_id.to_string(),
-                        cycle_started_at,
-                        used_bytes: 0,
-                        accounting,
-                    },
-                    last_rx_bytes: total_rx_bytes,
-                    last_tx_bytes: total_tx_bytes,
-                };
+                entry.usage.cycle_started_at = cycle_started_at;
+                entry.usage.accounting = accounting;
+                entry.usage.used_bytes = 0;
             } else {
-                let rx_delta = total_rx_bytes.saturating_sub(entry.last_rx_bytes);
-                let tx_delta = total_tx_bytes.saturating_sub(entry.last_tx_bytes);
                 entry.usage.used_bytes = entry
                     .usage
                     .used_bytes
                     .saturating_add(counted_bytes(accounting, rx_delta, tx_delta));
-                entry.last_rx_bytes = total_rx_bytes;
-                entry.last_tx_bytes = total_tx_bytes;
             }
             TrafficWrite::Upsert(entry.clone())
         };
@@ -280,8 +272,9 @@ fn load_traffic_state(
     sqlite_busy_timeout_secs: u64,
 ) -> Result<HashMap<String, TrafficUsageState>> {
     let connection = open_traffic_connection(db_path, sqlite_busy_timeout_secs)?;
+    ensure_uptime_column(&connection)?;
     let mut statement = connection.prepare(
-        "SELECT node_id, cycle_started_at, accounting, used_bytes, last_rx_bytes, last_tx_bytes FROM traffic_usage",
+        "SELECT node_id, cycle_started_at, accounting, used_bytes, last_rx_bytes, last_tx_bytes, last_uptime_secs FROM traffic_usage",
     )?;
     let rows = statement.query_map([], |row| {
         let node_id: String = row.get(0)?;
@@ -290,6 +283,7 @@ fn load_traffic_state(
         let used_bytes: i64 = row.get(3)?;
         let last_rx_bytes: i64 = row.get(4)?;
         let last_tx_bytes: i64 = row.get(5)?;
+        let last_uptime_secs: Option<i64> = row.get(6)?;
         Ok((
             node_id,
             cycle_started_at,
@@ -297,12 +291,20 @@ fn load_traffic_state(
             used_bytes,
             last_rx_bytes,
             last_tx_bytes,
+            last_uptime_secs,
         ))
     })?;
     let mut states = HashMap::new();
     for row in rows {
-        let (node_id, cycle_started_at, accounting, used_bytes, last_rx_bytes, last_tx_bytes) =
-            row?;
+        let (
+            node_id,
+            cycle_started_at,
+            accounting,
+            used_bytes,
+            last_rx_bytes,
+            last_tx_bytes,
+            last_uptime_secs,
+        ) = row?;
         let Some(cycle_started_at) = Utc.timestamp_opt(cycle_started_at, 0).single() else {
             continue;
         };
@@ -318,8 +320,11 @@ fn load_traffic_state(
                     used_bytes: sqlite_integer_to_u64(used_bytes),
                     accounting,
                 },
-                last_rx_bytes: sqlite_integer_to_u64(last_rx_bytes),
-                last_tx_bytes: sqlite_integer_to_u64(last_tx_bytes),
+                baseline: CounterBaseline::restored(
+                    sqlite_integer_to_u64(last_rx_bytes),
+                    sqlite_integer_to_u64(last_tx_bytes),
+                    last_uptime_secs.map(sqlite_integer_to_u64),
+                ),
             },
         );
     }
@@ -402,14 +407,15 @@ fn write_traffic_states(
         match write {
             TrafficWrite::Upsert(state) => {
                 tx.execute(
-                    "INSERT INTO traffic_usage (node_id, cycle_started_at, accounting, used_bytes, last_rx_bytes, last_tx_bytes) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(node_id) DO UPDATE SET cycle_started_at = excluded.cycle_started_at, accounting = excluded.accounting, used_bytes = excluded.used_bytes, last_rx_bytes = excluded.last_rx_bytes, last_tx_bytes = excluded.last_tx_bytes",
+                    "INSERT INTO traffic_usage (node_id, cycle_started_at, accounting, used_bytes, last_rx_bytes, last_tx_bytes, last_uptime_secs) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT(node_id) DO UPDATE SET cycle_started_at = excluded.cycle_started_at, accounting = excluded.accounting, used_bytes = excluded.used_bytes, last_rx_bytes = excluded.last_rx_bytes, last_tx_bytes = excluded.last_tx_bytes, last_uptime_secs = excluded.last_uptime_secs",
                     params![
                         state.usage.node_id,
                         state.usage.cycle_started_at.timestamp(),
                         accounting_to_db(state.usage.accounting),
                         u64_to_sqlite_integer(state.usage.used_bytes),
-                        u64_to_sqlite_integer(state.last_rx_bytes),
-                        u64_to_sqlite_integer(state.last_tx_bytes),
+                        u64_to_sqlite_integer(state.baseline.rx_bytes),
+                        u64_to_sqlite_integer(state.baseline.tx_bytes),
+                        state.baseline.uptime_secs.map(u64_to_sqlite_integer),
                     ],
                 )?;
             }
@@ -443,10 +449,25 @@ fn open_traffic_connection(db_path: &Path, sqlite_busy_timeout_secs: u64) -> Res
              accounting TEXT NOT NULL,\
              used_bytes INTEGER NOT NULL,\
              last_rx_bytes INTEGER NOT NULL,\
-             last_tx_bytes INTEGER NOT NULL\
+             last_tx_bytes INTEGER NOT NULL,\
+             last_uptime_secs INTEGER\
          );",
     )?;
     Ok(connection)
+}
+
+fn ensure_uptime_column(connection: &Connection) -> Result<()> {
+    let has_column = connection
+        .prepare(
+            "SELECT 1 FROM pragma_table_info('traffic_usage') WHERE name = 'last_uptime_secs'",
+        )?
+        .exists([])?;
+    if !has_column {
+        connection
+            .execute_batch("ALTER TABLE traffic_usage ADD COLUMN last_uptime_secs INTEGER;")
+            .context("failed to add uptime column to traffic usage table")?;
+    }
+    Ok(())
 }
 
 fn accounting_to_db(accounting: TrafficAccounting) -> &'static str {
@@ -475,67 +496,4 @@ fn sqlite_integer_to_u64(value: i64) -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    use chrono::{TimeZone, Utc};
-
-    use super::{TrafficTracker, counted_bytes, utc_month_start};
-    use crate::registry::TrafficAccounting;
-
-    #[test]
-    fn traffic_accounting_uses_the_configured_direction() {
-        assert_eq!(counted_bytes(TrafficAccounting::Bidirectional, 10, 15), 25);
-        assert_eq!(counted_bytes(TrafficAccounting::Inbound, 10, 15), 10);
-        assert_eq!(counted_bytes(TrafficAccounting::Outbound, 10, 15), 15);
-    }
-
-    #[test]
-    fn month_start_is_utc_not_the_server_local_timezone() {
-        let now = Utc.with_ymd_and_hms(2026, 7, 30, 16, 0, 0).unwrap();
-        assert_eq!(
-            utc_month_start(now),
-            Utc.with_ymd_and_hms(2026, 7, 1, 0, 0, 0).unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn record_uses_counter_deltas_and_resets_when_accounting_changes() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time should be available")
-            .as_nanos();
-        let db_path = std::env::temp_dir().join(format!("nodelite-traffic-test-{unique}.sqlite3"));
-        let tracker = TrafficTracker::new(Arc::new(db_path.clone()), 1);
-        tracker
-            .initialize()
-            .await
-            .expect("tracker should initialize");
-
-        let baseline = tracker
-            .record("node-a", 100, 200, TrafficAccounting::Bidirectional, true)
-            .await
-            .expect("enabled quota should return usage");
-        assert_eq!(baseline.used_bytes, 0);
-        let usage = tracker
-            .record("node-a", 130, 260, TrafficAccounting::Bidirectional, true)
-            .await
-            .expect("usage should be recorded");
-        assert_eq!(usage.used_bytes, 90);
-
-        let reset = tracker
-            .record("node-a", 140, 290, TrafficAccounting::Outbound, true)
-            .await
-            .expect("changed accounting should return usage");
-        assert_eq!(reset.used_bytes, 0);
-        let outbound = tracker
-            .record("node-a", 160, 330, TrafficAccounting::Outbound, true)
-            .await
-            .expect("outbound usage should be recorded");
-        assert_eq!(outbound.used_bytes, 40);
-
-        tracker.shutdown().await;
-        let _ = std::fs::remove_file(db_path);
-    }
-}
+mod tests;

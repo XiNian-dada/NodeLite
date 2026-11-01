@@ -48,7 +48,7 @@ pub(crate) use self::query_limit::HistoryQueryRuntimeMetrics;
 use self::query_limit::{HistoryQueryLimiter, HistoryQueryPermit};
 #[cfg(test)]
 use self::test_probe::HistoryQueryProbe;
-pub(crate) use self::traffic::TrafficPersistenceError;
+pub(crate) use self::traffic::{TrafficPersistenceError, TrafficSample};
 use self::traffic::{TrafficTracker, TrafficUsage};
 use self::writer::{WriterContext, build_history_point, run_history_writer};
 #[cfg(test)]
@@ -363,8 +363,7 @@ impl HistoryStore {
     pub(crate) async fn record_traffic(
         &self,
         node_id: &str,
-        total_rx_bytes: u64,
-        total_tx_bytes: u64,
+        sample: TrafficSample,
         accounting: TrafficAccounting,
         enabled: bool,
     ) -> Option<TrafficUsage> {
@@ -372,7 +371,7 @@ impl HistoryStore {
             return None;
         }
         self.traffic
-            .record(node_id, total_rx_bytes, total_tx_bytes, accounting, enabled)
+            .record(node_id, sample, accounting, enabled)
             .await
     }
 

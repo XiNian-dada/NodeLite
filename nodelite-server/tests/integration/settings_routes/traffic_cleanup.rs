@@ -19,14 +19,32 @@ async fn enroll(harness: &SettingsHarness, node_id: &str) -> Result<()> {
     Ok(())
 }
 
+fn sample(rx_bytes: u64, tx_bytes: u64) -> crate::history::TrafficSample {
+    crate::history::TrafficSample {
+        rx_bytes,
+        tx_bytes,
+        uptime_secs: 100,
+    }
+}
+
 async fn record_usage(state: &crate::AppState, node_id: &str) {
     state
         .history
-        .record_traffic(node_id, 100, 200, TrafficAccounting::Bidirectional, true)
+        .record_traffic(
+            node_id,
+            sample(100, 200),
+            TrafficAccounting::Bidirectional,
+            true,
+        )
         .await;
     let usage = state
         .history
-        .record_traffic(node_id, 400, 800, TrafficAccounting::Bidirectional, true)
+        .record_traffic(
+            node_id,
+            sample(400, 800),
+            TrafficAccounting::Bidirectional,
+            true,
+        )
         .await
         .expect("usage");
     assert_eq!(usage.used_bytes, 900);
@@ -76,7 +94,12 @@ async fn deleting_a_node_commits_ledger_removal_before_success_and_reenrollment_
     restarted.registry.reload().await?;
     let usage = restarted
         .history
-        .record_traffic(NODE, 10_000, 20_000, TrafficAccounting::Bidirectional, true)
+        .record_traffic(
+            NODE,
+            sample(10_000, 20_000),
+            TrafficAccounting::Bidirectional,
+            true,
+        )
         .await
         .expect("new baseline");
     assert_eq!(usage.used_bytes, 0);
