@@ -511,3 +511,13 @@ async fn recovery_after_a_rebaseline_is_not_billed_across_a_server_restart() {
     restarted.shutdown().await;
     remove_db(&db_path);
 }
+
+#[test]
+fn recovery_marker_can_be_restored_after_a_failed_reconcile() {
+    let tracker = TrafficTracker::new(Arc::new(test_db_path("recovery-marker")), 0);
+    tracker.mark_recovered_after_startup();
+    assert!(tracker.take_recovered_after_startup());
+    assert!(!tracker.take_recovered_after_startup());
+    tracker.mark_recovered_after_startup();
+    assert!(tracker.take_recovered_after_startup());
+}

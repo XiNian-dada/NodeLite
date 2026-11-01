@@ -383,6 +383,10 @@ impl HistoryStore {
         self.traffic.take_recovered_after_startup()
     }
 
+    pub(crate) fn mark_traffic_recovered(&self) {
+        self.traffic.mark_recovered_after_startup();
+    }
+
     pub(crate) async fn traffic_usages(&self) -> Vec<TrafficUsage> {
         self.traffic.usages().await
     }

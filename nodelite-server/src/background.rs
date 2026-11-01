@@ -84,6 +84,7 @@ pub(crate) fn spawn_registry_reloader(state: AppState) -> JoinHandle<()> {
                     if history.take_traffic_recovered()
                         && let Err(error) = history.reconcile_traffic(&registry.node_ids().await).await
                     {
+                        history.mark_traffic_recovered();
                         warn!(error = ?error, "failed to reconcile traffic ledgers after recovery");
                     }
                     let reload_result = registry.reload_if_file_changed().await;

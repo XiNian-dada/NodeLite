@@ -144,6 +144,11 @@ impl TrafficTracker {
         self.recovered_after_startup.swap(false, Ordering::AcqRel)
     }
 
+    /// 对账失败时恢复标记，让下一轮继续清理。
+    pub(super) fn mark_recovered_after_startup(&self) {
+        self.recovered_after_startup.store(true, Ordering::Release);
+    }
+
     pub(super) async fn initialize(&self) -> Result<()> {
         let db_path = Arc::clone(&self.db_path);
         let timeout_secs = self.sqlite_busy_timeout_secs;
