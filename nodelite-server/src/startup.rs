@@ -235,13 +235,7 @@ async fn initialize_server_runtime(
 
 fn spawn_server_background_tasks(config: &ServerConfig, state: &AppState) -> Vec<JoinHandle<()>> {
     let mut background_tasks = vec![
-        spawn_registry_reloader(
-            state.registry.clone(),
-            state.history.clone(),
-            state.agent_logs.clone(),
-            state.readiness.clone(),
-            state.shutdown.clone(),
-        ),
+        spawn_registry_reloader(state.clone()),
         state.audit_log.clone().spawn_pruner(state.shutdown.clone()),
         spawn_stale_reaper(state.shared.clone(), state.shutdown.clone()),
         spawn_snapshot_persistor(
