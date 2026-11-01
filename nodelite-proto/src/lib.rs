@@ -8,6 +8,7 @@ pub mod agent_update;
 #[cfg(feature = "wire-compression")]
 pub mod compression;
 pub mod config;
+pub mod limits;
 pub mod message;
 pub mod model;
 /// Server 与 Agent 传输安全检查共用的 URL 与主机名辅助工具。
@@ -41,6 +42,10 @@ pub use config::{
     MIN_HISTORY_READ_CACHE_KIB, MIN_TOKEN_VERIFY_MAX_PARALLELISM, MIN_WRITER_FLUSH_INTERVAL_MS,
     MetricsConfig, ReadonlyAuthConfig, ServerConfig, WsConfig, normalize_totp_secret,
     parse_server_config,
+};
+pub use limits::{
+    MAX_METRICS_FRAME_BYTES, MAX_SNAPSHOT_DISKS, MAX_SNAPSHOT_STRING_BYTES,
+    fit_snapshot_to_wire_limits,
 };
 pub use message::{
     AgentLogEntry, AgentLogsMessage, BrowserMessage, HelloMessage,

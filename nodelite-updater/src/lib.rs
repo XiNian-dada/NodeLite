@@ -13,6 +13,8 @@ mod error;
 mod fault;
 #[cfg(target_os = "linux")]
 mod fs;
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod gate;
 #[cfg(target_os = "linux")]
 mod maintenance;
 #[cfg(target_os = "linux")]

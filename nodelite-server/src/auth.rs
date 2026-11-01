@@ -107,6 +107,9 @@ pub const TWO_FACTOR_AUTH_SECS: u64 = 24 * 60 * 60;
 pub const BASIC_AUTH_SESSION_SECS: u64 = 24 * 60 * 60;
 /// Shared budget bounds memory and expiry scans without evicting live browser sessions.
 pub(crate) const MAX_AUTH_SESSIONS: usize = 1_024;
+/// Pending sessions have their own budget and evict the oldest, so Basic-authorized requests
+/// that never finish 2FA cannot use up the slots real logins need.
+pub(crate) const MAX_PENDING_SESSIONS: usize = 256;
 /// 敏感设置修改的确认凭证为短效机制，且与当前浏览器会话绑定。
 pub const SENSITIVE_CONFIRMATION_SECS: u64 = 5 * 60;
 /// 单个 pending session 允许的最大 TOTP 错误尝试次数。达到后该 pending token
@@ -277,7 +280,15 @@ impl TwoFactorSessions {
         let expires_at = Instant::now() + Duration::from_secs(TWO_FACTOR_PENDING_SECS);
         let mut store = lock_mutex(&self.inner);
         prune_expired_sessions(&mut store, Instant::now());
-        ensure_session_capacity(&store)?;
+        if store.pending.len() >= MAX_PENDING_SESSIONS
+            && let Some(oldest) = store
+                .pending
+                .iter()
+                .min_by_key(|(_, session)| session.expires_at)
+                .map(|(token, _)| token.clone())
+        {
+            store.pending.remove(&oldest);
+        }
         store.pending.insert(
             token.clone(),
             PendingSession {
@@ -346,6 +357,9 @@ impl TwoFactorSessions {
         if !store.pending.contains_key(pending_token) {
             return Ok(None);
         }
+        // Checked before consuming the pending token or TOTP step, so a full store leaves the
+        // login retryable.
+        ensure_session_capacity(&store)?;
         let token = generate_session_token()?;
         if !mark_unused_totp_steps(&mut store, matching_steps, now) {
             return Ok(None);
@@ -369,6 +383,7 @@ impl TwoFactorSessions {
         if !store.pending.contains_key(pending_token) {
             return Ok(None);
         }
+        ensure_session_capacity(&store)?;
         let token = generate_session_token()?;
         store.pending.remove(pending_token);
         insert_authenticated_session(&mut store, &token, now);
@@ -433,9 +448,7 @@ impl TwoFactorSessions {
 }
 
 fn ensure_session_capacity(store: &TwoFactorSessionStore) -> AuthSessionResult<()> {
-    if store.pending.len() + store.authenticated.len() + store.basic_auth_sessions.len()
-        >= MAX_AUTH_SESSIONS
-    {
+    if store.authenticated.len() + store.basic_auth_sessions.len() >= MAX_AUTH_SESSIONS {
         return Err(AuthSessionError::Capacity);
     }
     Ok(())

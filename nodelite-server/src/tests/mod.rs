@@ -7,6 +7,7 @@ pub(crate) use super::{
 pub(crate) use support::two_factor_auth_test_state;
 
 mod auth_runtime_tests;
+mod pending_two_factor_tests;
 mod protected_headers_tests;
 mod proxy_admission_tests;
 mod readonly_auth_tests;

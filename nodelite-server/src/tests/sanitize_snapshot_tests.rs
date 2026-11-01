@@ -408,8 +408,9 @@ fn sanitize_snapshot_caps_disk_count_and_tracks_clean_reports() {
 
     let (sanitized, report) = sanitize_snapshot(&config, snapshot);
     assert_eq!(sanitized.disks.len(), MAX_SANITIZED_DISKS);
-    assert_eq!(report.dropped_disks, 3);
-    assert!(report.modified());
+    assert_eq!(report.trimmed_disks, 3);
+    assert_eq!(report.dropped_disks, 0);
+    assert!(!report.modified());
 
     let mut window: std::collections::VecDeque<std::time::Instant> =
         std::collections::VecDeque::new();
@@ -422,6 +423,23 @@ fn sanitize_snapshot_caps_disk_count_and_tracks_clean_reports() {
         update_metric_anomaly_window(
             &mut window,
             &report,
+            now + std::time::Duration::from_secs(tick as u64),
+        );
+    }
+    assert!(window.is_empty());
+    assert!(!should_disconnect_for_metric_anomalies(
+        &window,
+        METRIC_ANOMALY_SESSION_LIMIT
+    ));
+
+    let malformed = SanitizationReport {
+        dropped_disks: 1,
+        ..SanitizationReport::default()
+    };
+    for tick in 0..METRIC_ANOMALY_SESSION_LIMIT {
+        update_metric_anomaly_window(
+            &mut window,
+            &malformed,
             now + std::time::Duration::from_secs(tick as u64),
         );
     }
@@ -551,5 +569,8 @@ fn sanitize_snapshot_deduplicates_repeated_disk_devices() {
     assert_eq!(sanitized.disks.len(), 2);
     assert_eq!(sanitized.disks[0].mount_point, "/");
     assert_eq!(sanitized.disks[1].mount_point, "/ssd");
-    assert_eq!(report.dropped_disks, 1);
+    assert_eq!(report.deduplicated_disks, 1);
+    assert_eq!(report.trimmed_disks, 0);
+    assert_eq!(report.dropped_disks, 0);
+    assert!(!report.modified());
 }

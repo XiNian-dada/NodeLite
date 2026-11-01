@@ -36,15 +36,19 @@ fn sanitization_configuration_defaults_and_bounds_are_consistent() {
         defaults.metric_anomaly_session_limit,
         DEFAULT_METRIC_ANOMALY_SESSION_LIMIT
     );
-    for (name, upper) in [
-        ("max_sanitized_disks", 1024),
-        ("max_sanitized_string_bytes", 4096),
-        ("metric_anomaly_session_limit", 1000),
+    for (name, lower, upper) in [
+        ("max_sanitized_disks", 1, 1024),
+        (
+            "max_sanitized_string_bytes",
+            crate::limits::MAX_SNAPSHOT_STRING_BYTES,
+            4096,
+        ),
+        ("metric_anomaly_session_limit", 1, 1000),
     ] {
-        for value in [1, upper] {
+        for value in [lower, upper] {
             assert!(parse_server_config(&format!("{base}{name} = {value}\n")).is_ok());
         }
-        for value in [0, upper + 1] {
+        for value in [lower - 1, upper + 1] {
             let error = parse_server_config(&format!("{base}{name} = {value}\n"))
                 .expect_err("out of bounds");
             assert!(error.to_string().contains(name));
@@ -472,5 +476,29 @@ fn rejects_token_verify_parallelism_outside_safe_range() {
                 .to_string()
                 .contains("server.token_verify_max_parallelism must be between 1 and 8")
         );
+    }
+}
+
+fn server_config_with_max_message_bytes(value: usize) -> String {
+    format!(
+        r#"
+        [server]
+        listen = "127.0.0.1:8080"
+        public_base_url = "http://127.0.0.1:8080"
+        max_message_bytes = {value}
+        "#
+    )
+}
+
+#[test]
+fn max_message_bytes_cannot_go_below_the_shared_frame_limit() {
+    let limit = crate::limits::MAX_METRICS_FRAME_BYTES;
+    let error = parse_server_config(&server_config_with_max_message_bytes(limit - 1))
+        .expect_err("a limit below the agent frame limit must be rejected");
+    assert!(error.to_string().contains("server.max_message_bytes"));
+    for accepted in [limit, limit + 1] {
+        let config = parse_server_config(&server_config_with_max_message_bytes(accepted))
+            .expect("limits at or above the agent frame limit should parse");
+        assert_eq!(config.max_message_bytes, accepted);
     }
 }

@@ -84,12 +84,7 @@ pub(crate) async fn finish_passkey_authentication(
         .exchange_pending_for_passkey(&pending_token)
         .map_err(|error| {
             error!(error = ?error, "failed to create passkey-authenticated session");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(Verify2FAError {
-                    error: "Failed to create authenticated session".to_string(),
-                }),
-            )
+            super::two_factor::session_exchange_error(error)
         })?;
     let Some(auth_token) = auth_token else {
         record_passkey_failure(

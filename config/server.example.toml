@@ -31,7 +31,7 @@ snapshot_path = "./data/snapshot.json"
 stale_after_secs = 20
 # Server 主动向 Agent 发送 Ping 的间隔(秒),决定 RTT 测量频率。
 ping_interval_secs = 10
-# WebSocket 单帧最大字节数,防止异常 Agent 发巨型负载。
+# WebSocket 单帧最大字节数,防止异常 Agent 发巨型负载。不得低于 Agent 的发送上限 65536。
 max_message_bytes = 65536
 # WebSocket Hello 握手超时(秒)。
 hello_timeout_secs = 10
@@ -41,7 +41,7 @@ max_outstanding_pings = 32
 insecure_transport_warn_interval_secs = 900
 # 最大磁盘数量限制，允许 1..=1024。
 max_sanitized_disks = 64
-# 磁盘字段的 UTF-8 字节数限制，允许 1..=4096。
+# 磁盘字段的 UTF-8 字节数限制，允许 256..=4096（下限为 Agent 的截断上限）。
 max_sanitized_string_bytes = 256
 # 五分钟内指标异常达到此次数时断连，允许 1..=1000。
 metric_anomaly_session_limit = 5
@@ -59,6 +59,9 @@ token_verify_max_parallelism = 4
 export_node_resource_metrics = false
 # 开启后会按节点和挂载点导出磁盘字节数与使用率;节点多或挂载点多时 series/body 会快速增长。
 export_node_disk_metrics = false
+# 开启 2FA 后 Prometheus 无法完成二次验证,/metrics 默认返回 401。设为 true 时只对 /metrics
+# 放宽为仅需 Basic 认证;其他页面与 API 仍要求 2FA。
+allow_basic_scrape_with_2fa = false
 
 [auth]
 # 前端只读访问用的基本认证用户名;生产建议由安装脚本生成或通过受控配置注入。

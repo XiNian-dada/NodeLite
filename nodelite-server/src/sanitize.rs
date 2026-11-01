@@ -106,11 +106,11 @@ pub fn sanitize_snapshot(
         };
         let disk_identity = disk_device_identity(&disk);
         if !seen_disk_devices.insert(disk_identity) {
-            report.dropped_disks = report.dropped_disks.saturating_add(1);
+            report.deduplicated_disks = report.deduplicated_disks.saturating_add(1);
             continue;
         }
         if sanitized_disks.len() >= config.max_sanitized_disks {
-            report.dropped_disks = report.dropped_disks.saturating_add(1);
+            report.trimmed_disks = report.trimmed_disks.saturating_add(1);
             continue;
         }
         sanitized_disks.push(disk);
@@ -132,6 +132,12 @@ pub struct SanitizationReport {
     pub truncated_strings: u32,
     pub dropped_disks: u32,
     pub sanitized_rates: u32,
+    /// 合法但超出 `max_sanitized_disks` 容量上限被丢弃的磁盘。
+    /// 这是服务端自身的策略裁剪而非 Agent 数据有误，因此不计入 `total()`，
+    /// 否则挂载点较多的主机会被异常窗口反复断开。
+    pub trimmed_disks: u32,
+    /// 因设备重复被丢弃的磁盘，同样属于策略裁剪，不计入 `total()`。
+    pub deduplicated_disks: u32,
 }
 
 impl SanitizationReport {
