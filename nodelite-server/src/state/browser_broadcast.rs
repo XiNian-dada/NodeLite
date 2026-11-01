@@ -2,12 +2,13 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use axum::extract::ws::Utf8Bytes;
 use nodelite_proto::{BrowserMessage, NodeListItem};
-use tokio::sync::broadcast;
+use tokio::sync::{Mutex, broadcast};
 use tokio_util::sync::CancellationToken;
 
 use super::SharedState;
@@ -24,6 +25,68 @@ pub(crate) struct BrowserIncrementalUpdate {
 /// 所以容量决定内存上限(容量 × 节点数)。16 个 tick 约等于落后 16 秒,
 /// 这样的会话走一次全量重同步比为它保留更多批次更划算。
 pub(super) const BROWSER_INCREMENTAL_CHANNEL_CAPACITY: usize = 16;
+
+/// 全量帧的复用时限。revision 在高频上报下每几毫秒就变一次,不能作为复用条件,
+/// 否则同一 tick 内落后的会话仍会各自重建。
+const BROWSER_INITIAL_STATE_MAX_AGE: Duration = Duration::from_secs(1);
+
+struct CachedInitialState {
+    revision: u64,
+    built_at: Instant,
+    frame: Utf8Bytes,
+}
+
+/// 浏览器会话共享的单份全量帧。
+#[derive(Default)]
+pub(super) struct BrowserResyncCache {
+    slot: Mutex<Option<CachedInitialState>>,
+    published_revision: AtomicU64,
+    builds: AtomicU64,
+}
+
+impl BrowserResyncCache {
+    fn advance_published_revision(&self, revision: u64) {
+        self.published_revision
+            .fetch_max(revision, Ordering::AcqRel);
+    }
+}
+
+impl SharedState {
+    /// 返回全量 `InitialState` 帧及其 revision baseline。调用方必须已持有增量订阅:
+    /// 只有快照不早于最后一批已发布增量时,快照加上后续批次才能收敛到最新状态,
+    /// 而之后发布的批次订阅者都能收到。因此每个 tick 最多构建一次全量。
+    pub(crate) async fn browser_initial_state_frame(&self) -> anyhow::Result<(u64, Utf8Bytes)> {
+        let cache = &self.browser_resync;
+        let mut slot = cache.slot.lock().await;
+        let published = cache.published_revision.load(Ordering::Acquire);
+        if let Some(cached) = slot.as_ref()
+            && cached.revision >= published
+            && cached.built_at.elapsed() <= BROWSER_INITIAL_STATE_MAX_AGE
+        {
+            return Ok((cached.revision, cached.frame.clone()));
+        }
+
+        cache.builds.fetch_add(1, Ordering::Relaxed);
+        let snapshot = self.browser_snapshot().await;
+        let revision = snapshot.revision;
+        let frame = browser_frame(&BrowserMessage::InitialState {
+            generated_at: snapshot.generated_at,
+            overview: snapshot.overview,
+            nodes: snapshot.nodes,
+        })?;
+        *slot = Some(CachedInitialState {
+            revision,
+            built_at: Instant::now(),
+            frame: frame.clone(),
+        });
+        Ok((revision, frame))
+    }
+
+    #[cfg(test)]
+    pub(super) fn browser_initial_state_build_count(&self) -> u64 {
+        self.browser_resync.builds.load(Ordering::Relaxed)
+    }
+}
 
 /// 启动集中 diff 后台任务,订阅脏信号、去抖并广播增量消息给所有浏览器会话。
 /// 返回 JoinHandle 供调用者纳入 shutdown 生命周期。
@@ -109,7 +172,13 @@ pub(super) async fn run_tick(
     last_nodes: &mut HashMap<String, NodeListItem>,
     dirty: &mut bool,
 ) {
+    // 必须先于 receiver_count 推进:本 tick 会消费掉脏标记,此后才订阅的会话
+    // 等不到下一批增量,只能靠这里让它拒绝旧缓存、取到包含这些变化的快照。
+    shared
+        .browser_resync
+        .advance_published_revision(shared.nodes_revision.load(Ordering::Acquire));
     if shared.browser_incremental_tx.receiver_count() == 0 {
+        *shared.browser_resync.slot.lock().await = None;
         // 不能保留旧基线:节点在无人订阅期间变化后又变回基线值时,diff 判定为未变,
         // 新会话手里的中间值就再也得不到修正。清空后首批增量等于全量,结果总是收敛。
         *last_nodes = HashMap::new();
@@ -158,6 +227,7 @@ async fn broadcast_incremental_updates(
 
     *last_nodes = index_by_node_id(current);
 
+    shared.browser_resync.advance_published_revision(revision);
     let _ = shared
         .browser_incremental_tx
         .send(BrowserIncrementalUpdate {

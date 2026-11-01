@@ -28,7 +28,7 @@ use nodelite_proto::{
 };
 use tokio::sync::{Mutex, broadcast, oneshot};
 
-use self::browser_broadcast::BROWSER_INCREMENTAL_CHANNEL_CAPACITY;
+use self::browser_broadcast::{BROWSER_INCREMENTAL_CHANNEL_CAPACITY, BrowserResyncCache};
 pub(crate) use self::browser_broadcast::{
     BrowserIncrementalUpdate, spawn_browser_incremental_task,
 };
@@ -109,6 +109,7 @@ pub struct SharedState {
     browser_view_dirty_tx: broadcast::Sender<BrowserViewDirty>,
     /// 集中 diff 任务计算出的增量消息,广播给所有浏览器会话直接转发(零锁、零 diff)。
     browser_incremental_tx: broadcast::Sender<BrowserIncrementalUpdate>,
+    browser_resync: Arc<BrowserResyncCache>,
     #[cfg(test)]
     metrics_cache_builds: Arc<AtomicU64>,
 }
@@ -147,6 +148,7 @@ impl SharedState {
             alert_delivery: AlertDeliveryMetrics::default(),
             browser_view_dirty_tx: broadcast::channel(BROWSER_VIEW_DIRTY_CHANNEL_CAPACITY).0,
             browser_incremental_tx: broadcast::channel(BROWSER_INCREMENTAL_CHANNEL_CAPACITY).0,
+            browser_resync: Arc::default(),
             #[cfg(test)]
             metrics_cache_builds: Arc::new(AtomicU64::new(0)),
         }

@@ -7,7 +7,7 @@
 //!   2. 升级为 WebSocket;
 //!   3. 立即下发全量 `InitialState`;
 //!   4. 订阅集中 diff 任务广播的增量消息(`Arc<BrowserMessage>`),直接转发
-//!      (零锁、零 diff);落后时(`Lagged`)重发全量 `InitialState` 强制重同步;
+//!      (零锁、零 diff);落后时(`Lagged`)重发共享的全量 `InitialState` 强制重同步;
 //!   5. 处理客户端应用层 `Ping`(回 `Pong`);
 //!   6. 连接关闭时 RAII permit 自动归还配额、广播订阅自动退订。
 //!
@@ -177,14 +177,14 @@ async fn handle_client_message(sender: &mut BrowserSink, message: Message) -> an
 
 /// 发送全量 `InitialState`。连接建立或 Lagged 重同步时调用。
 async fn send_initial_state(shared: &SharedState, sender: &mut BrowserSink) -> anyhow::Result<u64> {
-    let snapshot = shared.browser_snapshot().await;
-    let message = BrowserMessage::InitialState {
-        generated_at: snapshot.generated_at,
-        overview: snapshot.overview,
-        nodes: snapshot.nodes,
-    };
-    send_browser_message(sender, &message).await?;
-    Ok(snapshot.revision)
+    let (revision, frame) = shared.browser_initial_state_frame().await?;
+    send_message(
+        sender,
+        Message::Text(frame),
+        "failed to send browser message",
+    )
+    .await?;
+    Ok(revision)
 }
 
 fn should_forward_incremental(update_revision: u64, baseline_revision: u64) -> bool {
