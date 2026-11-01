@@ -331,8 +331,14 @@ where
     if !wecom {
         return Ok(());
     }
-    read_remaining_body(stream, &mut body).await?;
-    let body = if is_chunked(&headers) {
+    let chunked = is_chunked(&headers);
+    let framing = if chunked {
+        BodyFraming::Chunked
+    } else {
+        content_length(&headers)?.map_or(BodyFraming::UntilClose, BodyFraming::Length)
+    };
+    read_remaining_body(stream, &mut body, framing).await?;
+    let body = if chunked {
         decode_chunked(&body)?
     } else {
         body
@@ -465,22 +471,77 @@ where
     Ok((status, headers, body))
 }
 
+#[derive(Debug, Clone, Copy)]
+enum BodyFraming {
+    Length(usize),
+    Chunked,
+    UntilClose,
+}
+
+impl BodyFraming {
+    fn complete(self, body: &[u8]) -> bool {
+        match self {
+            Self::Length(length) => body.len() >= length,
+            Self::Chunked => chunked_body_complete(body),
+            Self::UntilClose => false,
+        }
+    }
+}
+
+/// Stops at the declared end of the body: a peer that ignores `Connection: close` would
+/// otherwise hold the request until the timeout and turn a delivered message into a retry.
 async fn read_remaining_body<S>(
     stream: &mut S,
     body: &mut Vec<u8>,
+    framing: BodyFraming,
 ) -> Result<(), AlertDeliveryError>
 where
     S: AsyncRead + Unpin + ?Sized,
 {
+    if let BodyFraming::Length(length) = framing
+        && length > MAX_RESPONSE_BODY_BYTES
+    {
+        return Err(AlertDeliveryError::ResponseTooLarge);
+    }
     let mut buffer = [0_u8; 1024];
-    while body.len() <= MAX_RESPONSE_BODY_BYTES {
+    while !framing.complete(body) {
+        if body.len() > MAX_RESPONSE_BODY_BYTES {
+            return Err(AlertDeliveryError::ResponseTooLarge);
+        }
         let read = stream.read(&mut buffer).await?;
         if read == 0 {
-            return Ok(());
+            return match framing {
+                BodyFraming::UntilClose => Ok(()),
+                // The peer closed before the declared end of the body.
+                BodyFraming::Length(_) | BodyFraming::Chunked => {
+                    Err(AlertDeliveryError::InvalidResponse)
+                }
+            };
         }
         body.extend_from_slice(&buffer[..read]);
     }
-    Err(AlertDeliveryError::ResponseTooLarge)
+    if let BodyFraming::Length(length) = framing {
+        body.truncate(length);
+    }
+    Ok(())
+}
+
+fn content_length(headers: &str) -> Result<Option<usize>, AlertDeliveryError> {
+    let Some(value) = headers.lines().skip(1).find_map(|line| {
+        line.split_once(':')
+            .filter(|(name, _)| name.trim().eq_ignore_ascii_case("content-length"))
+            .map(|(_, value)| value.trim())
+    }) else {
+        return Ok(None);
+    };
+    value
+        .parse::<usize>()
+        .map(Some)
+        .map_err(|_| AlertDeliveryError::InvalidResponse)
+}
+
+fn chunked_body_complete(body: &[u8]) -> bool {
+    body.starts_with(b"0\r\n\r\n") || body.windows(7).any(|window| window == b"\r\n0\r\n\r\n")
 }
 
 fn is_chunked(headers: &str) -> bool {
