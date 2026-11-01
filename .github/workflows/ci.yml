@@ -387,3 +387,38 @@ jobs:
       - name: Build agent for macOS release target
         # CI 先以编译通过为目标,真正的发布二进制仍在 release workflow 里产出。
         run: cargo check --locked --target "${{ matrix.target }}" -p nodelite-agent
+
+  fuzz-smoke:
+    # fuzz/ 是独立 workspace,不在 cargo test --workspace 覆盖范围内;
+    # 这里编译并运行其单测与有界 smoke,确保协议解析入口的编译错误或 panic 让 CI 失败。
+    name: Fuzz Smoke
+    runs-on: ubuntu-latest
+    needs: [workflow-guards]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        with:
+          shared-key: ci-fuzz
+          workspaces: |
+            fuzz -> target
+
+      - name: Test fuzz targets
+        run: cargo test --manifest-path fuzz/Cargo.toml --locked
+
+      - name: Run bounded protocol smoke
+        run: cargo run --manifest-path fuzz/Cargo.toml --locked --bin protocol_messages -- 20000
+
+      - name: Replay fuzz corpus
+        run: |
+          for bin in wire_message browser_message; do
+            cargo run --manifest-path fuzz/Cargo.toml --locked --bin "$bin" -- fuzz/corpus/protocol_messages
+          done
