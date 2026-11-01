@@ -5,6 +5,7 @@ pub mod config_io;
 pub mod credential_check;
 pub mod runtime;
 pub mod session;
+mod snapshot_limits;
 mod tls;
 pub(crate) mod traffic_control;
 // `support` 只服务于本 crate 内部(runtime / session),不属于对外测试 API,

@@ -55,3 +55,22 @@ fn rejects_decompression_bombs_and_non_metrics_json() {
         assert!(decode_metrics(&frame, usize::MAX).is_err());
     }
 }
+
+#[test]
+fn encoder_enforces_the_shared_frame_limit() {
+    let mut message = message();
+    let disk = crate::DiskUsage {
+        device: "d".repeat(crate::limits::MAX_METRICS_FRAME_BYTES),
+        mount_point: "/".to_string(),
+        fs_type: "ext4".to_string(),
+        total_bytes: 1,
+        available_bytes: 0,
+        used_bytes: 1,
+        used_percent: 100.0,
+    };
+    message.snapshot.disks.push(disk);
+    assert!(matches!(
+        encode_metrics(&message),
+        Err(CompressionError::TooLarge)
+    ));
+}

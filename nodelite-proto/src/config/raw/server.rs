@@ -1,5 +1,6 @@
 //! Server TOML decoding and cross-field validation.
 
+use crate::limits::{MAX_METRICS_FRAME_BYTES, MAX_SNAPSHOT_STRING_BYTES};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
@@ -491,10 +492,11 @@ impl RawServerConfigFile {
                 "server.ping_interval_secs must be at least 1 second",
             ));
         }
-        if self.server.max_message_bytes < 1024 {
-            return Err(ConfigError::new(
-                "server.max_message_bytes must be at least 1024 bytes",
-            ));
+        // Agent 按共享帧上限发送且不知道服务端配置，更低的值会让合法快照被反复断开。
+        if self.server.max_message_bytes < MAX_METRICS_FRAME_BYTES {
+            return Err(ConfigError::new(format!(
+                "server.max_message_bytes must be at least {MAX_METRICS_FRAME_BYTES} bytes, the frame limit agents send up to"
+            )));
         }
         if !(MIN_TOKEN_VERIFY_MAX_PARALLELISM..=MAX_TOKEN_VERIFY_MAX_PARALLELISM)
             .contains(&self.server.token_verify_max_parallelism)
@@ -531,22 +533,30 @@ impl RawServerConfigFile {
     }
 
     fn validate_sanitization_limits(&self) -> Result<(), ConfigError> {
-        for (name, value, maximum) in [
-            ("max_sanitized_disks", self.server.max_sanitized_disks, 1024),
+        for (name, value, minimum, maximum) in [
+            (
+                "max_sanitized_disks",
+                self.server.max_sanitized_disks,
+                1,
+                1024,
+            ),
+            // Agent 按共享上限截断字符串且不知道服务端配置，更低的值会把合法磁盘判为异常。
             (
                 "max_sanitized_string_bytes",
                 self.server.max_sanitized_string_bytes,
+                MAX_SNAPSHOT_STRING_BYTES,
                 4096,
             ),
             (
                 "metric_anomaly_session_limit",
                 self.server.metric_anomaly_session_limit,
+                1,
                 1000,
             ),
         ] {
-            if !(1..=maximum).contains(&value) {
+            if !(minimum..=maximum).contains(&value) {
                 return Err(ConfigError::new(format!(
-                    "server.{name} must be between 1 and {maximum}"
+                    "server.{name} must be between {minimum} and {maximum}"
                 )));
             }
         }

@@ -11,6 +11,7 @@
 //! "组装路由 + 启动后台任务"的骨架。
 
 mod browser;
+mod disk_limit_notice;
 mod handshake;
 mod origin;
 mod protocol;
