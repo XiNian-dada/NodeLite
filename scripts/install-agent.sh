@@ -675,7 +675,9 @@ case "$MODE" in auto|install|upgrade) ;; *) fail '--mode must be install, upgrad
 if [ "$SERVICE_KIND" = systemd ] && [ -e /etc/nodelite-updater/policy.toml ] &&
     grep -Eq '"phase"[[:space:]]*:[[:space:]]*"committed"' /var/lib/nodelite-updater-migration/journal.json &&
     grep -Eq '^ExecStart=/var/lib/nodelite-updater/code/active([[:space:]]|$)' "$UNIT_PATH"; then
-  [ "$MODE" != install ] && [ -z "$BOOTSTRAP_URL$BINARY_URL$SHA256_X86_64$SHA256_AARCH64" ] &&
+  # The signed manifest stays authoritative here, so release-source pins are ignored rather than fatal.
+  [ -z "$SHA256_X86_64$SHA256_AARCH64" ] || printf '%s\n' 'warning: enrolled Agent ignores --base-url/--sha256-* overrides; using the signed update path' >&2
+  [ "$MODE" != install ] && [ -z "$BOOTSTRAP_URL$BINARY_URL" ] &&
     [ "$INSTALL_DIR" = /usr/local/bin ] && [ "$STATE_DIR" = /var/lib/nodelite-agent ] &&
     [ "$CONFIG_DIR" = /etc/nodelite ] && [ "$TRAFFIC_CONTROL" = auto ] || fail 'enrolled Agent uses its fixed local policy; installer overrides are not allowed'
   set -- --upgrade

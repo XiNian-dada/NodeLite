@@ -127,6 +127,14 @@ if (select_release_target riscv64) >/dev/null 2>&1; then
   exit 1
 fi
 
+# Server-rendered mirror pins must not block the signed path on enrolled Agents.
+awk '
+  /enrolled Agent ignores --base-url\/--sha256-\* overrides/ { warned=1 }
+  /installer overrides are not allowed/ { if (!warned) exit 1; found=1 }
+  /^  \[ "\$MODE" != install \] && \[ -z "\$BOOTSTRAP_URL\$BINARY_URL" \]/ { guard=1 }
+  END { exit !(found && guard) }
+' "$INSTALLER"
+
 SERVICE_KIND=launchd
 # Linux musl pins must not be applied to macOS artifacts.
 select_release_target x86_64
