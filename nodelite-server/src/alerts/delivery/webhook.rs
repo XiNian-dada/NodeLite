@@ -508,7 +508,18 @@ where
         if body.len() > MAX_RESPONSE_BODY_BYTES {
             return Err(AlertDeliveryError::ResponseTooLarge);
         }
-        let read = stream.read(&mut buffer).await?;
+        let read = match stream.read(&mut buffer).await {
+            Ok(read) => read,
+            // TLS peers often close without close_notify; for a close-delimited body that is
+            // the end, and a truncated reply still fails JSON parsing below.
+            Err(error)
+                if matches!(framing, BodyFraming::UntilClose)
+                    && error.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                0
+            }
+            Err(error) => return Err(error.into()),
+        };
         if read == 0 {
             return match framing {
                 BodyFraming::UntilClose => Ok(()),

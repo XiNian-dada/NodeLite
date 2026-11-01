@@ -144,3 +144,38 @@ async fn wecom_reply_cut_short_is_invalid() {
         .expect_err("declared body over the cap");
     assert!(matches!(error, AlertDeliveryError::ResponseTooLarge));
 }
+
+struct UnexpectedEofAfter<'a>(&'a [u8]);
+
+impl tokio::io::AsyncRead for UnexpectedEofAfter<'_> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        if self.0.is_empty() {
+            return std::task::Poll::Ready(Err(std::io::Error::from(
+                std::io::ErrorKind::UnexpectedEof,
+            )));
+        }
+        let len = self.0.len().min(buf.remaining());
+        buf.put_slice(&self.0[..len]);
+        self.0 = &self.0[len..];
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+#[tokio::test]
+async fn tls_close_without_notify_ends_a_close_delimited_reply() {
+    let raw = "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n{\"errcode\":0}";
+    let mut stream = UnexpectedEofAfter(raw.as_bytes());
+    check_response(&mut stream, true)
+        .await
+        .expect("a complete close-delimited body is accepted");
+
+    let framed = ok_with_body(r#"{"errcode":0}"#);
+    let mut stream = UnexpectedEofAfter(framed.as_bytes());
+    check_response(&mut stream, true)
+        .await
+        .expect("a framed body never needs the extra read");
+}
