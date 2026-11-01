@@ -6,8 +6,8 @@ import { useDedupeAsync } from '@/composables/useDedupeAsync';
 
 /**
  * Active node's full status (GET /api/nodes/{id}). Single active node — the
- * NodeDetail view loads the full record once, then merges lightweight
- * WebSocket summaries into the realtime fields. If the id changes, data is
+ * NodeDetail view polls the full record (the only source of network, uptime
+ * and disk metrics) and merges lightweight WebSocket summaries in between. If the id changes, data is
  * cleared so a stale node's snapshot never flashes under the new id.
  */
 export const useNodeStatusStore = defineStore('nodeStatus', () => {
