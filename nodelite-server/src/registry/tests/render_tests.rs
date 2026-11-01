@@ -67,10 +67,17 @@ fn http_sources_carry_the_installer_insecure_opt_in() {
         .expect("install command renders");
     assert!(!install.contains("--insecure-allow-http"), "{install}");
 
+    // The upgrade script never fetches from public_base_url, and loopback needs no opt-in.
     let upgrade =
         render_upgrade_command("http://monitor.example.com", &https).expect("upgrade renders");
-    assert!(upgrade.contains("  --insecure-allow-http"), "{upgrade}");
-    assert!(!upgrade.ends_with('\\'), "{upgrade}");
+    assert!(!upgrade.contains("--insecure-allow-http"), "{upgrade}");
+    let install = render_install_command("http://127.0.0.1:8080", "tok", &https)
+        .expect("install command renders");
+    assert!(!install.contains("--insecure-allow-http"), "{install}");
+    let install = render_install_command("http://monitor.example.com", "tok", &https)
+        .expect("install command renders");
+    assert!(install.contains("  --insecure-allow-http"), "{install}");
+    assert!(!install.ends_with('\\'), "{install}");
 
     let http_mirror = AgentReleaseSource::from_config(&release_config(Some(
         "http://mirror.example.com/nodelite",
@@ -79,6 +86,9 @@ fn http_sources_carry_the_installer_insecure_opt_in() {
     let install = render_install_command("https://monitor.example.com", "tok", &http_mirror)
         .expect("install command renders");
     assert!(install.contains("  --insecure-allow-http \\"), "{install}");
+    let upgrade =
+        render_upgrade_command("https://monitor.example.com", &http_mirror).expect("upgrade");
+    assert!(upgrade.contains("  --insecure-allow-http \\"), "{upgrade}");
 }
 
 #[test]
