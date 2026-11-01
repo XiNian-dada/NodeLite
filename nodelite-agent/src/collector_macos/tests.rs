@@ -5,6 +5,7 @@ use std::ptr;
 use std::time::{Duration, Instant};
 
 use super::super::shared::{NetworkSample, NetworkTotals, compute_network_metrics};
+use super::held_network_totals;
 use super::identity::{extract_plist_value, parse_os_name_from_plist};
 use super::metrics::{
     NetworkInterfaceCache, NetworkInterfaceSignature, ObservedNetworkSample,
@@ -199,4 +200,26 @@ fn available_memory_does_not_underflow_when_compressor_is_large() {
     let available = compute_available_memory_bytes(&stats, 16_384, 34_359_738_368);
     assert!(available > 0);
     assert!(available < 34_359_738_368);
+}
+
+#[test]
+fn failed_network_read_holds_last_totals_instead_of_reporting_zero() {
+    assert!(held_network_totals(None).is_none());
+    let previous = ObservedNetworkSample {
+        sample: NetworkSample {
+            observed_at: Instant::now(),
+            rx_bytes: 2_000_000,
+            tx_bytes: 1_000_000,
+            rx_packets: 20,
+            tx_packets: 10,
+            rx_dropped_packets: 2,
+            tx_dropped_packets: 1,
+        },
+        signature: NetworkInterfaceSignature::from_indices(&[4]),
+    };
+    let held = held_network_totals(Some(&previous)).expect("previous totals should be held");
+    assert_eq!(held.rx_bytes, 2_000_000);
+    assert_eq!(held.tx_bytes, 1_000_000);
+    assert_eq!(held.rx_packets, 20);
+    assert_eq!(held.tx_dropped_packets, 1);
 }

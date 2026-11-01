@@ -39,10 +39,6 @@ pub(super) struct NetworkInterfaceCache {
 pub(super) struct NetworkInterfaceSignature(Vec<String>);
 
 impl NetworkInterfaceSignature {
-    pub(super) fn empty() -> Self {
-        Self(Vec::new())
-    }
-
     pub(super) fn from_indices(indices: &[u16]) -> Self {
         let mut parts = indices
             .iter()
