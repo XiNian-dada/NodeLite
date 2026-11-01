@@ -10,7 +10,9 @@ use tower::ServiceExt;
 use super::{require_readonly_auth, starts_browser_session};
 use crate::AppState;
 use crate::audit::{AuditEvent, AuditEventType, AuditQuery};
-use crate::auth::{BASIC_AUTH_SESSION_COOKIE, MAX_AUTH_SESSIONS, cookie_value};
+use crate::auth::{
+    BASIC_AUTH_SESSION_COOKIE, MAX_AUTH_SESSIONS, MAX_PENDING_SESSIONS, cookie_value,
+};
 use crate::test_support::TEST_BASIC_AUTH_HEADER;
 use crate::tests::two_factor_auth_test_state;
 
@@ -170,7 +172,7 @@ async fn full_session_store_rejects_new_browsers_without_logging_success_or_bloc
     for _ in 1..MAX_AUTH_SESSIONS {
         state
             .two_factor_sessions
-            .create_pending()
+            .create_authenticated()
             .expect("fill store");
     }
     let response = app
@@ -216,21 +218,28 @@ async fn full_session_store_rejects_new_browsers_without_logging_success_or_bloc
 }
 
 #[tokio::test]
-async fn full_pending_store_cannot_bypass_two_factor_authentication() {
+async fn full_pending_store_still_requires_two_factor_and_admits_new_logins() {
     let (state, temp_dir) = two_factor_auth_test_state("full-pending", true).await;
     let app = app(&state);
-    for _ in 0..MAX_AUTH_SESSIONS {
+    for _ in 0..MAX_PENDING_SESSIONS {
         state
             .two_factor_sessions
             .create_pending()
-            .expect("fill store");
+            .expect("fill pending budget");
     }
     let response = app
         .oneshot(request("/api/overview", None))
         .await
         .expect("2FA response");
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert!(response.headers().get(header::SET_COOKIE).is_none());
+    assert_eq!(response.status(), StatusCode::FOUND);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::LOCATION)
+            .map(|v| v.as_bytes()),
+        Some(b"/verify-2fa".as_slice()),
+        "a full pending budget evicts the oldest instead of bypassing 2FA"
+    );
     assert!(logins(&state).await.is_empty());
     cleanup(state, temp_dir).await;
 }

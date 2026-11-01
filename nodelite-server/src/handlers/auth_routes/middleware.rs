@@ -62,9 +62,22 @@ pub(crate) async fn require_readonly_auth(
             // redirect),返回 401 + JSON。WS 客户端据此 fallback 到一次 `/api/bootstrap`
             // 探测,由统一 api 客户端完成到 /verify-2fa 的真实跳转。
             if is_websocket_upgrade(&headers) {
-                return websocket_two_factor_required_response();
+                return two_factor_required_response();
             }
-            return issue_two_factor_redirect(&state, request).await;
+            match request.uri().path() {
+                // Identical build artifacts for every visitor; the public verify page needs them.
+                path if path.starts_with("/assets/") => return next.run(request).await,
+                // Scrapers cannot complete 2FA or keep cookies, so they never get a pending
+                // session; operators can opt in to Basic-only scraping.
+                "/metrics" => {
+                    if state.shared.config().metrics.allow_basic_scrape_with_2fa {
+                        return next.run(request).await;
+                    }
+                    return two_factor_required_response();
+                }
+                _ => {}
+            }
+            return issue_two_factor_redirect(&state, &headers, request).await;
         }
         // API scrapers do not retain cookies; only UI entry points start browser sessions.
         if !starts_browser_session(&request) {
@@ -184,9 +197,9 @@ fn is_websocket_upgrade(headers: &HeaderMap) -> bool {
         })
 }
 
-/// 受保护的 WebSocket 端点要求 2FA 时的响应。浏览器 `new WebSocket()` 无法跟随
-/// HTTP 302,因此返回 401 + JSON 而非重定向;WS 客户端据此跳转 /verify-2fa。
-fn websocket_two_factor_required_response() -> Response {
+/// 无法跟随 302 的客户端(浏览器 `new WebSocket()`、Prometheus)要求 2FA 时的响应。
+/// 返回 401 + JSON 而非重定向;WS 客户端据此跳转 /verify-2fa。
+fn two_factor_required_response() -> Response {
     (
         StatusCode::UNAUTHORIZED,
         Json(json!({
@@ -198,11 +211,26 @@ fn websocket_two_factor_required_response() -> Response {
         .into_response()
 }
 
-async fn issue_two_factor_redirect(state: &AppState, request: Request) -> Response {
+async fn issue_two_factor_redirect(
+    state: &AppState,
+    headers: &HeaderMap,
+    request: Request,
+) -> Response {
     let auth = state.readonly_auth.read().await;
     // 中间件初次校验后可能恰好发生凭据轮换，因此在签发前需在读锁下二次确认 2FA 开启且当前凭据依然有效。
     if !auth.enable_2fa || !auth.is_authorized(&request) {
         return readonly_auth_unauthorized_response();
+    }
+    // A browser that already holds a live pending session keeps it instead of minting one
+    // per request while the verify page loads.
+    if cookie_value(headers, TWO_FACTOR_PENDING_COOKIE)
+        .is_some_and(|token| state.two_factor_sessions.pending_exists(&token))
+    {
+        return (
+            StatusCode::FOUND,
+            [(header::LOCATION, "/verify-2fa".to_string())],
+        )
+            .into_response();
     }
     let pending_token = match state.two_factor_sessions.create_pending() {
         Ok(token) => token,
