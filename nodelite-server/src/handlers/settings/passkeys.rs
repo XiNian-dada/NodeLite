@@ -56,9 +56,12 @@ pub(crate) async fn finish_passkey_registration(
     {
         return settings_json_error(StatusCode::PRECONDITION_REQUIRED, "reauth_required");
     }
+    let sessions = state.two_factor_sessions.clone();
+    let binding = session_binding.clone();
+    let still_confirmed = move || sessions.sensitive_action_confirmed(&binding, true);
     match state
         .passkeys
-        .finish_registration(&session_binding, &response)
+        .finish_registration(&session_binding, &response, still_confirmed)
         .await
     {
         Ok(summary) => (StatusCode::CREATED, Json(summary)).into_response(),
@@ -174,6 +177,9 @@ fn passkey_operation_error(operation: &str, error: PasskeyError) -> Response {
             StatusCode::CONFLICT,
             "the maximum number of passkeys has been reached",
         ),
+        PasskeyError::ReauthRequired => {
+            settings_json_error(StatusCode::PRECONDITION_REQUIRED, "reauth_required")
+        }
         PasskeyError::RegistrationExpired => settings_json_error(
             StatusCode::UNAUTHORIZED,
             "passkey registration has expired; try again",
