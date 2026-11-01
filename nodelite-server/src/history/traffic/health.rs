@@ -6,8 +6,6 @@ pub(crate) struct TrafficLedgerHealth {
     pub(crate) available: bool,
     /// 最近一次落盘失败；成功后清除。
     pub(crate) write_degraded: bool,
-    /// 入队被拒绝的次数。对应节点会被标记并由 writer 补写，不代表用量丢失。
-    pub(crate) dropped_writes: u64,
     pub(crate) write_failures: u64,
     pub(crate) last_success_at: i64,
     /// 尚未落盘的节点数；关闭后保留最终值。

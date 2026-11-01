@@ -7,8 +7,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use chrono::{TimeZone, Utc};
 
 use super::{
-    TrafficCommand, TrafficLedgerHealth, TrafficPersistenceError, TrafficSample, TrafficTracker,
-    counted_bytes, run_traffic_writer, utc_month_start,
+    TrafficFlushBarrier, TrafficLedgerHealth, TrafficPersistenceError, TrafficSample,
+    TrafficTracker, counted_bytes, run_traffic_writer, utc_month_start,
 };
 use crate::registry::TrafficAccounting;
 
@@ -274,27 +274,41 @@ async fn removal_supersedes_a_retained_upsert() {
 }
 
 #[tokio::test]
-async fn rejected_enqueue_is_counted_and_written_later_with_the_latest_value() {
-    let db_path = test_db_path("dropped-enqueue");
+async fn removal_does_not_hold_state_while_waiting_for_a_full_queue() {
+    let db_path = test_db_path("remove-full-queue");
     let tracker = started_tracker(&db_path).await;
     tracker.shutdown().await;
 
-    let (tx, rx) = tokio::sync::mpsc::channel::<TrafficCommand>(1);
-    *tracker.writer_tx.write().await = Some(tx);
+    let (tx, rx) = tokio::sync::mpsc::channel::<TrafficFlushBarrier>(1);
+    *tracker.writer_tx.write().await = Some(tx.clone());
     used(&tracker, sample(100, 0, 10)).await;
-    assert_eq!(used(&tracker, sample(300, 0, 20)).await, 200);
-    assert_eq!(tracker.health().dropped_writes, 1);
     assert!(tracker.dirty.lock().contains("node-a"));
+    let (completed, queued_ack) = tokio::sync::oneshot::channel();
+    tx.try_send(TrafficFlushBarrier { completed })
+        .expect("barrier should fill the queue");
+    drop(tx);
+
+    let remover = tracker.clone();
+    let removal =
+        tokio::spawn(async move { remover.remove_nodes(vec!["node-a".to_string()]).await });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!removal.is_finished());
+    let state = tokio::time::timeout(Duration::from_secs(1), tracker.state.lock())
+        .await
+        .expect("a removal waiting on the queue must not hold the state lock");
+    drop(state);
 
     let writer = tokio::spawn(run_traffic_writer(rx, tracker.clone()));
-    tokio::time::timeout(Duration::from_secs(10), async {
-        while persisted_usage(&db_path) != Some(200) {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("dropped write should be caught up");
-    assert!(tracker.dirty.lock().is_empty());
+    tokio::time::timeout(Duration::from_secs(10), removal)
+        .await
+        .expect("removal should finish")
+        .expect("removal task should join")
+        .expect("removal should persist");
+    queued_ack
+        .await
+        .expect("queued barrier should be answered")
+        .expect("queued barrier should succeed");
+    assert_eq!(persisted_usage(&db_path), None);
 
     *tracker.writer_tx.write().await = None;
     writer.await.expect("writer should stop");
@@ -302,7 +316,58 @@ async fn rejected_enqueue_is_counted_and_written_later_with_the_latest_value() {
 }
 
 #[tokio::test]
-async fn rejected_enqueue_of_a_removed_node_does_not_recreate_its_ledger() {
+async fn writer_persists_only_the_latest_state_of_a_burst() {
+    let db_path = test_db_path("burst");
+    let tracker = started_tracker(&db_path).await;
+    for step in 0..5_000u64 {
+        used(&tracker, sample(step, 0, step)).await;
+    }
+    assert!(tracker.dirty.lock().len() <= 1);
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while persisted_usage(&db_path) != Some(4_999) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("latest usage should be persisted");
+    tracker.shutdown().await;
+    assert_eq!(persisted_usage(&db_path), Some(4_999));
+    remove_db(&db_path);
+}
+
+#[tokio::test]
+async fn quota_disable_is_not_undone_by_a_retained_upsert() {
+    let db_path = test_db_path("disable-retained");
+    let tracker = started_tracker(&db_path).await;
+    used(&tracker, sample(100, 0, 10)).await;
+    wait_for_health(&tracker, |health| health.last_success_at > 0).await;
+
+    let lock = lock_database(&db_path);
+    used(&tracker, sample(400, 0, 20)).await;
+    wait_for_health(&tracker, |health| health.write_degraded).await;
+    let disabled = tracker
+        .record("node-a", sample(500, 0, 30), BIDI, false)
+        .await
+        .expect("ledger should be available");
+    assert!(disabled.is_none());
+    drop(lock);
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while persisted_usage(&db_path).is_some() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("disable should remove the row");
+    tracker.shutdown().await;
+
+    let restarted = started_tracker(&db_path).await;
+    assert!(restarted.usages().await.is_empty());
+    restarted.shutdown().await;
+    remove_db(&db_path);
+}
+
+#[tokio::test]
+async fn dirty_marker_of_a_removed_node_does_not_recreate_its_ledger() {
     let db_path = test_db_path("dropped-removed");
     let tracker = started_tracker(&db_path).await;
     used(&tracker, sample(100, 0, 10)).await;

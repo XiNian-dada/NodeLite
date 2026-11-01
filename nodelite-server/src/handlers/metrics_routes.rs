@@ -177,12 +177,6 @@ fn render_traffic_ledger_metrics(
         u8::from(health.write_degraded),
     );
     emitter.counter(
-        "nodelite_traffic_dropped_writes_total",
-        "Number of traffic ledger updates rejected by the writer queue and deferred for catch-up.",
-        &[],
-        health.dropped_writes,
-    );
-    emitter.counter(
         "nodelite_traffic_write_failures_total",
         "Number of failed traffic ledger persistence operations.",
         &[],

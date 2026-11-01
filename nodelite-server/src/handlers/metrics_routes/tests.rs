@@ -203,7 +203,6 @@ fn exporter_exposes_writer_counters() {
         traffic_ledger: crate::history::TrafficLedgerHealth {
             available: false,
             write_degraded: true,
-            dropped_writes: 3,
             write_failures: 4,
             last_success_at: 5,
             pending_writes: 6,
@@ -232,7 +231,6 @@ fn exporter_exposes_writer_counters() {
     assert!(body.contains("nodelite_history_write_degraded 1"));
     assert!(body.contains("nodelite_traffic_ledger_available 0"));
     assert!(body.contains("nodelite_traffic_write_degraded 1"));
-    assert!(body.contains("nodelite_traffic_dropped_writes_total 3"));
     assert!(body.contains("nodelite_traffic_write_failures_total 4"));
     assert!(body.contains("nodelite_traffic_last_success_timestamp_seconds 5"));
     assert!(body.contains("nodelite_traffic_pending_writes 6"));

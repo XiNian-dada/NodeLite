@@ -25,7 +25,7 @@ use tracing::{error, info, warn};
 use self::counters::CounterBaseline;
 pub(crate) use self::counters::TrafficSample;
 pub(crate) use self::health::TrafficLedgerHealth;
-use crate::queue::{bounded_mpsc_channel, try_enqueue};
+use crate::queue::bounded_mpsc_channel;
 use crate::registry::TrafficAccounting;
 
 const TRAFFIC_WRITER_CHANNEL_CAPACITY: usize = 1024;
@@ -63,12 +63,9 @@ impl TrafficWrite {
     }
 }
 
-enum TrafficCommand {
-    Write(TrafficWrite),
-    Remove {
-        node_ids: Vec<String>,
-        completed: oneshot::Sender<Result<(), TrafficPersistenceError>>,
-    },
+/// 要求 writer 立即落盘并回报结果，让删除在返回前成为持久屏障。
+struct TrafficFlushBarrier {
+    completed: oneshot::Sender<Result<(), TrafficPersistenceError>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -86,9 +83,10 @@ pub(super) struct TrafficTracker {
     db_path: Arc<PathBuf>,
     sqlite_busy_timeout_secs: u64,
     state: Arc<Mutex<HashMap<String, TrafficUsageState>>>,
-    writer_tx: Arc<RwLock<Option<mpsc::Sender<TrafficCommand>>>>,
+    writer_tx: Arc<RwLock<Option<mpsc::Sender<TrafficFlushBarrier>>>>,
     writer_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
-    /// 入队被拒绝的节点。写入内容是累计值，所以只需记下节点，由 writer 读取最新状态补写。
+    /// 有变更待落盘的节点。这里只记节点，由 writer 落盘时读取最新状态：内存受节点数约束，
+    /// 也不存在排队中的旧内容覆盖新状态、或让已删除账本复活的问题。
     dirty: Arc<ParkingLotMutex<HashSet<String>>>,
     health: Arc<ParkingLotMutex<TrafficLedgerHealth>>,
     load_retry_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
@@ -174,24 +172,14 @@ impl TrafficTracker {
         if self.writer_tx.read().await.is_none() {
             return Err(TrafficPersistenceError::Unavailable);
         }
-        let removed = {
-            let mut state = self.state.lock().await;
-            if !enabled {
-                state
-                    .remove(node_id)
-                    .map(|_| TrafficWrite::Delete(node_id.to_string()))
-            } else {
-                None
-            }
-        };
         if !enabled {
-            if let Some(write) = removed {
-                self.try_enqueue(write).await;
+            if self.state.lock().await.remove(node_id).is_some() {
+                self.dirty.lock().insert(node_id.to_string());
             }
             return Ok(None);
         }
 
-        let write = {
+        let usage = {
             let mut state = self.state.lock().await;
 
             let now = Utc::now();
@@ -221,13 +209,9 @@ impl TrafficTracker {
                     .used_bytes
                     .saturating_add(counted_bytes(accounting, rx_delta, tx_delta));
             }
-            TrafficWrite::Upsert(entry.clone())
+            entry.usage.clone()
         };
-        let usage = match &write {
-            TrafficWrite::Upsert(state) => state.usage.clone(),
-            TrafficWrite::Delete(_) => return Ok(None),
-        };
-        self.try_enqueue(write).await;
+        self.dirty.lock().insert(node_id.to_string());
         Ok(Some(usage))
     }
 
@@ -274,20 +258,18 @@ impl TrafficTracker {
             .as_ref()
             .cloned()
             .ok_or(TrafficPersistenceError::Unavailable)?;
-        let (completed, receiver) = oneshot::channel();
         {
             let mut state = self.state.lock().await;
             for id in &node_ids {
                 state.remove(id);
             }
-            // Delete is a durable barrier after earlier upserts; it must never use try_send.
-            tx.send(TrafficCommand::Remove {
-                node_ids,
-                completed,
-            })
+        }
+        self.dirty.lock().extend(node_ids);
+        let (completed, receiver) = oneshot::channel();
+        // writer 落盘前要取 state 锁，所以等待队列空位时绝不能持有它。
+        tx.send(TrafficFlushBarrier { completed })
             .await
             .map_err(|_| TrafficPersistenceError::Unavailable)?;
-        }
         receiver
             .await
             .map_err(|_| TrafficPersistenceError::Unavailable)?
@@ -305,18 +287,6 @@ impl TrafficTracker {
             && let Err(error) = handle.await
         {
             warn!(error = ?error, "traffic usage writer task join failed during shutdown");
-        }
-    }
-
-    async fn try_enqueue(&self, write: TrafficWrite) {
-        let tx = self.writer_tx.read().await.as_ref().cloned();
-        if let Some(tx) = tx {
-            let node_id = write.node_id().to_string();
-            if try_enqueue(&tx, TrafficCommand::Write(write)).is_err() {
-                self.dirty.lock().insert(node_id);
-                let mut health = self.health.lock();
-                health.dropped_writes = health.dropped_writes.saturating_add(1);
-            }
         }
     }
 }
@@ -431,7 +401,7 @@ impl RetryBackoff {
     }
 }
 
-async fn run_traffic_writer(mut rx: mpsc::Receiver<TrafficCommand>, tracker: TrafficTracker) {
+async fn run_traffic_writer(mut rx: mpsc::Receiver<TrafficFlushBarrier>, tracker: TrafficTracker) {
     let mut pending = HashMap::new();
     let mut backoff = RetryBackoff::default();
     let mut ticker = interval(Duration::from_millis(TRAFFIC_WRITER_FLUSH_MILLIS));
@@ -440,11 +410,8 @@ async fn run_traffic_writer(mut rx: mpsc::Receiver<TrafficCommand>, tracker: Tra
     loop {
         tokio::select! {
             received = rx.recv() => match received {
-                Some(TrafficCommand::Write(write)) => record_pending(&mut pending, write),
-                Some(TrafficCommand::Remove { node_ids, completed }) => {
-                    for id in node_ids {
-                        record_pending(&mut pending, TrafficWrite::Delete(id));
-                    }
+                Some(TrafficFlushBarrier { completed }) => {
+                    collect_dirty_writes(&mut pending, &tracker).await;
                     let result = flush_traffic_writes(&mut pending, &tracker, &mut backoff).await;
                     let _ = completed.send(result.map_err(TrafficPersistenceError::Write));
                 }
@@ -475,7 +442,7 @@ async fn run_traffic_writer(mut rx: mpsc::Receiver<TrafficCommand>, tracker: Tra
     tracker.health.lock().pending_writes = pending.len() as u64;
 }
 
-/// 从内存状态取补写内容：节点若已被移除则写删除，迟到的标记不会让账本复活。
+/// 把变更节点解析为当前状态：已不存在的节点写删除，覆盖重试中保留的旧内容。
 async fn collect_dirty_writes(
     pending: &mut HashMap<String, TrafficWrite>,
     tracker: &TrafficTracker,
@@ -503,24 +470,20 @@ async fn flush_traffic_writes(
     tracker: &TrafficTracker,
     backoff: &mut RetryBackoff,
 ) -> Result<()> {
-    let writes = std::mem::take(pending);
+    let writes = Arc::new(std::mem::take(pending));
     let db_path = Arc::clone(&tracker.db_path);
     let timeout_secs = tracker.sqlite_busy_timeout_secs;
-    let outcome = tokio::task::spawn_blocking(move || {
-        let result = write_traffic_states(db_path.as_ref(), timeout_secs, &writes);
-        (result, writes)
+    let task_writes = Arc::clone(&writes);
+    let result = tokio::task::spawn_blocking(move || {
+        write_traffic_states(db_path.as_ref(), timeout_secs, &task_writes)
     })
     .await
-    .context("traffic writer task failed");
-    let result = match outcome {
-        Ok((Ok(()), _)) => Ok(()),
-        Ok((Err(error), writes)) => {
-            // 写入的是绝对值，重试幂等；flush 期间 pending 不会变化，无需与新内容合并。
-            *pending = writes;
-            Err(error)
-        }
-        Err(error) => Err(error),
-    };
+    .context("traffic writer task failed")
+    .and_then(|result| result);
+    if result.is_err() {
+        // 写入的是绝对值，重试幂等；flush 期间 pending 不会变化，无需与新内容合并。
+        *pending = Arc::unwrap_or_clone(writes);
+    }
     match &result {
         Ok(()) => {
             let recovered = tracker.health.lock().write_degraded;
