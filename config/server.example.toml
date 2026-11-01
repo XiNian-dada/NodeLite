@@ -155,6 +155,7 @@ send_resolved = true
 # 每日巡检摘要配置。默认关闭。
 enabled = false
 local_time = "09:00"
+# lookback_hours 允许 1..=336（历史保留期），offline_grace_minutes 最大 20160。
 lookback_hours = 24
 delivery = ["smtp"]
 offline_grace_minutes = 10
@@ -163,7 +164,9 @@ cpu_warn_percent = 85
 memory_warn_percent = 90
 
 [[alerts.rules]]
-# 规则 ID 需要稳定且唯一，便于后续调整和审计。
+# 规则 ID 需要稳定且唯一（重复 ID 会拒绝启动），便于后续调整和审计。
+# window_minutes 允许 1..=20160，cooldown_minutes 允许 1..=43200；
+# 百分比类指标的 threshold 不得超过 100。
 id = "node-offline"
 name = "Node offline over 10 minutes"
 enabled = true

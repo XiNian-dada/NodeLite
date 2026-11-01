@@ -1,6 +1,8 @@
 //! Configuration coverage runs for standalone Agent builds as well as the server feature.
 
 mod agent;
+#[cfg(feature = "server-config")]
+mod alert_rules;
 mod errors;
 mod range_rules;
 #[cfg(feature = "server-config")]

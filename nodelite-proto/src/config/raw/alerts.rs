@@ -17,8 +17,14 @@ use super::super::helpers::{normalize_tags, validate_url};
 use super::super::{
     AlertChannel, AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode, AlertSeverity,
     AlertSmtpConfig, AlertSmtpTransport, AlertWebhookConfig, AlertingConfig, ConfigError,
-    InspectionConfig,
+    DEFAULT_HISTORY_RETENTION_HOURS, InspectionConfig,
 };
+
+// 窗口与巡检回看不超过历史保留期，再长也查不到数据；这些上限同时让 chrono
+// 时间差构造远离溢出。
+const MAX_ALERT_WINDOW_MINUTES: u64 = DEFAULT_HISTORY_RETENTION_HOURS * 60;
+const MAX_INSPECTION_LOOKBACK_HOURS: u64 = DEFAULT_HISTORY_RETENTION_HOURS;
+const MAX_ALERT_COOLDOWN_MINUTES: u64 = 30 * 24 * 60;
 
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -170,19 +176,31 @@ impl RawAlertsSection {
         }
 
         let mut rules = Vec::with_capacity(raw_rules.len());
+        // Tracker 按规则 ID 建索引，重复 ID 会让后一条静默覆盖前一条。
+        let mut seen_ids = std::collections::HashSet::with_capacity(raw_rules.len());
         for (index, rule) in raw_rules.iter().enumerate() {
             let id = rule.id.trim().to_string();
             let name = rule.name.trim().to_string();
             validate_identifier(&format!("alerts.rules[{index}].id"), &id)?;
             validate_non_empty(&format!("alerts.rules[{index}].name"), &name)?;
-            if rule.window_minutes == 0 {
+            if seen_ids.contains(&id) {
                 return Err(ConfigError::new(format!(
-                    "alerts.rules[{index}].window_minutes must be greater than 0"
+                    "alerts.rules[{index}].id duplicates an earlier rule id \"{id}\""
                 )));
             }
-            if rule.cooldown_minutes == 0 {
+            if !(1..=MAX_ALERT_WINDOW_MINUTES).contains(&rule.window_minutes) {
                 return Err(ConfigError::new(format!(
-                    "alerts.rules[{index}].cooldown_minutes must be greater than 0"
+                    "alerts.rules[{index}].window_minutes must be between 1 and {MAX_ALERT_WINDOW_MINUTES}"
+                )));
+            }
+            if !(1..=MAX_ALERT_COOLDOWN_MINUTES).contains(&rule.cooldown_minutes) {
+                return Err(ConfigError::new(format!(
+                    "alerts.rules[{index}].cooldown_minutes must be between 1 and {MAX_ALERT_COOLDOWN_MINUTES}"
+                )));
+            }
+            if is_percentage_metric(&rule.metric) && rule.threshold > 100 {
+                return Err(ConfigError::new(format!(
+                    "alerts.rules[{index}].threshold must be between 0 and 100 for percentage metrics"
                 )));
             }
 
@@ -204,6 +222,7 @@ impl RawAlertsSection {
                 _ => {}
             }
 
+            seen_ids.insert(id.clone());
             rules.push(AlertRuleConfig {
                 id,
                 name,
@@ -227,10 +246,15 @@ impl RawAlertsSection {
 
     fn validate_inspection(&self) -> Result<InspectionConfig, ConfigError> {
         validate_local_time("alerts.inspection.local_time", &self.inspection.local_time)?;
-        if self.inspection.lookback_hours == 0 {
-            return Err(ConfigError::new(
-                "alerts.inspection.lookback_hours must be greater than 0",
-            ));
+        if !(1..=MAX_INSPECTION_LOOKBACK_HOURS).contains(&self.inspection.lookback_hours) {
+            return Err(ConfigError::new(format!(
+                "alerts.inspection.lookback_hours must be between 1 and {MAX_INSPECTION_LOOKBACK_HOURS}"
+            )));
+        }
+        if self.inspection.offline_grace_minutes > MAX_ALERT_WINDOW_MINUTES {
+            return Err(ConfigError::new(format!(
+                "alerts.inspection.offline_grace_minutes must be at most {MAX_ALERT_WINDOW_MINUTES}"
+            )));
         }
         if self.inspection.cpu_warn_percent == 0 || self.inspection.cpu_warn_percent > 100 {
             return Err(ConfigError::new(
@@ -254,6 +278,16 @@ impl RawAlertsSection {
             memory_warn_percent: self.inspection.memory_warn_percent,
         })
     }
+}
+
+fn is_percentage_metric(metric: &AlertMetric) -> bool {
+    matches!(
+        metric,
+        AlertMetric::CpuUsagePercent
+            | AlertMetric::MemoryUsagePercent
+            | AlertMetric::DiskUsagePercent
+            | AlertMetric::TrafficUsagePercent
+    )
 }
 
 fn default_true() -> bool {
