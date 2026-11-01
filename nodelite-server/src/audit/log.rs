@@ -17,6 +17,7 @@ use super::query::query_events;
 use super::storage::{
     AUDIT_CHANNEL_CAPACITY, AUDIT_PRUNE_INTERVAL, open_audit_connection, prune_expired_records,
 };
+use super::throttle::RateLimitAuditThrottle;
 use super::writer::{AuditWriterCommand, AuditWriterContext, run_audit_writer};
 use super::{AuditEvent, AuditEventType, AuditLogError, AuditQuery, NewAuditEvent};
 
@@ -30,6 +31,7 @@ pub struct AuditLog {
     writer_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     dropped_writes: Arc<AtomicU64>,
     write_failures: Arc<AtomicU64>,
+    rate_limit_throttle: Arc<RateLimitAuditThrottle>,
 }
 
 impl AuditLog {
@@ -42,6 +44,7 @@ impl AuditLog {
             writer_handle: Arc::new(Mutex::new(None)),
             dropped_writes: Arc::new(AtomicU64::new(0)),
             write_failures: Arc::new(AtomicU64::new(0)),
+            rate_limit_throttle: Arc::default(),
         }
     }
 
@@ -89,6 +92,9 @@ impl AuditLog {
         if !self.should_record(event.event_type) {
             return Ok(());
         }
+        let Some(event) = self.throttle_rate_limit(event) else {
+            return Ok(());
+        };
 
         let guard = self.writer_tx.read().await;
         let Some(tx) = guard.as_ref() else {
@@ -116,6 +122,9 @@ impl AuditLog {
         if !self.should_record(event.event_type) {
             return Ok(None);
         }
+        let Some(event) = self.throttle_rate_limit(event) else {
+            return Ok(None);
+        };
 
         self.flush_pending().await?;
         let event = event.bounded();
@@ -130,6 +139,28 @@ impl AuditLog {
         .await
         .context("audit record task failed")??;
         Ok(Some(id))
+    }
+
+    /// Keyed by source and `reason`, not path, so varying the request path does not
+    /// bypass it.
+    fn throttle_rate_limit(&self, mut event: NewAuditEvent) -> Option<NewAuditEvent> {
+        if event.event_type != AuditEventType::RateLimitExceeded {
+            return Some(event);
+        }
+        let reason = event
+            .details
+            .get("reason")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let suppressed =
+            self.rate_limit_throttle
+                .admit(&event.ip_address, reason, std::time::Instant::now())?;
+        if suppressed > 0
+            && let Some(details) = event.details.as_object_mut()
+        {
+            details.insert("suppressed_repeats".to_string(), suppressed.into());
+        }
+        Some(event)
     }
 
     pub async fn record_best_effort(&self, event: NewAuditEvent) {

@@ -11,6 +11,7 @@ mod storage_tests;
 mod support;
 #[cfg(test)]
 mod tests;
+mod throttle;
 mod types;
 mod writer;
 

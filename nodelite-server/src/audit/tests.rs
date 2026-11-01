@@ -226,7 +226,7 @@ fn audit_log_drains_burst_writes_through_writer_task() {
 
         for index in 0..1000 {
             let mut event = NewAuditEvent::now(
-                AuditEventType::RateLimitExceeded,
+                AuditEventType::LoginFailure,
                 format!("198.51.100.{}", index % 255),
                 false,
             );
@@ -242,7 +242,7 @@ fn audit_log_drains_burst_writes_through_writer_task() {
             .query(AuditQuery {
                 start: None,
                 end: None,
-                event_type: Some(AuditEventType::RateLimitExceeded),
+                event_type: Some(AuditEventType::LoginFailure),
                 success: Some(false),
                 limit: 1000,
             })
@@ -410,4 +410,42 @@ fn audit_details_cap_nested_strings_and_fall_back_when_still_large() {
     let mut many = NewAuditEvent::now(AuditEventType::TokenInvalid, "198.51.100.12", false);
     many.details = json!({ "paths": vec!["p".repeat(400); 16] });
     assert_eq!(many.bounded().details, json!({ "truncated": true }));
+}
+
+#[test]
+fn repeated_rate_limit_events_from_one_source_store_one_row() {
+    let runtime = Runtime::new().expect("runtime should build");
+    runtime.block_on(async {
+        let temp_dir = unique_temp_dir("nodelite-audit-rate-limit-throttle");
+        std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
+        let db_path = temp_dir.join("audit.sqlite3");
+        let audit = AuditLog::new(sample_config(db_path.clone()), 5);
+        audit.initialize().await.expect("audit should initialize");
+
+        let blocked = |ip: &str, path: &str| {
+            let mut event = NewAuditEvent::now(AuditEventType::RateLimitExceeded, ip, false);
+            event.details = json!({ "reason": "readonly_auth_block", "path": path });
+            event
+        };
+        for index in 0..20 {
+            audit
+                .record(blocked("198.51.100.20", &format!("/p{index}")))
+                .await
+                .expect("blocked event should queue");
+        }
+        audit
+            .record(blocked("198.51.100.21", "/p0"))
+            .await
+            .expect("other source should queue");
+        let mut failure = NewAuditEvent::now(AuditEventType::LoginFailure, "198.51.100.20", false);
+        failure.details = json!({ "reason": "readonly_auth_block" });
+        audit
+            .record(failure)
+            .await
+            .expect("other types are not throttled");
+        audit.shutdown().await;
+
+        assert_eq!(persisted_audit_event_count(&db_path), 3);
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    });
 }
