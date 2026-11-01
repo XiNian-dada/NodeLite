@@ -36,7 +36,10 @@ use super::super::{
     MIN_HISTORY_QUERY_CONCURRENCY, MIN_HISTORY_READ_CACHE_KIB, MIN_TOKEN_VERIFY_MAX_PARALLELISM,
     MIN_WRITER_FLUSH_INTERVAL_MS, MetricsConfig, ReadonlyAuthConfig, ServerConfig, WsConfig,
 };
+use super::agent::MAX_WARN_INTERVAL_SECS;
 use super::alerts::RawAlertsSection;
+
+const MAX_HELLO_TIMEOUT_SECS: u64 = 300;
 use crate::validation::{normalize_string_list, validate_non_empty};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -204,6 +207,7 @@ impl RawServerConfigFile {
         let geoip = self.validate_geoip()?;
         let alerting = self.validate_alerting()?;
         self.validate_server_limits()?;
+        self.validate_session_timers()?;
         self.validate_sanitization_limits()?;
         self.validate_ws_limits()?;
         self.validate_ui_limits()?;
@@ -525,6 +529,23 @@ impl RawServerConfigFile {
         if self.server.history_writer_flush_interval_ms < MIN_WRITER_FLUSH_INTERVAL_MS {
             return Err(ConfigError::new(format!(
                 "server.history_writer_flush_interval_ms must be at least {MIN_WRITER_FLUSH_INTERVAL_MS} ms"
+            )));
+        }
+        Ok(())
+    }
+
+    fn validate_session_timers(&self) -> Result<(), ConfigError> {
+        // 零握手超时会让每个 Agent 认证失败并累积到 IP 封禁。
+        if !(1..=MAX_HELLO_TIMEOUT_SECS).contains(&self.server.hello_timeout_secs) {
+            return Err(ConfigError::new(format!(
+                "server.hello_timeout_secs must be between 1 and {MAX_HELLO_TIMEOUT_SECS} seconds"
+            )));
+        }
+        if !(1..=MAX_WARN_INTERVAL_SECS)
+            .contains(&self.server.insecure_transport_warn_interval_secs)
+        {
+            return Err(ConfigError::new(format!(
+                "server.insecure_transport_warn_interval_secs must be between 1 and {MAX_WARN_INTERVAL_SECS} seconds"
             )));
         }
         Ok(())
