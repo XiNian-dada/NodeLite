@@ -40,6 +40,7 @@ impl NodeRegistry {
     ) -> RegistryResult<PreparedToken> {
         validate_identifier("node_id", node_id).map_err(RegistryError::validation)?;
         let node_id = node_id.to_string();
+        self.precheck_token_refresh(&node_id, generation).await?;
         let (token, refresh_id, token_hash) = self.hash_candidate_token().await?;
         let (prepared, file) = mutate_registry_file(self.path.as_ref(), move |file| {
             let node = file.nodes.iter_mut().find(|n| n.node_id == node_id)
@@ -63,6 +64,30 @@ impl NodeRegistry {
         }).await?;
         self.replace_state_from_file(file).await?;
         Ok(prepared)
+    }
+
+    /// Rejects from memory before spending an Argon2 hash; the file update below stays the
+    /// authoritative check.
+    async fn precheck_token_refresh(&self, node_id: &str, generation: u64) -> RegistryResult<()> {
+        let node = self
+            .registered_node(node_id)
+            .await
+            .ok_or_else(|| RegistryError::NodeNotFound(node_id.to_string()))?;
+        let now = Utc::now();
+        if token_status_for_node(&node, generation, 0, now).is_none() {
+            return Err(RegistryError::Unauthorized);
+        }
+        let live_pending = node
+            .pending_tokens
+            .iter()
+            .filter(|pending| now < pending.expires_at)
+            .count();
+        if live_pending >= MAX_PENDING_TOKENS {
+            return Err(RegistryError::validation(
+                "unconfirmed credential limit reached; retry with a saved candidate or reissue the node",
+            ));
+        }
+        Ok(())
     }
 
     /// Hashing happens before the optimistic write so a version conflict retries only the
