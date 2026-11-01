@@ -162,9 +162,6 @@ describe('TokenTable', () => {
       service_expires_at: '2027-01-15T00:00:00Z',
       service_unlimited: false,
       renewal_price: '$5/mo',
-      traffic_limit_bytes: null,
-      traffic_accounting: 'bidirectional',
-      traffic_throttle_kbps: null,
     });
     expect(wrapper.emitted('saved')).toHaveLength(1);
     expect(wrapper.find('[data-test="service-meta-message"]').text()).toBe('Saved');
@@ -197,10 +194,28 @@ describe('TokenTable', () => {
       service_expires_at: null,
       service_unlimited: true,
       renewal_price: null,
-      traffic_limit_bytes: null,
-      traffic_accounting: 'bidirectional',
-      traffic_throttle_kbps: null,
     });
+  });
+
+  it('leaves traffic settings out of service saves', async () => {
+    const wrapper = mountTable([
+      agent({
+        node_id: 'a',
+        traffic_limit_bytes: 0,
+        traffic_accounting: 'outbound',
+        traffic_throttle_kbps: 8,
+      }),
+    ]);
+
+    await wrapper.find('[data-test="service-meta-save"]').trigger('click');
+    await flushPromises();
+
+    const body = mockUpdateMeta.mock.calls[0]?.[1] ?? {};
+    expect(Object.keys(body).sort()).toEqual([
+      'renewal_price',
+      'service_expires_at',
+      'service_unlimited',
+    ]);
   });
 
   it('deletes an agent after clicking confirm', async () => {
