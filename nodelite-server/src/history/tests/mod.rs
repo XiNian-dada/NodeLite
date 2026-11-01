@@ -17,6 +17,7 @@ use super::{
     query_history_between, sqlite_busy_retry_delay, write_history_point,
 };
 
+mod bucket_tests;
 mod init_tests;
 mod migration_tests;
 mod reader_tests;

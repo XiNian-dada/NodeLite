@@ -51,8 +51,10 @@ pub(super) fn query_history_between(
     max_points: usize,
 ) -> Result<Vec<HistoryPoint>, HistoryQueryError> {
     let max_points = max_points.max(1);
-    let span_seconds = (until.timestamp() - since.timestamp()).max(1);
-    let bucket_seconds = ((span_seconds as usize).div_ceil(max_points)).max(1) as i64;
+    // 筛选包含 until，离散秒数是 span + 1；按它分桶才能让结束点落在第 max_points 个
+    // 半开桶 [since + k*w, since + (k+1)*w) 之内，而不是溢出成被 LIMIT 截掉的额外桶。
+    let inclusive_seconds = (until.timestamp() - since.timestamp()).max(0) as u64 + 1;
+    let bucket_seconds = inclusive_seconds.div_ceil(max_points as u64).max(1) as i64;
     let mut statement = connection.prepare(HISTORY_QUERY_SQL)?;
     let rows = statement.query_map(
         params![
