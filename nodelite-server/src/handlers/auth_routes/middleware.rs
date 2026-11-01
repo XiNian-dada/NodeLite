@@ -465,7 +465,7 @@ mod tests {
             (Method::POST, "/api/settings/password", true),
             (Method::POST, "/api/nodes/edge-01/service-meta", true),
             (Method::POST, "/api/nodes/edge-01/location-override", true),
-            (Method::DELETE, "/api/nodes/edge-01", true),
+            (Method::POST, "/api/nodes/edge-01/refresh-token", true),
             (Method::GET, "/api/nodes/edge-01/history", false),
             (Method::GET, "/api/settings", false),
             (Method::POST, "/api/overview", false),
