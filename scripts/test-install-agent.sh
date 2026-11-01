@@ -159,6 +159,25 @@ awk '
   END { exit !ok }
 ' "$INSTALLER"
 
+# Every download is size- and time-bounded, including the post-download size re-check.
+# shellcheck disable=SC2317
+curl() {
+  printf '%s\n' "$*" >"$TEMP_DIR/curl-args"
+  while [ "$#" -gt 1 ]; do [ "$1" = -o ] && out="$2"; shift; done
+  printf '%s' "$FAKE_BODY" >"$out"
+}
+FAKE_BODY=12345678
+fetch_bounded 8 30 https://example.com/a "$TEMP_DIR/dl" --config cfg
+grep -Eq -- '^-q .*--proto-redir =https .*--max-time 30 --max-filesize 8 --config cfg https://example.com/a -o ' "$TEMP_DIR/curl-args"
+FAKE_BODY=123456789
+if fetch_bounded 8 30 https://example.com/a "$TEMP_DIR/dl"; then
+  printf '%s\n' 'Oversized downloads must be rejected' >&2
+  exit 1
+fi
+[ ! -e "$TEMP_DIR/dl" ]
+unset -f curl
+[ "$(grep -c '^ *curl ' "$INSTALLER")" -eq 1 ] && grep -q 'curl -q -fsSI --connect-timeout 15 --max-time 30' "$INSTALLER"
+
 SERVICE_KIND=launchd
 # Linux musl pins must not be applied to macOS artifacts.
 select_release_target x86_64

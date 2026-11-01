@@ -59,6 +59,7 @@ SERVICE_GROUP="nodelite-agent"
 STATE_DIR="${NODELITE_AGENT_STATE_DIR:-/var/lib/nodelite-agent}"
 TRAFFIC_CONTROL="${NODELITE_AGENT_TRAFFIC_CONTROL:-auto}"
 INSECURE_HTTP="${NODELITE_AGENT_INSECURE_ALLOW_HTTP:-0}"
+MAX_BINARY_BYTES=134217728
 LEGACY_CONFIG_PATH=""
 BIN_PATH=""
 CONFIG_PATH=""
@@ -189,7 +190,7 @@ fetch_bootstrap_config() {
   load_install_token
   write_curl_auth_config
   printf '%s\n' "Fetching agent bootstrap from $BOOTSTRAP_URL"
-  curl -fsSL --config "$CURL_AUTH_CONFIG" "$BOOTSTRAP_URL" -o "$BOOTSTRAP_TMP" \
+  fetch_bounded 65536 60 "$BOOTSTRAP_URL" "$BOOTSTRAP_TMP" --config "$CURL_AUTH_CONFIG" \
     || fail "failed to fetch agent bootstrap config"
   grep -q '^\[agent\]$' "$BOOTSTRAP_TMP" || fail "bootstrap response did not contain an agent config"
   grep -q '^token = "' "$BOOTSTRAP_TMP" || fail "bootstrap response did not contain an agent token"
@@ -208,7 +209,7 @@ fetch_expected_sha256() {
   fi
 
   printf '%s\n' "Fetching checksums from $CHECKSUMS_URL"
-  curl -fsSL "$CHECKSUMS_URL" -o "$CHECKSUMS_TMP" \
+  fetch_bounded 1048576 60 "$CHECKSUMS_URL" "$CHECKSUMS_TMP" \
     || fail "failed to fetch release checksums"
 
   EXPECTED_SHA256="$(awk -v artifact="$artifact_name" '
@@ -249,7 +250,7 @@ resolve_release_base_url() {
   case "$BASE_URL" in
     https://github.com/*/releases/latest/download)
       releases_root="${BASE_URL%/latest/download}"
-      redirect_location="$(curl -fsSI "$releases_root/latest" | awk '
+      redirect_location="$(curl -q -fsSI --connect-timeout 15 --max-time 30 "$releases_root/latest" | awk '
         tolower($1) == "location:" {
           value = $2
           sub(/\r$/, "", value)
@@ -388,6 +389,17 @@ require_secure_url() {
     return 0
   fi
   fail "$1 must use https:// (remote http requires --insecure-allow-http): $2"; return 1
+}
+
+# fetch_bounded <max-bytes> <max-seconds> <url> <output> [curl options...]
+# 每个下载都限定大小与时长;旧版 curl 的 --max-filesize 只看 Content-Length,所以落盘后再复核一次。
+# shellcheck disable=SC2317
+fetch_bounded() {
+  fb_bytes="$1" fb_secs="$2" fb_url="$3" fb_out="$4"; shift 4
+  fb_redir='=https'; [ "$INSECURE_HTTP" != 1 ] || fb_redir='=http,https'
+  curl -q -fsSL --proto '=http,https' --proto-redir "$fb_redir" --connect-timeout 15 \
+    --max-time "$fb_secs" --max-filesize "$fb_bytes" "$@" "$fb_url" -o "$fb_out" || return 1
+  [ "$(wc -c <"$fb_out" | tr -d '[:space:]')" -le "$fb_bytes" ] || { rm -f "$fb_out"; return 1; }
 }
 
 # 自动更新支持已移除。升级时顺手清理旧版本曾经写入的 timer / service,
@@ -702,7 +714,7 @@ if [ "$SIGNED_UPDATES" -eq 1 ]; then
   TMP_PATH="$(mktemp)"
   EXPECTED_SHA256=''
   fetch_expected_sha256 install-agent-signed.sh
-  curl -q -fsSL --proto-redir '=https' --connect-timeout 15 --max-time 60 --max-filesize 1048576 "$BASE_URL/install-agent-signed.sh" -o "$TMP_PATH"
+  fetch_bounded 1048576 60 "$BASE_URL/install-agent-signed.sh" "$TMP_PATH" || fail 'failed to fetch signed installer helper'
   [ "$(calculate_sha256 "$TMP_PATH")" = "$EXPECTED_SHA256" ] || fail 'signed installer helper checksum mismatch'
   # shellcheck source=scripts/install-agent-signed.sh
   . "$TMP_PATH"
@@ -736,7 +748,7 @@ if [ "$SIGNED_UPDATES" -eq 1 ]; then
 else
   fetch_expected_sha256 "$ARTIFACT_NAME"
   printf '%s\n' "Downloading $DOWNLOAD_URL"
-  curl -fsSL "$DOWNLOAD_URL" -o "$TMP_PATH" || fail "failed to download agent binary"
+  fetch_bounded "$MAX_BINARY_BYTES" 600 "$DOWNLOAD_URL" "$TMP_PATH" || fail "failed to download agent binary"
   ACTUAL_SHA256="$(calculate_sha256 "$TMP_PATH")"
   [ "$ACTUAL_SHA256" = "$EXPECTED_SHA256" ] || fail "downloaded agent checksum mismatch"
 fi
