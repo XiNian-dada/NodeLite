@@ -12,6 +12,7 @@
 
 ### 升级与兼容性
 - 反向代理需保留原始 `Host`。代理监听非默认端口时请使用 Nginx `proxy_set_header Host $http_host;`（`$host` 不含端口），或让 `server.public_base_url` 与浏览器访问地址一致，否则面板实时推送会返回 403。
+- GeoIP 改为显式开启：`server.toml` 中没有 `[geoip]` 节（或该节既无 `enabled` 也无 `provider`）的 Server 升级后将停止在线 GeoIP 查询，不再向 ipwho.is 发送公网 IP；如需保留，请设置 `[geoip] enabled = true`。只写了 `provider` 的配置仍视为已开启。
 
 ## [v3.0.4] - 2026-10-14
 

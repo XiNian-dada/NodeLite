@@ -116,6 +116,28 @@ load_existing_server_defaults "$existing_config"
   exit 1
 }
 
+geoip_provider_only="$TEMP_DIR/geoip-provider-only.toml"
+printf '%s\n' '[geoip]' 'provider = "dbip"' >"$geoip_provider_only"
+GEOIP_ENABLED="false"
+GEOIP_PROVIDER="ipwhois"
+load_existing_server_defaults "$geoip_provider_only"
+[ "$GEOIP_ENABLED" = "true" ] || fail "upgrade disabled GeoIP for provider-only config"
+[ "$GEOIP_PROVIDER" = "dbip" ] || fail "upgrade lost explicit GeoIP provider"
+
+geoip_explicit_off="$TEMP_DIR/geoip-explicit-off.toml"
+printf '%s\n' '[geoip]' 'enabled = false' 'provider = "ipwhois"' >"$geoip_explicit_off"
+GEOIP_ENABLED="true"
+load_existing_server_defaults "$geoip_explicit_off"
+[ "$GEOIP_ENABLED" = "false" ] || fail "upgrade overrode explicit GeoIP disable"
+
+geoip_absent="$TEMP_DIR/geoip-absent.toml"
+printf '%s\n' '[server]' 'listen = "127.0.0.1:20000"' >"$geoip_absent"
+GEOIP_ENABLED="false"
+GEOIP_PROVIDER="ipwhois"
+load_existing_server_defaults "$geoip_absent"
+[ "$GEOIP_ENABLED" = "false" ] || fail "upgrade enabled GeoIP without opt-in"
+GEOIP_ENABLED="true"
+
 missing_config="$TEMP_DIR/missing.toml"
 printf '%s\n' '[server]' 'listen = "127.0.0.1:20000"' >"$missing_config"
 TMP_CONFIG=""
