@@ -263,7 +263,8 @@ insecure_allow_http = true
 | `[auth]` | `username` / `password` | 自动生成强密码 | 面板登录凭据（必须包含大小写字母、数字和特殊字符） |
 | `[auth]` | `enable_2fa` | `false` | 是否启用二次验证；启用后可绑定 TOTP 与 Passkey |
 | `[audit]` | `enabled` / `retention_days` / `max_rows` | `true` / `90` / `500000` | 独立安全审计日志，默认留存 90 天，最多 50 万行 |
-| `[geoip]` | `provider` | `"ipwhois"` | 物理位置查询：`"ipwhois"`（在线）/ `"dbip"`（本地 MMDB） |
+| `[geoip]` | `enabled` | `false` | 是否启用 GeoIP；默认关闭。启用 `"ipwhois"` 会把 Agent 及已认证客户端的公网 IP 发送给第三方 ipwho.is，注重隐私或离线部署请改用本地 `"dbip"` / `"custom"` |
+| `[geoip]` | `provider` | `"ipwhois"` | 物理位置查询：`"ipwhois"`（在线）/ `"dbip"`（本地 MMDB）；仅写 `provider` 未写 `enabled` 时视为开启 |
 
 ---
 
