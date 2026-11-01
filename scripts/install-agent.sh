@@ -13,6 +13,8 @@ fail() {
   exit 1
 }
 
+need_value() { [ "$#" -ge 2 ] || fail "$1 requires a value"; }
+
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
@@ -54,6 +56,11 @@ SERVICE_USER="nodelite-agent"
 SERVICE_GROUP="nodelite-agent"
 STATE_DIR="${NODELITE_AGENT_STATE_DIR:-/var/lib/nodelite-agent}"
 TRAFFIC_CONTROL="${NODELITE_AGENT_TRAFFIC_CONTROL:-auto}"
+INSECURE_HTTP="${NODELITE_AGENT_INSECURE_ALLOW_HTTP:-0}"
+MAX_BINARY_BYTES=134217728
+SERVICE_SETTLE_SECS=10
+ROLLBACK_DIR=""
+ROLLBACK_ARMED=0
 LEGACY_CONFIG_PATH=""
 BIN_PATH=""
 CONFIG_PATH=""
@@ -74,17 +81,24 @@ BOOTSTRAP_TMP=""
 CURL_AUTH_CONFIG=""
 CHECKSUMS_TMP=""
 
-# 退出时清理临时文件,确保不会残留含 token 的内容。
+# 退出时清理含 token 的临时文件;服务已停止则先恢复旧 Agent。每步都不可因 set -e(如 stderr 已关闭)中断,且屏蔽重入信号。
 cleanup() {
+  trap '' HUP INT TERM
+  if [ "$ROLLBACK_ARMED" = 1 ]; then
+    printf '%s\n' 'install-agent: aborted after stopping the service; restoring the previous agent' >&2 || true
+    restore_previous_install || [ ! -f "$ROLLBACK_DIR/binary" ] ||
+      printf '%s\n' 'install-agent: previous agent is NOT running; inspect the service manually' >&2 || true
+  fi
   [ -z "$SIGNED_STAGE" ] || rm -rf -- "$SIGNED_STAGE"
-  [ -n "$TMP_PATH" ] && rm -f "$TMP_PATH"
-  [ -n "$BOOTSTRAP_TMP" ] && rm -f "$BOOTSTRAP_TMP"
-  [ -n "$CURL_AUTH_CONFIG" ] && rm -f "$CURL_AUTH_CONFIG"
-  [ -n "$CHECKSUMS_TMP" ] && rm -f "$CHECKSUMS_TMP"
+  for cleanup_path in "$TMP_PATH" "$BOOTSTRAP_TMP" "$CURL_AUTH_CONFIG" "$CHECKSUMS_TMP"; do
+    [ -z "$cleanup_path" ] || rm -f -- "$cleanup_path"
+  done
+  [ -z "$ROLLBACK_DIR" ] || rm -rf -- "$ROLLBACK_DIR"
   return 0
 }
 
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'cleanup; exit 1' HUP INT TERM
 
 # 计算指定文件的 SHA-256 摘要;优先用 GNU `sha256sum`,缺失时回退到 `shasum -a 256`。
 calculate_sha256() {
@@ -104,22 +118,9 @@ resolve_nologin_shell() {
     command -v nologin
     return 0
   fi
-  if [ -x /usr/sbin/nologin ]; then
-    printf '%s\n' /usr/sbin/nologin
-    return 0
-  fi
-  if [ -x /sbin/nologin ]; then
-    printf '%s\n' /sbin/nologin
-    return 0
-  fi
-  if [ -x /usr/bin/false ]; then
-    printf '%s\n' /usr/bin/false
-    return 0
-  fi
-  if [ -x /bin/false ]; then
-    printf '%s\n' /bin/false
-    return 0
-  fi
+  for nologin_candidate in /usr/sbin/nologin /sbin/nologin /usr/bin/false /bin/false; do
+    [ -x "$nologin_candidate" ] && { printf '%s\n' "$nologin_candidate"; return 0; }
+  done
   fail "unable to find a nologin shell for the service user"
 }
 
@@ -151,12 +152,14 @@ prompt_install_token() {
   [ -r /dev/tty ] || fail "missing install token and no interactive terminal is available"
 
   old_tty_state="$(stty -g </dev/tty)" || fail "failed to inspect terminal state"
-  trap 'stty "$old_tty_state" </dev/tty; cleanup' EXIT HUP INT TERM
+  trap 'stty "$old_tty_state" </dev/tty; cleanup' EXIT
+  trap 'stty "$old_tty_state" </dev/tty; cleanup; exit 1' HUP INT TERM
   printf '%s' "One-time install token: " >/dev/tty
   stty -echo </dev/tty || fail "failed to disable terminal echo"
   IFS= read -r INSTALL_TOKEN </dev/tty || fail "failed to read install token"
   stty "$old_tty_state" </dev/tty || fail "failed to restore terminal state"
-  trap cleanup EXIT HUP INT TERM
+  trap cleanup EXIT
+  trap 'cleanup; exit 1' HUP INT TERM
   printf '\n' >/dev/tty
 }
 
@@ -184,7 +187,7 @@ fetch_bootstrap_config() {
   load_install_token
   write_curl_auth_config
   printf '%s\n' "Fetching agent bootstrap from $BOOTSTRAP_URL"
-  curl -fsSL --config "$CURL_AUTH_CONFIG" "$BOOTSTRAP_URL" -o "$BOOTSTRAP_TMP" \
+  fetch_bounded 65536 60 "$BOOTSTRAP_URL" "$BOOTSTRAP_TMP" --config "$CURL_AUTH_CONFIG" \
     || fail "failed to fetch agent bootstrap config"
   grep -q '^\[agent\]$' "$BOOTSTRAP_TMP" || fail "bootstrap response did not contain an agent config"
   grep -q '^token = "' "$BOOTSTRAP_TMP" || fail "bootstrap response did not contain an agent token"
@@ -203,7 +206,7 @@ fetch_expected_sha256() {
   fi
 
   printf '%s\n' "Fetching checksums from $CHECKSUMS_URL"
-  curl -fsSL "$CHECKSUMS_URL" -o "$CHECKSUMS_TMP" \
+  fetch_bounded 1048576 60 "$CHECKSUMS_URL" "$CHECKSUMS_TMP" \
     || fail "failed to fetch release checksums"
 
   EXPECTED_SHA256="$(awk -v artifact="$artifact_name" '
@@ -244,7 +247,7 @@ resolve_release_base_url() {
   case "$BASE_URL" in
     https://github.com/*/releases/latest/download)
       releases_root="${BASE_URL%/latest/download}"
-      redirect_location="$(curl -fsSI "$releases_root/latest" | awk '
+      redirect_location="$(curl -q -fsSI --connect-timeout 15 --max-time 30 "$releases_root/latest" | awk '
         tolower($1) == "location:" {
           value = $2
           sub(/\r$/, "", value)
@@ -271,31 +274,15 @@ resolve_release_base_url() {
 configure_platform() {
   OS_NAME="$(uname -s)"
   case "$OS_NAME" in
-    Linux)
-      SERVICE_KIND="systemd"
-      SERVICE_DEFINITION_PATH="$UNIT_PATH"
-      SERVICE_STATUS_NAME="nodelite-agent.service"
-      ;;
-    Darwin)
-      SERVICE_KIND="launchd"
-      SERVICE_DEFINITION_PATH="$PLIST_PATH"
-      SERVICE_STATUS_NAME="$LAUNCHD_LABEL"
-      ;;
-    *)
-      fail "unsupported operating system: $OS_NAME"
-      ;;
+    Linux) SERVICE_KIND=systemd SERVICE_DEFINITION_PATH="$UNIT_PATH" SERVICE_STATUS_NAME=nodelite-agent.service ;;
+    Darwin) SERVICE_KIND=launchd SERVICE_DEFINITION_PATH="$PLIST_PATH" SERVICE_STATUS_NAME="$LAUNCHD_LABEL" ;;
+    *) fail "unsupported operating system: $OS_NAME" ;;
   esac
 }
 
 prepare_service_account() {
-  if [ "$SERVICE_KIND" = "systemd" ]; then
-    ensure_service_account
-    SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
-    return 0
-  fi
-
-  SERVICE_USER="root"
-  SERVICE_GROUP="$(id -gn root)"
+  [ "$SERVICE_KIND" = systemd ] && ensure_service_account || SERVICE_USER=root
+  SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
 }
 
 configure_agent_config_paths() {
@@ -371,6 +358,86 @@ refuse_signed_updater_override() {
      grep -Eq '^ExecStart=/var/lib/nodelite-updater/code/active([[:space:]]|$)' "$UNIT_PATH"; then
     fail 'This Agent uses the signed updater; use nodelite-updater or the explicit local recovery procedure instead of the legacy installer.'
   fi
+}
+
+# 远程地址必须是 https;loopback 便于隔离测试;远程 http 仅在服务端已开启
+# insecure_allow_http 并渲染 --insecure-allow-http 时放行。
+# shellcheck disable=SC2317
+require_secure_url() {
+  printf '%s\n' "$2" | grep -Eq '^(https://[^/@[:space:]]+|http://(127[.]0[.]0[.]1|\[::1\]|localhost)(:[0-9]+)?)(/[^[:space:]]*)?$' && return 0
+  if [ "$INSECURE_HTTP" = 1 ] && printf '%s\n' "$2" | grep -Eq '^http://[^/@[:space:]]+(/[^[:space:]]*)?$'; then
+    printf '%s\n' "warning: $1 uses plain http because --insecure-allow-http was given" >&2
+    return 0
+  fi
+  fail "$1 must use https:// (remote http requires --insecure-allow-http): $2"; return 1
+}
+
+# fetch_bounded <max-bytes> <max-seconds> <url> <output> [curl options...]
+# 每个下载都限定大小与时长;旧版 curl 的 --max-filesize 只看 Content-Length,所以落盘后再复核一次。
+# shellcheck disable=SC2317
+fetch_bounded() {
+  fb_bytes="$1" fb_secs="$2" fb_url="$3" fb_out="$4"; shift 4
+  fb_redir='=https'; [ "$INSECURE_HTTP" != 1 ] || fb_redir='=http,https'
+  curl -q -fsSL --proto '=http,https' --proto-redir "$fb_redir" --connect-timeout 15 \
+    --max-time "$fb_secs" --max-filesize "$fb_bytes" "$@" "$fb_url" -o "$fb_out" || return 1
+  [ "$(wc -c <"$fb_out" | tr -d '[:space:]')" -le "$fb_bytes" ] || { rm -f "$fb_out"; return 1; }
+}
+
+# 替换前保留旧二进制与服务定义(放在 root 独占的安装目录,不放服务用户可写的 state 目录)。
+backup_previous_install() {
+  ROLLBACK_DIR="$(mktemp -d "$INSTALL_DIR/.nodelite-agent-rollback.XXXXXX")"
+  [ ! -f "$BIN_PATH" ] || cp -p "$BIN_PATH" "$ROLLBACK_DIR/binary"
+  [ ! -f "$SERVICE_DEFINITION_PATH" ] || cp -p "$SERVICE_DEFINITION_PATH" "$ROLLBACK_DIR/service"
+}
+
+service_is_active() {
+  if [ "$SERVICE_KIND" = systemd ]; then
+    systemctl is-active --quiet nodelite-agent.service
+  else
+    launchctl print "system/$LAUNCHD_LABEL" 2>/dev/null | grep -Eq '^[[:space:]]*state = running'
+  fi
+}
+
+# 重启后在观察窗口内逐秒确认服务持续运行,崩溃循环(activating/重启间隙)即判失败。
+service_stays_active() {
+  sa_left="$SERVICE_SETTLE_SECS"
+  while [ "$sa_left" -gt 0 ]; do sleep 1; service_is_active || return 1; sa_left=$((sa_left - 1)); done
+}
+
+# 恢复备份并确认旧服务重新稳定运行;全新安装没有旧二进制时只停止服务。
+# shellcheck disable=SC2317
+restore_previous_install() {
+  ROLLBACK_ARMED=0
+  [ -f "$ROLLBACK_DIR/binary" ] || { stop_service; return 1; }
+  install -m 0755 "$ROLLBACK_DIR/binary" "$BIN_PATH" || return 1
+  [ ! -f "$ROLLBACK_DIR/service" ] || install -m 0644 "$ROLLBACK_DIR/service" "$SERVICE_DEFINITION_PATH" || return 1
+  restart_service && service_stays_active
+}
+
+# shellcheck disable=SC2317
+verify_or_roll_back() {
+  service_stays_active && return 0
+  if [ ! -f "$ROLLBACK_DIR/binary" ]; then
+    restore_previous_install || true
+    fail "agent service did not stay running; it was stopped. Inspect: $SERVICE_STATUS_NAME logs"; return 1
+  fi
+  if restore_previous_install; then
+    fail "agent service did not stay running after the upgrade; the previous binary and service definition were restored and are running (config kept: $CONFIG_PATH)"; return 1
+  fi
+  fail "agent service did not stay running after the upgrade; the previous binary was restored but the service is NOT running. Inspect: $SERVICE_STATUS_NAME logs"; return 1
+}
+
+# 升级时若 --install-dir 与现有服务定义中的二进制路径不同,无法回滚旧二进制,直接拒绝。
+# shellcheck disable=SC2317
+refuse_install_dir_change() {
+  [ -f "$SERVICE_DEFINITION_PATH" ] || return 0
+  if [ "$SERVICE_KIND" = systemd ]; then
+    current_bin="$(sed -n 's/^ExecStart=\([^[:space:]]*\).*/\1/p' "$SERVICE_DEFINITION_PATH" | sed -n 1p)"
+  else
+    current_bin="$(awk '/<key>ProgramArguments<\/key>/ { f=1; next } f && /<string>/ { sub(/.*<string>/, ""); sub(/<\/string>.*/, ""); print; exit }' "$SERVICE_DEFINITION_PATH")"
+  fi
+  [ -z "$current_bin" ] || [ "$current_bin" = "$BIN_PATH" ] ||
+    { fail "existing service runs $current_bin; changing --install-dir on upgrade is not supported (reinstall or keep the current directory)"; return 1; }
 }
 
 # 自动更新支持已移除。升级时顺手清理旧版本曾经写入的 timer / service,
@@ -522,99 +589,39 @@ restart_systemd_service() {
 restart_launchd_service() {
   launchctl bootout system "$PLIST_PATH" >/dev/null 2>&1 || \
     launchctl bootout "system/$LAUNCHD_LABEL" >/dev/null 2>&1 || true
-  launchctl bootstrap system "$PLIST_PATH" || fail "failed to bootstrap launchd service"
+  launchctl bootstrap system "$PLIST_PATH" || { printf '%s\n' 'install-agent: failed to bootstrap launchd service' >&2; return 1; }
   launchctl enable "system/$LAUNCHD_LABEL" >/dev/null 2>&1 || true
-  launchctl kickstart -k "system/$LAUNCHD_LABEL" || fail "failed to start launchd service"
+  launchctl kickstart -k "system/$LAUNCHD_LABEL" || { printf '%s\n' 'install-agent: failed to start launchd service' >&2; return 1; }
+}
+
+stop_service() {
+  if [ "$SERVICE_KIND" = systemd ]; then systemctl disable --now nodelite-agent.service
+  else launchctl bootout "system/$LAUNCHD_LABEL"; fi >/dev/null 2>&1 || true
 }
 
 restart_service() {
-  if [ "$SERVICE_KIND" = "systemd" ]; then
-    restart_systemd_service
-    return 0
-  fi
-
-  restart_launchd_service
+  if [ "$SERVICE_KIND" = systemd ]; then restart_systemd_service; else restart_launchd_service; fi
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --bootstrap-url)
-      [ "$#" -ge 2 ] || fail "--bootstrap-url requires a value"
-      BOOTSTRAP_URL="$2"
-      shift 2
-      ;;
-    --install-token)
-      [ "$#" -ge 2 ] || fail "--install-token requires a value"
-      INSTALL_TOKEN="$2"
-      shift 2
-      ;;
-    --install-token-file)
-      [ "$#" -ge 2 ] || fail "--install-token-file requires a value"
-      INSTALL_TOKEN_FILE="$2"
-      shift 2
-      ;;
-    --install-dir)
-      [ "$#" -ge 2 ] || fail "--install-dir requires a value"
-      INSTALL_DIR="$2"
-      shift 2
-      ;;
-    --config-dir)
-      [ "$#" -ge 2 ] || fail "--config-dir requires a value"
-      CONFIG_DIR="$2"
-      shift 2
-      ;;
-    --state-dir)
-      [ "$#" -ge 2 ] || fail "--state-dir requires a value"
-      STATE_DIR="$2"
-      shift 2
-      ;;
-    --enable-traffic-control)
-      TRAFFIC_CONTROL=1
-      shift
-      ;;
-    --disable-traffic-control)
-      TRAFFIC_CONTROL=0
-      shift
-      ;;
-    --enable-signed-updates)
-      SIGNED_UPDATES=1
-      shift
-      ;;
-    --enable-web-updates)
-      SIGNED_UPDATES=1
-      WEB_UPDATES=1
-      shift
-      ;;
-    --mode)
-      [ "$#" -ge 2 ] || fail "--mode requires a value"
-      MODE="$2"
-      shift 2
-      ;;
-    --base-url)
-      [ "$#" -ge 2 ] || fail "--base-url requires a value"
-      BASE_URL="$2"
-      shift 2
-      ;;
-    --checksums-url)
-      [ "$#" -ge 2 ] || fail "--checksums-url requires a value"
-      CHECKSUMS_URL="$2"
-      shift 2
-      ;;
-    --binary-url)
-      [ "$#" -ge 2 ] || fail "--binary-url requires a value"
-      BINARY_URL="$2"
-      shift 2
-      ;;
-    --sha256-x86_64)
-      [ "$#" -ge 2 ] || fail "--sha256-x86_64 requires a value"
-      SHA256_X86_64="$2"
-      shift 2
-      ;;
-    --sha256-aarch64)
-      [ "$#" -ge 2 ] || fail "--sha256-aarch64 requires a value"
-      SHA256_AARCH64="$2"
-      shift 2
-      ;;
+    --bootstrap-url) need_value "$@"; BOOTSTRAP_URL="$2"; shift 2 ;;
+    --install-token) need_value "$@"; INSTALL_TOKEN="$2"; shift 2 ;;
+    --install-token-file) need_value "$@"; INSTALL_TOKEN_FILE="$2"; shift 2 ;;
+    --install-dir) need_value "$@"; INSTALL_DIR="$2"; shift 2 ;;
+    --config-dir) need_value "$@"; CONFIG_DIR="$2"; shift 2 ;;
+    --state-dir) need_value "$@"; STATE_DIR="$2"; shift 2 ;;
+    --enable-traffic-control) TRAFFIC_CONTROL=1; shift ;;
+    --disable-traffic-control) TRAFFIC_CONTROL=0; shift ;;
+    --enable-signed-updates) SIGNED_UPDATES=1; shift ;;
+    --enable-web-updates) SIGNED_UPDATES=1; WEB_UPDATES=1; shift ;;
+    --insecure-allow-http) INSECURE_HTTP=1; shift ;;
+    --mode) need_value "$@"; MODE="$2"; shift 2 ;;
+    --base-url) need_value "$@"; BASE_URL="$2"; shift 2 ;;
+    --checksums-url) need_value "$@"; CHECKSUMS_URL="$2"; shift 2 ;;
+    --binary-url) need_value "$@"; BINARY_URL="$2"; shift 2 ;;
+    --sha256-x86_64) need_value "$@"; SHA256_X86_64="$2"; shift 2 ;;
+    --sha256-aarch64) need_value "$@"; SHA256_AARCH64="$2"; shift 2 ;;
     --help|-h)
       cat <<'EOF'
 Usage:
@@ -637,6 +644,7 @@ Optional:
   --binary-url <exact-binary-url>
   --sha256-x86_64 <sha256-override>
   --sha256-aarch64 <sha256-override>
+  --insecure-allow-http (accept remote http:// sources; https and loopback need no flag)
 
 Notes:
   Linux keeps its writable agent.toml in /var/lib/nodelite-agent (0700/0600).
@@ -657,19 +665,9 @@ done
 
 [ "$(id -u)" -eq 0 ] || fail "please run as root"
 
-need_cmd uname
-need_cmd curl
-need_cmd awk
-need_cmd grep
-need_cmd id
-need_cmd install
-need_cmd mkdir
-need_cmd mktemp
-need_cmd mv
-need_cmd rm
-need_cmd sed
-need_cmd chown
-need_cmd chmod
+for required_cmd in uname curl awk grep id install mkdir mktemp mv rm sed chown chmod wc tr cp sleep; do
+  need_cmd "$required_cmd"
+done
 configure_platform
 case "$MODE" in auto|install|upgrade) ;; *) fail '--mode must be install, upgrade or auto' ;; esac
 if [ "$SERVICE_KIND" = systemd ] && [ -e /etc/nodelite-updater/policy.toml ] &&
@@ -705,28 +703,23 @@ else
   DOWNLOAD_URL="$BASE_URL/$ARTIFACT_NAME"
 fi
 
+[ -z "$BOOTSTRAP_URL" ] || require_secure_url 'bootstrap URL' "$BOOTSTRAP_URL"
+require_secure_url 'agent download URL' "$DOWNLOAD_URL"
+[ -n "$EXPECTED_SHA256" ] || require_secure_url 'checksums URL' "${CHECKSUMS_URL:-$BASE_URL/SHA256SUMS.txt}"
 BIN_PATH="$INSTALL_DIR/nodelite-agent"
 configure_agent_config_paths
+# Before the bootstrap fetch, so a refused upgrade does not consume the one-time token.
+refuse_install_dir_change
 
 existing_install=0
 if [ -e "$CONFIG_PATH" ] || [ -e "$LEGACY_CONFIG_PATH" ] || [ -e "$SERVICE_DEFINITION_PATH" ] || [ -e "$BIN_PATH" ]; then
   existing_install=1
 fi
 
-case "$MODE" in
-  auto)
-    if [ "$existing_install" -eq 1 ]; then
-      MODE="upgrade"
-    else
-      MODE="install"
-    fi
-    ;;
-  install|upgrade)
-    ;;
-  *)
-    fail "--mode must be one of: install, upgrade, auto"
-    ;;
-esac
+# --mode was validated above; auto picks upgrade when anything is already installed.
+if [ "$MODE" = auto ]; then
+  [ "$existing_install" -eq 1 ] && MODE=upgrade || MODE=install
+fi
 
 if [ "$MODE" = "install" ] && [ -z "$BOOTSTRAP_URL" ]; then
   fail "install mode requires --bootstrap-url"
@@ -741,7 +734,7 @@ if [ "$SIGNED_UPDATES" -eq 1 ]; then
   TMP_PATH="$(mktemp)"
   EXPECTED_SHA256=''
   fetch_expected_sha256 install-agent-signed.sh
-  curl -q -fsSL --proto-redir '=https' --connect-timeout 15 --max-time 60 --max-filesize 1048576 "$BASE_URL/install-agent-signed.sh" -o "$TMP_PATH"
+  fetch_bounded 1048576 60 "$BASE_URL/install-agent-signed.sh" "$TMP_PATH" || fail 'failed to fetch signed installer helper'
   [ "$(calculate_sha256 "$TMP_PATH")" = "$EXPECTED_SHA256" ] || fail 'signed installer helper checksum mismatch'
   # shellcheck source=scripts/install-agent-signed.sh
   . "$TMP_PATH"
@@ -775,31 +768,32 @@ if [ "$SIGNED_UPDATES" -eq 1 ]; then
 else
   fetch_expected_sha256 "$ARTIFACT_NAME"
   printf '%s\n' "Downloading $DOWNLOAD_URL"
-  curl -fsSL "$DOWNLOAD_URL" -o "$TMP_PATH" || fail "failed to download agent binary"
+  fetch_bounded "$MAX_BINARY_BYTES" 600 "$DOWNLOAD_URL" "$TMP_PATH" || fail "failed to download agent binary"
   ACTUAL_SHA256="$(calculate_sha256 "$TMP_PATH")"
   [ "$ACTUAL_SHA256" = "$EXPECTED_SHA256" ] || fail "downloaded agent checksum mismatch"
 fi
 
 check_saved_credentials
+backup_previous_install
+ROLLBACK_ARMED=1
 if [ "$SERVICE_KIND" = "systemd" ] && systemctl is-active --quiet nodelite-agent.service; then
   systemctl stop nodelite-agent.service
 fi
 install -o root -g root -m 0755 "$TMP_PATH" "$BIN_PATH"
 install_agent_config
 write_service_definition
-restart_service
+# A failed restart is judged (and rolled back) by the liveness window below.
+restart_service || true
+verify_or_roll_back
+ROLLBACK_ARMED=0
 [ "$SIGNED_UPDATES" -eq 0 ] || finish_signed_update
 
-if [ "$MODE" = "upgrade" ]; then
-  printf '%s\n' "NodeLite agent upgraded and restarted."
-else
+[ "$MODE" = upgrade ] && printf '%s\n' "NodeLite agent upgraded and restarted." ||
   printf '%s\n' "NodeLite agent installed and started."
-fi
 printf '%s\n' "Config: $CONFIG_PATH"
-if [ "$SERVICE_KIND" = "launchd" ]; then
-  printf '%s\n' "Service: $SERVICE_STATUS_NAME (experimental macOS launchd support)"
-  printf '%s\n' "Plist: $PLIST_PATH"
-  printf '%s\n' "Logs: $LAUNCHD_STDOUT_PATH / $LAUNCHD_STDERR_PATH"
+if [ "$SERVICE_KIND" = launchd ]; then
+  printf '%s\n' "Service: $SERVICE_STATUS_NAME (experimental macOS launchd support)" "Plist: $PLIST_PATH" \
+    "Logs: $LAUNCHD_STDOUT_PATH / $LAUNCHD_STDERR_PATH"
 else
   printf '%s\n' "Service: $SERVICE_STATUS_NAME"
 fi

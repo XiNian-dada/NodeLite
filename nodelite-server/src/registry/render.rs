@@ -144,8 +144,17 @@ impl AgentReleaseSource {
         &self.base_url
     }
 
-    fn push_args(&self, lines: &mut Vec<String>) {
+    fn push_args(&self, bootstrap_url: Option<&str>, lines: &mut Vec<String>) {
         let mut args = vec![format!("--base-url {}", shell_quote(&self.base_url))];
+        // Config validation only admits remote http:// with server.insecure_allow_http;
+        // carry that opt-in so the installer's HTTPS guard accepts the same sources.
+        if bootstrap_url
+            .into_iter()
+            .chain([self.base_url.as_str()])
+            .any(is_remote_http)
+        {
+            args.push("--insecure-allow-http".to_string());
+        }
         if let Some(sha256) = self.sha256_x86_64.as_deref() {
             args.push(format!("--sha256-x86_64 {}", shell_quote(sha256)));
         }
@@ -158,6 +167,15 @@ impl AgentReleaseSource {
             lines.push(format!("  {arg}{suffix}"));
         }
     }
+}
+
+/// 安装脚本只对远程 `http://` 要求 `--insecure-allow-http`;loopback 与它的放行规则保持一致。
+fn is_remote_http(url: &str) -> bool {
+    let Ok(url) = Url::parse(url) else {
+        return false;
+    };
+    let loopback = matches!(url.host_str(), Some("127.0.0.1" | "[::1]" | "localhost"));
+    url.scheme() == "http" && !loopback
 }
 
 /// 渲染"复制即可用"的安装命令文本。
@@ -178,7 +196,7 @@ pub fn render_install_command(
         ),
         format!("  --bootstrap-url {} \\", shell_quote(&bootstrap_url)),
     ];
-    release.push_args(&mut lines);
+    release.push_args(Some(&bootstrap_url), &mut lines);
 
     Ok(lines.join("\n"))
 }
@@ -194,7 +212,7 @@ pub fn render_upgrade_command(
         "  NODELITE_AGENT_MODE=upgrade sh -s -- \\".to_string(),
         "  --mode upgrade \\".to_string(),
     ];
-    release.push_args(&mut lines);
+    release.push_args(None, &mut lines);
 
     Ok(lines.join("\n"))
 }

@@ -6,7 +6,7 @@ SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 INSTALLER="$SCRIPT_DIR/install-agent.sh"
 (
   eval "$(awk '/^cleanup\(\)/ { printing=1 } /^trap cleanup/ { exit } printing { print }' "$INSTALLER")"
-  SIGNED_STAGE='' TMP_PATH='' BOOTSTRAP_TMP='' CURL_AUTH_CONFIG='' CHECKSUMS_TMP=''
+  SIGNED_STAGE='' TMP_PATH='' BOOTSTRAP_TMP='' CURL_AUTH_CONFIG='' CHECKSUMS_TMP='' ROLLBACK_DIR='' ROLLBACK_ARMED=0
   cleanup
 )
 TEMP_DIR=$(mktemp -d)
@@ -133,6 +133,154 @@ awk '
   /installer overrides are not allowed/ { if (!warned) exit 1; found=1 }
   /^  \[ "\$MODE" != install \] && \[ -z "\$BOOTSTRAP_URL\$BINARY_URL" \]/ { guard=1 }
   END { exit !(found && guard) }
+' "$INSTALLER"
+
+# Remote sources must use https; loopback is allowed; remote http needs the explicit opt-in.
+INSECURE_HTTP=0
+for url in https://monitor.example.com/install/bootstrap http://127.0.0.1:8080/x 'http://[::1]:9/x' http://localhost/x; do
+  require_secure_url test "$url"
+done
+for url in http://monitor.example.com/x http://127.0.0.1.example.com/x http://127.0.0.1:1@example.com/x https://user@example.com/x ftp://example.com/x; do
+  if (require_secure_url test "$url") >/dev/null 2>&1; then
+    printf '%s\n' "Insecure source must be rejected: $url" >&2
+    exit 1
+  fi
+done
+INSECURE_HTTP=1
+require_secure_url test http://monitor.example.com/x 2>/dev/null
+if (require_secure_url test ftp://example.com/x) >/dev/null 2>&1; then
+  printf '%s\n' 'Opt-in must only relax http' >&2
+  exit 1
+fi
+INSECURE_HTTP=0
+awk '
+  /require_secure_url .bootstrap URL/ { b=1 } /require_secure_url .agent download URL/ { d=1 }
+  /^  fetch_bootstrap_config$/ { if (!(b && d)) exit 1; ok=1 }
+  END { exit !ok }
+' "$INSTALLER"
+
+# Every download is size- and time-bounded, including the post-download size re-check.
+# shellcheck disable=SC2317
+curl() {
+  printf '%s\n' "$*" >"$TEMP_DIR/curl-args"
+  while [ "$#" -gt 1 ]; do [ "$1" = -o ] && out="$2"; shift; done
+  printf '%s' "$FAKE_BODY" >"$out"
+}
+FAKE_BODY=12345678
+fetch_bounded 8 30 https://example.com/a "$TEMP_DIR/dl" --config cfg
+grep -Eq -- '^-q .*--proto-redir =https .*--max-time 30 --max-filesize 8 --config cfg https://example.com/a -o ' "$TEMP_DIR/curl-args"
+FAKE_BODY=123456789
+if fetch_bounded 8 30 https://example.com/a "$TEMP_DIR/dl"; then
+  printf '%s\n' 'Oversized downloads must be rejected' >&2
+  exit 1
+fi
+[ ! -e "$TEMP_DIR/dl" ]
+unset -f curl
+[ "$(grep -c '^ *curl ' "$INSTALLER")" -eq 1 ] && grep -q 'curl -q -fsSI --connect-timeout 15 --max-time 30' "$INSTALLER"
+
+# After restart the service must stay active; otherwise the previous binary/unit is restored.
+# shellcheck disable=SC2317
+sleep() { :; }
+# shellcheck disable=SC2317
+service_is_active() { ACTIVE_CHECKS=$((ACTIVE_CHECKS + 1)); [ "$ACTIVE_CHECKS" -lt "$FAIL_AT" ]; }
+# shellcheck disable=SC2317
+restart_service() { RESTARTS=$((RESTARTS + 1)); }
+# shellcheck disable=SC2317
+stop_service() { STOPPED=1; }
+SERVICE_STATUS_NAME=nodelite-agent.service SERVICE_DEFINITION_PATH="$UNIT_PATH" SERVICE_SETTLE_SECS=3 RESTARTS=0 STOPPED=0
+printf '%s\n' old-binary >"$BIN_PATH"
+backup_previous_install
+printf '%s\n' new-binary >"$BIN_PATH"
+printf '%s\n' new-unit >"$UNIT_PATH"
+ACTIVE_CHECKS=0 FAIL_AT=99
+verify_or_roll_back
+[ "$ACTIVE_CHECKS" -eq 3 ] && grep -qx new-binary "$BIN_PATH" && [ "$RESTARTS" -eq 0 ]
+ACTIVE_CHECKS=0 FAIL_AT=2
+if verify_or_roll_back 2>/dev/null; then
+  printf '%s\n' 'A service that exits after restart must fail the install' >&2
+  exit 1
+fi
+grep -qx old-binary "$BIN_PATH" && cmp "$TEMP_DIR/original-unit" "$UNIT_PATH" && [ "$RESTARTS" -eq 1 ]
+rm -rf "$INSTALL_DIR"/.nodelite-agent-rollback.*
+rm -f "$BIN_PATH"
+backup_previous_install
+ACTIVE_CHECKS=0 FAIL_AT=1
+if verify_or_roll_back 2>/dev/null; then exit 1; fi
+[ "$STOPPED" -eq 1 ] && [ "$RESTARTS" -eq 1 ]
+rm -rf "$INSTALL_DIR"/.nodelite-agent-rollback.*
+
+# Once armed, any abort (set -e failure or signal) restores the backup and restarts it.
+cleanup_and_traps="$(awk '/^cleanup\(\)/ { p=1 } p { print } /^trap .*HUP INT TERM$/ { exit }' "$INSTALLER")"
+FAIL_AT=99 RESTARTS=0
+printf '%s\n' old-binary >"$BIN_PATH"
+backup_previous_install
+if (
+  eval "$cleanup_and_traps"
+  SIGNED_STAGE='' TMP_PATH='' BOOTSTRAP_TMP='' CURL_AUTH_CONFIG='' CHECKSUMS_TMP=''
+  ROLLBACK_ARMED=1
+  printf '%s\n' new-binary >"$BIN_PATH"
+  false
+) 2>/dev/null; then exit 1; fi
+grep -qx old-binary "$BIN_PATH"
+backup_previous_install
+if (
+  eval "$cleanup_and_traps"
+  SIGNED_STAGE='' TMP_PATH='' BOOTSTRAP_TMP='' CURL_AUTH_CONFIG='' CHECKSUMS_TMP=''
+  ROLLBACK_ARMED=1
+  printf '%s\n' new-binary >"$BIN_PATH"
+  # shellcheck disable=SC2016
+  kill -HUP "$(exec sh -c 'printf %s "$PPID"')"
+  printf '%s\n' continued >"$TEMP_DIR/after-signal"
+) 2>/dev/null; then exit 1; fi
+grep -qx old-binary "$BIN_PATH" && [ ! -e "$TEMP_DIR/after-signal" ]
+if ls -d "$INSTALL_DIR"/.nodelite-agent-rollback.* >/dev/null 2>&1; then exit 1; fi
+# A closed stderr (SSH hang-up) must not stop the restore under set -e.
+backup_previous_install
+if (
+  eval "$cleanup_and_traps"
+  SIGNED_STAGE='' TMP_PATH='' BOOTSTRAP_TMP='' CURL_AUTH_CONFIG='' CHECKSUMS_TMP=''
+  ROLLBACK_ARMED=1
+  printf '%s\n' new-binary >"$BIN_PATH"
+  exec 2>&-
+  false
+); then exit 1; fi
+grep -qx old-binary "$BIN_PATH"
+# A second signal during the restore must not re-enter and delete the backup mid-way.
+backup_previous_install
+if (
+  eval "$cleanup_and_traps"
+  # shellcheck disable=SC2016,SC2317
+  restart_service() {
+    kill -HUP "$(exec sh -c 'printf %s "$PPID"')"
+    ls "$INSTALL_DIR"/.nodelite-agent-rollback.*/binary >/dev/null && printf '%s\n' finished >"$TEMP_DIR/restore-finished"
+  }
+  SIGNED_STAGE='' TMP_PATH='' BOOTSTRAP_TMP='' CURL_AUTH_CONFIG='' CHECKSUMS_TMP=''
+  ROLLBACK_ARMED=1
+  printf '%s\n' new-binary >"$BIN_PATH"
+  # shellcheck disable=SC2016
+  kill -TERM "$(exec sh -c 'printf %s "$PPID"')"
+) 2>/dev/null; then exit 1; fi
+grep -qx old-binary "$BIN_PATH" && [ -e "$TEMP_DIR/restore-finished" ]
+
+# launchd restart failures must return so the rollback runs instead of exiting.
+awk '/^restart_launchd_service\(\)/ { p=1 } p && /fail / { exit 1 } p && /^}/ { exit 0 }' "$INSTALLER"
+
+# Upgrades cannot move the binary away from the path the existing service runs.
+cp "$TEMP_DIR/original-unit" "$UNIT_PATH"
+refuse_install_dir_change
+printf '%s\n' 'ExecStart=/opt/elsewhere/nodelite-agent --config x' >"$UNIT_PATH"
+if refuse_install_dir_change 2>/dev/null; then exit 1; fi
+cp "$TEMP_DIR/original-unit" "$UNIT_PATH"
+awk '
+  /^refuse_install_dir_change$/ { c=1 } /^  fetch_bootstrap_config$/ { if (!c) exit 1 }
+  /^backup_previous_install$/ { if (!c) exit 1; b=1 }
+  /^ROLLBACK_ARMED=1$/ { if (!b) exit 1; a=1 }
+  /systemctl stop nodelite-agent.service/ { if (!a) exit 1 }
+  /^backup_previous_install$/ { b=1 } /^install .*\$TMP_PATH.*\$BIN_PATH/ { if (!b) exit 1 }
+  /^restart_service [|][|] true$/ { r=1 } /^verify_or_roll_back$/ { if (!r) exit 1; v=1 }
+  /finish_signed_update$/ && /SIGNED_UPDATES/ { if (!v) exit 1 }
+  /upgraded and restarted/ { if (!v) exit 1; ok=1 }
+  END { exit !ok }
 ' "$INSTALLER"
 
 SERVICE_KIND=launchd
