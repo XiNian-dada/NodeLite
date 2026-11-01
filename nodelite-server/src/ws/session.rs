@@ -11,7 +11,7 @@ use nodelite_proto::{
     RefreshTokenRequestMessage, ServerNoticeMessage, WIRE_PROTOCOL_VERSION, WireMessage,
 };
 use tokio::time::{MissedTickBehavior, interval};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use super::protocol::{ParsedFrame, encode_ping_message, prune_outstanding_pings};
 use super::refresh::{
@@ -278,6 +278,15 @@ async fn handle_metrics_message(
         return Ok(LoopAction::Break);
     }
     let (snapshot, report) = sanitize_snapshot(shared.config(), snapshot);
+    if report.trimmed_disks > 0 {
+        debug!(
+            node_id = %session.node_id,
+            session_id = session.session_id,
+            trimmed_disks = report.trimmed_disks,
+            max_disks = shared.config().max_sanitized_disks,
+            "trimmed duplicate or excess disks from agent snapshot",
+        );
+    }
     if report.modified() {
         update_metric_anomaly_window(
             &mut loop_state.metric_anomaly_window,
