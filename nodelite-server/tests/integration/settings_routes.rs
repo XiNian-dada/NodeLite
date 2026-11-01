@@ -280,6 +280,125 @@ async fn settings_two_factor_disable_covers_password_failure_and_persistence() -
     Ok(())
 }
 
+const ROTATED_TOTP_SECRET: &str = "GEZDGNBVGY3TQOJQ";
+
+async fn rotate_two_factor(
+    harness: &SettingsHarness,
+    auth_token: &str,
+    current_code: Option<&str>,
+) -> Result<axum::response::Response> {
+    let mut body = json!({
+        "current_password": "secret",
+        "secret": ROTATED_TOTP_SECRET,
+        "code": current_totp_code_with_margin(ROTATED_TOTP_SECRET).await,
+    });
+    if let Some(code) = current_code {
+        body["current_code"] = json!(code);
+    }
+    Ok(harness
+        .app
+        .clone()
+        .oneshot(json_request(
+            "/api/settings/2fa/enable",
+            &basic_auth_header("secret"),
+            Some(&auth_cookie(auth_token)),
+            body,
+        ))
+        .await?)
+}
+
+async fn persisted_totp_secret(harness: &SettingsHarness) -> Result<Option<String>> {
+    Ok(parse_current_config(&harness.config_path)
+        .await?
+        .readonly_auth
+        .and_then(|auth| auth.totp_secret))
+}
+
+#[tokio::test]
+async fn replacing_an_enrolled_second_factor_requires_the_current_factor() -> Result<()> {
+    let harness = SettingsHarness::new(readonly_auth(true, Some(TEST_TOTP_SECRET))).await?;
+    let auth_token = harness.state.two_factor_sessions.create_authenticated()?;
+    // A fresh login counts as confirmed; the gap is a session whose window has passed.
+    harness
+        .state
+        .two_factor_sessions
+        .expire_sensitive_confirmation_for_test(&auth_token);
+
+    let unconfirmed = rotate_two_factor(&harness, &auth_token, None).await?;
+    assert_eq!(unconfirmed.status(), StatusCode::PRECONDITION_REQUIRED);
+    assert_eq!(
+        persisted_totp_secret(&harness).await?.as_deref(),
+        Some(TEST_TOTP_SECRET)
+    );
+    assert!(
+        harness
+            .state
+            .two_factor_sessions
+            .is_authenticated(&auth_token)
+    );
+
+    let wrong_current = rotate_two_factor(&harness, &auth_token, Some("000000")).await?;
+    assert_eq!(wrong_current.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        persisted_totp_secret(&harness).await?.as_deref(),
+        Some(TEST_TOTP_SECRET)
+    );
+
+    harness.cleanup().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn confirmed_session_can_replace_the_second_factor_in_the_same_totp_step() -> Result<()> {
+    let harness = SettingsHarness::new(readonly_auth(true, Some(TEST_TOTP_SECRET))).await?;
+    let auth_token = harness.state.two_factor_sessions.create_authenticated()?;
+    harness
+        .state
+        .two_factor_sessions
+        .expire_sensitive_confirmation_for_test(&auth_token);
+    // Confirm with the current factor the way the UI step-up does, consuming this step.
+    let current = current_totp_code_with_margin(TEST_TOTP_SECRET).await;
+    let confirmed = rotate_two_factor(&harness, &auth_token, Some(&current)).await?;
+    assert_status(confirmed.status(), StatusCode::OK, confirmed).await?;
+    assert_eq!(
+        persisted_totp_secret(&harness).await?.as_deref(),
+        Some(ROTATED_TOTP_SECRET)
+    );
+    assert!(
+        !harness
+            .state
+            .two_factor_sessions
+            .is_authenticated(&auth_token),
+        "rotation revokes existing sessions"
+    );
+
+    harness.cleanup().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn step_up_confirmed_session_can_replace_the_second_factor() -> Result<()> {
+    let harness = SettingsHarness::new(readonly_auth(true, Some(TEST_TOTP_SECRET))).await?;
+    let auth_token = harness.state.two_factor_sessions.create_authenticated()?;
+    harness
+        .state
+        .two_factor_sessions
+        .expire_sensitive_confirmation_for_test(&auth_token);
+    harness
+        .state
+        .two_factor_sessions
+        .confirm_sensitive_action(&auth_token, true);
+    let rotated = rotate_two_factor(&harness, &auth_token, None).await?;
+    assert_status(rotated.status(), StatusCode::OK, rotated).await?;
+    assert_eq!(
+        persisted_totp_secret(&harness).await?.as_deref(),
+        Some(ROTATED_TOTP_SECRET)
+    );
+
+    harness.cleanup().await;
+    Ok(())
+}
+
 #[tokio::test]
 async fn settings_node_token_refresh_covers_success_offline_and_timeout_paths() -> Result<()> {
     let harness = SettingsHarness::new(readonly_auth(false, None)).await?;

@@ -82,4 +82,96 @@ describe('useAlertsStore', () => {
     await expect(store.save(EMPTY_PAYLOAD)).rejects.toBeInstanceOf(ApiError);
     expect(store.saving).toBe(false);
   });
+
+  describe('load/save ordering', () => {
+    const stale = makeAlertSettings({ config: { enabled: false } });
+    const saved = makeAlertSettings({ config: { enabled: true } });
+
+    function deferred<T>() {
+      let resolve: (value: T) => void = () => {};
+      let reject: (error: Error) => void = () => {};
+      const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    }
+
+    it('drops a GET sent before the POST when it returns after the POST', async () => {
+      const get = deferred<typeof stale>();
+      mockGet.mockReturnValueOnce(get.promise);
+      mockPost.mockResolvedValueOnce(saved);
+      const store = useAlertsStore();
+
+      const loading = store.load();
+      await store.save(EMPTY_PAYLOAD);
+      get.resolve(stale);
+      await loading;
+
+      expect(store.config?.enabled).toBe(true);
+      expect(store.loading).toBe(false);
+    });
+
+    it('keeps the POST result when the GET returns before the POST', async () => {
+      const get = deferred<typeof stale>();
+      const post = deferred<typeof saved>();
+      mockGet.mockReturnValueOnce(get.promise);
+      mockPost.mockReturnValueOnce(post.promise);
+      const store = useAlertsStore();
+
+      const loading = store.load();
+      const saving = store.save(EMPTY_PAYLOAD);
+      get.resolve(stale);
+      await loading;
+      post.resolve(saved);
+      await saving;
+
+      expect(store.config?.enabled).toBe(true);
+    });
+
+    it('drops a GET sent while the POST is in flight once the POST commits', async () => {
+      const get = deferred<typeof stale>();
+      const post = deferred<typeof saved>();
+      mockGet.mockReturnValueOnce(get.promise);
+      mockPost.mockReturnValueOnce(post.promise);
+      const store = useAlertsStore();
+
+      const saving = store.save(EMPTY_PAYLOAD);
+      const loading = store.load();
+      post.resolve(saved);
+      await saving;
+      get.resolve(stale);
+      await loading;
+
+      expect(store.config?.enabled).toBe(true);
+    });
+
+    it('does not report a failed GET that a save already superseded', async () => {
+      const get = deferred<typeof stale>();
+      mockGet.mockReturnValueOnce(get.promise);
+      mockPost.mockResolvedValueOnce(saved);
+      const store = useAlertsStore();
+
+      const loading = store.load();
+      await store.save(EMPTY_PAYLOAD);
+      get.reject(new ApiError(503, 'down'));
+      await loading;
+
+      expect(store.error).toBeNull();
+    });
+
+    it('lets a concurrent caller wait for the shared load', async () => {
+      const get = deferred<typeof stale>();
+      mockGet.mockReturnValueOnce(get.promise);
+      const store = useAlertsStore();
+
+      void store.load();
+      const second = store.load();
+      get.resolve(saved);
+      await second;
+
+      expect(store.config?.enabled).toBe(true);
+      expect(mockGet).toHaveBeenCalledTimes(1);
+    });
+  });
 });

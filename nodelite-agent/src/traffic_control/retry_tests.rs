@@ -2,6 +2,10 @@
 
 use super::*;
 
+fn eth0() -> Result<String, TrafficControlError> {
+    Ok("eth0".into())
+}
+
 struct FakeTc {
     ingress: Option<u64>,
     egress: Option<u64>,
@@ -37,12 +41,15 @@ async fn failed_apply_and_removal_retry_without_changing_the_desired_policy() {
                 attempts: 0,
             };
             let mut controller = TrafficController {
-                last_applied_rate_kbps: Some(Some(1000)),
+                applied: Some(policy::AppliedPolicy {
+                    rate_kbps: Some(1000),
+                    interface: "eth0".into(),
+                }),
                 ..TrafficController::default()
             };
             assert!(
                 controller
-                    .apply_with(rate, None, || std::future::ready(tc.apply(rate)))
+                    .apply_with(rate, None, eth0, |_| std::future::ready(tc.apply(rate)))
                     .await
                     .is_err()
             );
@@ -51,7 +58,7 @@ async fn failed_apply_and_removal_retry_without_changing_the_desired_policy() {
                 TrafficControlState::Retrying
             );
             assert_eq!(
-                controller.last_applied_rate_kbps, None,
+                controller.applied, None,
                 "partial changes invalidate the confirmed policy"
             );
             let (deadline, desired) = controller.retry_policy().expect("retry queued");
@@ -59,7 +66,9 @@ async fn failed_apply_and_removal_retry_without_changing_the_desired_policy() {
             assert_eq!(deadline - Instant::now(), Duration::from_secs(2));
             tokio::time::advance(Duration::from_secs(2)).await;
             controller
-                .apply_with(desired, None, || std::future::ready(tc.apply(desired)))
+                .apply_with(desired, None, eth0, |_| {
+                    std::future::ready(tc.apply(desired))
+                })
                 .await
                 .expect("second attempt succeeds");
             assert_eq!((tc.ingress, tc.egress), (rate, rate));
@@ -79,7 +88,7 @@ async fn retry_delay_and_attempt_count_are_bounded_and_a_new_policy_resets_them(
     for attempt in 1..=MAX_APPLY_ATTEMPTS {
         assert!(
             controller
-                .apply_with(Some(1000), None, || async {
+                .apply_with(Some(1000), None, eth0, |_| async {
                     Err(TrafficControlError::Injected)
                 })
                 .await
@@ -99,7 +108,7 @@ async fn retry_delay_and_attempt_count_are_bounded_and_a_new_policy_resets_them(
     );
     assert!(
         controller
-            .apply_with(Some(2000), None, || async {
+            .apply_with(Some(2000), None, eth0, |_| async {
                 Err(TrafficControlError::Injected)
             })
             .await
@@ -109,4 +118,48 @@ async fn retry_delay_and_attempt_count_are_bounded_and_a_new_policy_resets_them(
         controller.retry_policy().expect("new policy retries").0 - Instant::now(),
         Duration::from_secs(2)
     );
+}
+
+#[tokio::test]
+async fn same_rate_follows_a_default_route_change_and_clear_removes_old_rules() {
+    let mut controller = TrafficController::default();
+    let mut plans = Vec::new();
+    for (rate, interface) in [
+        (Some(1000), "eth0"),
+        (Some(1000), "eth0"),
+        (Some(1000), "eth1"),
+        (None, "eth0"),
+    ] {
+        controller
+            .apply_with(
+                rate,
+                None,
+                || Ok(interface.to_string()),
+                |plan| {
+                    plans.push(plan);
+                    std::future::ready(Ok(()))
+                },
+            )
+            .await
+            .expect("apply");
+    }
+    let executed: Vec<_> = plans
+        .iter()
+        .map(|plan| {
+            (
+                plan.interface.as_str(),
+                plan.rate_kbps,
+                plan.stale_interfaces.clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        executed,
+        vec![
+            ("eth0", Some(1000), vec![]),
+            ("eth1", Some(1000), vec!["eth0".to_string()]),
+            ("eth0", None, vec!["eth1".to_string()]),
+        ]
+    );
+    assert!(controller.owned_interfaces.is_empty());
 }

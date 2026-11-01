@@ -16,10 +16,15 @@ const props = defineProps<{
 const emit = defineEmits<{ saved: []; deleted: [] }>();
 const { t, locale } = useI18n();
 
-interface ServiceDraft {
+interface ServiceFields {
   serviceDate: string;
   serviceUnlimited: boolean;
   renewalPrice: string;
+}
+
+interface ServiceDraft extends ServiceFields {
+  /** Values the inputs were last synced to; any difference is an unsaved edit. */
+  baseline: ServiceFields;
   saving: boolean;
   state: 'ok' | 'error' | null;
   message: string;
@@ -28,15 +33,33 @@ interface ServiceDraft {
 const drafts = reactive<Record<string, ServiceDraft>>({});
 const deleteTarget = ref<SettingsAgentToken | null>(null);
 
-function draftFromAgent(agent: SettingsAgentToken, existing?: ServiceDraft): ServiceDraft {
+function fieldsFromAgent(agent: SettingsAgentToken): ServiceFields {
   return {
     serviceDate: dateInputValue(agent.service_expires_at),
     serviceUnlimited: agent.service_unlimited,
     renewalPrice: agent.renewal_price ?? '',
-    saving: false,
-    state: existing?.state ?? null,
-    message: existing?.message ?? '',
   };
+}
+
+function currentFields(draft: ServiceFields): ServiceFields {
+  return {
+    serviceDate: draft.serviceDate,
+    serviceUnlimited: draft.serviceUnlimited,
+    renewalPrice: draft.renewalPrice,
+  };
+}
+
+function sameFields(a: ServiceFields, b: ServiceFields): boolean {
+  return (
+    a.serviceDate === b.serviceDate &&
+    a.serviceUnlimited === b.serviceUnlimited &&
+    a.renewalPrice === b.renewalPrice
+  );
+}
+
+function draftFromAgent(agent: SettingsAgentToken): ServiceDraft {
+  const fields = fieldsFromAgent(agent);
+  return { ...fields, baseline: fields, saving: false, state: null, message: '' };
 }
 
 function fmtDateTime(value: string | null): string {
@@ -79,7 +102,15 @@ watch(
     }
     for (const agent of agents) {
       const existing = drafts[agent.node_id];
-      drafts[agent.node_id] = draftFromAgent(agent, existing);
+      if (!existing) {
+        drafts[agent.node_id] = draftFromAgent(agent);
+        continue;
+      }
+      // Saving one row refreshes the whole list, which must not discard edits in others.
+      // Mutate in place because an in-flight save keeps a reference to this draft.
+      const fields = fieldsFromAgent(agent);
+      if (sameFields(existing, existing.baseline)) Object.assign(existing, fields);
+      existing.baseline = fields;
     }
   },
   { immediate: true, flush: 'sync' },
@@ -91,14 +122,18 @@ async function saveServiceMetadata(nodeId: string): Promise<void> {
   draft.saving = true;
   draft.state = null;
   draft.message = '';
+  const submitted = currentFields(draft);
   try {
-    const renewalPrice = draft.renewalPrice.trim();
+    const renewalPrice = submitted.renewalPrice.trim();
     const resp = await apiClient.updateNodeServiceMetadata(nodeId, {
-      service_expires_at: draft.serviceUnlimited ? null : serviceExpiresAt(draft.serviceDate),
-      service_unlimited: draft.serviceUnlimited,
+      service_expires_at: submitted.serviceUnlimited ? null : serviceExpiresAt(submitted.serviceDate),
+      service_unlimited: submitted.serviceUnlimited,
       renewal_price: renewalPrice || null,
     });
-    draft.renewalPrice = renewalPrice;
+    // Unchanged since submit means clean, so the refresh below adopts the server's
+    // values; anything typed while the request was in flight stays an edit.
+    if (sameFields(draft, submitted)) draft.renewalPrice = renewalPrice;
+    draft.baseline = { ...submitted, renewalPrice };
     draft.state = 'ok';
     draft.message = resp.message || t('settings.tokens.service_meta_saved');
     emit('saved');

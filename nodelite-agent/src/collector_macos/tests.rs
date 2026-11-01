@@ -223,3 +223,46 @@ fn failed_network_read_holds_last_totals_instead_of_reporting_zero() {
     assert_eq!(held.rx_packets, 20);
     assert_eq!(held.tx_dropped_packets, 1);
 }
+
+unsafe extern "C" {
+    fn mach_port_get_refs(
+        task: libc::mach_port_t,
+        name: libc::mach_port_t,
+        right: libc::c_uint,
+        refs: *mut libc::c_uint,
+    ) -> libc::kern_return_t;
+}
+
+fn host_port_send_refs() -> u32 {
+    const MACH_PORT_RIGHT_SEND: libc::c_uint = 0;
+    let host = super::syscall::HostPort::acquire();
+    let mut refs = 0;
+    // SAFETY: host 在调用期间有效，refs 是可写输出槽。
+    let status = unsafe {
+        mach_port_get_refs(
+            #[allow(deprecated)]
+            libc::mach_task_self(),
+            host.raw(),
+            MACH_PORT_RIGHT_SEND,
+            &mut refs,
+        )
+    };
+    assert_eq!(status, libc::KERN_SUCCESS, "mach_port_get_refs");
+    refs
+}
+
+#[test]
+fn repeated_collection_does_not_accumulate_host_port_send_rights() {
+    const ITERATIONS: u32 = 200;
+    let before = host_port_send_refs();
+    for _ in 0..ITERATIONS {
+        super::syscall::collect_cpu_sample().expect("cpu sample");
+        super::syscall::read_memory_statistics().expect("memory statistics");
+    }
+    let after = host_port_send_refs();
+    // Why: 并行测试可能短暂持有少量引用；泄漏时每轮会增加 2 个引用。
+    assert!(
+        after <= before + 8,
+        "host port send refs grew from {before} to {after}"
+    );
+}

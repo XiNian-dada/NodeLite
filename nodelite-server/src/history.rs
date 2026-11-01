@@ -50,9 +50,11 @@ use self::query_limit::{HistoryQueryLimiter, HistoryQueryPermit};
 use self::test_probe::HistoryQueryProbe;
 pub(crate) use self::traffic::{TrafficLedgerHealth, TrafficPersistenceError, TrafficSample};
 use self::traffic::{TrafficTracker, TrafficUsage};
-use self::writer::{WriterContext, build_history_point, run_history_writer};
 #[cfg(test)]
-use self::writer::{sqlite_busy_retry_delay, write_history_point};
+use self::writer::{
+    HISTORY_PRUNE_BATCH_ROWS, prune_history_before, sqlite_busy_retry_delay, write_history_point,
+};
+use self::writer::{WriterContext, build_history_point, run_history_writer};
 use crate::queue::{QueueSendError, bounded_mpsc_channel, record_dropped_write, try_enqueue};
 use crate::registry::TrafficAccounting;
 
