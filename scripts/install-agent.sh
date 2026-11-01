@@ -62,6 +62,7 @@ INSECURE_HTTP="${NODELITE_AGENT_INSECURE_ALLOW_HTTP:-0}"
 MAX_BINARY_BYTES=134217728
 SERVICE_SETTLE_SECS=10
 ROLLBACK_DIR=""
+ROLLBACK_ARMED=0
 LEGACY_CONFIG_PATH=""
 BIN_PATH=""
 CONFIG_PATH=""
@@ -83,17 +84,22 @@ CURL_AUTH_CONFIG=""
 CHECKSUMS_TMP=""
 
 # 退出时清理临时文件,确保不会残留含 token 的内容。
+# 服务停止后若异常退出(set -e 失败或信号),先恢复旧二进制/服务定义并重启,再清理临时文件。
 cleanup() {
+  if [ "$ROLLBACK_ARMED" = 1 ]; then
+    printf '%s\n' 'install-agent: aborted after stopping the service; restoring the previous agent' >&2
+    restore_previous_install || printf '%s\n' 'install-agent: previous agent is NOT running; inspect the service manually' >&2
+  fi
   [ -z "$SIGNED_STAGE" ] || rm -rf -- "$SIGNED_STAGE"
-  [ -n "$TMP_PATH" ] && rm -f "$TMP_PATH"
-  [ -n "$BOOTSTRAP_TMP" ] && rm -f "$BOOTSTRAP_TMP"
-  [ -n "$CURL_AUTH_CONFIG" ] && rm -f "$CURL_AUTH_CONFIG"
-  [ -n "$CHECKSUMS_TMP" ] && rm -f "$CHECKSUMS_TMP"
+  for cleanup_path in "$TMP_PATH" "$BOOTSTRAP_TMP" "$CURL_AUTH_CONFIG" "$CHECKSUMS_TMP"; do
+    [ -z "$cleanup_path" ] || rm -f -- "$cleanup_path"
+  done
   [ -z "$ROLLBACK_DIR" ] || rm -rf -- "$ROLLBACK_DIR"
   return 0
 }
 
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'cleanup; exit 1' HUP INT TERM
 
 # 计算指定文件的 SHA-256 摘要;优先用 GNU `sha256sum`,缺失时回退到 `shasum -a 256`。
 calculate_sha256() {
@@ -147,12 +153,14 @@ prompt_install_token() {
   [ -r /dev/tty ] || fail "missing install token and no interactive terminal is available"
 
   old_tty_state="$(stty -g </dev/tty)" || fail "failed to inspect terminal state"
-  trap 'stty "$old_tty_state" </dev/tty; cleanup' EXIT HUP INT TERM
+  trap 'stty "$old_tty_state" </dev/tty; cleanup' EXIT
+  trap 'stty "$old_tty_state" </dev/tty; cleanup; exit 1' HUP INT TERM
   printf '%s' "One-time install token: " >/dev/tty
   stty -echo </dev/tty || fail "failed to disable terminal echo"
   IFS= read -r INSTALL_TOKEN </dev/tty || fail "failed to read install token"
   stty "$old_tty_state" </dev/tty || fail "failed to restore terminal state"
-  trap cleanup EXIT HUP INT TERM
+  trap cleanup EXIT
+  trap 'cleanup; exit 1' HUP INT TERM
   printf '\n' >/dev/tty
 }
 
@@ -267,31 +275,15 @@ resolve_release_base_url() {
 configure_platform() {
   OS_NAME="$(uname -s)"
   case "$OS_NAME" in
-    Linux)
-      SERVICE_KIND="systemd"
-      SERVICE_DEFINITION_PATH="$UNIT_PATH"
-      SERVICE_STATUS_NAME="nodelite-agent.service"
-      ;;
-    Darwin)
-      SERVICE_KIND="launchd"
-      SERVICE_DEFINITION_PATH="$PLIST_PATH"
-      SERVICE_STATUS_NAME="$LAUNCHD_LABEL"
-      ;;
-    *)
-      fail "unsupported operating system: $OS_NAME"
-      ;;
+    Linux) SERVICE_KIND=systemd SERVICE_DEFINITION_PATH="$UNIT_PATH" SERVICE_STATUS_NAME=nodelite-agent.service ;;
+    Darwin) SERVICE_KIND=launchd SERVICE_DEFINITION_PATH="$PLIST_PATH" SERVICE_STATUS_NAME="$LAUNCHD_LABEL" ;;
+    *) fail "unsupported operating system: $OS_NAME" ;;
   esac
 }
 
 prepare_service_account() {
-  if [ "$SERVICE_KIND" = "systemd" ]; then
-    ensure_service_account
-    SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
-    return 0
-  fi
-
-  SERVICE_USER="root"
-  SERVICE_GROUP="$(id -gn root)"
+  [ "$SERVICE_KIND" = systemd ] && ensure_service_account || SERVICE_USER=root
+  SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
 }
 
 configure_agent_config_paths() {
@@ -410,24 +402,43 @@ service_is_active() {
 # 重启后在观察窗口内逐秒确认服务持续运行,崩溃循环(activating/重启间隙)即判失败。
 service_stays_active() {
   sa_left="$SERVICE_SETTLE_SECS"
-  while [ "$sa_left" -gt 0 ]; do
-    sleep 1
-    service_is_active || return 1
-    sa_left=$((sa_left - 1))
-  done
+  while [ "$sa_left" -gt 0 ]; do sleep 1; service_is_active || return 1; sa_left=$((sa_left - 1)); done
+}
+
+# 恢复备份并确认旧服务重新稳定运行;全新安装没有旧二进制时只停止服务。
+# shellcheck disable=SC2317
+restore_previous_install() {
+  ROLLBACK_ARMED=0
+  [ -f "$ROLLBACK_DIR/binary" ] || { stop_service; return 1; }
+  install -m 0755 "$ROLLBACK_DIR/binary" "$BIN_PATH" || return 1
+  [ ! -f "$ROLLBACK_DIR/service" ] || install -m 0644 "$ROLLBACK_DIR/service" "$SERVICE_DEFINITION_PATH" || return 1
+  restart_service && service_stays_active
 }
 
 # shellcheck disable=SC2317
 verify_or_roll_back() {
   service_stays_active && return 0
   if [ ! -f "$ROLLBACK_DIR/binary" ]; then
-    stop_service
+    restore_previous_install || true
     fail "agent service did not stay running; it was stopped. Inspect: $SERVICE_STATUS_NAME logs"; return 1
   fi
-  install -m 0755 "$ROLLBACK_DIR/binary" "$BIN_PATH"
-  [ ! -f "$ROLLBACK_DIR/service" ] || install -m 0644 "$ROLLBACK_DIR/service" "$SERVICE_DEFINITION_PATH"
-  restart_service || true
-  fail "agent service did not stay running after the upgrade; the previous binary and service definition were restored (config kept: $CONFIG_PATH)"; return 1
+  if restore_previous_install; then
+    fail "agent service did not stay running after the upgrade; the previous binary and service definition were restored and are running (config kept: $CONFIG_PATH)"; return 1
+  fi
+  fail "agent service did not stay running after the upgrade; the previous binary was restored but the service is NOT running. Inspect: $SERVICE_STATUS_NAME logs"; return 1
+}
+
+# 升级时若 --install-dir 与现有服务定义中的二进制路径不同,无法回滚旧二进制,直接拒绝。
+# shellcheck disable=SC2317
+refuse_install_dir_change() {
+  [ -f "$SERVICE_DEFINITION_PATH" ] || return 0
+  if [ "$SERVICE_KIND" = systemd ]; then
+    current_bin="$(sed -n 's/^ExecStart=\([^[:space:]]*\).*/\1/p' "$SERVICE_DEFINITION_PATH" | sed -n 1p)"
+  else
+    current_bin="$(awk '/<key>ProgramArguments<\/key>/ { f=1; next } f && /<string>/ { sub(/.*<string>/, ""); sub(/<\/string>.*/, ""); print; exit }' "$SERVICE_DEFINITION_PATH")"
+  fi
+  [ -z "$current_bin" ] || [ "$current_bin" = "$BIN_PATH" ] ||
+    { fail "existing service runs $current_bin; changing --install-dir on upgrade is not supported (reinstall or keep the current directory)"; return 1; }
 }
 
 # 自动更新支持已移除。升级时顺手清理旧版本曾经写入的 timer / service,
@@ -579,26 +590,18 @@ restart_systemd_service() {
 restart_launchd_service() {
   launchctl bootout system "$PLIST_PATH" >/dev/null 2>&1 || \
     launchctl bootout "system/$LAUNCHD_LABEL" >/dev/null 2>&1 || true
-  launchctl bootstrap system "$PLIST_PATH" || fail "failed to bootstrap launchd service"
+  launchctl bootstrap system "$PLIST_PATH" || { printf '%s\n' 'install-agent: failed to bootstrap launchd service' >&2; return 1; }
   launchctl enable "system/$LAUNCHD_LABEL" >/dev/null 2>&1 || true
-  launchctl kickstart -k "system/$LAUNCHD_LABEL" || fail "failed to start launchd service"
+  launchctl kickstart -k "system/$LAUNCHD_LABEL" || { printf '%s\n' 'install-agent: failed to start launchd service' >&2; return 1; }
 }
 
 stop_service() {
-  if [ "$SERVICE_KIND" = systemd ]; then
-    systemctl disable --now nodelite-agent.service >/dev/null 2>&1 || true
-  else
-    launchctl bootout "system/$LAUNCHD_LABEL" >/dev/null 2>&1 || true
-  fi
+  if [ "$SERVICE_KIND" = systemd ]; then systemctl disable --now nodelite-agent.service
+  else launchctl bootout "system/$LAUNCHD_LABEL"; fi >/dev/null 2>&1 || true
 }
 
 restart_service() {
-  if [ "$SERVICE_KIND" = "systemd" ]; then
-    restart_systemd_service
-    return 0
-  fi
-
-  restart_launchd_service
+  if [ "$SERVICE_KIND" = systemd ]; then restart_systemd_service; else restart_launchd_service; fi
 }
 
 while [ "$#" -gt 0 ]; do
@@ -770,28 +773,27 @@ else
 fi
 
 check_saved_credentials
+refuse_install_dir_change
+backup_previous_install
+ROLLBACK_ARMED=1
 if [ "$SERVICE_KIND" = "systemd" ] && systemctl is-active --quiet nodelite-agent.service; then
   systemctl stop nodelite-agent.service
 fi
-backup_previous_install
 install -o root -g root -m 0755 "$TMP_PATH" "$BIN_PATH"
 install_agent_config
 write_service_definition
 # A failed restart is judged (and rolled back) by the liveness window below.
 restart_service || true
 verify_or_roll_back
+ROLLBACK_ARMED=0
 [ "$SIGNED_UPDATES" -eq 0 ] || finish_signed_update
 
-if [ "$MODE" = "upgrade" ]; then
-  printf '%s\n' "NodeLite agent upgraded and restarted."
-else
+[ "$MODE" = upgrade ] && printf '%s\n' "NodeLite agent upgraded and restarted." ||
   printf '%s\n' "NodeLite agent installed and started."
-fi
 printf '%s\n' "Config: $CONFIG_PATH"
-if [ "$SERVICE_KIND" = "launchd" ]; then
-  printf '%s\n' "Service: $SERVICE_STATUS_NAME (experimental macOS launchd support)"
-  printf '%s\n' "Plist: $PLIST_PATH"
-  printf '%s\n' "Logs: $LAUNCHD_STDOUT_PATH / $LAUNCHD_STDERR_PATH"
+if [ "$SERVICE_KIND" = launchd ]; then
+  printf '%s\n' "Service: $SERVICE_STATUS_NAME (experimental macOS launchd support)" "Plist: $PLIST_PATH" \
+    "Logs: $LAUNCHD_STDOUT_PATH / $LAUNCHD_STDERR_PATH"
 else
   printf '%s\n' "Service: $SERVICE_STATUS_NAME"
 fi

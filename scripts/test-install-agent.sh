@@ -6,7 +6,7 @@ SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 INSTALLER="$SCRIPT_DIR/install-agent.sh"
 (
   eval "$(awk '/^cleanup\(\)/ { printing=1 } /^trap cleanup/ { exit } printing { print }' "$INSTALLER")"
-  SIGNED_STAGE='' TMP_PATH='' BOOTSTRAP_TMP='' CURL_AUTH_CONFIG='' CHECKSUMS_TMP='' ROLLBACK_DIR=''
+  SIGNED_STAGE='' TMP_PATH='' BOOTSTRAP_TMP='' CURL_AUTH_CONFIG='' CHECKSUMS_TMP='' ROLLBACK_DIR='' ROLLBACK_ARMED=0
   cleanup
 )
 TEMP_DIR=$(mktemp -d)
@@ -208,7 +208,46 @@ ACTIVE_CHECKS=0 FAIL_AT=1
 if verify_or_roll_back 2>/dev/null; then exit 1; fi
 [ "$STOPPED" -eq 1 ] && [ "$RESTARTS" -eq 1 ]
 rm -rf "$INSTALL_DIR"/.nodelite-agent-rollback.*
+
+# Once armed, any abort (set -e failure or signal) restores the backup and restarts it.
+cleanup_and_traps="$(awk '/^cleanup\(\)/ { p=1 } p { print } /^trap .*HUP INT TERM$/ { exit }' "$INSTALLER")"
+FAIL_AT=99 RESTARTS=0
+printf '%s\n' old-binary >"$BIN_PATH"
+backup_previous_install
+if (
+  eval "$cleanup_and_traps"
+  SIGNED_STAGE='' TMP_PATH='' BOOTSTRAP_TMP='' CURL_AUTH_CONFIG='' CHECKSUMS_TMP=''
+  ROLLBACK_ARMED=1
+  printf '%s\n' new-binary >"$BIN_PATH"
+  false
+) 2>/dev/null; then exit 1; fi
+grep -qx old-binary "$BIN_PATH"
+backup_previous_install
+if (
+  eval "$cleanup_and_traps"
+  SIGNED_STAGE='' TMP_PATH='' BOOTSTRAP_TMP='' CURL_AUTH_CONFIG='' CHECKSUMS_TMP=''
+  ROLLBACK_ARMED=1
+  printf '%s\n' new-binary >"$BIN_PATH"
+  # shellcheck disable=SC2016
+  kill -HUP "$(exec sh -c 'printf %s "$PPID"')"
+  printf '%s\n' continued >"$TEMP_DIR/after-signal"
+) 2>/dev/null; then exit 1; fi
+grep -qx old-binary "$BIN_PATH" && [ ! -e "$TEMP_DIR/after-signal" ]
+if ls -d "$INSTALL_DIR"/.nodelite-agent-rollback.* >/dev/null 2>&1; then exit 1; fi
+
+# launchd restart failures must return so the rollback runs instead of exiting.
+awk '/^restart_launchd_service\(\)/ { p=1 } p && /fail / { exit 1 } p && /^}/ { exit 0 }' "$INSTALLER"
+
+# Upgrades cannot move the binary away from the path the existing service runs.
+cp "$TEMP_DIR/original-unit" "$UNIT_PATH"
+refuse_install_dir_change
+printf '%s\n' 'ExecStart=/opt/elsewhere/nodelite-agent --config x' >"$UNIT_PATH"
+if refuse_install_dir_change 2>/dev/null; then exit 1; fi
+cp "$TEMP_DIR/original-unit" "$UNIT_PATH"
 awk '
+  /^refuse_install_dir_change$/ { c=1 } /^backup_previous_install$/ { if (!c) exit 1; b=1 }
+  /^ROLLBACK_ARMED=1$/ { if (!b) exit 1; a=1 }
+  /systemctl stop nodelite-agent.service/ { if (!a) exit 1 }
   /^backup_previous_install$/ { b=1 } /^install .*\$TMP_PATH.*\$BIN_PATH/ { if (!b) exit 1 }
   /^restart_service [|][|] true$/ { r=1 } /^verify_or_roll_back$/ { if (!r) exit 1; v=1 }
   /finish_signed_update$/ && /SIGNED_UPDATES/ { if (!v) exit 1 }
