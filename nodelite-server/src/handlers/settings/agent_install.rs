@@ -54,7 +54,7 @@ pub(crate) async fn generate_agent_install(
             error!(error = %error, "refused to issue agent installation command");
             return settings_json_error(
                 StatusCode::SERVICE_UNAVAILABLE,
-                "node registry file is missing or rolled back; restore it before issuing nodes",
+                "node registry file is missing or rolled back; restore the latest file, or restart the server to accept an intentionally restored older file",
             );
         }
         Err(error) => {

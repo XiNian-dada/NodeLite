@@ -127,7 +127,7 @@ pub(crate) fn spawn_registry_reloader(state: AppState) -> JoinHandle<()> {
                                 error!(
                                     error = %error,
                                     registry_path = %registry.path().display(),
-                                    "node registry on disk diverged from memory; serving in-memory snapshot and refusing writes until a file at or above the in-memory version is restored",
+                                    "node registry on disk diverged from memory; serving in-memory snapshot and refusing writes until a file at or above the in-memory version is restored, or restart the server to accept an intentionally restored older file",
                                 );
                             }
                         }
