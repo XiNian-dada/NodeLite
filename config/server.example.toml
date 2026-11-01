@@ -38,11 +38,11 @@ stale_after_secs = 20
 ping_interval_secs = 10
 # WebSocket 单帧最大字节数,防止异常 Agent 发巨型负载。
 max_message_bytes = 65536
-# WebSocket Hello 握手超时(秒)，允许 1..=300。
+# WebSocket Hello 握手超时(秒)，至少为 1。
 hello_timeout_secs = 10
 # 最大未响应 Ping 数量。
 max_outstanding_pings = 32
-# 不安全传输警告间隔(秒)，允许 1..=86400。
+# 不安全传输警告间隔(秒)，至少为 1。
 insecure_transport_warn_interval_secs = 900
 # 最大磁盘数量限制，允许 1..=1024。
 max_sanitized_disks = 64

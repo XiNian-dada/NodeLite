@@ -15,8 +15,6 @@ use crate::validation::{
 };
 
 const MIN_INCOMING_MESSAGE_BYTES: usize = 1024;
-/// 明文传输告警周期上限（一天），Server 端复用同一上限。
-pub(in crate::config) const MAX_WARN_INTERVAL_SECS: u64 = 24 * 60 * 60;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -89,12 +87,11 @@ impl RawAgentConfigFile {
                 "agent.max_incoming_message_bytes must be at least {MIN_INCOMING_MESSAGE_BYTES} bytes"
             )));
         }
-        // 零周期会让 tokio interval panic；过大的周期会在 Instant 加法时溢出。
-        if !(1..=MAX_WARN_INTERVAL_SECS).contains(&self.agent.insecure_transport_warn_interval_secs)
-        {
-            return Err(ConfigError::new(format!(
-                "agent.insecure_transport_warn_interval_secs must be between 1 and {MAX_WARN_INTERVAL_SECS} seconds"
-            )));
+        // 零周期会让 tokio interval panic；超大周期由 tokio 饱和到 far future，无需上限。
+        if self.agent.insecure_transport_warn_interval_secs == 0 {
+            return Err(ConfigError::new(
+                "agent.insecure_transport_warn_interval_secs must be at least 1 second",
+            ));
         }
 
         if let Some(hostname) = &self.agent.hostname_override {

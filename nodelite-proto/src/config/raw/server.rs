@@ -37,10 +37,7 @@ use super::super::{
     MIN_HISTORY_QUERY_CONCURRENCY, MIN_HISTORY_READ_CACHE_KIB, MIN_TOKEN_VERIFY_MAX_PARALLELISM,
     MIN_WRITER_FLUSH_INTERVAL_MS, MetricsConfig, ReadonlyAuthConfig, ServerConfig, WsConfig,
 };
-use super::agent::MAX_WARN_INTERVAL_SECS;
 use super::alerts::RawAlertsSection;
-
-const MAX_HELLO_TIMEOUT_SECS: u64 = 300;
 use crate::validation::{normalize_string_list, validate_non_empty};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -545,18 +542,17 @@ impl RawServerConfigFile {
     }
 
     fn validate_session_timers(&self) -> Result<(), ConfigError> {
-        // 零握手超时会让每个 Agent 认证失败并累积到 IP 封禁。
-        if !(1..=MAX_HELLO_TIMEOUT_SECS).contains(&self.server.hello_timeout_secs) {
-            return Err(ConfigError::new(format!(
-                "server.hello_timeout_secs must be between 1 and {MAX_HELLO_TIMEOUT_SECS} seconds"
-            )));
+        // 零握手超时会让每个 Agent 认证失败并累积到 IP 封禁；超大值由 tokio
+        // timeout 饱和处理，旧配置里的大值继续可用，因此只设下限。
+        if self.server.hello_timeout_secs == 0 {
+            return Err(ConfigError::new(
+                "server.hello_timeout_secs must be at least 1 second",
+            ));
         }
-        if !(1..=MAX_WARN_INTERVAL_SECS)
-            .contains(&self.server.insecure_transport_warn_interval_secs)
-        {
-            return Err(ConfigError::new(format!(
-                "server.insecure_transport_warn_interval_secs must be between 1 and {MAX_WARN_INTERVAL_SECS} seconds"
-            )));
+        if self.server.insecure_transport_warn_interval_secs == 0 {
+            return Err(ConfigError::new(
+                "server.insecure_transport_warn_interval_secs must be at least 1 second",
+            ));
         }
         Ok(())
     }

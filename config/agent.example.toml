@@ -30,5 +30,5 @@ send_timeout_secs = 20
 inbound_timeout_secs = 90
 # Agent 最大接收消息字节数，至少 1024。
 max_incoming_message_bytes = 65536
-# 不安全传输警告间隔(秒)，允许 1..=86400。
+# 不安全传输警告间隔(秒)，至少为 1。
 insecure_transport_warn_interval_secs = 900

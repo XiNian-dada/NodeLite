@@ -54,13 +54,18 @@ fn agent_rejects_tiny_incoming_message_limit() {
 }
 
 #[test]
-fn agent_rejects_zero_or_huge_warn_interval() {
-    for value in ["0", "86401"] {
-        assert!(
-            agent_error("insecure_transport_warn_interval_secs", value)
-                .contains("agent.insecure_transport_warn_interval_secs")
-        );
-    }
+fn agent_rejects_zero_warn_interval_but_keeps_large_values() {
+    parse_agent_config(&override_line(
+        AGENT_SAMPLE,
+        "insecure_transport_warn_interval_secs",
+        "31536000",
+    ))
+    .expect("large intervals saved by earlier versions should still parse");
+    let value = "0";
+    assert!(
+        agent_error("insecure_transport_warn_interval_secs", value)
+            .contains("agent.insecure_transport_warn_interval_secs")
+    );
 }
 
 #[cfg(feature = "server-config")]
@@ -86,19 +91,19 @@ fn shipped_server_example_still_parses() {
 
 #[cfg(feature = "server-config")]
 #[test]
-fn server_rejects_zero_or_huge_hello_timeout() {
-    for value in ["0", "301"] {
-        assert!(server_error("hello_timeout_secs", value).contains("server.hello_timeout_secs"));
-    }
+fn server_rejects_zero_hello_timeout_but_keeps_large_values() {
+    parse_server_config(&override_line(SERVER_SAMPLE, "hello_timeout_secs", "3600"))
+        .expect("large hello timeouts saved by earlier versions should still parse");
+    let value = "0";
+    assert!(server_error("hello_timeout_secs", value).contains("server.hello_timeout_secs"));
 }
 
 #[cfg(feature = "server-config")]
 #[test]
-fn server_rejects_zero_or_huge_warn_interval() {
-    for value in ["0", "86401"] {
-        assert!(
-            server_error("insecure_transport_warn_interval_secs", value)
-                .contains("server.insecure_transport_warn_interval_secs")
-        );
-    }
+fn server_rejects_zero_warn_interval() {
+    let value = "0";
+    assert!(
+        server_error("insecure_transport_warn_interval_secs", value)
+            .contains("server.insecure_transport_warn_interval_secs")
+    );
 }
