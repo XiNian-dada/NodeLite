@@ -49,6 +49,10 @@ pub(crate) async fn require_readonly_auth(
         state
             .sensitive_readonly_auth_admission
             .record_auth_failure(meta.client_ip);
+    } else if meta.sensitive_path && response.status().is_success() {
+        state
+            .sensitive_readonly_auth_admission
+            .clear_auth_failures(meta.client_ip);
     }
     response
 }
@@ -204,15 +208,12 @@ async fn enforce_readonly_auth_limits(
     None
 }
 
+/// The sensitive budget is cleared only after the handler succeeds (see
+/// `require_readonly_auth`), so a valid Basic header cannot reset inline guesses.
 fn clear_readonly_auth_failures(state: &AppState, meta: &ReadonlyAuthMeta) {
     state
         .readonly_auth_admission
         .clear_auth_failures(meta.client_ip);
-    if meta.sensitive_path {
-        state
-            .sensitive_readonly_auth_admission
-            .clear_auth_failures(meta.client_ip);
-    }
 }
 
 /// 判断请求是否为 WebSocket 升级握手。依据 `Upgrade` 头是否包含 `websocket`
