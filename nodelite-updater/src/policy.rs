@@ -81,6 +81,11 @@ impl Policy {
                 "automatic updates are not explicitly enabled",
             ));
         }
+        self.validate_paused()
+    }
+
+    /// Everything except `enabled`, so a paused host still recovers under a trusted policy.
+    pub(crate) fn validate_paused(&self) -> Result<()> {
         if !matches!(self.channel.as_str(), "stable" | "testing") {
             return Err(UpdateError::Policy("unsupported update channel"));
         }

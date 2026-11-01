@@ -1,71 +1,105 @@
-//! Decides which idle states must exit cleanly so they never hold back Agent startup.
-
-/// Commands that run unattended from systemd units at boot or on a timer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Unattended {
-    Reconcile,
-    Status,
-}
+//! Decides when unattended reconcile may exit cleanly so it never holds back Agent startup.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Gate {
+    /// Run the normal recovery path, which fails closed on anything unexpected.
     Proceed,
     /// Nothing may change, but failing here would block `nodelite-agent.service` via `Requires=`.
     Idle(&'static str),
 }
 
-/// Only unattended commands are gated; operator-invoked commands keep failing loudly.
-pub(crate) fn unattended(
-    command: Option<Unattended>,
-    policy_enabled: bool,
-    recovery_required: bool,
-) -> Gate {
-    match command {
-        None => Gate::Proceed,
-        Some(_) if !policy_enabled => Gate::Idle("signed updates paused by local policy"),
-        // Status must still report the recovery state to the operator.
-        Some(Unattended::Reconcile) if recovery_required => {
+/// Verified facts read under the lock after the journal and `active` object were checked.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Facts<'a> {
+    pub paused: bool,
+    pub recovery_required: bool,
+    pub terminal: bool,
+    pub active: &'a str,
+    pub installed: &'a str,
+    pub from: Option<&'a str>,
+}
+
+/// Idles only when `active` is already a known-good object; anything else keeps recovery or
+/// fails closed, so a paused policy can never skip a rollback or start an unconfirmed candidate.
+pub(crate) fn reconcile(facts: Facts<'_>) -> Gate {
+    if facts.recovery_required {
+        let known_good = facts.active == facts.installed || Some(facts.active) == facts.from;
+        return if known_good {
             Gate::Idle("operator recovery required; recovery state preserved")
-        }
-        Some(_) => Gate::Proceed,
+        } else {
+            Gate::Proceed
+        };
     }
+    if facts.paused && facts.terminal && facts.active == facts.installed {
+        return Gate::Idle("signed updates paused by local policy");
+    }
+    Gate::Proceed
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn disabled_policy_idles_unattended_commands_only() {
-        for command in [Unattended::Reconcile, Unattended::Status] {
-            assert!(matches!(
-                unattended(Some(command), false, false),
-                Gate::Idle(_)
-            ));
-            assert!(matches!(
-                unattended(Some(command), false, true),
-                Gate::Idle(_)
-            ));
+    const INSTALLED: &str = "installed";
+    const FROM: &str = "from";
+    const TO: &str = "to";
+
+    fn facts(paused: bool, recovery: bool, terminal: bool, active: &'static str) -> Facts<'static> {
+        Facts {
+            paused,
+            recovery_required: recovery,
+            terminal,
+            active,
+            installed: INSTALLED,
+            from: (!terminal).then_some(FROM),
         }
-        assert_eq!(unattended(None, false, false), Gate::Proceed);
-        assert_eq!(unattended(None, false, true), Gate::Proceed);
     }
 
     #[test]
-    fn manual_recovery_idles_reconcile_but_not_status_or_operator_commands() {
+    fn paused_policy_idles_only_a_settled_installed_object() {
         assert!(matches!(
-            unattended(Some(Unattended::Reconcile), true, true),
+            reconcile(facts(true, false, true, INSTALLED)),
             Gate::Idle(_)
         ));
-        assert_eq!(
-            unattended(Some(Unattended::Status), true, true),
-            Gate::Proceed
-        );
-        assert_eq!(unattended(None, true, true), Gate::Proceed);
-        assert_eq!(
-            unattended(Some(Unattended::Reconcile), true, false),
-            Gate::Proceed
-        );
+        // Committed pointer changed: normal reconcile fails closed.
+        assert_eq!(reconcile(facts(true, false, true, TO)), Gate::Proceed);
+    }
+
+    #[test]
+    fn paused_policy_never_skips_an_open_transaction() {
+        // Prepared, Stopping, Trial and RollbackIntent must still roll forward or back.
+        for active in [FROM, TO, INSTALLED] {
+            assert_eq!(reconcile(facts(true, false, false, active)), Gate::Proceed);
+        }
+    }
+
+    #[test]
+    fn enabled_policy_always_runs_recovery_without_latch() {
+        for terminal in [true, false] {
+            for active in [INSTALLED, FROM, TO] {
+                assert_eq!(
+                    reconcile(facts(false, false, terminal, active)),
+                    Gate::Proceed
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn recovery_latch_idles_only_on_a_verified_known_good_object() {
+        for paused in [true, false] {
+            assert!(matches!(
+                reconcile(facts(paused, true, true, INSTALLED)),
+                Gate::Idle(_)
+            ));
+            assert!(matches!(
+                reconcile(facts(paused, true, false, FROM)),
+                Gate::Idle(_)
+            ));
+            // An unconfirmed candidate or unexpected object keeps the Agent blocked.
+            assert_eq!(reconcile(facts(paused, true, false, TO)), Gate::Proceed);
+            assert_eq!(reconcile(facts(paused, true, true, TO)), Gate::Proceed);
+        }
     }
 
     #[test]

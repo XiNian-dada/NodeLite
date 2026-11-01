@@ -8,9 +8,9 @@ use crate::activate;
 use crate::download;
 use crate::error::{Result, UpdateError};
 use crate::fs::Lock;
-use crate::gate::{self, Gate, Unattended};
+use crate::gate::{self, Facts, Gate};
 use crate::policy::{Policy, ROOT, trusted_file};
-use crate::state::Store;
+use crate::state::{Journal, Store};
 use crate::system;
 
 #[derive(Parser)]
@@ -59,16 +59,12 @@ pub async fn run() -> Result<()> {
     let cli = Cli::parse();
     let _ = rustls::crypto::ring::default_provider().install_default();
     let policy = Policy::read()?;
-    let command = match &cli.action {
-        Action::Reconcile { .. } => Some(Unattended::Reconcile),
-        Action::Status => Some(Unattended::Status),
-        _ => None,
-    };
-    if let Gate::Idle(reason) = gate::unattended(command, policy.enabled, false) {
-        println!("{reason}");
-        return Ok(());
+    // Pausing stops new releases only; journal recovery must still run under the same checks.
+    if matches!(cli.action, Action::Reconcile { .. } | Action::Status) {
+        policy.validate_paused()?;
+    } else {
+        policy.validate()?;
     }
-    policy.validate()?;
     let bootstrap = trusted_file(Path::new(ROOT), 262144)?;
     system::guard(!matches!(&cli.action, Action::VerifyEnrollment { .. })).await?;
     let store = Store::system();
@@ -99,12 +95,15 @@ async fn dispatch(action: Action, store: &Store, policy: &Policy, bootstrap: &[u
             return Err(error);
         }
     };
-    let command = matches!(action, Action::Reconcile { .. }).then_some(Unattended::Reconcile);
-    let recovery_required = store.private().join("recovery-required.json").exists();
-    if let Gate::Idle(reason) = gate::unattended(command, policy.enabled, recovery_required) {
-        if matches!(action, Action::Reconcile { boot: true }) {
+    if let Action::Reconcile { boot } = action
+        && let Gate::Idle(reason) = idle(store, &state, policy)?
+    {
+        if boot {
             // Markers from the previous boot must not replay against an idle Agent.
             system::clear_markers()?;
+        }
+        if state.phase.terminal() {
+            remove_pending(store)?;
         }
         println!("{reason}");
         return Ok(());
@@ -151,11 +150,7 @@ async fn dispatch(action: Action, store: &Store, policy: &Policy, bootstrap: &[u
         return Err(error);
     }
     if state.phase.terminal() {
-        match std::fs::remove_file(store.private().join("pending")) {
-            Ok(()) => crate::fs::sync_dir(&store.private())?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
+        remove_pending(store)?;
     }
     println!(
         "{}",
@@ -166,6 +161,35 @@ async fn dispatch(action: Action, store: &Store, policy: &Policy, bootstrap: &[u
         }))?
     );
     Ok(())
+}
+
+fn idle(store: &Store, state: &Journal, policy: &Policy) -> Result<Gate> {
+    let recovery_required = store.private().join("recovery-required.json").exists();
+    if !recovery_required && policy.enabled {
+        return Ok(Gate::Proceed);
+    }
+    let active = store.active()?;
+    let transaction = state.transaction.as_ref();
+    // A revoked rollback target is not known-good even though its digest still verifies.
+    let from = transaction
+        .filter(|tx| tx.from.sequence >= state.hard_floor)
+        .map(|tx| tx.from.digest.as_str());
+    Ok(gate::reconcile(Facts {
+        paused: !policy.enabled,
+        recovery_required,
+        terminal: state.phase.terminal(),
+        active: &active,
+        installed: &state.installed.digest,
+        from: from.filter(|_| !state.phase.terminal()),
+    }))
+}
+
+fn remove_pending(store: &Store) -> Result<()> {
+    match std::fs::remove_file(store.private().join("pending")) {
+        Ok(()) => crate::fs::sync_dir(&store.private()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 pub(crate) async fn apply(store: &Store, policy: &Policy, bootstrap: &[u8]) -> Result<()> {
