@@ -20,12 +20,24 @@ fn parses_server_config_with_metrics_overrides() {
         [metrics]
         export_node_resource_metrics = true
         export_node_disk_metrics = true
+        allow_basic_scrape_with_2fa = true
         "#,
     )
     .expect("metrics config should parse");
 
     assert!(config.metrics.export_node_resource_metrics);
     assert!(config.metrics.export_node_disk_metrics);
+    assert!(config.metrics.allow_basic_scrape_with_2fa);
+
+    let defaults = parse_server_config(
+        r#"
+        [server]
+        listen = "127.0.0.1:8080"
+        public_base_url = "https://monitor.example.com"
+        "#,
+    )
+    .expect("default config should parse");
+    assert!(!defaults.metrics.allow_basic_scrape_with_2fa);
 }
 
 #[test]

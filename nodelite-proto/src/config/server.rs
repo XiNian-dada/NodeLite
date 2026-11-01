@@ -162,6 +162,9 @@ pub struct MetricsConfig {
     #[serde(default = "default_metrics_export_node_disk_metrics")]
     /// 是否按节点和挂载点导出磁盘指标。
     pub export_node_disk_metrics: bool,
+    #[serde(default)]
+    /// 开启 2FA 时是否允许仅凭 Basic 认证抓取 `/metrics`。Prometheus 无法完成 2FA。
+    pub allow_basic_scrape_with_2fa: bool,
 }
 
 /// 审计日志存储与记录策略。
