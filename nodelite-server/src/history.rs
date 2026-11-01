@@ -366,9 +366,9 @@ impl HistoryStore {
         sample: TrafficSample,
         accounting: TrafficAccounting,
         enabled: bool,
-    ) -> Option<TrafficUsage> {
+    ) -> Result<Option<TrafficUsage>, TrafficPersistenceError> {
         if !self.is_available() {
-            return None;
+            return Err(TrafficPersistenceError::Unavailable);
         }
         self.traffic
             .record(node_id, sample, accounting, enabled)

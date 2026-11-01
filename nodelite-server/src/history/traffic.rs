@@ -111,7 +111,11 @@ impl TrafficTracker {
         sample: TrafficSample,
         accounting: TrafficAccounting,
         enabled: bool,
-    ) -> Option<TrafficUsage> {
+    ) -> Result<Option<TrafficUsage>, TrafficPersistenceError> {
+        // 账本未加载时内存用量从 0 开始，据此做配额判断会把超额节点当成未超额。
+        if self.writer_tx.read().await.is_none() {
+            return Err(TrafficPersistenceError::Unavailable);
+        }
         let removed = {
             let mut state = self.state.lock().await;
             if !enabled {
@@ -126,7 +130,7 @@ impl TrafficTracker {
             if let Some(write) = removed {
                 self.try_enqueue(write).await;
             }
-            return None;
+            return Ok(None);
         }
 
         let write = {
@@ -163,10 +167,10 @@ impl TrafficTracker {
         };
         let usage = match &write {
             TrafficWrite::Upsert(state) => state.usage.clone(),
-            TrafficWrite::Delete(_) => return None,
+            TrafficWrite::Delete(_) => return Ok(None),
         };
         self.try_enqueue(write).await;
-        Some(usage)
+        Ok(Some(usage))
     }
 
     pub(super) async fn usages(&self) -> Vec<TrafficUsage> {

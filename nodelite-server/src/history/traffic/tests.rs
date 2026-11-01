@@ -6,7 +6,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{TimeZone, Utc};
 
-use super::{TrafficSample, TrafficTracker, counted_bytes, utc_month_start};
+use super::{
+    TrafficPersistenceError, TrafficSample, TrafficTracker, counted_bytes, utc_month_start,
+};
 use crate::registry::TrafficAccounting;
 
 const BIDI: TrafficAccounting = TrafficAccounting::Bidirectional;
@@ -46,6 +48,7 @@ async fn used(tracker: &TrafficTracker, frame: TrafficSample) -> u64 {
     tracker
         .record("node-a", frame, BIDI, true)
         .await
+        .expect("ledger should be available")
         .expect("enabled quota should return usage")
         .used_bytes
 }
@@ -82,6 +85,7 @@ async fn record_uses_counter_deltas_and_resets_when_accounting_changes() {
             true,
         )
         .await
+        .expect("ledger should be available")
         .expect("changed accounting should return usage");
     assert_eq!(reset.used_bytes, 0);
     let outbound = tracker
@@ -92,6 +96,7 @@ async fn record_uses_counter_deltas_and_resets_when_accounting_changes() {
             true,
         )
         .await
+        .expect("ledger should be available")
         .expect("outbound usage should be recorded");
     assert_eq!(outbound.used_bytes, 40);
 
@@ -157,5 +162,15 @@ async fn legacy_ledger_rows_are_migrated_and_keep_their_usage() {
     assert_eq!(used(&tracker, sample(15, 5, 1_010)).await, 710);
 
     tracker.shutdown().await;
+    remove_db(&db_path);
+}
+
+#[tokio::test]
+async fn record_reports_unavailable_when_the_ledger_never_loaded() {
+    let db_path = test_db_path("never-loaded");
+    let tracker = TrafficTracker::new(Arc::new(db_path.clone()), 0);
+    let result = tracker.record("node-a", sample(1, 1, 1), BIDI, true).await;
+    assert!(matches!(result, Err(TrafficPersistenceError::Unavailable)));
+    assert!(tracker.usages().await.is_empty());
     remove_db(&db_path);
 }

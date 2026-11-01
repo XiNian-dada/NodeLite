@@ -17,6 +17,7 @@ use super::protocol::{ParsedFrame, encode_ping_message, prune_outstanding_pings}
 use super::refresh::{
     ensure_current_token, handle_refresh_request, refresh_session_token, should_refresh_agent_token,
 };
+use super::traffic_quota::{ThrottleDecision, record_and_decide};
 use super::transport::send_message;
 use super::{ActiveSession, LoopAction};
 use crate::AppState;
@@ -352,40 +353,12 @@ async fn handle_metrics_message(
     {
         return Ok(LoopAction::Break);
     }
-    let desired_throttle_kbps =
-        if let Some(quota) = state.registry.traffic_quota(&session.node_id).await {
-            state
-                .history
-                .record_traffic(&session.node_id, traffic_sample, quota.accounting, true)
-                .await
-                .and_then(|usage| {
-                    (quota.throttle_kbps.is_some()
-                        && traffic_usage_reached_throttle_threshold(
-                            usage.used_bytes,
-                            quota.limit_bytes,
-                        ))
-                    .then_some(quota.throttle_kbps)
-                    .flatten()
-                })
-        } else {
-            let _ = state
-                .history
-                .record_traffic(
-                    &session.node_id,
-                    traffic_sample,
-                    crate::registry::TrafficAccounting::Bidirectional,
-                    false,
-                )
-                .await;
-            None
-        };
+    let decision = record_and_decide(state, &session.node_id, traffic_sample).await;
     drop(traffic_guard);
-    maybe_send_network_throttle(session, sender, loop_state, desired_throttle_kbps).await?;
+    if let ThrottleDecision::Apply(rate_kbps) = decision {
+        maybe_send_network_throttle(session, sender, loop_state, rate_kbps).await?;
+    }
     Ok(LoopAction::Continue)
-}
-
-fn traffic_usage_reached_throttle_threshold(used_bytes: u64, limit_bytes: u64) -> bool {
-    u128::from(used_bytes) * 100 >= u128::from(limit_bytes) * 95
 }
 
 async fn maybe_send_network_throttle(
@@ -735,16 +708,6 @@ mod tests {
         assert!(matches!(
             super::super::protocol::parse_wire_message(Message::Close(None)),
             Ok(super::super::protocol::ParsedFrame::Close)
-        ));
-    }
-
-    #[test]
-    fn traffic_limit_uses_a_95_percent_threshold_without_overflow() {
-        assert!(!super::traffic_usage_reached_throttle_threshold(949, 1_000));
-        assert!(super::traffic_usage_reached_throttle_threshold(950, 1_000));
-        assert!(super::traffic_usage_reached_throttle_threshold(
-            u64::MAX,
-            u64::MAX
         ));
     }
 

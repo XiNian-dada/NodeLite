@@ -36,7 +36,8 @@ async fn record_usage(state: &crate::AppState, node_id: &str) {
             TrafficAccounting::Bidirectional,
             true,
         )
-        .await;
+        .await
+        .expect("ledger should be available");
     let usage = state
         .history
         .record_traffic(
@@ -46,6 +47,7 @@ async fn record_usage(state: &crate::AppState, node_id: &str) {
             true,
         )
         .await
+        .expect("ledger should be available")
         .expect("usage");
     assert_eq!(usage.used_bytes, 900);
 }
@@ -101,6 +103,7 @@ async fn deleting_a_node_commits_ledger_removal_before_success_and_reenrollment_
             true,
         )
         .await
+        .expect("ledger should be available")
         .expect("new baseline");
     assert_eq!(usage.used_bytes, 0);
     assert_retained_history(&restarted)?;
