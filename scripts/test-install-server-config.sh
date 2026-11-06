@@ -243,3 +243,28 @@ grep -F \
 grep -F \
   'ensure_toml_default "$config_path" audit writer_flush_interval_ms "writer_flush_interval_ms = $AUDIT_WRITER_FLUSH_INTERVAL_MS"' \
   "$INSTALLER" >/dev/null
+
+# shellcheck disable=SC2089,SC2090 # Literal quotes/backslashes are the regression input.
+verify_toml_string_literals() {
+READONLY_PASSWORD='quoted"\密码
+with trailing newline
+'
+READONLY_USERNAME='viewer"\name'
+CONFIG_DIR='/etc/node"\lite'
+export READONLY_PASSWORD READONLY_USERNAME CONFIG_DIR
+render_server_config > "$TEMP_DIR/escaped.toml"
+python3 - "$TEMP_DIR/escaped.toml" <<'PYTHON'
+import os, sys
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib
+with open(sys.argv[1], 'rb') as f:
+    config = tomllib.load(f)
+assert config['auth']['password'] == os.environ['READONLY_PASSWORD']
+assert config['auth']['username'] == os.environ['READONLY_USERNAME']
+assert config['server']['node_registry_path'] == os.environ['CONFIG_DIR'] + '/server.json'
+PYTHON
+
+}
+verify_toml_string_literals

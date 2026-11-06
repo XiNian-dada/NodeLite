@@ -341,6 +341,25 @@ complete_server_config_defaults() {
   chmod 0600 "$config_path"
 }
 
+# TOML 基本字符串要求转义引号、反斜线与控制字符；保留 Unicode 输入。
+toml_escape() {
+  # 末尾哨兵防止 awk 丢掉输入末尾换行；Shell 本身不能表示 NUL。
+  printf '%sx' "$1" | LC_ALL=C awk '
+    BEGIN { for (i = 1; i < 32; i++) controls[sprintf("%c", i)] = i; controls[sprintf("%c", 127)] = 127 }
+    function emit(line, i, c) {
+      for (i = 1; i <= length(line); i++) {
+        c = substr(line, i, 1)
+        if (c == "\\") printf "\\\\"
+        else if (c == "\"") printf "\\\""
+        else if (c in controls) printf "\\u%04x", controls[c]
+        else printf "%s", c
+      }
+    }
+    NR > 1 { emit(previous); printf "\\n" }
+    { previous = $0 }
+    END { emit(substr(previous, 1, length(previous) - 1)) }'
+}
+
 # 把交互或默认得到的变量拼成最终 server.toml 文本。
 render_server_config() {
   insecure_allow_http_value="false"
@@ -350,24 +369,24 @@ render_server_config() {
   geoip_database_path="${GEOIP_DATABASE_PATH:-${DATA_DIR}/geoip/dbip.mmdb}"
   cat <<EOF
 [server]
-listen = "${LISTEN_HOST}:${LISTEN_PORT}"
-public_base_url = "${PUBLIC_SCHEME}://${PUBLIC_HOST}"
+listen = "$(toml_escape "${LISTEN_HOST}:${LISTEN_PORT}")"
+public_base_url = "$(toml_escape "${PUBLIC_SCHEME}://${PUBLIC_HOST}")"
 insecure_allow_http = ${insecure_allow_http_value}
-node_registry_path = "${CONFIG_DIR}/server.json"
-history_db_path = "${DATA_DIR}/history.sqlite3"
+node_registry_path = "$(toml_escape "${CONFIG_DIR}/server.json")"
+history_db_path = "$(toml_escape "${DATA_DIR}/history.sqlite3")"
 history_query_concurrency = ${SERVER_HISTORY_QUERY_CONCURRENCY}
 history_read_cache_kib = ${SERVER_HISTORY_READ_CACHE_KIB}
 history_writer_batch_max = ${SERVER_HISTORY_WRITER_BATCH_MAX}
 history_writer_flush_interval_ms = ${SERVER_HISTORY_WRITER_FLUSH_INTERVAL_MS}
-snapshot_path = "${DATA_DIR}/snapshot.json"
+snapshot_path = "$(toml_escape "${DATA_DIR}/snapshot.json")"
 stale_after_secs = ${SERVER_STALE_AFTER_SECS}
 ping_interval_secs = ${SERVER_PING_INTERVAL_SECS}
 max_message_bytes = ${SERVER_MAX_MESSAGE_BYTES}
 token_verify_max_parallelism = ${SERVER_TOKEN_VERIFY_MAX_PARALLELISM}
 
 [auth]
-username = "${READONLY_USERNAME}"
-password = "${READONLY_PASSWORD}"
+username = "$(toml_escape "${READONLY_USERNAME}")"
+password = "$(toml_escape "${READONLY_PASSWORD}")"
 
 [ws]
 max_total_connections = ${WS_MAX_TOTAL_CONNECTIONS}
@@ -381,9 +400,9 @@ refresh_interval_secs = ${UI_REFRESH_INTERVAL_SECS}
 
 [geoip]
 enabled = ${GEOIP_ENABLED}
-provider = "${GEOIP_PROVIDER}"
-edition = "${GEOIP_EDITION}"
-database_path = "${geoip_database_path}"
+provider = "$(toml_escape "${GEOIP_PROVIDER}")"
+edition = "$(toml_escape "${GEOIP_EDITION}")"
+database_path = "$(toml_escape "${geoip_database_path}")"
 auto_update = ${GEOIP_AUTO_UPDATE}
 update_interval_days = ${GEOIP_UPDATE_INTERVAL_DAYS}
 
