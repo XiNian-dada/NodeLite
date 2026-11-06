@@ -140,6 +140,7 @@ fn mime_type_for_path(path: &str) -> &'static str {
         Some("js") | Some("mjs") => "application/javascript; charset=utf-8",
         Some("css") => "text/css; charset=utf-8",
         Some("json") => "application/json; charset=utf-8",
+        Some("geojson") => "application/geo+json",
         Some("woff2") => "font/woff2",
         Some("woff") => "font/woff",
         Some("ttf") => "font/ttf",
@@ -372,9 +373,7 @@ mod tests {
         );
         assert!(csp.contains("style-src-attr 'unsafe-inline'"), "csp={csp}");
         assert!(
-            csp.contains(
-                "connect-src 'self' https://api.github.com"
-            ),
+            csp.contains("connect-src 'self' https://api.github.com"),
             "csp={csp}"
         );
     }

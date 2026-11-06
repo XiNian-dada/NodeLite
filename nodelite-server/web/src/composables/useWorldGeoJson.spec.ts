@@ -29,7 +29,7 @@ describe('useWorldGeoJson', () => {
     expect(geojson.value).toBeNull();
     await load();
     expect(geojson.value).toEqual(FAKE_GEO);
-    expect(WORLD_GEOJSON_URL).toBe('/map/world.geojson');
+    expect(WORLD_GEOJSON_URL).toBe('/assets/world.geojson');
     expect(error.value).toBeNull();
   });
 

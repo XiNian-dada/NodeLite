@@ -18,7 +18,7 @@ import {
 } from './projection';
 
 export const WORLD_GEOJSON_URL =
-  '/map/world.geojson';
+  '/assets/world.geojson';
 
 type Coord = [number, number];
 type Ring = Coord[];

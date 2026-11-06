@@ -1,6 +1,6 @@
 # Bundled world boundaries
 
-`world.geojson` contains the countries dataset from
+`../assets/world.geojson` contains the countries dataset from
 https://github.com/datasets/geo-boundaries-world-110m/blob/6cf0946a0f4d027d21686e8402f19b524c4f6385/countries.geojson
 (original: 689,418 bytes; SHA-256 `4b80696f5baddcebf5780a487295f55cf7fdaa09c371534fed98a0ec5da5e7aa`).
 
