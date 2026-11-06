@@ -57,7 +57,8 @@ class GitHubPublishing(_CeremonyFixture):
         self.candidate = self.path / "initialized"
         self.renew()
         result, download = self.render()
-        download.assert_called_once_with("XiNian-dada/NodeLite", "v3.0.5", "nodelite-agent-" + TARGET, self.cache)
+        download.assert_called_once_with("XiNian-dada/NodeLite", "v3.0.5", "nodelite-agent-" + TARGET,
+                                         self.cache, limit=self.artifact.stat().st_size)
         public = self.path / "public"
         self.assertEqual(result["repositories"][0]["version"], "3.0.5")
         self.assertFalse(any(path.is_symlink() for path in public.rglob("*")))
@@ -184,7 +185,7 @@ class GitHubPublishing(_CeremonyFixture):
         for private, _ in self.roles["targets"]:
             target.sign(CryptoSigner(serialization.load_pem_private_key(read(private), self.secret)), append=True)
         create(folder / "2.targets.json", target.to_bytes())
-        with self.assertRaisesRegex(ValueError, "same release sequence"):
+        with self.assertRaisesRegex(ValueError, "same release sequence|asset bytes changed"):
             self.prepare(initialize=False, out=self.path / "bad")
         empty = directory(self.path / "lost-state")
         with self.assertRaisesRegex(ValueError, "missing durable state"):
@@ -201,3 +202,15 @@ class GitHubPublishing(_CeremonyFixture):
             github.download("XiNian-dada/NodeLite", "--help", "agent", self.cache)
         with self.assertRaises(ValueError):
             github.budget(901 * 1024 * 1024)
+
+    def test_signed_digest_cannot_escape_target_directory(self):
+        folder = self.approvals / SCOPE / "metadata"
+        path = folder / "1.targets.json"
+        target = metadata.load(path)
+        next(iter(target.signed.targets.values())).hashes["sha256"] = "../outside"
+        target.signatures.clear()
+        for private, _ in self.roles["targets"]:
+            target.sign(CryptoSigner(serialization.load_pem_private_key(read(private), self.secret)), append=True)
+        path.write_bytes(target.to_bytes())
+        with self.assertRaises(Exception):
+            state.inspect(folder, self.entry, online=False)

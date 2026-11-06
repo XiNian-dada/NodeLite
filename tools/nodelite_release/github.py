@@ -14,7 +14,7 @@ from .io import LIMIT, create, digest, directory, read
 from .metadata import release_scope
 
 
-def download(repository, tag, asset, cache):
+def download(repository, tag, asset, cache, *, limit=LIMIT):
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository) or not state.valid_tag(tag) \
             or not re.fullmatch(r"[A-Za-z0-9_.-]+", asset):
         raise ValueError("invalid GitHub release locator")
@@ -25,8 +25,11 @@ def download(repository, tag, asset, cache):
     output = target / asset
     if not output.exists():
         # Redirects occur only in the publisher; signed target hashes remain authoritative.
-        subprocess.run(["gh", "release", "download", tag, "--repo", repository, "--pattern", asset,
-                        "--dir", str(target)], check=True, timeout=180, stdout=subprocess.DEVNULL)
+        url = f"https://github.com/{repository}/releases/download/{tag}/{asset}"
+        subprocess.run(["curl", "-q", "--fail", "--silent", "--show-error", "--location",
+                        "--proto", "=https", "--proto-redir", "=https", "--connect-timeout", "15",
+                        "--max-time", "180", "--max-filesize", str(limit), "--output", str(output), url],
+                       check=True, timeout=190)
     return output
 
 
@@ -63,7 +66,7 @@ def render(configuration, previous, candidate, output, cache, repository, base_u
             name = info.hashes["sha256"] + "." + release_scope(signed)
             if (target_folder / name).exists():
                 continue
-            asset = download(repository, "v" + signed["version"], "nodelite-agent-" + signed["target"], cache)
+            asset = download(repository, "v" + signed["version"], "nodelite-agent-" + signed["target"], cache, limit=info.length)
             raw = read(asset, LIMIT)
             info.verify_length_and_hashes(raw)
             used += len(raw)
@@ -74,7 +77,7 @@ def render(configuration, previous, candidate, output, cache, repository, base_u
     enrollment_folder = directory(Path(output) / "enrollment", 0o755)
     links = []
     for approval in configuration["enrollments"]:
-        path = download(repository, approval["tag"], "nodelite-web-enrollment.tar.gz", cache)
+        path = download(repository, approval["tag"], "nodelite-web-enrollment.tar.gz", cache, limit=github_handoff.LIMIT)
         destination = enrollment_folder / approval["tag"]
         result = github_handoff.unpack(path, approval["sha256"], destination, tag=approval["tag"],
                                        base_url=base_url, repositories=configuration["repositories"], trusted_roots=trusted_roots)

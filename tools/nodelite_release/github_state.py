@@ -53,6 +53,9 @@ def inventory(path):
         if total > 64 * 1024 * 1024:
             raise ValueError("metadata storage budget exceeded")
         document = Metadata.from_dict(decode(raw))
+        limit = {"root": 262144, "snapshot": 262144, "timestamp": 16384, "targets": 2 * 1024 * 1024}.get(document.signed.type, 0)
+        if len(raw) > limit:
+            raise ValueError("metadata exceeds Agent runtime limit")
         expected = "timestamp.json" if document.signed.type == "timestamp" else \
             f"{document.signed.version}.{document.signed.type}.json"
         if expected != item.name:
@@ -66,7 +69,7 @@ def inspect(path, entry, *, online=True, fresh=False):
     chain = repository.roots(path)
     if not any(digest(values[f"{root.signed.version}.root.json"]) == entry["root_sha256"] for root in chain):
         raise ValueError("metadata does not extend approved bootstrap root")
-    targets = []
+    targets, locators = [], {}
     for name, raw in values.items():
         document = Metadata.from_bytes(raw)
         if document.signed.type == "root":
@@ -89,9 +92,14 @@ def inspect(path, entry, *, online=True, fresh=False):
             custom = info.unrecognized_fields.get("custom", {})
             if metadata.release_scope(custom) != target_name or scope(custom) != scope(entry) \
                     or set(info.hashes) != {"sha256"} or not 0 < info.length <= repository.LIMIT \
+                    or not re.fullmatch(r"[0-9a-f]{64}", info.hashes["sha256"]) \
                     or not valid_tag("v" + custom["version"]) \
                     or custom["channel"] == "stable" and "-" in custom["version"]:
                 raise ValueError("signed target scope or release tag rejected")
+            locator = custom["version"]
+            if locator in locators and locators[locator] != info.hashes["sha256"]:
+                raise ValueError("historical Release asset bytes changed")
+            locators[locator] = info.hashes["sha256"]
             targets.append((document, name, custom, info))
         elif online is False:
             raise ValueError("offline approvals must contain only roots and targets")
