@@ -25,7 +25,7 @@ CURL_DOWNLOAD_TIMEOUT_SECS=60
 CHECKSUM_MAX_BYTES=1048576
 INSTALLER_MAX_BYTES=1048576
 
-# shellcheck disable=SC2317 # Invoked indirectly by the EXIT trap.
+# shellcheck disable=SC2317,SC2329 # Invoked indirectly by the EXIT trap.
 cleanup() {
   [ -n "$tmp_script" ] && rm -f "$tmp_script"
   [ -n "$tmp_checksums" ] && rm -f "$tmp_checksums"
@@ -44,7 +44,7 @@ fail_update() {
   finish 1
 }
 
-# shellcheck disable=SC2317 # Invoked indirectly by the signal traps.
+# shellcheck disable=SC2317,SC2329 # Invoked indirectly by the signal traps.
 stop_active_process() {
   if [ -n "$active_pid" ]; then
     kill -TERM "$active_pid" 2>/dev/null || true
@@ -53,7 +53,7 @@ stop_active_process() {
   fi
 }
 
-# shellcheck disable=SC2317 # Invoked indirectly by the signal traps.
+# shellcheck disable=SC2317,SC2329 # Invoked indirectly by the signal traps.
 handle_signal() {
   signal_name="$1"
   signal_status="$2"
