@@ -3,7 +3,7 @@
 from pathlib import Path
 import subprocess
 
-from . import metadata, repository, web
+from . import github_handoff, metadata, repository, web
 from .io import create, decode, digest, directory, read
 from .test_release import _CeremonyFixture
 
@@ -124,3 +124,41 @@ class WebRelease(_CeremonyFixture):
         self.assertEqual({p["target"] for p in result["enrollments"]}, {TARGET, target})
         for name in self.payloads:
             self.assertEqual(read(self.output / "assets" / name), self.payloads[name])
+
+    def test_github_handoff_roundtrip_preserves_original_release_and_pinned_commands(self):
+        base = "https://xinian-dada.github.io/NodeLite"
+        scope = "stable/" + TARGET
+        original_manifest = read(self.assets / "SHA256SUMS.txt")
+        self.stage(release_url=base + "/updates/enrollment/v3.0.5/assets",
+                   metadata_urls=[base + "/updates/" + scope + "/metadata/"],
+                   targets_urls=[base + "/updates/" + scope + "/targets/"])
+        archive = self.path / "nodelite-web-enrollment.tar.gz"
+        packed = github_handoff.pack(self.output, archive)
+        packed_again = github_handoff.pack(self.output, self.path / "same.tar.gz")
+        self.assertEqual(packed, packed_again)
+        entry = {"channel": "stable", "target": TARGET, "root_sha256": digest(read(self.root))}
+        out = self.path / "unpacked"
+        github_handoff.unpack(archive, packed["sha256"], out, tag="v3.0.5", base_url=base, repositories=[entry])
+        self.assertEqual(read(self.assets / "SHA256SUMS.txt"), original_manifest)
+        for file in self.output.rglob("*"):
+            if file.is_file():
+                self.assertEqual(read(file, 128 * 1024 * 1024), read(out / file.relative_to(self.output), 128 * 1024 * 1024))
+        for changes in ({"expected_hash": "0" * 64}, {"tag": "v3.0.6"}, {"base_url": "https://wrong.invalid"}):
+            args = dict(path=archive, expected_hash=packed["sha256"], output=self.path / "bad",
+                        tag="v3.0.5", base_url=base, repositories=[entry])
+            args.update(changes)
+            with self.assertRaises(ValueError):
+                github_handoff.unpack(**args)
+            self.assertFalse((self.path / "bad").exists())
+
+    def test_github_handoff_rejects_unapproved_commands_and_private_files(self):
+        self.stage()
+        script = self.output / f"enable-web-updates-{TARGET}.sh"
+        original = read(script)
+        script.write_bytes(original + b"\necho altered\n")
+        with self.assertRaises(ValueError):
+            github_handoff.pack(self.output, self.path / "bad.tar.gz")
+        script.write_bytes(original)
+        create(self.output / "private.pem", b"never publish")
+        with self.assertRaises(ValueError):
+            github_handoff.pack(self.output, self.path / "bad.tar.gz")
