@@ -67,7 +67,7 @@ curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/inst
 
 ## 可选：签名自动更新
 
-默认是上面的手动升级。Linux/systemd 节点可以改用签名更新器 [nodelite-updater](https://github.com/XiNian-dada/NodeLite/blob/main/nodelite-updater/README.md)。首次开启需要维护者完成签名源部署并发布同版本迁移包。
+默认是上面的手动升级。Linux/systemd 节点可以改用签名更新器 [nodelite-updater](https://github.com/XiNian-dada/NodeLite/blob/main/nodelite-updater/README.md)。签名源可以直接使用 [GitHub Releases + Pages 托管](github-agent-updates.md)，普通用户无需自建服务器。首次开启需要项目维护者配置正式签名密钥并发布同版本迁移包。
 
 从独立可信的发布审批渠道取得适合节点架构的 `enable-web-updates-<target>.sh` 和摘要记录，
 核对版本、root、URL 和完整归档摘要后执行。该脚本先校验外层 installer，再传入固定的

@@ -1,0 +1,196 @@
+name: Documentation and signed Agent updates
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      initialize:
+        description: Initialize explicitly approved new scopes (never recover lost state this way)
+        type: boolean
+        default: false
+  schedule:
+    - cron: '17 */6 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nodelite-pages-and-update-state
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main' && (github.event_name != 'schedule' || vars.NODELITE_GITHUB_UPDATES == 'enabled')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      enabled: ${{ steps.mode.outputs.enabled }}
+      state_sha: ${{ steps.state.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: mode
+        env:
+          ENABLED: ${{ vars.NODELITE_GITHUB_UPDATES }}
+        run: |
+          if [ "$ENABLED" = enabled ]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          else
+            python3 -c 'import json; assert not json.load(open("updates/github.json"))["repositories"], "configured updates must not disappear from Pages"'
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.mode.outputs.enabled == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: codex/agent-update-state
+          path: _state
+          persist-credentials: false
+      - id: state
+        if: steps.mode.outputs.enabled == 'true'
+        run: echo "sha=$(git -C _state rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - if: steps.mode.outputs.enabled == 'true'
+        run: |
+          python3 -m pip install --only-binary=:all: -r tools/nodelite_release/requirements.txt
+      - if: steps.mode.outputs.enabled == 'true'
+        env:
+          INITIALIZE: ${{ inputs.initialize == true && 'true' || 'false' }}
+        run: |
+          args=()
+          if [ "$INITIALIZE" = true ]; then args+=(--initialize); fi
+          python3 -m tools.nodelite_release.github prepare --config updates/github.json \
+            --approvals updates/approved --previous _state --out _candidate "${args[@]}"
+      - if: steps.mode.outputs.enabled == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: update-prepared
+          path: _candidate
+          retention-days: 1
+          if-no-files-found: error
+
+  snapshot:
+    needs: prepare
+    if: needs.prepare.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: nodelite-update-snapshot
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: update-prepared
+          path: _candidate
+      - run: |
+          python3 -m pip install --only-binary=:all: -r tools/nodelite_release/requirements.txt
+      - name: Renew only snapshot
+        env:
+          NODELITE_ONLINE_PRIVATE_KEY: ${{ secrets.NODELITE_ONLINE_PRIVATE_KEY }}
+          NODELITE_ONLINE_PASSWORD: ${{ secrets.NODELITE_ONLINE_PASSWORD }}
+        run: python3 -m tools.nodelite_release.github renew --config updates/github.json --candidate _candidate --role snapshot
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: update-snapshot
+          path: _candidate
+          retention-days: 1
+          if-no-files-found: error
+
+  timestamp:
+    needs: snapshot
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: nodelite-update-timestamp
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: update-snapshot
+          path: _candidate
+      - run: |
+          python3 -m pip install --only-binary=:all: -r tools/nodelite_release/requirements.txt
+      - name: Renew only timestamp
+        env:
+          NODELITE_ONLINE_PRIVATE_KEY: ${{ secrets.NODELITE_ONLINE_PRIVATE_KEY }}
+          NODELITE_ONLINE_PASSWORD: ${{ secrets.NODELITE_ONLINE_PASSWORD }}
+        run: python3 -m tools.nodelite_release.github renew --config updates/github.json --candidate _candidate --role timestamp
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: update-signed
+          path: _candidate
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    needs: [prepare, snapshot, timestamp]
+    if: >-
+      always() && needs.prepare.result == 'success' &&
+      (needs.prepare.outputs.enabled != 'true' || needs.timestamp.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: pages
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+      - uses: actions/jekyll-build-pages@44a6e6beabd48582f863aeeb6cb2151cc1716697 # v1
+        with:
+          source: docs
+          destination: _site
+          build_revision: ${{ github.sha }}
+          verbose: false
+      - if: needs.prepare.outputs.enabled == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.state_sha }}
+          path: _state
+      - if: needs.prepare.outputs.enabled == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: update-signed
+          path: _candidate
+      - if: needs.prepare.outputs.enabled == 'true'
+        run: |
+          python3 -m pip install --only-binary=:all: -r tools/nodelite_release/requirements.txt
+      - name: Verify and reconstruct public updates
+        if: needs.prepare.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          BASE_URL: ${{ steps.pages.outputs.base_url }}
+          INITIALIZE: ${{ inputs.initialize == true && 'true' || 'false' }}
+        run: |
+          mkdir _release-cache
+          args=()
+          if [ "$INITIALIZE" = true ]; then args+=(--initialize); fi
+          python3 -m tools.nodelite_release.github render --config updates/github.json \
+            --previous _state --candidate _candidate --out _site/updates --cache _release-cache \
+            --repository "$REPOSITORY" --base-url "$BASE_URL" "${args[@]}"
+          python3 -m tools.nodelite_release.github save-state --config updates/github.json \
+            --public _site/updates --destination _state
+          git -C _state config user.name 'github-actions[bot]'
+          git -C _state config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C _state add -- '*.json'
+          git -C _state commit -m 'chore: advance signed Agent update metadata'
+          git -C _state push origin HEAD:refs/heads/codex/agent-update-state
+      - name: Check complete site size and static file types
+        run: |
+          test -s _site/index.html
+          test -z "$(find _site -type l -print -quit)"
+          test "$(du -sb _site | cut -f1)" -lt 1000000000
+      - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
