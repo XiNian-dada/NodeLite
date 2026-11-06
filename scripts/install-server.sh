@@ -1,27 +1,15 @@
 #!/bin/sh
 # NodeLite Server 一键安装 / 升级 / 迁移脚本。
-#
-# 主要流程:
-#   1. 解析参数与环境变量,确定模式(install / upgrade / migrate / auto)。
-#   2. 探测当前是否已存在安装(unit 文件、配置文件、二进制),据此推断默认值。
-#   3. 拉取并校验对应架构的发布二进制,落到 /usr/local/bin。
-#   4. 生成或保留 server.toml / server.json,写入 systemd unit,重启服务。
-#
-# 设计目标与 install-agent.sh 一致:全部 POSIX shell、不依赖 bash。
 
 set -eu
 # 默认 umask:确保临时文件不会泄漏给同主机其它用户。
 umask 077
 
 # VERSION 环境变量:默认只安装正式版本。如需 alpha/beta/RC 等预发布版本,
-# 必须显式设置 NODELITE_SERVER_VERSION=v2.3.0-alpha.1,否则安装脚本会拒绝。
+# 必须通过 --version 或 NODELITE_SERVER_VERSION 显式选择。
 # 留空时自动使用 GitHub 最新正式版。
 VERSION="${NODELITE_SERVER_VERSION:-}"
-if [ -n "$VERSION" ]; then
-  BASE_URL="${NODELITE_SERVER_BASE_URL:-https://github.com/XiNian-dada/NodeLite/releases/download/${VERSION}}"
-else
-  BASE_URL="${NODELITE_SERVER_BASE_URL:-https://github.com/XiNian-dada/NodeLite/releases/latest/download}"
-fi
+BASE_URL="${NODELITE_SERVER_BASE_URL:-}"
 INSTALL_ROOT_DEFAULT="/opt/nodelite"
 LISTEN_HOST_DEFAULT="127.0.0.1"
 SERVICE_NAME="nodelite-server"
@@ -458,6 +446,28 @@ copy_tree_contents() {
   fi
 }
 
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --version|--mode|--base-url)
+      if [ "$#" -lt 2 ] || [ -z "$2" ]; then fail "$1 requires a value"; fi
+      case "$1" in --version) VERSION="$2" ;; --mode) MODE="$2" ;; --base-url) BASE_URL="$2" ;; esac
+      shift 2 ;;
+    --help|-h)
+      printf '%s\n' 'Usage: sh install-server.sh [--mode auto|install|upgrade|migrate] [--version <release-tag>] [--base-url <mirror>]' \
+        'Default: latest stable release. Example: --mode upgrade --version v3.1.0-rc.1' \
+        'Flags override NODELITE_SERVER_MODE, NODELITE_SERVER_VERSION and NODELITE_SERVER_BASE_URL.'
+      exit 0 ;;
+    *) fail "unknown argument: $1" ;;
+  esac
+done
+if [ -z "$BASE_URL" ]; then
+  BASE_URL="https://github.com/XiNian-dada/NodeLite/releases/latest/download"
+  [ -z "$VERSION" ] || BASE_URL="https://github.com/XiNian-dada/NodeLite/releases/download/$VERSION"
+fi
+case "$VERSION" in
+  *[!0-9A-Za-z._+-]*) fail 'version must be a release tag, for example v3.1.0-rc.1' ;;
+esac
+
 mark_step "checking privileges"
 [ "$(id -u)" -eq 0 ] || fail "please run as root"
 
@@ -491,7 +501,7 @@ need_cmd wc
 clear_screen
 
 tty_println "NodeLite Server Installer"
-tty_println "This script installs the latest NodeLite server release from GitHub."
+tty_println "This script installs the selected NodeLite server release."
 tty_println ""
 
 validate_mode "$MODE"

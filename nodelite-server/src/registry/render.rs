@@ -107,17 +107,43 @@ pub fn default_agent_release_base_url() -> RegistryResult<String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentReleaseSource {
     base_url: String,
+    version: Option<String>,
     sha256_x86_64: Option<String>,
     sha256_aarch64: Option<String>,
 }
 
 impl AgentReleaseSource {
-    /// 有 `[install]` 镜像时使用它并固定两个架构的 SHA256;否则回退到项目 GitHub latest,
-    /// 由安装脚本读取发布源中的 SHA256SUMS.txt。
+    /// 官方构建跟随 Server 的 release tag；开发构建使用 latest，显式镜像仍保留自己的固定摘要。
     pub fn from_config(config: &ServerConfig) -> RegistryResult<Self> {
+        Self::from_config_for_tag(config, option_env!("NODELITE_BUILD_TAG"))
+    }
+
+    pub(super) fn from_config_for_tag(
+        config: &ServerConfig,
+        release_tag: Option<&str>,
+    ) -> RegistryResult<Self> {
         let Some(base_url) = config.agent_release_base_url.as_deref() else {
+            let mut base_url = default_agent_release_base_url()?;
+            if let Some(tag) = release_tag {
+                if tag.is_empty()
+                    || !tag
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || b"._+-".contains(&c))
+                    || !tag.bytes().any(|c| c.is_ascii_digit())
+                {
+                    return Err(RegistryError::invalid_config(
+                        "release tag",
+                        "invalid build tag",
+                    ));
+                }
+                base_url = format!(
+                    "{}/download/{tag}",
+                    base_url.trim_end_matches("/latest/download")
+                );
+            }
             return Ok(Self {
-                base_url: default_agent_release_base_url()?,
+                base_url,
+                version: release_tag.map(str::to_owned),
                 sha256_x86_64: None,
                 sha256_aarch64: None,
             });
@@ -135,6 +161,7 @@ impl AgentReleaseSource {
         };
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_string(),
+            version: None,
             sha256_x86_64: Some(sha256_x86_64),
             sha256_aarch64: Some(sha256_aarch64),
         })
@@ -145,7 +172,11 @@ impl AgentReleaseSource {
     }
 
     fn push_args(&self, bootstrap_url: Option<&str>, lines: &mut Vec<String>) {
-        let mut args = vec![format!("--base-url {}", shell_quote(&self.base_url))];
+        let mut args = Vec::new();
+        if let Some(version) = &self.version {
+            args.push(format!("--version {}", shell_quote(version)));
+        }
+        args.push(format!("--base-url {}", shell_quote(&self.base_url)));
         // Config validation only admits remote http:// with server.insecure_allow_http;
         // carry that opt-in so the installer's HTTPS guard accepts the same sources.
         if bootstrap_url

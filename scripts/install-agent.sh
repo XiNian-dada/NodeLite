@@ -1,8 +1,6 @@
 #!/bin/sh
 # shellcheck disable=SC2015
 # NodeLite Agent 一键安装 / 升级脚本。
-# 该脚本设计为可被 `curl ... | sh` 直接执行,所以全部用 POSIX shell 实现,
-# 不依赖 bash 特性。所有失败都通过 `fail` 输出统一前缀并以非零状态退出。
 
 set -eu
 # 默认 umask:确保新建的临时文件不会泄漏给同主机其它用户。
@@ -45,11 +43,7 @@ SIGNED_HELPER_SHA256="${NODELITE_SIGNED_HELPER_SHA256:-}"
 SIGNED_STAGE=""
 # Pin binaries, helpers and enrollment assets to the same release.
 VERSION="${NODELITE_AGENT_VERSION:-}"
-if [ -n "$VERSION" ]; then
-  BASE_URL="${NODELITE_AGENT_BASE_URL:-https://github.com/XiNian-dada/NodeLite/releases/download/${VERSION}}"
-else
-  BASE_URL="${NODELITE_AGENT_BASE_URL:-https://github.com/XiNian-dada/NodeLite/releases/latest/download}"
-fi
+BASE_URL="${NODELITE_AGENT_BASE_URL:-}"
 CHECKSUMS_URL="${NODELITE_AGENT_CHECKSUMS_URL:-}"
 BINARY_URL="${NODELITE_AGENT_BINARY_URL:-}"
 SHA256_X86_64="${NODELITE_AGENT_SHA256_X86_64:-}"
@@ -102,7 +96,6 @@ cleanup() {
 trap cleanup EXIT
 trap 'cleanup; exit 1' HUP INT TERM
 
-# 计算指定文件的 SHA-256 摘要;优先用 GNU `sha256sum`,缺失时回退到 `shasum -a 256`。
 verify_release_attestation() {
   case "${NODELITE_VERIFY_ATTESTATIONS:-0}" in
     0) return 0 ;;
@@ -166,7 +159,6 @@ ensure_service_account() {
   fail "missing required command: useradd or adduser"
 }
 
-# 通过 /dev/tty 提示用户手动输入一次性安装令牌,输入过程中关闭回显。
 prompt_install_token() {
   need_cmd stty
   [ -r /dev/tty ] || fail "missing install token and no interactive terminal is available"
@@ -213,7 +205,6 @@ fetch_bootstrap_config() {
   grep -q '^token = "' "$BOOTSTRAP_TMP" || fail "bootstrap response did not contain an agent token"
 }
 
-# 解析发布源对应的 SHA256SUMS.txt,挑出当前架构产物的预期摘要。
 fetch_expected_sha256() {
   artifact_name="$1"
 
@@ -244,15 +235,7 @@ fetch_expected_sha256() {
 }
 
 is_stable_version() {
-  version_value="$1"
-  version_value="${version_value#v}"
-  version_value="${version_value#V}"
-  case "$version_value" in
-    ""|*-*)
-      return 1
-      ;;
-  esac
-  return 0
+  case "$1" in ''|v|V|*-*) return 1 ;; esac
 }
 
 # 把 `releases/latest/download` 形式的下载源解析成具体 tag,避免每次升级又跳到最新版。
@@ -268,16 +251,8 @@ resolve_release_base_url() {
     https://github.com/*/releases/latest/download)
       releases_root="${BASE_URL%/latest/download}"
       redirect_location="$(curl -q -fsSI --connect-timeout 15 --max-time 30 "$releases_root/latest" | awk '
-        tolower($1) == "location:" {
-          value = $2
-          sub(/\r$/, "", value)
-          location = value
-        }
-        END {
-          if (location != "") {
-            print location
-          }
-        }
+        tolower($1) == "location:" { sub(/\r$/, "", $2); location = $2 }
+        END { if (location != "") print location }
       ')" \
         || fail "failed to resolve latest GitHub release"
       [ -n "$redirect_location" ] || fail "GitHub latest release redirect did not include a location"
@@ -554,28 +529,20 @@ write_launchd_plist() {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key>
-  <string>$LAUNCHD_LABEL</string>
+  <key>Label</key><string>$LAUNCHD_LABEL</string>
   <key>ProgramArguments</key>
   <array>
     <string>$escaped_bin_path</string>
     <string>--config</string>
     <string>$escaped_config_path</string>
   </array>
-  <key>WorkingDirectory</key>
-  <string>$escaped_state_dir</string>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>ProcessType</key>
-  <string>Background</string>
-  <key>Umask</key>
-  <integer>63</integer>
-  <key>StandardOutPath</key>
-  <string>$escaped_stdout_path</string>
-  <key>StandardErrorPath</key>
-  <string>$escaped_stderr_path</string>
+  <key>WorkingDirectory</key><string>$escaped_state_dir</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Background</string>
+  <key>Umask</key><integer>63</integer>
+  <key>StandardOutPath</key><string>$escaped_stdout_path</string>
+  <key>StandardErrorPath</key><string>$escaped_stderr_path</string>
 </dict>
 </plist>
 EOF
@@ -639,6 +606,7 @@ while [ "$#" -gt 0 ]; do
     --enrollment-sha256) need_value "$@"; ENROLLMENT_SHA256="$2"; shift 2 ;;
     --signed-helper-sha256) need_value "$@"; SIGNED_HELPER_SHA256="$2"; shift 2 ;;
     --insecure-allow-http) INSECURE_HTTP=1; shift ;;
+    --version) need_value "$@"; [ -n "$2" ] || fail '--version must not be empty'; VERSION="$2"; shift 2 ;;
     --mode) need_value "$@"; MODE="$2"; shift 2 ;;
     --base-url) need_value "$@"; BASE_URL="$2"; shift 2 ;;
     --checksums-url) need_value "$@"; CHECKSUMS_URL="$2"; shift 2 ;;
@@ -647,38 +615,26 @@ while [ "$#" -gt 0 ]; do
     --sha256-aarch64) need_value "$@"; SHA256_AARCH64="$2"; shift 2 ;;
     --help|-h)
       cat <<'EOF'
-Usage:
-  sh install-agent.sh \
-    --bootstrap-url https://monitor.example.com/install/bootstrap
+Usage: sh install-agent.sh [options]
+  --bootstrap-url <url>                  Required for a new installation
+  --mode <install|upgrade|auto>          Default: auto
+  --version <release-tag>                Overrides NODELITE_AGENT_VERSION; default: latest stable
+  --install-token <token> | --install-token-file <path>
+  --install-dir <dir> | --config-dir <dir> | --state-dir <dir>
+  --enable-traffic-control | --disable-traffic-control
+  --base-url <release-base-url> | --binary-url <exact-binary-url>
+  --checksums-url <url> | --sha256-x86_64 <sha256> | --sha256-aarch64 <sha256>
+  --insecure-allow-http                  Accept remote HTTP (HTTPS/loopback need no flag)
+  --enable-signed-updates                Optional Linux/systemd signed migration
+  --enable-web-updates                   Includes signed migration; permits web-triggered updates
+  --enrollment-sha256 <sha256>           Independently trusted enrollment archive pin
+  --signed-helper-sha256 <sha256>        Independently trusted install-agent-signed.sh pin
 
-Optional:
-  --install-token <one-time-token>
-  --install-token-file <path>
-  --install-dir <dir>
-  --config-dir <dir>
-  --state-dir <dir>
-  --enable-traffic-control
-  --disable-traffic-control
-  --enable-signed-updates (optional Linux/systemd signed migration)
-  --enable-web-updates (explicitly allow web-triggered signed updates; includes signed migration)
-  --enrollment-sha256 <independently trusted enrollment archive SHA256>
-  --signed-helper-sha256 <independently trusted install-agent-signed.sh SHA256>
-  --mode <install|upgrade|auto>
-  --base-url <release-base-url>
-  --checksums-url <release-checksums-url>
-  --binary-url <exact-binary-url>
-  --sha256-x86_64 <sha256-override>
-  --sha256-aarch64 <sha256-override>
-  --insecure-allow-http (accept remote http:// sources; https and loopback need no flag)
-
-Notes:
-  Linux keeps its writable agent.toml in /var/lib/nodelite-agent (0700/0600).
-  --state-dir overrides that directory. Existing --config-dir/agent.toml is
-  imported once; subsequent upgrades preserve the active state's credentials.
-  Default: manual upgrades. --enable-signed-updates opts into signed updates.
-  Once enrolled, --mode upgrade uses the local signed updater automatically.
-  macOS uses an experimental launchd path and currently keeps the agent
-  running as root instead of provisioning a dedicated service account.
+Linux preserves active credentials in /var/lib/nodelite-agent/agent.toml (0700/0600).
+--state-dir overrides that directory; old --config-dir/agent.toml is imported once.
+Default: manual upgrades. Signed enrollment requires an explicit version and both pins.
+Once enrolled, upgrades follow the local signed policy, including its version selection.
+macOS launchd support is experimental and runs the Agent as root.
 EOF
       exit 0
       ;;
@@ -687,6 +643,14 @@ EOF
       ;;
   esac
 done
+
+if [ -z "$BASE_URL" ]; then
+  BASE_URL="https://github.com/XiNian-dada/NodeLite/releases/latest/download"
+  [ -z "$VERSION" ] || BASE_URL="https://github.com/XiNian-dada/NodeLite/releases/download/$VERSION"
+fi
+case "$VERSION" in
+  *[!0-9A-Za-z._+-]*) fail 'version must be a release tag, for example v3.1.0-rc.1' ;;
+esac
 
 [ "$(id -u)" -eq 0 ] || fail "please run as root"
 
@@ -699,7 +663,7 @@ if [ "$SERVICE_KIND" = systemd ] && [ -e /etc/nodelite-updater/policy.toml ] &&
     grep -Eq '"phase"[[:space:]]*:[[:space:]]*"committed"' /var/lib/nodelite-updater-migration/journal.json &&
     grep -Eq '^ExecStart=/var/lib/nodelite-updater/code/active([[:space:]]|$)' "$UNIT_PATH"; then
   # The signed manifest stays authoritative here, so release-source pins are ignored rather than fatal.
-  [ -z "$SHA256_X86_64$SHA256_AARCH64" ] || printf '%s\n' 'warning: enrolled Agent ignores --base-url/--sha256-* overrides; using the signed update path' >&2
+  [ -z "$VERSION$BASE_URL$SHA256_X86_64$SHA256_AARCH64" ] || printf '%s\n' 'warning: enrolled Agent ignores --base-url/--sha256-* overrides; --version also follows local signed policy; using the signed update path' >&2
   [ "$MODE" != install ] && [ -z "$BOOTSTRAP_URL$BINARY_URL" ] &&
     [ "$INSTALL_DIR" = /usr/local/bin ] && [ "$STATE_DIR" = /var/lib/nodelite-agent ] &&
     [ "$CONFIG_DIR" = /etc/nodelite ] && [ "$TRAFFIC_CONTROL" = auto ] || fail 'enrolled Agent uses its fixed local policy; installer overrides are not allowed'

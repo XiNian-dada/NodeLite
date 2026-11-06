@@ -121,6 +121,7 @@ jobs:
         run: |
           sudo sh scripts/test-install-agent.sh
           python3 scripts/test-agent-enrollment-pins.py -v
+          python3 scripts/test-installer-versions.py -v
 
       - name: Test traffic control in the installed systemd sandbox
         run: |
