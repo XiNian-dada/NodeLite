@@ -7,6 +7,41 @@ nav_order: 7
 
 **先升级 Server，再升级所有 Agent。** 旧版 Agent 可以继续用有效凭据上报，但不支持凭据续期的落盘确认，请在 Token 过期前完成升级。凭据续期与恢复的细节见 [Agent 凭证续期与安全升级](agent-credential-upgrades.md)。
 
+## 从 3.0.x 试用 3.1.0 RC
+
+`v3.1.0-rc.1` 是需要主动选择的预发布版本；普通 `latest` 命令仍使用最新正式版。
+请从目标 RC 下载安装器，并明确传入同一个 tag。不要用旧版或 `latest` 安装器试装 RC。
+
+在 Server 主机执行：
+
+```bash
+curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/download/v3.1.0-rc.1/install-server.sh | \
+  sudo sh -s -- --mode upgrade --version v3.1.0-rc.1
+```
+
+Server 就绪后，在每台 Agent 主机执行：
+
+```bash
+curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/download/v3.1.0-rc.1/install-agent.sh | \
+  sudo sh -s -- --mode upgrade --version v3.1.0-rc.1
+```
+
+这两条命令使用现有安装：保留 Server 配置、节点注册表、数据库以及 Agent 的有效凭据，
+不需要重新添加节点或生成安装令牌。自定义 Agent 路径仍需传入原来的目录参数；
+自定义 Server 配置路径通过 `sudo env NODELITE_SERVER_CONFIG_PATH=/绝对路径/server.toml sh -s -- ...` 指定。
+下载、校验或凭据预检失败时保留旧程序；启动失败时按各自的升级恢复流程回滚。
+执行前应备份重要数据并为 Server 的完整备份预留空间。
+
+也可按下一节通过 Server 生成 Agent 命令。自 3.1 起，官方构建生成的安装和升级命令
+默认固定到该 Server 的发布 tag，包括 RC；开发构建才回退到 `latest`。
+配置了 `[install]` 自定义镜像的 Server 继续使用镜像和固定摘要，请维护者先准备相应产物。
+`--version` 优先于 `NODELITE_SERVER_VERSION` / `NODELITE_AGENT_VERSION`；环境变量仍然兼容。
+
+本次手动升级不会自动启用网页 Agent 更新。已经迁移到签名更新器的节点继续遵循本地
+签名策略，安装器的 `--version` 和下载源不能覆盖它；需等待对应签名版本发布。
+尚未部署正式签名更新源的用户，先使用上述手动升级流程。
+回退到 3.0.x 时不能只替换旧二进制，须恢复与旧版兼容的完整数据备份。
+
 ## 升级 Server
 
 ```bash

@@ -29,8 +29,8 @@ pub(super) fn release_config(mirror: Option<&str>) -> ServerConfig {
 
 #[test]
 fn default_release_source_keeps_github_latest_without_pins() {
-    let release =
-        AgentReleaseSource::from_config(&release_config(None)).expect("default source builds");
+    let release = AgentReleaseSource::from_config_for_tag(&release_config(None), None)
+        .expect("default source builds");
     let command = render_install_command("https://monitor.example.com", "tok", &release)
         .expect("install command renders");
 
@@ -97,4 +97,45 @@ fn mirror_without_checksums_is_refused() {
     config.agent_release_sha256_aarch64 = None;
 
     assert!(AgentReleaseSource::from_config(&config).is_err());
+}
+
+#[test]
+fn official_commands_follow_the_server_tag_including_prereleases() {
+    for tag in ["v3.0.4", "v3.1.0-rc.1", "3.1.0"] {
+        let release = AgentReleaseSource::from_config_for_tag(&release_config(None), Some(tag))
+            .expect("tagged source");
+        for command in [
+            render_install_command("https://monitor.example.com", "tok", &release)
+                .expect("install"),
+            render_upgrade_command("https://monitor.example.com", &release).expect("upgrade"),
+        ] {
+            assert!(command.contains(&format!("--version '{tag}'")), "{command}");
+            assert!(
+                command.contains(&format!("/releases/download/{tag}'")),
+                "{command}"
+            );
+            assert!(!command.contains("/latest/"), "{command}");
+        }
+    }
+}
+
+#[test]
+fn tagged_server_preserves_mirror_version_and_pins() {
+    let release = AgentReleaseSource::from_config_for_tag(
+        &release_config(Some("https://mirror.example.com/custom")),
+        Some("v3.1.0-rc.1"),
+    )
+    .expect("mirror source");
+    let command = render_upgrade_command("https://monitor.example.com", &release).expect("upgrade");
+    assert!(!command.contains("--version"));
+    assert!(command.contains("--base-url 'https://mirror.example.com/custom'"));
+    assert!(command.contains(X86_SHA));
+    assert!(command.contains(ARM_SHA));
+}
+
+#[test]
+fn invalid_build_tags_are_rejected() {
+    for tag in ["", "../v3.1.0", "v3.1.0?x", "v3.1.0\n", "'shell'", "latest"] {
+        assert!(AgentReleaseSource::from_config_for_tag(&release_config(None), Some(tag)).is_err());
+    }
 }

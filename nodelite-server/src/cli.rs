@@ -327,11 +327,11 @@ password = "StrongPassword!123"
                 .install_command
                 .contains("--bootstrap-url 'https://monitor.example.com/install/bootstrap'")
         );
-        assert!(
-            bundle
-                .agent_release_base_url
-                .contains("/releases/latest/download")
+        let expected_path = option_env!("NODELITE_BUILD_TAG").map_or_else(
+            || "/releases/latest/download".to_string(),
+            |tag| format!("/releases/download/{tag}"),
         );
+        assert!(bundle.agent_release_base_url.ends_with(&expected_path));
 
         assert!(!bundle.install_command.contains("--sha256"));
 

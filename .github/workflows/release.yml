@@ -21,6 +21,7 @@ permissions:
 env:
   # 兼容"tag 推送触发"与"手动指定 tag"两种入口。
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+  NODELITE_BUILD_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   validate:
@@ -141,6 +142,7 @@ jobs:
         run: |
           sudo sh scripts/test-install-agent.sh
           python3 scripts/test-agent-enrollment-pins.py -v
+          python3 scripts/test-installer-versions.py -v
 
       - name: Test signing and enrollment tooling
         run: |
@@ -495,7 +497,7 @@ jobs:
         run: |
           release_flags=()
           if [[ "$TAG_NAME" == *-* ]]; then
-            release_flags+=(--prerelease)
+            release_flags+=(--prerelease --latest=false)
           fi
 
           if ! gh release view "$TAG_NAME" --repo "$GH_REPO" >/dev/null 2>&1; then
@@ -507,7 +509,7 @@ jobs:
           elif [[ "$TAG_NAME" == *-* ]]; then
             gh release edit "$TAG_NAME" \
               --repo "$GH_REPO" \
-              --prerelease
+              --prerelease --latest=false
           fi
 
           gh release upload "$TAG_NAME" \
