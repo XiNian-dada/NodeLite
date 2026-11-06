@@ -1,3 +1,4 @@
+import { WORLD_GEOJSON_URL } from '@/lib/map/landMask';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   useWorldGeoJson,
@@ -28,6 +29,7 @@ describe('useWorldGeoJson', () => {
     expect(geojson.value).toBeNull();
     await load();
     expect(geojson.value).toEqual(FAKE_GEO);
+    expect(WORLD_GEOJSON_URL).toBe('/map/world.geojson');
     expect(error.value).toBeNull();
   });
 

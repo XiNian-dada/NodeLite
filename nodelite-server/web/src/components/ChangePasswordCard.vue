@@ -85,7 +85,7 @@ async function submit(): Promise<void> {
           v-model="form.new_password"
           :type="revealNew ? 'text' : 'password'"
           autocomplete="new-password"
-          minlength="8"
+          minlength="12"
           data-test="password-new"
           required
         />

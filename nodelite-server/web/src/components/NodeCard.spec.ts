@@ -188,6 +188,11 @@ describe('NodeCard', () => {
 
     expect(wrapper.find('[data-test="node-service-expiry"]').text()).toBe('Unlimited');
     expect(wrapper.find('[data-test="node-renewal-price"]').text()).toBe('Self-owned');
+    vi.stubEnv('TZ', 'America/New_York');
+    settingsStore.data = { ...settingsStore.data!, agents: settingsStore.data!.agents.map((a) => ({ ...a, service_unlimited: false, service_expires_at: '2027-01-15T00:00:00Z' })) };
+    await flushPromises();
+    expect(wrapper.find('[data-test="node-service-expiry"]').text()).toBe('01/15/2027');
+    vi.unstubAllEnvs();
   });
 
   it('shows the offline badge label for an offline node', async () => {

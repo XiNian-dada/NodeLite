@@ -14,6 +14,7 @@ export interface UseChartReturn {
   hover: Ref<HoverModel | null>;
   onPointerMove: (event: PointerEvent) => void;
   onPointerLeave: () => void;
+  onKeydown: (event: KeyboardEvent) => void;
 }
 
 /**
@@ -103,10 +104,24 @@ export function useChart(
     }
   }
 
+  let keyboardIndex = -1;
+  function onKeydown(event: KeyboardEvent): void {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    const timestamps = [...new Set(model.value.series.flatMap((s) => s.points.map((p) => p.ts).filter((ts): ts is number => ts !== null)))].sort((a, b) => a - b);
+    if (!timestamps.length) return;
+    event.preventDefault();
+    if (event.key === 'Home') keyboardIndex = 0;
+    else if (event.key === 'End') keyboardIndex = timestamps.length - 1;
+    else keyboardIndex = Math.max(0, Math.min(timestamps.length - 1, keyboardIndex + (event.key === 'ArrowRight' ? 1 : -1)));
+    const ts = timestamps[keyboardIndex]!;
+    if (group) group.set(ts);
+    else renderByTs(ts);
+  }
+
   function onPointerLeave(): void {
     if (group) group.set(null);
     else hover.value = null;
   }
 
-  return { model, hover, onPointerMove, onPointerLeave };
+  return { model, hover, onPointerMove, onPointerLeave, onKeydown };
 }

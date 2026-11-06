@@ -120,6 +120,30 @@ async function mountCard(
 }
 
 describe('ServerUpdateCard', () => {
+  it('times out a hanging release check and re-enables its button', async () => {
+    vi.useFakeTimers();
+    const wrapper = await mountCard();
+    const fetchMock = routedFetch([]);
+    vi.stubGlobal('fetch', fetchMock);
+    const controller = new AbortController();
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => {
+      setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), 10_000);
+      return controller.signal;
+    });
+    fetchMock.mockImplementation((_url: string, init?: RequestInit) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+    }));
+    const button = wrapper.find('[data-test="check-update"]');
+    await button.trigger('click');
+    expect(button.attributes('disabled')).toBeDefined();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await flushPromises();
+    expect(button.attributes('disabled')).toBeUndefined();
+    expect(wrapper.text()).toContain('Check failed');
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     __resetI18nForTest();
     mockUpdate.mockReset();

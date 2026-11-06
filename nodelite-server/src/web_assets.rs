@@ -21,7 +21,7 @@ static WEB_ASSETS: Dir = include_dir!("$CARGO_MANIFEST_DIR/web/dist");
 /// 单页应用的 Content Security Policy（CSP）安全策略
 const SPA_CSP: &str = "default-src 'self'; \
     img-src 'self' data:; \
-    connect-src 'self' https://raw.githubusercontent.com https://api.github.com; \
+    connect-src 'self' https://api.github.com; \
     font-src 'self'; \
     object-src 'none'; \
     media-src 'none'; \
@@ -154,7 +154,7 @@ fn mime_type_for_path(path: &str) -> &'static str {
 
 /// 独立 2FA 页面的公共尾部 CSP 指令
 const PAGE_CSP_DIRECTIVES: &str = "default-src 'self'; img-src 'self' data:; \
-    connect-src 'self' https://raw.githubusercontent.com https://api.github.com; \
+    connect-src 'self' https://api.github.com; \
     font-src 'self'; object-src 'none'; media-src 'none'; worker-src 'none'; \
     base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
 
@@ -373,7 +373,7 @@ mod tests {
         assert!(csp.contains("style-src-attr 'unsafe-inline'"), "csp={csp}");
         assert!(
             csp.contains(
-                "connect-src 'self' https://raw.githubusercontent.com https://api.github.com"
+                "connect-src 'self' https://api.github.com"
             ),
             "csp={csp}"
         );

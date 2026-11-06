@@ -5,7 +5,7 @@ const route = useRoute();
 </script>
 
 <template>
-  <aside class="sidebar" aria-label="primary" data-test="sidebar-nav">
+  <nav class="sidebar" aria-label="primary" data-test="sidebar-nav">
     <RouterLink class="brand" to="/" title="NodeLite" aria-label="NodeLite" />
 
     <RouterLink
@@ -125,7 +125,7 @@ const route = useRoute();
         </div>
       </RouterLink>
     </div>
-  </aside>
+  </nav>
 </template>
 
 <style scoped>

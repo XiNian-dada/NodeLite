@@ -73,6 +73,8 @@ describe('SidebarNav', () => {
     await router.isReady();
     const wrapper = mount(SidebarNav, { global: { plugins: [router, getI18n()] } });
 
+    expect(wrapper.find('nav').exists()).toBe(true);
+    expect(wrapper.find('[data-test="nav-overview"]').attributes('aria-current')).toBe('page');
     expect(wrapper.find('[data-test="nav-overview"]').classes()).toContain('active');
   });
 

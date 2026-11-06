@@ -147,11 +147,6 @@ function update(index: number, next: RuleDraft): void {
             :key="preset.key"
             class="preset-card"
             :data-test="`preset-card-${preset.key}`"
-            role="button"
-            tabindex="0"
-            @click="addPreset(preset.key)"
-            @keydown.enter.prevent="addPreset(preset.key)"
-            @keydown.space.prevent="addPreset(preset.key)"
           >
             <div class="preset-card-top">
               <span class="preset-tag-pill">{{ preset.tag }}</span>

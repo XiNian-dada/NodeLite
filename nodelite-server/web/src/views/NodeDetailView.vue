@@ -239,8 +239,11 @@ const modalConfig = computed(() => {
           {{ $t(statusLabelKey) }}
         </span>
         <div class="node-title__meta" data-test="node-meta">
-          <span
+          <button
             v-if="ip"
+            type="button"
+            :aria-pressed="ipRevealed"
+            :aria-label="$t(ipRevealed ? 'node.meta.ip_hide' : 'node.meta.ip_reveal')"
             class="node-ip-toggle"
             :title="$t(ipRevealed ? 'node.meta.ip_hide' : 'node.meta.ip_reveal')"
             data-test="node-ip-toggle"
@@ -249,7 +252,7 @@ const modalConfig = computed(() => {
             <span class="node-ip-value" :class="{ 'node-ip-value--revealed': ipRevealed }">{{
               ip
             }}</span
-            ><template v-if="isLan"> (LAN)</template></span
+            ><template v-if="isLan"> (LAN)</template></button
           >
           <span v-if="location && !isLan">{{ location }}</span>
           <span v-if="uptime && uptime.days > 0">{{
@@ -296,6 +299,7 @@ const modalConfig = computed(() => {
             class="tab-button"
             :class="{ active: activeTab === tab }"
             :data-test="`tab-${tab}`"
+            :aria-current="activeTab === tab ? 'page' : undefined"
             @click="selectTab(tab)"
           >
             {{ $t(`node.tabs.${tab}`) }}
@@ -364,6 +368,11 @@ const modalConfig = computed(() => {
   width: 100%;
 }
 .node-ip-toggle {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
   cursor: pointer;
 }
 .node-ip-value {
