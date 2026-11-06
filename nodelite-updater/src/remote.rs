@@ -102,6 +102,7 @@ fn result_status(state: &Journal) -> AgentUpdateStatus {
     if let Some(update) = &state.remote_update
         && let Some(transaction) = &state.transaction
         && update.target.as_deref() == Some(transaction.to.digest.as_str())
+        && update.status.target_sequence == Some(transaction.to.sequence)
     {
         status.phase = match state.phase {
             Phase::Prepared => UpdatePhase::Prepared,
@@ -127,6 +128,7 @@ pub(crate) fn status(state: &Journal) -> AgentUpdateStatus {
         .zip(state.transaction.as_ref())
         .is_some_and(|(update, transaction)| {
             update.target.as_deref() == Some(transaction.to.digest.as_str())
+                && update.status.target_sequence == Some(transaction.to.sequence)
         });
     if state.phase == Phase::ManualRecovery {
         status.capability = Capability::ManualRecovery;
@@ -303,29 +305,49 @@ mod tests {
         let previous = state.remote_update.as_mut().expect("previous web update");
         previous.status.phase = UpdatePhase::Failed;
         previous.status.reason = Some(Reason::UpdateFailed);
+        previous.status.target_sequence = Some(2);
         previous.target = Some("a".repeat(64));
-        for phase in [
-            Phase::Prepared,
-            Phase::Stopping,
-            Phase::Trial,
-            Phase::RollbackIntent,
-        ] {
-            state.phase = phase;
-            assert_eq!(status(&state).capability, Capability::Disabled);
-            assert_eq!(status(&state).reason, Some(Reason::Busy));
-            store.save(&state).expect("persist local progress");
-            state = serde_json::from_slice(
-                &crate::fs::read(&store.private().join("journal.json"), 65536)
-                    .expect("read progress"),
-            )
-            .expect("reload progress");
+        // Even identical code republished under a new sequence is a different local transaction.
+        for digest in ["a", "b"] {
+            state.transaction = Some(crate::state::Transaction {
+                from: state.installed.clone(),
+                to: Artifact {
+                    digest: digest.repeat(64),
+                    sequence: 3,
+                },
+                boot: "test-boot".into(),
+                deadline_ms: 1000,
+                old_invocation: "0".repeat(32),
+                bridge_exit: String::new(),
+                rollback_consumed: false,
+                recovery_requested: false,
+                stable_since_ms: None,
+                stable_sample_ms: None,
+                stable_invocation: None,
+            });
+            for phase in [
+                Phase::Prepared,
+                Phase::Stopping,
+                Phase::Trial,
+                Phase::RollbackIntent,
+            ] {
+                state.phase = phase;
+                assert_eq!(status(&state).capability, Capability::Disabled);
+                assert_eq!(status(&state).reason, Some(Reason::Busy));
+                store.save(&state).expect("persist local progress");
+                state = serde_json::from_slice(
+                    &crate::fs::read(&store.private().join("journal.json"), 65536)
+                        .expect("read progress"),
+                )
+                .expect("reload progress");
+            }
+            state.phase = Phase::Committed;
+            let result = status(&state);
+            assert_eq!(result.capability, Capability::Ready);
+            assert_eq!(result.phase, UpdatePhase::Failed);
+            assert_eq!(result.reason, Some(Reason::UpdateFailed));
+            assert_eq!(result.next_request_at, 400);
         }
-        state.phase = Phase::Committed;
-        let result = status(&state);
-        assert_eq!(result.capability, Capability::Ready);
-        assert_eq!(result.phase, UpdatePhase::Failed);
-        assert_eq!(result.reason, Some(Reason::UpdateFailed));
-        assert_eq!(result.next_request_at, 400);
     }
 
     #[test]
