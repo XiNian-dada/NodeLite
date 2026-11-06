@@ -6,11 +6,15 @@
 之后同一手动升级入口调用本机固定策略，不覆盖签名更新器，也不会无人值守拉取新版本。
 额外使用 `--enable-web-updates` 才允许网页触发同一本地流程；仅开启签名模式不会隐式授权远程触发。
 
-当前已在隔离 KVM 客机验证。[签名仓库与密钥工具](../tools/nodelite_release/README.md)及
-[显式首次迁移工具](../tools/nodelite_migrate/README.md)已补齐，但尚未部署生产签名源、
-建立真实多方密钥保管或发布正式迁移包。发布工作流已包含正常 updater 和安装 helper；签名
-包必须由可信发布机审批后上传。运行时核心为 Rust 二进制，Python 标准库由安装器管理，
-用于本地迁移／开机恢复／等待健康确认，不属于日常采集链路。
+官方 [GitHub 签名更新源](../docs/github-agent-updates.md)已上线，提供 `v3.1.0-rc.1` 的
+Linux x86_64 / ARM64 `testing` 通道、首次启用包和在线续签。普通用户按
+[固定版本启用命令](../docs/github-agent-updates.md#一次升级并启用网页更新)操作，无需管理签名密钥。
+已在编译机隔离 KVM 客机验证正式源的首次启用与网页同版本检查。
+初始密钥由同一维护者保管、角色与 key ID 分离，尚未建立多位人员独立保管；详情见托管说明。
+[签名仓库与密钥工具](../tools/nodelite_release/README.md)及
+[显式首次迁移工具](../tools/nodelite_migrate/README.md)供维护者发布和排查使用。
+运行时核心为 Rust 二进制，Python 标准库由安装器管理，用于本地迁移／开机恢复／等待健康确认，
+不属于日常采集链路。
 
 ## 源码目录
 

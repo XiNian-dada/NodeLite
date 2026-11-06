@@ -47,6 +47,7 @@ Server 默认监听 `127.0.0.1:8080`，生产环境请放在 Nginx 或 Caddy 后
 
 - [快速开始](docs/getting-started.md) · [反向代理](docs/reverse-proxy.md) · [配置](docs/configuration.md)
 - [告警与巡检](docs/alerts.md) · [流量限速](docs/traffic-control.md) · [升级](docs/upgrades.md)
+- [GitHub 托管与网页 Agent 更新](docs/github-agent-updates.md)（RC 更新源已上线）
 - [运维与排障](docs/operations.md) · [性能基准](docs/benchmarks.md) · [开发](docs/development.md)
 - [安全模型](SECURITY.md) · [架构设计](DESIGN.md) · [更新日志](CHANGELOG.md)
 
