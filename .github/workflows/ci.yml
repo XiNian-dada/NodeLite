@@ -23,6 +23,15 @@ jobs:
       - name: Check pinned GitHub Actions
         run: sh scripts/check-actions-pinned.sh
 
+      - name: Validate workflow syntax and expressions
+        run: |
+          curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 90 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            -o "$RUNNER_TEMP/actionlint.tar.gz"
+          printf '%s  %s\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$RUNNER_TEMP/actionlint.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -shellcheck='' -pyflakes=''
+
   lint-and-test:
     name: Lint and Test
     runs-on: ubuntu-latest
@@ -97,7 +106,7 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/nodelite-operator-tests"
           "$RUNNER_TEMP/nodelite-operator-tests/bin/pip" install --only-binary=:all: -r tools/nodelite_release/requirements.txt
-          PYTHONDONTWRITEBYTECODE=1 "$RUNNER_TEMP/nodelite-operator-tests/bin/python" -m unittest tools.nodelite_release.test_release tools.nodelite_release.test_maintenance tools.nodelite_release.test_web tools.nodelite_migrate.test_bundle tools.nodelite_migrate.test_audit -v
+          PYTHONDONTWRITEBYTECODE=1 "$RUNNER_TEMP/nodelite-operator-tests/bin/python" -m unittest tools.nodelite_release.test_release tools.nodelite_release.test_maintenance tools.nodelite_release.test_web tools.nodelite_release.test_github tools.nodelite_migrate.test_bundle tools.nodelite_migrate.test_audit -v
 
       - name: Shellcheck installers
         run: shellcheck scripts/install-server.sh scripts/install-server-config.sh scripts/install-server-upgrade.sh scripts/install-agent.sh scripts/install-agent-signed.sh scripts/test-install-agent.sh scripts/fixtures/preflight-agent.sh scripts/server-web-update.sh scripts/merge-release-checksums.sh scripts/test-install-server-summary.sh scripts/test-install-server-modules.sh scripts/test-install-server-config.sh scripts/test-server-web-update.sh scripts/test-release-checksums.sh scripts/check-demo-credentials.sh scripts/check-actions-pinned.sh

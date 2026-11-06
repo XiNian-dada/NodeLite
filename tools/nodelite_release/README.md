@@ -33,9 +33,14 @@
 签名格式。两份 detached approval 必须来自不同 key ID，且绑定同一角色的规范化签名载荷摘要。
 输入 JSON 的缩进不是签名对象；签名前必须审查解析后的内容和 approval 中的 payload SHA256。
 
-私钥是加密 PKCS8，父目录 0700、文件 0600，不覆盖已有文件。口令至少 12 字节，交互生成时
+离线私钥是加密 PKCS8，父目录 0700、文件 0600，不覆盖已有文件。口令至少 12 字节，交互生成时
 二次确认；非交互只允许显式传入已打开的 `--password-fd`。不要将口令放在命令参数、环境变量、
 脚本、Git、CI 日志或公开仓库中。本实现不承诺 Python 内存清零、HSM 或抗已失陷签名机。
+
+GitHub 托管可使用[专用在线签名入口](../../docs/github-agent-updates.md)：仅 snapshot 与 timestamp
+允许从各自 GitHub Environment 的临时步骤环境接收加密私钥和口令，进入 Python 后立即移除，
+只在内存使用，不落盘、不转交子进程。root/targets 不适用此例外，仍保持离线独立审批。
+该流程同时保留现有 Pages 文档站，普通用户不需要部署服务器。
 
 每位保管人应独立备份自己的加密私钥，口令另存；在隔离环境演练解密和审批恢复。不要把满足
 整个阈值的生产密钥放在同一 CI job。实验中一个进程管理多把一次性密钥，仅证明协议和程序
@@ -109,7 +114,7 @@ python -m tools.nodelite_release publish --roots /ceremony/roots --targets /cere
 各角色版本独立递增：timestamp 可以引用未改变的 snapshot，仅用 timestamp 密钥续签；
 snapshot 可引用未改变的 targets，随后生成新 timestamp。不需要为短期 timestamp 重签 targets。
 建议 timestamp 不晚于每 6 小时刷新，snapshot 在 7 天到期前刷新，targets/root 在各自到期前
-完成离线审批。此处只是运行规程，本轮未安装生产定时任务。过期、缺失或网络失败会拒绝更新，
+完成离线审批。GitHub 托管可启用上述专用工作流，每六小时续签在线角色。过期、缺失或网络失败会拒绝更新，
 不停止健康的旧 Agent。
 
 发布器在进程锁内校验完整根链、签名阈值、有效期、子元数据长度/摘要、产物字节及防降级下限。
@@ -187,10 +192,13 @@ SDK、测试、私钥、口令或生产配置；旁边生成 `.sha256`。逐架�
 Release**，将 `.sha256` 条目并入该 Release 原有 `SHA256SUMS.txt`，保留全部既有条目。
 每个资产文件名只保留一个摘要；重新组包时替换该项，不要重复追加。
 新安装器和 `install-agent-signed.sh` 必须同版且都在清单中；发布工作流负责正常 updater、
-helper 和原有资产，签名包由可信发布机审批后另行上传，不把签名私钥交给 GitHub CI。
+helper 和原有资产，签名包由可信发布机审批后另行上传，不把 root/targets 离线私钥交给 GitHub CI。
 
 先确认签名源、完整连续根链及当前授权 baseline 可访问，再开放迁移入口。没有迁移包的
 Release 仍能正常手动安装／升级；请求开启签名模式会明确失败，不修改已有 Agent。
+
+GitHub Pages 托管推荐将整个交接目录打包为额外的 `nodelite-web-enrollment.tar.gz`，
+保持原始 Release 清单及 provenance 不变，具体流程见 [GitHub 托管说明](../../docs/github-agent-updates.md)。
 
 ### 生成经过核对的网页更新发布交接目录
 
