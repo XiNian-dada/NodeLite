@@ -1,5 +1,21 @@
 {
-  "schema": 1,
-  "repositories": [],
-  "enrollments": []
+  "enrollments": [
+    {
+      "sha256": "f2873d4883d8bc2b6e96e79a954a06ce477a8b1816b01bcced87997ede38a8ba",
+      "tag": "v3.1.0-rc.1"
+    }
+  ],
+  "repositories": [
+    {
+      "channel": "testing",
+      "root_sha256": "d8d6ef8fdfda507c07164bcd7ee570ac2d8101dd001a62fd4da97dd2c5fb0681",
+      "target": "x86_64-unknown-linux-musl"
+    },
+    {
+      "channel": "testing",
+      "root_sha256": "d8d6ef8fdfda507c07164bcd7ee570ac2d8101dd001a62fd4da97dd2c5fb0681",
+      "target": "aarch64-unknown-linux-musl"
+    }
+  ],
+  "schema": 1
 }

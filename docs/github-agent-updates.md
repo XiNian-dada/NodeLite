@@ -7,7 +7,41 @@ nav_order: 8
 
 **不需要另外租服务器或配置域名。** GitHub Releases 保存发布产物，现有
 [GitHub Pages 文档站](https://xinian-dada.github.io/NodeLite/)同时提供静态签名更新文件。
-初次启用需要维护者配置正式签名密钥；仓库中的空配置不代表更新源已经上线。
+目前已配置 `v3.1.0-rc.1` 的 `testing` 更新源，支持 x86_64 和 ARM64 Linux。
+正式版 `stable` 通道将在正式发布时另行启用。
+
+## 已升级 Agent：一次启用网页更新
+
+已经手动升级到 `v3.1.0-rc.1` 的 Linux Agent，也需要运行一次启用脚本，安装更新器、
+固定正式公钥和通道，并允许网页触发。以下命令自动选择架构，校验固定版本的脚本后执行；
+保留现有配置和有效凭据。Server 也应升级到 3.1。
+
+```sh
+(
+  set -eu
+  case "$(uname -m)" in
+    x86_64) target=x86_64-unknown-linux-musl; expected=d937a1e87f985303cd41bf32829ea8ccea627815da5f7d45d837e2b45eff0364 ;;
+    aarch64|arm64) target=aarch64-unknown-linux-musl; expected=b27b12e90b575954620f2679be282174048762b295f321776b8730210e94df0b ;;
+    *) echo '该架构请继续手动升级'; exit 1 ;;
+  esac
+  stage=$(mktemp -d)
+  trap 'rm -f "$stage/enable.sh"; rmdir "$stage"' EXIT HUP INT TERM
+  curl -q -fsS --proto '=https' --connect-timeout 15 --max-time 60 --max-filesize 1048576 \
+    "https://xinian-dada.github.io/NodeLite/updates/enrollment/v3.1.0-rc.1/enable-web-updates-$target.sh" \
+    -o "$stage/enable.sh"
+  printf '%s  %s\n' "$expected" "$stage/enable.sh" | sha256sum -c -
+  sh "$stage/enable.sh"
+)
+```
+
+首次根的 SHA256：`d8d6ef8fdfda507c07164bcd7ee570ac2d8101dd001a62fd4da97dd2c5fb0681`。
+首次安装应从可信的发布审批记录核对这些固定摘要；下载站自身的摘要不能单独建立信任。
+启用后在网页的节点详情检查更新能力，再从设置或节点详情触发后续更新。
+当前最新版本仍为 `3.1.0-rc.1`，已安装相同版本时显示最新是正常结果。
+
+本次初始密钥由同一维护者保管：加密私钥留在维护者本地，口令保存在 macOS 登录钥匙串；
+只有 snapshot、timestamp 在线角色进入各自的受限 GitHub Environment。
+root 为 2-of-3、targets 为 2-of-2，角色和 key ID 均分离；当前尚未建立多位人员独立保管。
 
 ## 普通用户如何使用
 
