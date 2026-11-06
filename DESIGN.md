@@ -6,7 +6,7 @@
 ## 数据流
 
 `SharedState` 的节点 revision 与脏信号触发 `state/browser_broadcast.rs` 中的
-`spawn_browser_incremental_task`。后台任务按 UI 刷新间隔合并变更，每批只生成一次
+`spawn_browser_incremental_task`。后台任务按 1 秒间隔合并变更，每批只生成一次
 节点列表、diff 和概览；序列化的帧由 `Arc` 共享并广播给浏览器会话。
 
 ```text
@@ -25,8 +25,8 @@
 最近已发布的增量且仍在新鲜度窗口内时才可复用。全量帧携带其节点 revision
 baseline；会话丢弃 `revision <= baseline` 的排队增量，避免旧批次覆盖较新快照。
 
-无订阅者时后台任务跳过 diff 并释放基线与全量帧。任务使用弱引用，最后一个
-`SharedState` 释放后退出。发送大型批次时会话仍处理 Ping、Close 和发送超时。
+无订阅者时后台任务跳过 diff 并释放基线与全量帧。任务的 JoinHandle 纳入启动器
+关停流程，收到 CancellationToken 后退出。发送大型批次时会话仍处理 Ping、Close 和发送超时。
 
 ## 验证与取舍
 
