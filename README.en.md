@@ -59,6 +59,13 @@ curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/inst
 /usr/local/bin/nodelite-server --config /opt/nodelite/config/server.toml upgrade-agent
 ```
 
+The official [GitHub-hosted signed Agent source](docs/github-agent-updates.md) is live for
+`v3.1.0-rc.1` on x86_64 and ARM64 Linux (`testing` channel). RC upgrades require that explicit tag;
+`latest` still selects the latest stable release. Eligible existing Linux Agents can use the
+[version-pinned enrollment command](docs/github-agent-updates.md#一次升级并启用网页更新) to upgrade and enable
+web-triggered updates in one step. Manually upgrading the Agent alone does not enable this feature.
+After enrollment, open the node details → Settings → Agent upgrade for future updates.
+
 ## Configuration
 
 The server reads `/opt/nodelite/config/server.toml`. The annotated templates [`config/server.example.toml`](config/server.example.toml) and [`config/agent.example.toml`](config/agent.example.toml) document every option. A few worth knowing:

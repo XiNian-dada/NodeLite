@@ -20,6 +20,7 @@ NodeLite 是一个用 Rust 编写的服务器监控面板，采用 Server-Agent 
 | 配置邮件或 Webhook 告警 | [告警与巡检](alerts.md) |
 | 按流量套餐自动限速 | [流量限速](traffic-control.md) |
 | 升级 Server 和 Agent | [升级](upgrades.md) |
+| 启用网页 Agent 更新 | [GitHub 托管 Agent 更新](github-agent-updates.md) |
 | 排查节点不上线等问题 | [运维与排障](operations.md) |
 | 看资源占用与性能数据 | [性能基准](benchmarks.md) |
 | 参与开发 | [开发](development.md) |
