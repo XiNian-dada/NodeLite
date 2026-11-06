@@ -44,7 +44,7 @@ Agent -> WebSocket -> Server -> SharedState / NodeRegistry
 
 `nodelite-proto`：
 - `message.rs`：Agent 与 Server 间的 wire message。
-- `snapshot.rs`：系统快照与指标结构。
+- `model.rs`：节点身份、系统快照、历史点与概览指标结构。
 - `config/`：raw config、默认值、公开配置类型与校验。
 
 `nodelite-agent`：
@@ -182,7 +182,7 @@ pnpm --dir nodelite-server/web typecheck
 - `rusqlite`：SQLite 绑定。
 - `serde` / `serde_json`：序列化。
 - `tracing`：日志。
-- `rustls`：TLS，不使用 OpenSSL。
+- `rustls`：HTTP/WebSocket/SMTP/Webhook 传输层 TLS。WebAuthn 的 `webauthn-rs` 依赖 OpenSSL；Server 使用 vendored OpenSSL 构建，Agent 不依赖 WebAuthn/OpenSSL。
 - `subtle`：常量时间比较。
 - `getrandom`：CSPRNG。
 
@@ -265,7 +265,7 @@ docs(server): refresh architecture guide
 ### 添加新的系统指标
 
 1. 在 `nodelite-agent/src/collector*.rs` 添加采集逻辑。
-2. 在 `nodelite-proto/src/snapshot.rs` 添加字段。
+2. 在 `nodelite-proto/src/model.rs` 添加字段。
 3. 在 `nodelite-server/src/sanitize.rs` 或对应模型校验新字段。
 4. 在 Vue Web UI 的 store/component 中展示。
 5. 添加 Rust 单元测试和前端 `*.spec.ts`。

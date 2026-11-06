@@ -39,9 +39,9 @@ use crate::background::{
 use crate::fs_security::log_if_directory_is_not_private;
 use crate::geoip::GeoIpResolver;
 use crate::handlers::{
-    agent_update, alert_settings, audit_log, bootstrap, change_readonly_password, confirm_settings,
-    delete_agent, delete_passkey, disable_two_factor, enable_two_factor,
-    finish_passkey_authentication, finish_passkey_registration,
+    agent_update, alert_settings, audit_log, authenticated_readyz_diagnostics, bootstrap,
+    change_readonly_password, confirm_settings, delete_agent, delete_passkey, disable_two_factor,
+    enable_two_factor, finish_passkey_authentication, finish_passkey_registration,
     finish_settings_passkey_confirmation, generate_agent_install, healthz, index,
     install_agent_script, install_bootstrap, last_login, logout_and_reauth, metrics, node_detail,
     node_history, node_logs, node_status, nodes, overview, readyz, refresh_node_token,
@@ -62,7 +62,7 @@ mod config_checks;
 mod shutdown;
 
 pub(crate) const PROTECTED_CONTENT_SECURITY_POLICY: &str = "default-src 'self'; img-src 'self' data:; \
-     connect-src 'self' https://raw.githubusercontent.com https://api.github.com; font-src 'self'; \
+     connect-src 'self' https://api.github.com; font-src 'self'; \
      object-src 'none'; media-src 'none'; worker-src 'none'; base-uri 'none'; frame-ancestors 'none'; \
      form-action 'self'";
 pub(crate) const PROTECTED_CACHE_CONTROL: &str = "no-store, no-cache, must-revalidate";
@@ -118,13 +118,18 @@ pub(crate) async fn run_server(config_path: &Path) -> Result<()> {
         "nodelite server listening",
     );
 
-    axum::serve(
+    let server = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
-    .await
-    .context("server exited unexpectedly")?;
+    .with_graceful_shutdown(shutdown.clone().cancelled_owned());
+    let result = shutdown::await_http_shutdown(
+        std::future::IntoFuture::into_future(server),
+        shutdown_signal(),
+        shutdown.clone(),
+        Duration::from_secs(3),
+    )
+    .await;
 
     drain_server_shutdown(
         shutdown,
@@ -132,7 +137,7 @@ pub(crate) async fn run_server(config_path: &Path) -> Result<()> {
         runtime.shutdown_artifacts,
     )
     .await;
-    Ok(())
+    result.context("server exited unexpectedly")
 }
 
 async fn initialize_server_runtime(
@@ -165,7 +170,7 @@ async fn initialize_server_runtime(
     if let Err(error) = history.reconcile_traffic(&registry.node_ids().await).await {
         warn!(error = ?error, "failed to reconcile active traffic ledgers");
     }
-    audit_log.initialize().await?;
+    initialize_optional_audit(&audit_log).await;
     let geoip = GeoIpResolver::new(config.geoip.clone()).await;
     let readiness = ServerReadiness::new(history.is_available());
     readiness.mark_history_available(history.is_available());
@@ -274,11 +279,19 @@ fn spawn_geoip_database_preparer(
     shutdown: CancellationToken,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        tokio::select! {
-            _ = shutdown.cancelled() => {}
-            prepared = geoip.prepare_database() => {
-                if prepared {
-                    refresh_online_geoip_locations(&geoip, &shared).await;
+        let mut interval = tokio::time::interval(Duration::from_secs(24 * 60 * 60));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                _ = shutdown.cancelled() => return,
+                _ = interval.tick() => {}
+            }
+            tokio::select! {
+                _ = shutdown.cancelled() => return,
+                prepared = geoip.prepare_database() => {
+                    if prepared {
+                        refresh_online_geoip_locations(&geoip, &shared).await;
+                    }
                 }
             }
         }
@@ -312,21 +325,26 @@ async fn log_registry_loaded(config: &ServerConfig, registry: &NodeRegistry) {
     );
 }
 
+async fn initialize_optional_audit(audit: &AuditLog) {
+    if let Err(error) = audit.initialize().await {
+        warn!(error = ?error, "audit unavailable; continuing in degraded mode");
+    }
+}
+
 async fn drain_server_shutdown(
     shutdown: CancellationToken,
     background_tasks: Vec<JoinHandle<()>>,
     shutdown_artifacts: ShutdownArtifacts,
 ) {
-    // axum 的 graceful shutdown 只 drain HTTP 请求,不会通知 WebSocket 会话或
-    // 后台任务。这里在 HTTP 端 drain 完成后, cancel 全局 token, 让:
-    //   - 每个 spawn_* 后台任务从各自的 select! 跳出, 结束 loop;
-    //   - 每个活跃 WebSocket handle_socket 发出 Close 帧后退出。
+    // HTTP、WebSocket 和后台任务共享取消信号；此处也覆盖 HTTP 异常退出。
     info!("propagating shutdown signal to background tasks and websocket sessions");
     shutdown.cancel();
 
     // 所有后台任务共用 5 秒预算；取消并回收超时任务后才允许最终持久化。
     shutdown::drain_background_tasks(background_tasks, Duration::from_secs(5)).await;
 
+    // HTTP 3 秒、后台任务 5 秒、最终持久化 4 秒，留出 systemd 15 秒预算的余量。
+    shutdown::finish_persistence(async {
     // 周期持久化任务每 15 秒落盘一次,SIGTERM 期间最近一次 tick 之后的状态变更可能
     // 还没刷到磁盘。这里同步再落一次,确保 systemd restart 后看到的就是退出前最新视图。
     info!("flushing final snapshot before shutdown");
@@ -346,6 +364,8 @@ async fn drain_server_shutdown(
 
     info!("draining audit writer before shutdown");
     shutdown_artifacts.audit_log.shutdown().await;
+
+    }, Duration::from_secs(4)).await;
 
     info!("nodelite server shutdown complete");
 }
@@ -427,6 +447,7 @@ pub(crate) fn build_router(state: AppState) -> Router {
         )
         .layer(DefaultBodyLimit::max(PASSKEY_JSON_BODY_LIMIT_BYTES));
     let protected_routes = Router::new()
+        .route("/api/readyz", get(authenticated_readyz_diagnostics))
         .route("/", get(index))
         .route("/nodes/{node_id}", get(node_detail))
         // SPA HTML5 History 模式路由：每个顶层 Vue 路由都必须返回 index.html 外壳，
@@ -665,6 +686,33 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::{LogFormat, parse_log_format};
+
+    #[tokio::test]
+    async fn invalid_audit_path_does_not_abort_startup() {
+        let dir = std::env::temp_dir().join(format!(
+            "nodelite-startup-audit-{}",
+            chrono::Utc::now().timestamp_nanos_opt().expect("timestamp")
+        ));
+        std::fs::create_dir_all(&dir).expect("fixture");
+        let path = dir.join("not-a-directory");
+        std::fs::write(&path, b"fixture").expect("file");
+        let mut config = crate::test_support::test_server_config(
+            "127.0.0.1:8080".parse().expect("listen"),
+            "http://localhost".into(),
+            dir.join("registry"),
+            dir.join("history"),
+            dir.join("snapshot"),
+        )
+        .audit;
+        config.enabled = true;
+        config.db_path = path.join("audit.sqlite");
+        let audit = crate::audit::AuditLog::new(config, 1);
+        super::initialize_optional_audit(&audit).await;
+        assert!(audit.enabled());
+        assert!(!audit.is_available().await);
+        std::fs::remove_file(path).expect("remove file");
+        std::fs::remove_dir(dir).expect("remove directory");
+    }
 
     #[test]
     fn parses_json_log_format_from_env_value() {

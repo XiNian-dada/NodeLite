@@ -100,9 +100,6 @@ function usageTone(value: number | null): Tone {
         <span>{{ $t('index.matrix.title') }}</span>
         <small>{{ $t('index.matrix.subtitle') }}</small>
       </div>
-      <button type="button" class="panel-action">
-        {{ $t('index.matrix.more') }}
-      </button>
     </div>
 
     <div v-if="rows.length === 0" class="empty" data-test="health-matrix-empty">

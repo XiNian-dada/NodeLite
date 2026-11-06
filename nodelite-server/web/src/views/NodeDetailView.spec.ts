@@ -249,6 +249,13 @@ describe('NodeDetailView', () => {
     expect(wrapper.find('[data-test="node-status-badge"]').classes()).toContain('online');
     expect(wrapper.find('[data-test="node-meta"]').text()).toContain('IP: 10.0.0.9');
     expect(wrapper.find('[data-test="node-meta"]').text()).toContain('eu');
+    const toggle = wrapper.find('[data-test="node-ip-toggle"]');
+    expect(toggle.element.tagName).toBe('BUTTON');
+    expect(toggle.attributes('type')).toBe('button');
+    expect(toggle.attributes('aria-pressed')).toBe('false');
+    await toggle.trigger('click');
+    expect(toggle.attributes('aria-pressed')).toBe('true');
+    expect(wrapper.find('[data-test="tab-overview"]').attributes('aria-current')).toBe('page');
   });
 
   it('annotates LAN IPs in the detail header', async () => {

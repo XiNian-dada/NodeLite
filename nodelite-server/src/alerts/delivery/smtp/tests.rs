@@ -245,7 +245,7 @@ fn build_inspection_message_includes_totals_and_highlights() {
     let summary = super::InspectionSummary {
         occurred_at: Utc::now(),
         local_date: chrono::NaiveDate::from_ymd_opt(2026, 5, 27).expect("date should be valid"),
-        lookback_hours: 24,
+        lookback_hours: 168,
         report: &report,
         trends: &trends,
     };
@@ -261,7 +261,9 @@ fn build_inspection_message_includes_totals_and_highlights() {
     assert!(message.contains("Hong Kong <edge> (hk-01): Offline for 30 min"));
     assert!(message.contains("NodeLite Daily Inspection"));
     assert!(message.contains("High latency"));
-    assert!(message.contains("24h trends"));
+    assert!(message.contains("168h trends"));
+    assert!(!message.contains("24h trends"));
+    assert!(!message.contains("Hourly averages"));
     assert!(message.contains("Latest 70%"));
     assert!(message.contains("Latest 112 ms"));
     assert!(message.contains("Hong Kong &lt;edge&gt;"));

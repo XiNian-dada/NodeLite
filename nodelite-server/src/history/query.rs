@@ -32,6 +32,26 @@ pub(crate) const HISTORY_QUERY_SQL: &str = r#"
         LIMIT ?5
         "#;
 
+const HISTORY_PEAK_QUERY_SQL: &str = r#"
+SELECT ?1 AS node_id, recorded_at, cpu_usage_percent, load_one, load_five, load_fifteen,
+       memory_used_percent, rx_bytes_per_sec, tx_bytes_per_sec, latency_ms,
+       packet_loss_percent, disk_used_percent
+FROM history_points WHERE rowid IN (
+    SELECT rowid FROM (SELECT rowid FROM history_points WHERE node_id = ?1 AND recorded_at BETWEEN ?2 AND ?3 ORDER BY cpu_usage_percent DESC, recorded_at DESC LIMIT 1)
+    UNION SELECT rowid FROM (SELECT rowid FROM history_points WHERE node_id = ?1 AND recorded_at BETWEEN ?2 AND ?3 ORDER BY memory_used_percent DESC, recorded_at DESC LIMIT 1)
+    UNION SELECT rowid FROM (SELECT rowid FROM history_points WHERE node_id = ?1 AND recorded_at BETWEEN ?2 AND ?3 ORDER BY latency_ms DESC, recorded_at DESC LIMIT 1)
+) ORDER BY recorded_at ASC LIMIT ?5
+"#;
+
+pub(super) fn query_history_peaks_between(
+    connection: &Connection,
+    node_id: &str,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+) -> Result<Vec<HistoryPoint>, HistoryQueryError> {
+    query_between(connection, node_id, since, until, 3, HISTORY_PEAK_QUERY_SQL)
+}
+
 #[allow(dead_code)]
 pub(super) fn query_history(
     connection: &Connection,
@@ -50,12 +70,30 @@ pub(super) fn query_history_between(
     until: DateTime<Utc>,
     max_points: usize,
 ) -> Result<Vec<HistoryPoint>, HistoryQueryError> {
+    query_between(
+        connection,
+        node_id,
+        since,
+        until,
+        max_points,
+        HISTORY_QUERY_SQL,
+    )
+}
+
+fn query_between(
+    connection: &Connection,
+    node_id: &str,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    max_points: usize,
+    sql: &str,
+) -> Result<Vec<HistoryPoint>, HistoryQueryError> {
     let max_points = max_points.max(1);
     // 筛选包含 until，离散秒数是 span + 1；按它分桶才能让结束点落在第 max_points 个
     // 半开桶 [since + k*w, since + (k+1)*w) 之内，而不是溢出成被 LIMIT 截掉的额外桶。
     let inclusive_seconds = (until.timestamp() - since.timestamp()).max(0) as u64 + 1;
     let bucket_seconds = inclusive_seconds.div_ceil(max_points as u64).max(1) as i64;
-    let mut statement = connection.prepare(HISTORY_QUERY_SQL)?;
+    let mut statement = connection.prepare(sql)?;
     let rows = statement.query_map(
         params![
             node_id,

@@ -1,7 +1,7 @@
 //! 安全审计日志状态机与异步生命周期管理模块。
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
@@ -31,6 +31,7 @@ pub struct AuditLog {
     writer_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     dropped_writes: Arc<AtomicU64>,
     write_failures: Arc<AtomicU64>,
+    write_degraded: Arc<AtomicBool>,
     rate_limit_throttle: Arc<RateLimitAuditThrottle>,
 }
 
@@ -44,6 +45,7 @@ impl AuditLog {
             writer_handle: Arc::new(Mutex::new(None)),
             dropped_writes: Arc::new(AtomicU64::new(0)),
             write_failures: Arc::new(AtomicU64::new(0)),
+            write_degraded: Arc::new(AtomicBool::new(false)),
             rate_limit_throttle: Arc::default(),
         }
     }
@@ -80,6 +82,7 @@ impl AuditLog {
         let context = AuditWriterContext {
             connection: Arc::clone(&self.connection),
             write_failures: Arc::clone(&self.write_failures),
+            write_degraded: Arc::clone(&self.write_degraded),
             batch_max: self.config.writer_batch_max,
             flush_interval: Duration::from_millis(self.config.writer_flush_interval_ms),
         };
@@ -187,7 +190,15 @@ impl AuditLog {
         if !self.config.enabled {
             return true;
         }
-        self.writer_tx.read().await.is_some()
+        self.writer_tx
+            .read()
+            .await
+            .as_ref()
+            .is_some_and(|tx| !tx.is_closed())
+    }
+
+    pub(crate) fn write_degraded(&self) -> bool {
+        self.write_degraded.load(Ordering::Acquire)
     }
 
     pub(crate) fn write_failures(&self) -> u64 {

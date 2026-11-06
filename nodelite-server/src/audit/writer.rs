@@ -1,7 +1,7 @@
 //! 审计日志后台写入任务。
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -16,6 +16,7 @@ use super::types::NewAuditEvent;
 pub(super) struct AuditWriterContext {
     pub(super) connection: Arc<Mutex<Option<Connection>>>,
     pub(super) write_failures: Arc<AtomicU64>,
+    pub(super) write_degraded: Arc<AtomicBool>,
     pub(super) batch_max: usize,
     pub(super) flush_interval: Duration,
 }
@@ -99,6 +100,9 @@ async fn flush_audit_batch(batch: &mut Vec<NewAuditEvent>, context: &AuditWriter
     })
     .await;
 
+    context
+        .write_degraded
+        .store(!matches!(&result, Ok(Ok(()))), Ordering::Release);
     match result {
         Ok(Ok(())) => {}
         Ok(Err(error)) => {
@@ -150,4 +154,31 @@ fn insert_event_batch(connection: &mut Connection, events: &[NewAuditEvent]) -> 
         .commit()
         .context("failed to commit audit transaction")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audit::AuditEventType;
+
+    #[tokio::test]
+    async fn successful_batch_clears_current_failure_but_keeps_counter() {
+        let connection = Connection::open_in_memory().expect("memory database");
+        let context = AuditWriterContext {
+            connection: Arc::new(Mutex::new(Some(connection))),
+            write_failures: Arc::new(AtomicU64::new(0)),
+            write_degraded: Arc::new(AtomicBool::new(false)),
+            batch_max: 1,
+            flush_interval: Duration::from_secs(1),
+        };
+        let event = || NewAuditEvent::now(AuditEventType::LoginFailure, "127.0.0.1", false);
+        flush_audit_batch(&mut vec![event()], &context).await;
+        assert!(context.write_degraded.load(Ordering::Acquire));
+        context.connection.lock().await.as_ref().expect("connection").execute_batch(
+            "CREATE TABLE audit_log (timestamp INTEGER, event_type TEXT, user TEXT, node_id TEXT, ip_address TEXT, user_agent TEXT, success INTEGER, details TEXT)"
+        ).expect("repair schema");
+        flush_audit_batch(&mut vec![event()], &context).await;
+        assert!(!context.write_degraded.load(Ordering::Acquire));
+        assert_eq!(context.write_failures.load(Ordering::Relaxed), 1);
+    }
 }

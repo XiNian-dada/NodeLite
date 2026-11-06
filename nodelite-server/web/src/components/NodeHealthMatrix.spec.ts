@@ -58,6 +58,10 @@ async function mountMatrix(nodes = [] as ReturnType<typeof makeNode>[]) {
 }
 
 describe('NodeHealthMatrix', () => {
+  it('does not offer a button without an action', async () => {
+    const wrapper = await mountMatrix();
+    expect(wrapper.find('.panel-action').exists()).toBe(false);
+  });
   beforeEach(async () => {
     __resetI18nForTest();
     vi.stubGlobal(

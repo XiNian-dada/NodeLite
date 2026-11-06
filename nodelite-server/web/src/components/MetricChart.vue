@@ -2,7 +2,7 @@
 import { computed, ref, useId } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ChartPoint } from '@/lib/chart/chartData';
-import type { ChartValueKind } from '@/lib/chart/format';
+import { formatChartValue, type ChartValueKind } from '@/lib/chart/format';
 import {
   buildAreaChart,
   buildMultiAreaChart,
@@ -54,7 +54,7 @@ function axisTimeLabel(ts: number): string {
   });
 }
 
-const { model, hover, onPointerMove, onPointerLeave } = useChart(
+const { model, hover, onPointerMove, onPointerLeave, onKeydown } = useChart(
   containerRef,
   ({ width, height }) => {
     const base = {
@@ -79,6 +79,19 @@ const { model, hover, onPointerMove, onPointerLeave } = useChart(
     formatTime: (ts) => new Date(ts).toLocaleString(locale.value),
   },
 );
+
+const accessibleSeries = computed(() => props.series ?? [{ label: props.label, points: props.points ?? [] }]);
+const chartLabel = computed(() => accessibleSeries.value.map((s) => s.label).filter(Boolean).join(', ') || t('node.tabs.monitor'));
+const tableRows = computed(() => {
+  const series = accessibleSeries.value;
+  const timestamps = [...new Set(series.flatMap((s) => s.points.map((p) => p.ts)))].sort((a, b) => a - b);
+  const values = series.map((s) => new Map(s.points.map((p) => [p.ts, p.value])));
+  return timestamps.map((ts) => ({
+    ts,
+    time: new Date(ts).toLocaleString(locale.value),
+    values: values.map((v) => v.get(ts) == null ? '—' : formatChartValue(v.get(ts), props.valueKind)),
+  }));
+});
 </script>
 
 <template>
@@ -87,6 +100,11 @@ const { model, hover, onPointerMove, onPointerLeave } = useChart(
     class="metric-chart"
     :style="{ height: `${height}px`, minHeight: `${height}px` }"
     data-test="metric-chart"
+    tabindex="0"
+    role="group"
+    :aria-label="chartLabel"
+    @keydown="onKeydown"
+    @blur="onPointerLeave"
     @pointermove="onPointerMove"
     @pointerleave="onPointerLeave"
   >
@@ -94,12 +112,19 @@ const { model, hover, onPointerMove, onPointerLeave } = useChart(
       {{ t('node.waiting_history') }}
     </div>
 
-    <template v-else>
+    <table class="sr-only" data-test="metric-chart-data">
+      <caption>{{ chartLabel }}</caption>
+      <thead><tr><th scope="col">{{ t('node.chart.time') }}</th><th v-for="(s, i) in accessibleSeries" :key="i" scope="col">{{ s.label }}</th></tr></thead>
+      <tbody><tr v-for="row in tableRows" :key="row.ts"><th scope="row">{{ row.time }}</th><td v-for="(value, i) in row.values" :key="i">{{ value }}</td></tr></tbody>
+    </table>
+
+    <template v-if="!model.empty">
       <svg
         :viewBox="`0 0 ${model.width} ${model.height}`"
         preserveAspectRatio="xMinYMin meet"
         class="metric-chart__svg"
-        aria-hidden="true"
+        role="img"
+        :aria-label="chartLabel"
         data-test="metric-chart-svg"
       >
         <defs v-if="!isMulti">
@@ -228,6 +253,13 @@ const { model, hover, onPointerMove, onPointerLeave } = useChart(
 </template>
 
 <style scoped>
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
 .metric-chart {
   position: relative;
   width: 100%;

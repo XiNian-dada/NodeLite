@@ -77,10 +77,16 @@ pub(crate) async fn start_server_update(
     };
     let log_path = server_update_log_path(state.shared.config());
     let cache_dir = server_update_cache_dir(state.shared.config());
-    let command = server_update_shell_command(&log_path, &cache_dir, release_tag);
-    let writable_paths = server_update_writable_paths(state.shared.config());
+    let command =
+        server_update_shell_command(&log_path, &cache_dir, release_tag, &state.config_path);
+    let writable_paths = server_update_writable_paths(state.shared.config(), &state.config_path);
     let install_root = server_update_install_root(state.shared.config());
-    if !is_writable_paths_subset_of_install_root(&writable_paths, &install_root) {
+    if !is_writable_paths_subset_of_install_root(
+        &writable_paths,
+        &install_root,
+        &state.config_path,
+        state.shared.config(),
+    ) {
         error!(
             install_root = %install_root.display(),
             paths = ?writable_paths,
@@ -91,11 +97,17 @@ pub(crate) async fn start_server_update(
             "failed to start server update",
         );
     }
-    let unit_name = format!(
-        "nodelite-server-web-update-{}",
-        Utc::now().timestamp_millis()
-    );
-    match spawn_server_update_subprocess(&unit_name, &command, &writable_paths).await {
+    if let Err(error) = super::update_lock::check_update_idle(&log_path) {
+        if error.kind() == std::io::ErrorKind::WouldBlock {
+            return settings_json_error(StatusCode::CONFLICT, "server update is already running");
+        }
+        return settings_json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to check server update lock",
+        );
+    }
+    let unit_name = "nodelite-server-web-update";
+    match spawn_server_update_subprocess(unit_name, &command, &writable_paths).await {
         Ok(launch_mode) => {
             let launch_mode = match launch_mode {
                 UpdateLaunchMode::Systemd => "systemd",
@@ -113,6 +125,9 @@ pub(crate) async fn start_server_update(
                 }),
             )
                 .into_response()
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            settings_json_error(StatusCode::CONFLICT, "server update is already running")
         }
         Err(error) => {
             error!(error = ?error, "failed to start manual server update");

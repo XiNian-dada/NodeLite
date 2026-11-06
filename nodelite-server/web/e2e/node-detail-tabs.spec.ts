@@ -74,3 +74,24 @@ test('logs tab streams entries', async ({ page }) => {
   await expect(page.locator('[data-test="log-panel"]')).toBeVisible();
   await expect(page.locator('[data-test="log-entry"]')).toContainText('collector started');
 });
+
+
+test('IP reveal uses native keyboard activation and presets fit on mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 900 });
+  await page.goto('/nodes/node-a');
+  await waitForAppShell(page);
+  const toggle = page.locator('[data-test="node-ip-toggle"]');
+  await toggle.focus();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await page.keyboard.press('Enter');
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('Space');
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('[data-test="tab-overview"]')).toHaveAttribute('aria-current', 'page');
+  const presets = page.locator('[data-test="monitor-presets"] button');
+  for (const button of await presets.all()) {
+    const box = await button.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x + box!.width).toBeLessThanOrEqual(375);
+  }
+});

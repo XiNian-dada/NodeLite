@@ -32,9 +32,9 @@ fn forget_missing_prunes_retired_nodes_from_write_throttle_state() {
         let store = test_history_store(PathBuf::from("./data/history.sqlite3"));
         {
             let mut guard = store.last_written_at.lock().await;
-            guard.insert("hk-01".to_string(), Utc::now());
-            guard.insert("jp-01".to_string(), Utc::now());
-            guard.insert("us-01".to_string(), Utc::now());
+            guard.insert("hk-01".to_string(), std::time::Instant::now());
+            guard.insert("jp-01".to_string(), std::time::Instant::now());
+            guard.insert("us-01".to_string(), std::time::Instant::now());
         }
 
         let removed = store
@@ -214,7 +214,7 @@ async fn record_status_skips_point_build_when_throttled() {
     let now = Utc::now();
     {
         let mut guard = store.last_written_at.lock().await;
-        guard.insert("hk-01".to_string(), now);
+        guard.insert("hk-01".to_string(), std::time::Instant::now());
     }
 
     let builds = AtomicUsize::new(0);
@@ -254,4 +254,23 @@ async fn record_status_is_noop_after_shutdown() {
     if let Some(parent) = db_path.parent() {
         let _ = std::fs::remove_dir(parent);
     }
+}
+
+#[tokio::test]
+async fn wall_clock_rollback_does_not_stop_history_writes() {
+    let db_path = temp_history_db_path("wall-clock-rollback");
+    let store = test_history_store(db_path.clone());
+    store.initialize().await;
+    let now = Utc::now();
+    store.record_status(&fake_status_for("hk-01", now)).await;
+    store.last_written_at.lock().await.insert(
+        "hk-01".into(),
+        std::time::Instant::now() - std::time::Duration::from_secs(61),
+    );
+    store
+        .record_status(&fake_status_for("hk-01", now - chrono::Duration::hours(1)))
+        .await;
+    store.shutdown().await;
+    assert_eq!(persisted_history_point_count(&db_path), 2);
+    std::fs::remove_file(&db_path).expect("test database removed");
 }

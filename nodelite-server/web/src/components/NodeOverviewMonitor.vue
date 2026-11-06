@@ -419,7 +419,7 @@ const model = computed(() =>
 @media (max-width: 700px) {
   .preset-segment {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     width: 100%;
   }
 

@@ -115,6 +115,7 @@ const serviceExpiryText = computed(() => {
   const ms = Date.parse(meta.service_expires_at);
   return Number.isFinite(ms)
     ? new Date(ms).toLocaleDateString(locale.value, {
+        timeZone: 'UTC',
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',

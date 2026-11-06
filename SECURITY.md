@@ -32,8 +32,8 @@
 - `nodelite-server/src/handlers/auth_routes.rs`
 
 当前 2FA / 只读认证保护包括：
-- TOTP 校验仅接受当前 step，不接受前后窗口漂移
-- 同一 TOTP step 有重放保护
+- TOTP 接受前一、当前、后一 30 秒 step（±1 step 时钟漂移）
+- 成功验证会原子记录所有匹配的 TOTP step；全部匹配 step 已被消费时拒绝重放，避免相邻窗口的碰撞码被再次使用
 - pending 2FA session 连续失败达到上限后立即失效
 - `/api/verify-2fa` 有独立的 IP 维度失败窗口与封禁
 - 只读 Basic Auth 主路径也有独立失败限流
@@ -155,3 +155,5 @@
 - 更完整的配置变更审计与差异留痕
 - 更强的 token 撤销/批量轮换工具
 - 更丰富的上游代理/WAF 部署建议与自动化检查
+
+发布资产来源证明、独立验证命令和强制验证选项见[发布来源验证](docs/release-provenance.md)。

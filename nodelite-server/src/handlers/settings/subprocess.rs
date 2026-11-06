@@ -5,7 +5,7 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command as StdCommand, Stdio};
+use std::process::Stdio;
 use std::time::Duration;
 
 use tokio::process::Command;
@@ -116,9 +116,10 @@ impl UpdateLauncher {
             probe_systemd_availability(&self.systemd_run, self.probe_timeout).await
         };
         self.spawn_server_update_with_probe(unit_name, command, writable_paths, availability)
+            .await
     }
 
-    fn spawn_server_update_with_probe(
+    async fn spawn_server_update_with_probe(
         &self,
         unit_name: &str,
         command: &str,
@@ -127,7 +128,8 @@ impl UpdateLauncher {
     ) -> io::Result<UpdateLaunchMode> {
         match availability {
             SystemdAvailability::Available => {
-                self.spawn_systemd_run(unit_name, command, writable_paths)?;
+                self.spawn_systemd_run(unit_name, command, writable_paths)
+                    .await?;
                 Ok(UpdateLaunchMode::Systemd)
             }
             SystemdAvailability::Missing => {
@@ -151,14 +153,15 @@ impl UpdateLauncher {
         }
     }
 
-    fn spawn_systemd_run(
+    async fn spawn_systemd_run(
         &self,
         unit_name: &str,
         command: &str,
         writable_paths: &[PathBuf],
     ) -> io::Result<()> {
-        let mut systemd_run = StdCommand::new(&self.systemd_run);
+        let mut systemd_run = Command::new(&self.systemd_run);
         systemd_run
+            .env("LC_ALL", "C")
             .arg(format!("--unit={unit_name}"))
             .arg("--collect")
             .arg("--service-type=exec")
@@ -176,9 +179,23 @@ impl UpdateLauncher {
             .arg(command.replace('$', "$$"))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map(|_| ())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        let output = timeout(Duration::from_secs(10), systemd_run.output())
+            .await
+            .map_err(|_| {
+                io::Error::new(io::ErrorKind::TimedOut, "systemd update launch timed out")
+            })??;
+        if output.status.success() {
+            return Ok(());
+        }
+        let message = String::from_utf8_lossy(&output.stderr);
+        let kind = if message.contains("already exists") {
+            io::ErrorKind::AlreadyExists
+        } else {
+            io::ErrorKind::Other
+        };
+        Err(io::Error::new(kind, "systemd refused the update unit"))
     }
 }
 
@@ -318,6 +335,7 @@ mod tests {
                 ],
                 SystemdAvailability::Available,
             )
+            .await
             .expect("systemd launch should succeed");
 
         assert_eq!(mode, UpdateLaunchMode::Systemd);
@@ -338,6 +356,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn existing_systemd_update_unit_is_a_conflict() {
+        let dir = TempScriptDir::new("systemd-conflict");
+        let script = dir.write_script(
+            "systemd-run",
+            "#!/bin/sh\nprintf 'Unit already exists' >&2\nexit 1\n",
+        );
+        let launcher = UpdateLauncher {
+            systemd_run: script,
+            probe_timeout: Duration::from_millis(50),
+        };
+        let error = launcher
+            .spawn_server_update_with_probe(
+                "nodelite-server-web-update",
+                "true",
+                &[],
+                SystemdAvailability::Available,
+            )
+            .await
+            .expect_err("conflict");
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+    }
+
+    #[tokio::test]
     async fn spawn_server_update_rejects_missing_systemd_without_shell_fallback() {
         let dir = TempScriptDir::new("systemd-fallback");
         let marker = dir.path.join("shell.args");
@@ -353,6 +394,7 @@ mod tests {
                 &[],
                 SystemdAvailability::Missing,
             )
+            .await
             .expect_err("missing systemd should fail closed");
 
         assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);

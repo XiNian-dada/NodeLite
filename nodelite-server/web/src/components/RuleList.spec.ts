@@ -103,6 +103,8 @@ describe('RuleList', () => {
     expect(wrapper.find('[data-test="rule-list-empty"]').exists()).toBe(true);
     expect(wrapper.findAll('[data-test="rule-card"]')).toHaveLength(0);
     expect(wrapper.find('[data-test="preset-card-offline"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="preset-card-offline"]').attributes('role')).toBeUndefined();
+    expect(wrapper.find('[data-test="preset-card-offline"]').findAll('button')).toHaveLength(1);
     expect(wrapper.find('[data-test="preset-card-latency"]').exists()).toBe(true);
   });
 

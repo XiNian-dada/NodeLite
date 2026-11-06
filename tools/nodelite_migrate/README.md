@@ -112,7 +112,7 @@ resume 保留所有既有 TUF 状态；发现“信任处理已开始，但 jour
 sudo python3 -m tools.nodelite_migrate --audit
 ```
 
-该命令核对首次 receipt、root/updater 指纹、12 个固定单元、恢复依赖、账户/配置权限、启用
+该命令核对首次 receipt、root/updater 指纹、`common.py` 的 `UNITS` 定义的全部固定单元（当前 14 个）、恢复依赖、账户/配置权限、启用
 状态、updater 终态及当前实际进程的近期鉴权健康证据。不读取配置或 Token，不改变服务或
 凭证；updater 的 status 可能创建锁、清理终态 pending 或标记坏 journal，不能把 audit 理解
 为零本地状态写入。任何拒绝或非 ready 都暂停推广，保留证据排查，不能自动删除 journal。

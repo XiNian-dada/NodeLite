@@ -62,10 +62,10 @@ cargo fmt
 **运行服务：**
 ```bash
 # 服务端
-cargo run -p nodelite-server -- --config server.example.toml
+cargo run -p nodelite-server -- --config config/server.example.toml
 
 # Agent
-cargo run -p nodelite-agent -- --config agent.example.toml
+cargo run -p nodelite-agent -- --config config/agent.example.toml
 ```
 
 #### 代码风格

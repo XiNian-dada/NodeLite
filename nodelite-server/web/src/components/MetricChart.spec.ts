@@ -59,6 +59,21 @@ describe('MetricChart', () => {
     expect(wrapper.findAll('text').length).toBeGreaterThan(0);
   });
 
+  it('exposes chart values and supports keyboard selection', async () => {
+    const wrapper = mountChart({ points: pts([10, 50, 90]), valueKind: 'percent', label: 'CPU' });
+    const svg = wrapper.find('svg');
+    expect(svg.attributes('role')).toBe('img');
+    expect(svg.attributes('aria-label')).toBe('CPU');
+    expect(wrapper.find('[data-test="metric-chart-data"]').text()).toContain('90%');
+    const chart = wrapper.find('[data-test="metric-chart"]');
+    expect(chart.attributes('tabindex')).toBe('0');
+    vi.spyOn(chart.element, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 600, height: 180 } as DOMRect);
+    await chart.trigger('keydown', { key: 'End' });
+    expect(wrapper.find('[data-test="metric-chart-tooltip"]').text()).toContain('90%');
+    await chart.trigger('keydown', { key: 'ArrowLeft' });
+    expect(wrapper.find('[data-test="metric-chart-tooltip"]').text()).toContain('50%');
+  });
+
   it('renders x-axis time ticks from point timestamps', () => {
     const wrapper = mountChart({
       points: pts([10, 50, 90]),

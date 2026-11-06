@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use chrono::Datelike;
 use flate2::read::GzDecoder;
-use tracing::info;
+use tracing::warn;
 
 use nodelite_proto::{GeoIpConfig, GeoIpEdition, GeoIpProvider};
 
@@ -55,41 +55,48 @@ pub(super) async fn download_dbip_database(config: &GeoIpConfig) -> Result<()> {
         .context("build geoip download client")?;
     let now = chrono::Utc::now();
 
-    for url in dbip_download_urls(
+    let urls = dbip_download_urls(
         config.edition,
         now.year(),
         now.month(),
         DBIP_DOWNLOAD_ATTEMPTS,
-    ) {
-        let response = client
-            .get(&url)
-            .send()
-            .await
-            .with_context(|| format!("download DB-IP Lite database from {url}"))?;
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
-            info!(url = %url, "DB-IP Lite database is not published for this month, trying previous release");
-            continue;
-        }
-
-        let response = response
-            .error_for_status()
-            .with_context(|| format!("DB-IP Lite download returned an error status for {url}"))?;
-        let compressed = response
-            .bytes()
-            .await
-            .context("read DB-IP Lite download body")?;
-        let mut decoder = GzDecoder::new(compressed.as_ref());
-        let mut database = Vec::new();
-        decoder
-            .read_to_end(&mut database)
-            .context("decompress DB-IP Lite database")?;
-        replace_database(&config.database_path, database).await?;
-        return Ok(());
-    }
-
-    anyhow::bail!(
-        "DB-IP Lite database was not found in the last {DBIP_DOWNLOAD_ATTEMPTS} monthly releases"
     );
+    download_from_urls(&client, config, &urls).await
+}
+
+async fn download_from_urls(
+    client: &reqwest::Client,
+    config: &GeoIpConfig,
+    urls: &[String],
+) -> Result<()> {
+    for url in urls {
+        match download_month(client, config, url).await {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                warn!(error = ?error, "DB-IP download failed; trying previous monthly release")
+            }
+        }
+    }
+    anyhow::bail!("no DB-IP Lite monthly release could be downloaded")
+}
+
+async fn download_month(client: &reqwest::Client, config: &GeoIpConfig, url: &str) -> Result<()> {
+    let compressed = client
+        .get(url)
+        .send()
+        .await
+        .context("download DB-IP Lite database")?
+        .error_for_status()
+        .context("DB-IP Lite download status")?
+        .bytes()
+        .await
+        .context("read DB-IP Lite download body")?;
+    let mut decoder = GzDecoder::new(compressed.as_ref());
+    let mut database = Vec::new();
+    decoder
+        .read_to_end(&mut database)
+        .context("decompress DB-IP Lite database")?;
+    replace_database(&config.database_path, database).await
 }
 
 async fn replace_database(path: &Path, database: Vec<u8>) -> Result<()> {
@@ -158,4 +165,70 @@ pub(super) fn dbip_download_url(edition: GeoIpEdition, year: i32, month: u32) ->
         "https://download.db-ip.com/free/dbip-{suffix}-{}-{:02}.mmdb.gz",
         year, month,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn monthly_fallback_recovers_from_status_and_gzip_errors() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind stub");
+        let base = format!("http://{}", listener.local_addr().expect("address"));
+        let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gzip.write_all(b"fixture database").expect("gzip input");
+        let compressed = gzip.finish().expect("gzip body");
+        let stub = tokio::spawn(async move {
+            for (status, body) in [
+                ("503 Service Unavailable", Vec::new()),
+                ("200 OK", b"invalid gzip".to_vec()),
+                ("200 OK", compressed),
+            ] {
+                let (mut stream, _) = listener.accept().await.expect("request");
+                let mut request = [0; 2048];
+                let bytes = stream.read(&mut request).await.expect("read");
+                assert!(bytes > 0, "stub received an HTTP request");
+                stream
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .expect("headers");
+                stream.write_all(&body).await.expect("body");
+            }
+        });
+        let dir = std::env::temp_dir().join(format!(
+            "nodelite-geoip-fallback-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().expect("timestamp")
+        ));
+        let mut config = crate::test_support::test_server_config(
+            "127.0.0.1:8080".parse().expect("listen"),
+            "http://localhost".into(),
+            dir.join("registry"),
+            dir.join("history"),
+            dir.join("snapshot"),
+        )
+        .geoip;
+        config.database_path = dir.join("geoip.mmdb");
+        let urls = (0..3).map(|n| format!("{base}/{n}")).collect::<Vec<_>>();
+        download_from_urls(&reqwest::Client::new(), &config, &urls)
+            .await
+            .expect("fallback succeeds");
+        assert_eq!(
+            std::fs::read(&config.database_path).expect("database"),
+            b"fixture database"
+        );
+        stub.await.expect("stub finishes");
+        std::fs::remove_file(config.database_path).expect("remove fixture");
+        std::fs::remove_dir(dir).expect("remove fixture directory");
+    }
 }

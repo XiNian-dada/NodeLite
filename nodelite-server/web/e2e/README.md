@@ -34,9 +34,9 @@ cannot satisfy the assertions. Run just this regression with
 `node_upsert` in `useRealtimeData.ts` must fail at the 73% assertion; restore the
 handler and rebuild before running the passing suite.
 
-## Coverage targets (14 spec files)
+## Coverage targets
 
-The first 12 flows come from the original plan, §3.7.2. Two supplementary suites
+The first 12 flows come from the original plan, §3.7.2. Supplementary suites
 cover the application shell and the WebSocket-first dashboard. UI-only flows run
 with local fixtures. Live WebSocket flows run in the separate `e2e:live` command and are required in CI.
 
@@ -56,5 +56,6 @@ with local fixtures. Live WebSocket flows run in the separate `e2e:live` command
 | 12 | `ws-reconnect.spec.ts` | Drop → reconnect indicator → recovery |
 | 13 | `smoke.spec.ts` | Authenticated application shell and dashboard smoke check |
 | 14 | `ws-dashboard.spec.ts` | WS initial state, incremental updates, REST fallback, navigation, and visibility lifecycle |
+| 15 | `modal-keyboard.spec.ts` | Modal focus trapping, Escape and focus restoration |
 
 The plan §3.7.4 documents the accepted compromises (no pixel diffs, chart contents asserted via tooltip text).

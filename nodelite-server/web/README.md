@@ -26,7 +26,7 @@ The NodeLite web interface is a Vue 3 single-page application built with Vite an
 | `/alerts` | `AlertsView.vue` | Alert rules, SMTP and webhook channels, inspection reports, previews, and reauthentication |
 | `/logs` | `LogsView.vue` | Authentication and administrative audit events |
 
-The current source tree contains 38 Vue components, 10 Pinia stores, and 6 route views. Keep the counts and responsibilities in this document synchronized when adding or removing modules.
+Components, Pinia stores, and route views live in the directories below; the source tree is the authoritative inventory.
 
 ## Source layout
 
@@ -107,7 +107,7 @@ NODELITE_DEV_BACKEND=http://127.0.0.1:9090 \
 
 ## Testing
 
-The frontend currently has 81 `*.spec.ts` Vitest files under `src/`. Run the fast checks during normal development:
+Vitest specs live alongside the source under `src/`. Run the fast checks during normal development:
 
 ```bash
 pnpm --dir nodelite-server/web lint
@@ -115,7 +115,7 @@ pnpm --dir nodelite-server/web typecheck
 pnpm --dir nodelite-server/web test
 ```
 
-There are 14 Playwright spec files in `e2e/`. Most tests stub the small API surface they need, and `pnpm e2e` starts Vite automatically. To exercise flows against a running NodeLite server instead, provide its URL and optional Basic Auth credentials:
+Playwright specs live in `e2e/`, including modal keyboard navigation (`modal-keyboard.spec.ts`). Most tests stub the small API surface they need, and `pnpm e2e` starts Vite automatically. To exercise flows against a running NodeLite server instead, provide its URL and optional Basic Auth credentials:
 
 ```bash
 cargo run -p nodelite-server

@@ -21,5 +21,5 @@ pub(crate) use evaluator::{
     AlertMetricReading, AlertStatusView, EvaluatedRule, InspectionHighlight,
     InspectionHighlightEvent, InspectionReport, build_inspection_report, evaluate_rules,
 };
-pub(crate) use runtime::spawn_alert_runtime;
+pub(crate) use runtime::{evaluate_alert_rules_with_history, spawn_alert_runtime};
 pub(crate) use tracker::{AlertEvent, AlertEventKind, AlertStateTracker};

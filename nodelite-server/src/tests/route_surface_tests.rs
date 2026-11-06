@@ -20,7 +20,8 @@ use tower_http::trace::TraceLayer;
 use super::AppState;
 use crate::handlers::{
     audit_log, bootstrap, healthz, index, install_agent_script, install_bootstrap, node_detail,
-    node_history, node_logs, node_status, nodes, overview, readyz, static_asset,
+    node_history, node_logs, node_status, nodes, overview, readyz, readyz_diagnostics,
+    static_asset,
 };
 use crate::registry::{IssueNodeRequest, issue_node};
 use crate::test_support::{test_server_config, test_ws_config};
@@ -222,11 +223,11 @@ async fn readyz_reports_traffic_write_failure_and_recovery() {
     std::fs::remove_dir_all(temp_dir).expect("readyz temp dir should be removable");
 }
 
-async fn readyz_test_state(test_name: &str) -> (AppState, PathBuf) {
+pub(super) async fn readyz_test_state(test_name: &str) -> (AppState, PathBuf) {
     readyz_test_state_with(test_name, |_, _| {}).await
 }
 
-async fn readyz_test_state_with(
+pub(super) async fn readyz_test_state_with(
     test_name: &str,
     prepare: impl FnOnce(&std::path::Path, &mut nodelite_proto::ServerConfig),
 ) -> (AppState, PathBuf) {
@@ -256,7 +257,7 @@ async fn readyz_test_state_with(
 }
 
 async fn readyz_payload(state: AppState) -> (StatusCode, Value) {
-    let response = readyz(State(state)).await.into_response();
+    let response = readyz_diagnostics(State(state)).await.into_response();
     assert_eq!(
         response.headers()["x-nodelite-version"],
         crate::server_build_version()
@@ -605,4 +606,110 @@ fn spa_history_mode_routes_serve_index_shell() {
         state.audit_log.shutdown().await;
         let _ = std::fs::remove_dir_all(&temp_dir);
     });
+}
+
+#[tokio::test]
+async fn public_readiness_is_minimal_and_diagnostics_require_auth() {
+    let (state, temp_dir) = readyz_test_state_with("privacy", |_, config| {
+        config.readonly_auth = Some(nodelite_proto::ReadonlyAuthConfig {
+            username: "viewer".into(),
+            password: "fixture-password".into(),
+            enable_2fa: false,
+            totp_secret: None,
+        });
+    })
+    .await;
+    let app = crate::startup::build_router(state.clone());
+    for (path, status) in [
+        ("/readyz", StatusCode::OK),
+        ("/api/readyz", StatusCode::UNAUTHORIZED),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), status);
+        if path == "/readyz" {
+            let bytes = to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("body");
+            let json: Value = serde_json::from_slice(&bytes).expect("json");
+            assert_eq!(json.as_object().expect("object").len(), 3);
+            assert_eq!(json["ready"], true);
+            assert!(json.get("signals").is_none());
+        }
+    }
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/readyz")
+                .header(
+                    header::AUTHORIZATION,
+                    "Basic dmlld2VyOmZpeHR1cmUtcGFzc3dvcmQ=",
+                )
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("authorized response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let json: Value = serde_json::from_slice(
+        &to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body"),
+    )
+    .expect("json");
+    assert!(json.get("signals").is_some());
+    state.shutdown.cancel();
+    state.history.shutdown().await;
+    state.audit_log.shutdown().await;
+    drop(state);
+    std::fs::remove_dir_all(temp_dir).expect("remove fixture");
+}
+
+#[tokio::test]
+async fn bundled_world_map_is_served_by_the_asset_route() {
+    let (state, temp_dir) = readyz_test_state("map-route").await;
+    let private = crate::startup::build_router(state.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/api/readyz")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(private.status(), StatusCode::UNAUTHORIZED);
+    let response = crate::startup::build_router(state.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/assets/world.geojson")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()[header::CONTENT_TYPE],
+        "application/geo+json"
+    );
+    let json: Value = serde_json::from_slice(
+        &to_bytes(response.into_body(), 2_000_000)
+            .await
+            .expect("body"),
+    )
+    .expect("GeoJSON");
+    assert_eq!(json["type"], "FeatureCollection");
+    state.shutdown.cancel();
+    state.history.shutdown().await;
+    state.audit_log.shutdown().await;
+    drop(state);
+    std::fs::remove_dir_all(temp_dir).expect("remove fixture");
 }

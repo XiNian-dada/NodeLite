@@ -60,7 +60,10 @@ function latestTestReleaseTag(releases: GithubRelease[]): string | null {
 async function fetchReleases(): Promise<GithubRelease[]> {
   const url = githubReleasesUrl();
   if (!url) throw new Error('GitHub repository URL is unavailable');
-  const res = await fetch(url, { headers: { accept: 'application/vnd.github+json' } });
+  const res = await fetch(url, {
+    headers: { accept: 'application/vnd.github+json' },
+    signal: AbortSignal.timeout(10_000),
+  });
   if (!res.ok) throw new Error(`GitHub ${res.status}`);
   const body = (await res.json()) as GithubRelease[] | GithubRelease;
   return Array.isArray(body) ? body : [body];

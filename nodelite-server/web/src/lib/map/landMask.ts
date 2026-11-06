@@ -18,7 +18,7 @@ import {
 } from './projection';
 
 export const WORLD_GEOJSON_URL =
-  'https://raw.githubusercontent.com/datasets/geo-boundaries-world-110m/master/countries.geojson';
+  '/assets/world.geojson';
 
 type Coord = [number, number];
 type Ring = Coord[];

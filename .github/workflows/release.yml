@@ -29,6 +29,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Bind provenance to the release tag
+        env:
+          SOURCE_REF: ${{ github.ref }}
+        run: |
+          if [ "$SOURCE_REF" != "refs/tags/$RELEASE_TAG" ]; then
+            echo "::error::Run this workflow from the release tag (workflow_dispatch --ref must match input tag)"
+            exit 1
+          fi
+
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -419,6 +428,8 @@ jobs:
     permissions:
       # 仅此 job 需要创建 Release 并上传资产。
       contents: write
+      id-token: write
+      attestations: write
 
     steps:
       - name: Download build artifacts
@@ -431,7 +442,7 @@ jobs:
         run: sh release-assets/release-scripts/merge-release-checksums.sh release-assets
 
       - name: Stage and verify release assets
-        # 把所有待发布资产平铺到同一目录,并按用户下载后的布局执行 sha256sum -c 自检;
+        # 把二进制/脚本/SBOM 平铺到同一目录,并按下载布局执行 sha256sum -c 自检;
         # 同时要求每个资产都在清单里、清单里没有多余条目。
         run: |
           mkdir -p publish
@@ -464,6 +475,15 @@ jobs:
             echo "::error::SHA256SUMS.txt does not cover exactly the published assets"
             exit 1
           fi
+
+      - name: Attest release asset provenance
+        id: provenance
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: publish/*
+
+      - name: Preserve provenance bundle
+        run: cp "${{ steps.provenance.outputs.bundle-path }}" publish/provenance.intoto.jsonl
 
       - name: Create or update GitHub release
         env:

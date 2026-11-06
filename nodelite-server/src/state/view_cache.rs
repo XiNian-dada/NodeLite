@@ -74,6 +74,11 @@ pub(super) struct MetricsViewSlot {
 }
 
 impl MetricsViewSlot {
+    #[cfg(test)]
+    pub(super) fn expire_for_test(&mut self) {
+        self.cached_at = Some(Instant::now() - Duration::from_secs(6));
+    }
+
     pub(super) fn get(
         &self,
         revision: u64,

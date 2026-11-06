@@ -59,7 +59,7 @@ impl AlertStatusView for TrafficAlertStatus {
     }
 }
 
-pub(super) async fn evaluate_alert_rules_with_history(
+pub(crate) async fn evaluate_alert_rules_with_history(
     shared: &SharedState,
     history: &HistoryStore,
     registry: &NodeRegistry,

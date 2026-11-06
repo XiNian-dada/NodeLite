@@ -40,6 +40,7 @@ struct ReadyzSignals {
     traffic_pending_writes: u64,
     audit_dropped_writes: u64,
     audit_write_failures: u64,
+    audit_write_degraded: bool,
     history_queue_depth: u64,
     history_queue_capacity: u64,
     audit_queue_depth: u64,
@@ -62,6 +63,29 @@ pub(crate) async fn healthz() -> StatusCode {
 /// HTTP 状态码和 `ready` 仅反映承载流量所需的硬依赖；审计与写入异常属于诊断信号，
 /// 只会把 `status` 标为 `degraded` 并写入 `problems`，不会单独触发 503。
 pub(crate) async fn readyz(State(state): State<AppState>) -> Response {
+    readiness_response(state, false).await
+}
+
+pub(crate) async fn authenticated_readyz_diagnostics(State(state): State<AppState>) -> Response {
+    // 无认证部署仍可读取公开探针，但不发布内部容量与安全状态。
+    if state.readonly_auth.read().await.config.is_none() {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    readyz_diagnostics(State(state)).await
+}
+
+pub(crate) async fn readyz_diagnostics(State(state): State<AppState>) -> Response {
+    readiness_response(state, true).await
+}
+
+#[derive(Serialize)]
+struct PublicReadyzResponse {
+    version: &'static str,
+    status: &'static str,
+    ready: bool,
+}
+
+async fn readiness_response(state: AppState, detailed: bool) -> Response {
     let history_available = state.readiness.history_available();
     let registry_reload_healthy = state.readiness.registry_reload_healthy();
     let hard_ready = history_available && registry_reload_healthy;
@@ -87,9 +111,6 @@ pub(crate) async fn readyz(State(state): State<AppState>) -> Response {
     if audit_enabled && !audit_available {
         problems.push("audit_unavailable");
     }
-    if history_dropped_writes > 0 {
-        problems.push("history_dropped_writes");
-    }
     if history_write.degraded {
         problems.push("history_write_failed");
     }
@@ -99,10 +120,7 @@ pub(crate) async fn readyz(State(state): State<AppState>) -> Response {
     if traffic.write_degraded {
         problems.push("traffic_write_failed");
     }
-    if audit_dropped_writes > 0 {
-        problems.push("audit_dropped_writes");
-    }
-    if audit_write_failures > 0 {
+    if state.audit_log.write_degraded() {
         problems.push("audit_write_failures");
     }
 
@@ -134,6 +152,7 @@ pub(crate) async fn readyz(State(state): State<AppState>) -> Response {
             traffic_pending_writes: traffic.pending_writes,
             audit_dropped_writes,
             audit_write_failures,
+            audit_write_degraded: state.audit_log.write_degraded(),
             history_queue_depth,
             history_queue_capacity,
             audit_queue_depth,
@@ -151,13 +170,18 @@ pub(crate) async fn readyz(State(state): State<AppState>) -> Response {
     } else {
         StatusCode::SERVICE_UNAVAILABLE
     };
-    (
-        status,
-        [
-            ("x-nodelite-version", crate::server_build_version()),
-            ("cache-control", "no-store"),
-        ],
-        Json(response),
-    )
-        .into_response()
+    let headers = [
+        ("x-nodelite-version", crate::server_build_version()),
+        ("cache-control", "no-store"),
+    ];
+    if detailed {
+        (status, headers, Json(response)).into_response()
+    } else {
+        let public = PublicReadyzResponse {
+            version: response.version,
+            status: response.status,
+            ready: response.ready,
+        };
+        (status, headers, Json(public)).into_response()
+    }
 }

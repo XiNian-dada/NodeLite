@@ -1,4 +1,5 @@
 import type { BrowserMessage } from '@/api/types';
+import { parseBrowserMessage } from './parser';
 
 export type ConnectionState =
   | { kind: 'idle' }
@@ -25,51 +26,7 @@ const defaultLogger: WsClientLogger = {
   error: (...args) => console.error(...args),
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function hasStringField(value: Record<string, unknown>, key: string): boolean {
-  return typeof value[key] === 'string';
-}
-
-function hasRecordField(value: Record<string, unknown>, key: string): boolean {
-  return isRecord(value[key]);
-}
-
-function hasArrayField(value: Record<string, unknown>, key: string): boolean {
-  return Array.isArray(value[key]);
-}
-
-export function parseBrowserMessage(value: unknown): BrowserMessage | null {
-  if (!isRecord(value) || typeof value.type !== 'string') return null;
-
-  switch (value.type) {
-    case 'initial_state':
-      return hasStringField(value, 'generated_at') &&
-        hasRecordField(value, 'overview') &&
-        hasArrayField(value, 'nodes')
-        ? (value as BrowserMessage)
-        : null;
-    case 'overview_update':
-      return hasStringField(value, 'generated_at') && hasRecordField(value, 'overview')
-        ? (value as BrowserMessage)
-        : null;
-    case 'node_upsert':
-      return hasStringField(value, 'generated_at') && hasRecordField(value, 'node')
-        ? (value as BrowserMessage)
-        : null;
-    case 'node_removed':
-      return hasStringField(value, 'generated_at') && hasStringField(value, 'node_id')
-        ? (value as BrowserMessage)
-        : null;
-    case 'ping':
-    case 'pong':
-      return value as BrowserMessage;
-    default:
-      return null;
-  }
-}
+export { parseBrowserMessage } from './parser';
 
 export class WsClient {
   private ws: WebSocket | null = null;
@@ -96,6 +53,7 @@ export class WsClient {
   }
 
   connect(): void {
+    if (typeof document !== 'undefined' && document.hidden) return;
     if (this.state.kind === 'connecting' || this.state.kind === 'open') return;
     this.clearReconnectTimer();
     document.addEventListener('visibilitychange', this.handleVisibilityChange);
@@ -247,6 +205,10 @@ export class WsClient {
 
   private scheduleReconnect(): void {
     this.clearReconnectTimer();
+    if (typeof document !== 'undefined' && document.hidden) {
+      this.setState({ kind: 'idle' });
+      return;
+    }
 
     const baseDelay =
       this.handshakeFailures >= 3 ? 30000 : Math.min(1000 * 2 ** this.reconnectAttempt, 30000);
@@ -313,10 +275,12 @@ export class WsClient {
     if (typeof document === 'undefined') return;
 
     if (document.hidden) {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.logger.log('Tab hidden, closing WebSocket');
-        this.ws.close();
-      }
+      this.clearReconnectTimer();
+      this.clearHeartbeat();
+      const socket = this.ws;
+      this.ws = null;
+      if (socket) socket.close();
+      this.setState({ kind: 'idle' });
     } else {
       if (
         this.state.kind === 'failed' ||

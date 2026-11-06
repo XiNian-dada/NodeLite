@@ -141,7 +141,7 @@ required, run it on an isolated disposable host and label it explicitly.
 ## Database and swap context
 
 ```bash
-data_dir=/var/lib/nodelite
+data_dir=/opt/nodelite/data
 pid=$(systemctl show nodelite-server.service -p MainPID --value)
 
 du -h "$data_dir"

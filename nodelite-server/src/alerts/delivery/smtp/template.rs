@@ -438,10 +438,16 @@ fn inspection_summary_cards_html(
 
 fn inspection_trends_body(summary: &InspectionSummary<'_>) -> String {
     if !trend_has_samples(summary.trends) {
-        return "\n24h trends: no retained history samples available.\n".to_string();
+        return format!(
+            "\n{}h trends: no retained history samples available.\n",
+            summary.lookback_hours
+        );
     }
 
-    let mut body = String::from("\n24h trends:\n");
+    let mut body = format!(
+        "\n{}h trends (bucket averages of retained samples):\n",
+        summary.lookback_hours
+    );
     push_trend_body_line(
         &mut body,
         "CPU",
@@ -476,22 +482,26 @@ fn push_trend_body_line(body: &mut String, label: &str, unit: &str, stats: Optio
 
 fn inspection_trends_html(summary: &InspectionSummary<'_>) -> String {
     if !trend_has_samples(summary.trends) {
-        return String::from(concat!(
-            r#"<div style="margin-top:18px;border:1px dashed #d4d4d8;border-radius:12px;background:#fafafa;padding:18px 20px;">"#,
-            r#"<h2 style="margin:0 0 6px;font-size:16px;line-height:1.3;color:#111111;">24h trends</h2>"#,
-            r#"<p style="margin:0;color:#6b6b6b;font-size:13px;">No retained history samples were available for this inspection window.</p>"#,
-            r#"</div>"#
-        ));
+        return format!(
+            concat!(
+                r#"<div style="margin-top:18px;border:1px dashed #d4d4d8;border-radius:12px;background:#fafafa;padding:18px 20px;">"#,
+                r#"<h2 style="margin:0 0 6px;font-size:16px;line-height:1.3;color:#111111;">{}h trends</h2>"#,
+                r#"<p style="margin:0;color:#6b6b6b;font-size:13px;">No retained history samples were available for this inspection window.</p>"#,
+                r#"</div>"#
+            ),
+            summary.lookback_hours
+        );
     }
 
     format!(
         concat!(
             r#"<div style="margin-top:18px;border:1px solid #e5e5e5;border-radius:12px;background:#ffffff;padding:18px 20px;">"#,
-            r#"<h2 style="margin:0;font-size:16px;line-height:1.3;color:#111111;">24h trends</h2>"#,
-            r#"<p style="margin:5px 0 14px;color:#6b6b6b;font-size:13px;">Hourly averages across nodes with retained history samples.</p>"#,
+            r#"<h2 style="margin:0;font-size:16px;line-height:1.3;color:#111111;">{}h trends</h2>"#,
+            r#"<p style="margin:5px 0 14px;color:#6b6b6b;font-size:13px;">Bucket averages across nodes; missing or expired samples are not included.</p>"#,
             "{}{}{}",
             r#"</div>"#
         ),
+        summary.lookback_hours,
         trend_chart_html(
             TrendChartConfig {
                 label: "CPU usage",

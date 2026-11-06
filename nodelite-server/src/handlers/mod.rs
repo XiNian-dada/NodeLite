@@ -23,9 +23,11 @@ pub(crate) use api_routes::process_resident_memory_bytes;
 pub(crate) use api_routes::{
     audit_log, bootstrap, metrics, node_history, node_logs, node_status, nodes, overview,
 };
+#[cfg(test)]
+pub(crate) use auth_routes::readyz_diagnostics;
 pub(crate) use auth_routes::{
-    finish_passkey_authentication, healthz, last_login, logout_and_reauth, readyz,
-    require_readonly_auth, start_passkey_authentication, verify_2fa_api,
+    authenticated_readyz_diagnostics, finish_passkey_authentication, healthz, last_login,
+    logout_and_reauth, readyz, require_readonly_auth, start_passkey_authentication, verify_2fa_api,
 };
 pub(crate) use install_routes::{install_agent_script, install_bootstrap};
 pub(crate) use page_routes::{index, node_detail, static_asset, verify_2fa_page};

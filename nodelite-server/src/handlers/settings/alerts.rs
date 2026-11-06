@@ -10,7 +10,7 @@ use chrono::Utc;
 use tracing::error;
 
 use crate::AppState;
-use crate::alerts::{build_inspection_report, evaluate_rules};
+use crate::alerts::{EvaluatedRule, build_inspection_report, evaluate_alert_rules_with_history};
 use nodelite_proto::{AlertingConfig, NodeStatus};
 
 use super::config_edit::persist_alerting_change;
@@ -96,9 +96,18 @@ async fn build_alert_settings_response(state: &AppState) -> AlertSettingsRespons
         std::sync::Arc::clone(&alerting)
     };
     let statuses = state.shared.list_statuses().await;
+    let now = Utc::now();
+    let matches = evaluate_alert_rules_with_history(
+        &state.shared,
+        &state.history,
+        &state.registry,
+        &alerting.rules,
+        now,
+    )
+    .await;
     AlertSettingsResponse {
         config: alert_settings_view(&alerting),
-        preview: build_alert_preview(&alerting, &statuses),
+        preview: build_alert_preview(&alerting, &statuses, &matches, now),
     }
 }
 
@@ -227,8 +236,12 @@ fn alert_settings_view(config: &AlertingConfig) -> AlertSettingsView {
     }
 }
 
-fn build_alert_preview(config: &AlertingConfig, statuses: &[NodeStatus]) -> AlertPreview {
-    let now = Utc::now();
+fn build_alert_preview(
+    config: &AlertingConfig,
+    statuses: &[NodeStatus],
+    matches: &[EvaluatedRule],
+    now: chrono::DateTime<Utc>,
+) -> AlertPreview {
     let inspection = build_inspection_report(&config.inspection, statuses, now);
     AlertPreview {
         generated_at: now,
@@ -237,8 +250,9 @@ fn build_alert_preview(config: &AlertingConfig, statuses: &[NodeStatus]) -> Aler
             .iter()
             .filter(|rule| rule.enabled)
             .filter_map(|rule| {
-                let node_ids = evaluate_rules(std::slice::from_ref(rule), statuses, now)
+                let node_ids = matches
                     .iter()
+                    .filter(|matched| matched.rule_id == rule.id)
                     .map(|matched| matched.node_id.clone())
                     .collect::<Vec<_>>();
                 if node_ids.is_empty() {
@@ -411,7 +425,10 @@ mod tests {
             inspection: InspectionConfig::default(),
         };
 
-        let preview = build_alert_preview(&config, &[status]);
+        let now = Utc::now();
+        let statuses = [status];
+        let matches = crate::alerts::evaluate_rules(&config.rules, &statuses, now);
+        let preview = build_alert_preview(&config, &statuses, &matches, now);
 
         assert_eq!(preview.triggered_rules.len(), 1);
         assert_eq!(preview.inspection.offline_nodes, 1);

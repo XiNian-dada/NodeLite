@@ -236,3 +236,15 @@ async fn metrics_cache_reuses_and_invalidates_cleanly() {
     assert_eq!(shared.metrics_cache_build_count(), 3);
     assert_ne!(after_disconnect, after_readiness);
 }
+
+#[tokio::test]
+async fn metrics_ttl_is_capped_independently_of_ui_refresh() {
+    let mut config = sample_config();
+    config.refresh_interval_secs = 3600;
+    let shared = SharedState::new(Arc::new(config));
+    let readiness = crate::ServerReadiness::new(true);
+    shared.metrics_text(&readiness).await;
+    shared.metrics_cache.lock().await.expire_for_test();
+    shared.metrics_text(&readiness).await;
+    assert_eq!(shared.metrics_cache_build_count(), 2);
+}

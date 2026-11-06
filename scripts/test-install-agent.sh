@@ -74,7 +74,7 @@ grep -Fx 'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK' "$UNIT_PA
 refuse_signed_updater_override
 cp "$UNIT_PATH" "$TEMP_DIR/original-unit"
 printf '%s\n' 'ExecStart=/var/lib/nodelite-updater/code/active --config /var/lib/nodelite-agent/agent.toml' >"$UNIT_PATH"
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329 # Called by installer functions loaded through eval.
 fail() { printf '%s\n' "$*" >&2; return 1; }
 if refuse_signed_updater_override >/dev/null 2>&1; then
   printf '%s\n' 'Legacy installation must not bypass enrolled signature policy' >&2
@@ -160,7 +160,7 @@ awk '
 ' "$INSTALLER"
 
 # Every download is size- and time-bounded, including the post-download size re-check.
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329 # Called by fetch_bounded, loaded through eval.
 curl() {
   printf '%s\n' "$*" >"$TEMP_DIR/curl-args"
   while [ "$#" -gt 1 ]; do [ "$1" = -o ] && out="$2"; shift; done
@@ -249,7 +249,7 @@ grep -qx old-binary "$BIN_PATH"
 backup_previous_install
 if (
   eval "$cleanup_and_traps"
-  # shellcheck disable=SC2016,SC2317
+  # shellcheck disable=SC2016,SC2317,SC2329 # Called by the cleanup handler loaded through eval.
   restart_service() {
     kill -HUP "$(exec sh -c 'printf %s "$PPID"')"
     ls "$INSTALL_DIR"/.nodelite-agent-rollback.*/binary >/dev/null && printf '%s\n' finished >"$TEMP_DIR/restore-finished"

@@ -19,6 +19,7 @@ async function fetchWorldGeoJson(): Promise<GeoJsonFeatureCollection> {
   if (!inFlight) {
     inFlight = fetch(WORLD_GEOJSON_URL, {
       cache: 'force-cache',
+      signal: AbortSignal.timeout(10_000),
       headers: { accept: 'application/geo+json,application/json' },
     })
       .then((response) => {
