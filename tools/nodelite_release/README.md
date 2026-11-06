@@ -191,3 +191,37 @@ helper 和原有资产，签名包由可信发布机审批后另行上传，不�
 
 先确认签名源、完整连续根链及当前授权 baseline 可访问，再开放迁移入口。没有迁移包的
 Release 仍能正常手动安装／升级；请求开启签名模式会明确失败，不修改已有 Agent。
+
+### 生成经过核对的网页更新发布交接目录
+
+在与具体 Release 对应的、已审查的源码 checkout 中运行。先下载该 Release 的全部资产到
+单独目录并核验 GitHub provenance；原 SHA256 清单只提供完整性，不能代替独立来源认证。
+签名仓库由上述离线流程完成审批，`--root-sha256` 必须来自此前独立确认的根指纹记录。
+
+```sh
+python -m tools.nodelite_release stage-web-release \
+  --tag v3.0.5 --release-assets /review/release-assets \
+  --repository /srv/nodelite-repository \
+  --root-sha256 TRUSTED_ROOT_SHA256 \
+  --metadata-url https://updates.example.invalid/stable/x86_64/metadata/ \
+  --targets-url https://updates.example.invalid/stable/x86_64/targets/ \
+  --units nodelite-updater/systemd --out /review/web-release-v3.0.5
+```
+
+双架构发布时，按同样顺序再提供第二组 `--repository`、`--root-sha256`、`--metadata-url`、
+`--targets-url`，一次生成完整目录。工具拒绝已存在的输出目录；不会覆盖旧交接目录或资产。
+它验证签名链和有效期、tag/channel、签名 Agent 与 Release Agent 的字节一致性、同版安装脚本、
+全部原资产摘要和文件范围，然后生成：
+
+- `assets/`：保留原有各平台资产，加上每个架构的 enrollment 归档和完整 `SHA256SUMS.txt`。
+- `approval.json`：待独立审批的完整归档、installer、helper、root 摘要，以及固定 URL 和版本。
+- `enable-web-updates-<target>.sh`：先验证外层 installer，再用固定版本和两个独立摘要开启网页更新。
+
+工具不联网、不签署新 metadata、不创建私钥，也不上传 Release。审批人核对 `approval.json`
+和固定 URL 后，将新增归档及更新后的 `SHA256SUMS.txt` 交给发布负责人，上传至**同一个具体
+Release**。上传前重新比对远端原资产清单；若期间发生变化，从新下载目录重新组包，不能用旧
+清单覆盖新增资产。原 CI provenance 只证明原始资产，不证明离线新增的归档或改写后的清单。
+通过独立可信渠道分发批准后的安装脚本及 pins；从同一下载站取脚本、校验和及 pins 不构成
+独立信任。发布负责人部署只读 HTTPS metadata/targets 并验证可访问性后，才开放节点迁移。
+
+这些步骤是发布准备流程，仓库不会自动替运维上线正式签名源。示例版本和域名均为占位值。

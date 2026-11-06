@@ -138,7 +138,9 @@ jobs:
         run: shellcheck scripts/install-server.sh scripts/install-server-config.sh scripts/install-server-upgrade.sh scripts/install-agent.sh scripts/install-agent-signed.sh scripts/test-install-agent.sh scripts/server-web-update.sh scripts/merge-release-checksums.sh scripts/test-install-server-summary.sh scripts/test-install-server-modules.sh scripts/test-install-server-config.sh scripts/test-server-web-update.sh scripts/test-release-checksums.sh scripts/check-demo-credentials.sh scripts/check-actions-pinned.sh
 
       - name: Test Agent installer
-        run: sudo sh scripts/test-install-agent.sh
+        run: |
+          sudo sh scripts/test-install-agent.sh
+          python3 scripts/test-agent-enrollment-pins.py -v
 
       - name: Test signing and enrollment tooling
         run: |

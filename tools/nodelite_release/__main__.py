@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sys
 
-from . import bundle, keys, maintenance, metadata, repository
+from . import bundle, keys, maintenance, metadata, repository, web
 
 
 def parser():
@@ -51,6 +51,14 @@ def parser():
     pack.add_argument("--targets-url")
     for name in ("repository", "updater", "units", "out"):
         pack.add_argument("--" + name, type=Path, required=True)
+    stage = sub.add_parser("stage-web-release")
+    for name in ("repository", "root-sha256", "metadata-url", "targets-url"):
+        stage.add_argument("--" + name, action="append", required=True)
+    for name in ("release-assets", "units", "out"):
+        stage.add_argument("--" + name, type=Path, required=True)
+    stage.add_argument("--tag", required=True)
+    stage.add_argument("--release-url")
+    stage.add_argument("--channel", choices=("stable", "testing"), default="stable")
     check = sub.add_parser("check")
     check.add_argument("--destination", type=Path, required=True)
     check.add_argument("--root-sha256", required=True)
@@ -89,6 +97,9 @@ def main():
                                           args.metadata_url, args.targets_url, args.bootstrap_version)
         else:
             result = bundle.pack(args.repository, args.updater, args.units, args.out, args.bootstrap_version)
+    elif args.action == "stage-web-release":
+        result = web.stage(args.repository, args.root_sha256, args.metadata_url, args.targets_url,
+                           args.release_assets, args.units, args.tag, args.out, args.release_url, args.channel)
     elif args.action == "check":
         result = maintenance.check(args.destination, args.root_sha256)
     elif args.action == "collect":
