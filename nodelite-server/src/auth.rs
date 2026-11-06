@@ -49,10 +49,11 @@ pub(crate) fn validate_password_strength(password: &str) -> Result<(), &'static 
     const MIN_PASSWORD_CHARS: usize = 12;
     const MAX_PASSWORD_CHARS: usize = 128;
 
-    if password.len() < MIN_PASSWORD_CHARS {
+    let password_chars = password.chars().count();
+    if password_chars < MIN_PASSWORD_CHARS {
         return Err("password must be at least 12 characters");
     }
-    if password.chars().count() > MAX_PASSWORD_CHARS {
+    if password_chars > MAX_PASSWORD_CHARS {
         return Err("password must be at most 128 characters");
     }
 
@@ -708,6 +709,25 @@ mod tests {
 
     /// #92: 启动期与改密 API 必须用同一套规则,这里覆盖关键拒绝路径,
     /// 以防未来有人单独动 startup.rs 或 helpers.rs 让两边漂移。
+    #[test]
+    fn password_length_counts_unicode_scalars_at_both_limits() {
+        for suffix in ["界", "😀", "e\u{301}"] {
+            let short = format!("Aa1!{}", suffix.repeat(2));
+            assert!(short.chars().count() < 12);
+            assert_eq!(
+                validate_password_strength(&short),
+                Err("password must be at least 12 characters")
+            );
+        }
+        assert!(validate_password_strength("Aa1!界界界界界界界").is_err());
+        assert!(validate_password_strength("Aa1!界界界界界界界界").is_ok());
+        assert!(validate_password_strength(&format!("Aa1!{}", "😀".repeat(124))).is_ok());
+        assert_eq!(
+            validate_password_strength(&format!("Aa1!{}", "😀".repeat(125))),
+            Err("password must be at most 128 characters")
+        );
+    }
+
     #[test]
     fn validate_password_strength_enforces_unified_rules() {
         // 11 字符 = 旧 startup 8 字符规则会放过, 新规则必须拒绝。
