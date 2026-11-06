@@ -145,6 +145,27 @@ describe('AgentUpdatePanel', () => {
     ).toBe(true);
   });
 
+  it('shows current local work instead of a past web success while the node is busy', async () => {
+    const local = view('committed');
+    local.status.capability = 'disabled';
+    local.status.reason = 'busy';
+    vi.mocked(apiClient.agentUpdate).mockResolvedValue(local);
+    const wrapper = await panel();
+    expect(wrapper.get('[data-test="agent-update-phase"]').attributes('data-phase')).toBe(
+      'local_busy',
+    );
+    expect(wrapper.text()).toContain('节点已在处理一次升级');
+    expect(wrapper.text()).not.toContain('升级已确认成功');
+    expect(
+      wrapper.get<HTMLButtonElement>('[data-test="agent-update-start"]').element.disabled,
+    ).toBe(true);
+    vi.mocked(apiClient.agentUpdate).mockResolvedValue(view('committed'));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(wrapper.get('[data-test="agent-update-phase"]').attributes('data-phase')).toBe(
+      'committed',
+    );
+  });
+
   it('ignores a late status response after navigating to another node', async () => {
     let finishOld!: (result: AgentUpdateView) => void;
     vi.mocked(apiClient.agentUpdate).mockImplementationOnce(
