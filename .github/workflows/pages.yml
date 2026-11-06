@@ -144,6 +144,8 @@ jobs:
           persist-credentials: false
       - id: pages
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+      - name: Keep the site directory writable for the update exporter
+        run: mkdir _site
       - uses: actions/jekyll-build-pages@44a6e6beabd48582f863aeeb6cb2151cc1716697 # v1
         with:
           source: docs
@@ -166,7 +168,6 @@ jobs:
       - name: Verify and reconstruct public updates
         if: needs.prepare.outputs.enabled == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           BASE_URL: ${{ steps.pages.outputs.base_url }}
           INITIALIZE: ${{ inputs.initialize == true && 'true' || 'false' }}
