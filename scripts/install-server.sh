@@ -268,6 +268,25 @@ random_port() {
   printf '%s' "$((20000 + raw_port % 20000))"
 }
 
+# 来源证明验证独立于同源摘要，旧 release 需显式启用。
+verify_release_attestation() {
+  case "${NODELITE_VERIFY_ATTESTATIONS:-0}" in
+    0) return 0 ;;
+    1) ;;
+    *) printf '%s\n' 'NODELITE_VERIFY_ATTESTATIONS must be 0 or 1' >&2; return 1 ;;
+  esac
+  case "$2" in
+    ""|*[!A-Za-z0-9._+-]*) printf '%s\n' 'attestation verification requires an explicit release tag' >&2; return 1 ;;
+  esac
+  command -v gh >/dev/null 2>&1 || { printf '%s\n' 'attestation verification requires GitHub CLI (gh)' >&2; return 1; }
+  gh attestation verify "$1" \
+    --repo XiNian-dada/NodeLite \
+    --signer-workflow XiNian-dada/NodeLite/.github/workflows/release.yml \
+    --source-ref "refs/tags/$2" \
+    --cert-oidc-issuer https://token.actions.githubusercontent.com \
+    --deny-self-hosted-runners
+}
+
 # 计算文件 SHA-256:优先 sha256sum,缺失时回退到 shasum -a 256。
 calculate_sha256() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -320,6 +339,7 @@ fetch_verified_script() {
     "$BASE_URL/$helper_name" -o "$helper_path" || fail "failed to download $helper_name"
   [ "$(wc -c <"$helper_path")" -le 1048576 ] || fail "$helper_name exceeds size limit"
   [ "$(calculate_sha256 "$helper_path")" = "$helper_sha256" ] || fail "$helper_name checksum mismatch"
+  verify_release_attestation "$helper_path" "$VERSION" || fail "$helper_name provenance verification failed"
 }
 
 # 检查版本号是否是正式版（不含任何 SemVer prerelease 后缀）。
@@ -535,7 +555,14 @@ CURRENT_CONFIG_PATH=""
 CURRENT_REGISTRY_PATH=""
 CURRENT_DATA_DIR=""
 if [ -n "$CURRENT_INSTALL_ROOT" ]; then
-  CURRENT_CONFIG_PATH="$CURRENT_INSTALL_ROOT/config/server.toml"
+  CURRENT_CONFIG_PATH="${NODELITE_SERVER_CONFIG_PATH:-$CURRENT_INSTALL_ROOT/config/server.toml}"
+  case "$CURRENT_CONFIG_PATH" in
+    /*) ;;
+    *) fail "server config path must be absolute" ;;
+  esac
+  case "$CURRENT_CONFIG_PATH" in
+    */../*|*/..|/) fail "server config path must not traverse parent directories" ;;
+  esac
   CURRENT_REGISTRY_PATH="$CURRENT_INSTALL_ROOT/config/server.json"
   CURRENT_DATA_DIR="$CURRENT_INSTALL_ROOT/data"
 fi
@@ -567,6 +594,10 @@ fi
 CONFIG_DIR="$INSTALL_ROOT/config"
 DATA_DIR="$INSTALL_ROOT/data"
 CONFIG_PATH="$CONFIG_DIR/server.toml"
+if [ "$MODE" = "upgrade" ]; then
+  CONFIG_PATH="$CURRENT_CONFIG_PATH"
+  CONFIG_DIR="$(dirname "$CONFIG_PATH")"
+fi
 REGISTRY_PATH="$CONFIG_DIR/server.json"
 
 if [ "$MODE" = "install" ] && [ "$existing_install" -eq 1 ]; then
@@ -628,6 +659,7 @@ curl -fsSL --connect-timeout 10 --max-time 300 "$DOWNLOAD_URL" -o "$TMP_BIN" \
 mark_step "verifying server binary checksum"
 ACTUAL_SHA256="$(calculate_sha256 "$TMP_BIN")"
 [ "$ACTUAL_SHA256" = "$EXPECTED_SHA256" ] || fail "downloaded server checksum mismatch"
+verify_release_attestation "$TMP_BIN" "$VERSION" || fail "server provenance verification failed"
 chmod 0700 "$TMP_BIN"
 verify_candidate_version
 

@@ -26,7 +26,7 @@ import urllib.request
 SCRIPTS = Path(__file__).resolve().parent
 SCENARIOS = ["crash", "not_ready", "wrong_version", "success", "migrate_fail", "corrupt_backup",
              "restore_fail", "backup_fail", "signal", "bad_binary_digest", "bad_helper_digest",
-             "candidate_version", "inactive", "symlink", "locked"]
+             "candidate_version", "inactive", "symlink", "locked", "custom_layout", "attestation_fail"]
 
 
 def wait_until(predicate, timeout=10):
@@ -56,7 +56,7 @@ class Installation:
         self.binary = self.root / "bin/nodelite-server"
         self.name = self.root.name
         self.unit = Path("/etc/systemd/system") / f"{self.name}.service" if systemd else self.root / "server.service"
-        self.config = self.install / "config/server.toml"
+        self.config = self.root / "etc/nodelite/server.toml" if scenario == "custom_layout" else self.install / "config/server.toml"
         self.data = self.install / "data"
         self.release = self.root / "release"
         self.wrappers = self.root / "commands"
@@ -80,7 +80,7 @@ class Installation:
         source = (SCRIPTS / "tests/upgrade_server_fixture.py").read_text()
 
         def binary(version):
-            return source.replace('"@VERSION@"', repr(version)).replace('"@SCENARIO@"', repr(self.scenario)) \
+            return source.replace('"@VERSION@"', repr(version)).replace('"@SCENARIO@"', repr("success" if self.scenario == "custom_layout" else self.scenario)) \
                 .replace('"@ROOT@"', repr(str(self.root))).encode()
 
         self.old_binary = binary("1.0.0")
@@ -115,6 +115,13 @@ class Installation:
             "TMPDIR": str(self.root),
             "PATH": f"{self.wrappers}{os.pathsep}{os.environ['PATH']}",
         })
+        if self.scenario == "custom_layout":
+            self.environment["NODELITE_SERVER_CONFIG_PATH"] = str(self.config)
+        if self.scenario == "attestation_fail":
+            self.environment["NODELITE_VERIFY_ATTESTATIONS"] = "1"
+            fake_gh = self.wrappers / "gh"
+            fake_gh.write_text("#!/bin/sh\nexit 1\n")
+            fake_gh.chmod(0o700)
         commands = ["curl", "tar"]
         if not self.systemd:
             commands.extend(["id", "chown", "install", "systemctl"])
@@ -233,10 +240,10 @@ WantedBy=multi-user.target
         assert self.password not in output, "installer leaked a password"
         events = self.events()[len(self.before_events):]
         assert "OLD_STARTED_WITH_INCOMPATIBLE_DATA" not in events, events
-        success = self.scenario in {"success", "inactive"}
+        success = self.scenario in {"success", "inactive", "custom_layout"}
         assert (code == 0) == success, output
         assert ("NodeLite server upgraded and restarted." in output) == success, output
-        if self.scenario in {"bad_binary_digest", "bad_helper_digest", "candidate_version", "locked"}:
+        if self.scenario in {"bad_binary_digest", "bad_helper_digest", "candidate_version", "locked", "attestation_fail"}:
             assert "systemctl-stop" not in events, events
             assert self.config.read_bytes() == self.old_config
             assert self.binary.read_bytes() == self.old_binary

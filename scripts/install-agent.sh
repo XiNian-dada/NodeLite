@@ -101,6 +101,24 @@ trap cleanup EXIT
 trap 'cleanup; exit 1' HUP INT TERM
 
 # 计算指定文件的 SHA-256 摘要;优先用 GNU `sha256sum`,缺失时回退到 `shasum -a 256`。
+verify_release_attestation() {
+  case "${NODELITE_VERIFY_ATTESTATIONS:-0}" in
+    0) return 0 ;;
+    1) ;;
+    *) printf '%s\n' 'NODELITE_VERIFY_ATTESTATIONS must be 0 or 1' >&2; return 1 ;;
+  esac
+  case "$2" in
+    ""|*[!A-Za-z0-9._+-]*) printf '%s\n' 'attestation verification requires an explicit release tag' >&2; return 1 ;;
+  esac
+  command -v gh >/dev/null 2>&1 || { printf '%s\n' 'attestation verification requires GitHub CLI (gh)' >&2; return 1; }
+  gh attestation verify "$1" \
+    --repo XiNian-dada/NodeLite \
+    --signer-workflow XiNian-dada/NodeLite/.github/workflows/release.yml \
+    --source-ref "refs/tags/$2" \
+    --cert-oidc-issuer https://token.actions.githubusercontent.com \
+    --deny-self-hosted-runners
+}
+
 calculate_sha256() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | sed 's/[[:space:]].*$//'
@@ -265,6 +283,7 @@ resolve_release_base_url() {
       if ! is_stable_version "$resolved_tag"; then
         fail "resolved latest release '${resolved_tag}' is a pre-release. Set NODELITE_AGENT_VERSION=${resolved_tag} to install it explicitly."
       fi
+      VERSION="$resolved_tag"
       BASE_URL="${releases_root}/download/${resolved_tag}"
       printf '%s\n' "Resolved GitHub latest release tag: $resolved_tag"
       ;;
@@ -736,6 +755,7 @@ if [ "$SIGNED_UPDATES" -eq 1 ]; then
   fetch_expected_sha256 install-agent-signed.sh
   fetch_bounded 1048576 60 "$BASE_URL/install-agent-signed.sh" "$TMP_PATH" || fail 'failed to fetch signed installer helper'
   [ "$(calculate_sha256 "$TMP_PATH")" = "$EXPECTED_SHA256" ] || fail 'signed installer helper checksum mismatch'
+  verify_release_attestation "$TMP_PATH" "$VERSION" || fail 'signed installer helper provenance verification failed'
   # shellcheck source=scripts/install-agent-signed.sh
   . "$TMP_PATH"
   rm -f "$TMP_PATH"
@@ -773,6 +793,7 @@ else
   [ "$ACTUAL_SHA256" = "$EXPECTED_SHA256" ] || fail "downloaded agent checksum mismatch"
 fi
 
+verify_release_attestation "$TMP_PATH" "$VERSION" || fail "agent provenance verification failed"
 check_saved_credentials
 backup_previous_install
 ROLLBACK_ARMED=1

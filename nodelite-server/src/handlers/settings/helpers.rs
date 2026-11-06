@@ -53,7 +53,10 @@ pub(super) fn server_update_cache_dir(config: &nodelite_proto::ServerConfig) -> 
     base_dir.join(".server-update-cache")
 }
 
-pub(super) fn server_update_writable_paths(config: &nodelite_proto::ServerConfig) -> Vec<PathBuf> {
+pub(super) fn server_update_writable_paths(
+    config: &nodelite_proto::ServerConfig,
+    config_path: &Path,
+) -> Vec<PathBuf> {
     let install_root = server_update_install_root(config);
     let log_dir = server_update_log_path(config)
         .parent()
@@ -64,40 +67,88 @@ pub(super) fn server_update_writable_paths(config: &nodelite_proto::ServerConfig
     let mut paths = Vec::new();
     for candidate in [
         install_root,
+        config_path
+            .parent()
+            .unwrap_or_else(|| Path::new("/"))
+            .to_path_buf(),
         log_dir,
         cache_dir,
         PathBuf::from("/usr/local/bin"),
         PathBuf::from("/etc/systemd/system"),
     ] {
-        if !paths.iter().any(|existing| existing == &candidate) {
+        if candidate != Path::new("/") && !paths.iter().any(|existing| existing == &candidate) {
             paths.push(candidate);
         }
     }
+    for path in [
+        &config.node_registry_path,
+        &config.history_db_path,
+        &config.snapshot_path,
+    ] {
+        if let Some(parent) = path.parent() {
+            paths.push(parent.to_path_buf());
+        }
+    }
+    if let Ok(directory) = std::env::current_dir() {
+        paths.push(directory);
+    }
+    paths.sort();
+    paths.dedup();
     paths
 }
 
 pub(super) fn is_writable_paths_subset_of_install_root(
     paths: &[PathBuf],
     install_root: &Path,
+    config_path: &Path,
+    config: &nodelite_proto::ServerConfig,
 ) -> bool {
-    paths.iter().all(|path| {
-        !path
-            .components()
-            .any(|component| component == Component::ParentDir)
-            && (path.starts_with(install_root)
-                || path == Path::new("/usr/local/bin")
-                || path.starts_with("/usr/local/bin/")
-                || path == Path::new("/etc/systemd/system")
-                || path.starts_with("/etc/systemd/system/"))
-    })
+    let current_dir = std::env::current_dir().ok();
+    let data_dirs = [
+        &config.node_registry_path,
+        &config.history_db_path,
+        &config.snapshot_path,
+    ];
+    config_path.is_absolute()
+        && !config_path.components().any(|c| c == Component::ParentDir)
+        && paths.iter().all(|path| {
+            path.is_absolute()
+                && path != Path::new("/")
+                && !path
+                    .components()
+                    .any(|component| component == Component::ParentDir)
+                && (Some(path.as_path()) == config_path.parent()
+                    || (install_root != Path::new("/") && path.starts_with(install_root))
+                    || current_dir.as_deref() == Some(path.as_path())
+                    || data_dirs
+                        .iter()
+                        .filter_map(|p| p.parent())
+                        .filter(|p| *p != Path::new("/"))
+                        .any(|dir| path.starts_with(dir))
+                    || path == Path::new("/usr/local/bin")
+                    || path.starts_with("/usr/local/bin/")
+                    || path == Path::new("/etc/systemd/system")
+                    || path.starts_with("/etc/systemd/system/"))
+        })
 }
 
 pub(super) fn server_update_shell_command(
     log_path: &Path,
     cache_dir: &Path,
     release_tag: Option<&str>,
+    config_path: &Path,
 ) -> String {
     [
+        format!(
+            "NODELITE_VERIFY_ATTESTATIONS={}",
+            shell_quote(
+                &std::env::var("NODELITE_VERIFY_ATTESTATIONS").unwrap_or_else(|_| "0".into())
+            )
+        ),
+        format!(
+            "NODELITE_SERVER_CONFIG_PATH={}",
+            shell_quote(&config_path.display().to_string())
+        ),
         format!(
             "NODELITE_UPDATE_LOG={}",
             shell_quote(&log_path.display().to_string())
@@ -272,7 +323,8 @@ mod tests {
     #[test]
     fn server_update_paths_stay_under_install_root_plus_required_system_dirs() {
         let config = sample_server_config();
-        let paths = server_update_writable_paths(&config);
+        let paths =
+            server_update_writable_paths(&config, Path::new("/opt/nodelite/config/server.toml"));
         let install_root = server_update_install_root(&config);
 
         assert!(paths.contains(&PathBuf::from("/opt/nodelite")));
@@ -283,11 +335,14 @@ mod tests {
         assert!(is_writable_paths_subset_of_install_root(
             &paths,
             &install_root,
+            Path::new("/opt/nodelite/config/server.toml"),
+            &config,
         ));
     }
 
     #[test]
     fn server_update_paths_reject_parent_dir_and_unapproved_roots() {
+        let config = sample_server_config();
         let install_root = Path::new("/opt/nodelite");
         let invalid_root = vec![
             PathBuf::from("/opt/nodelite/data"),
@@ -296,12 +351,47 @@ mod tests {
         assert!(!is_writable_paths_subset_of_install_root(
             &invalid_root,
             install_root,
+            Path::new("/opt/nodelite/config/server.toml"),
+            &config,
         ));
 
         let parent_dir_escape = vec![PathBuf::from("/usr/local/bin/../etc")];
         assert!(!is_writable_paths_subset_of_install_root(
             &parent_dir_escape,
             install_root,
+            Path::new("/opt/nodelite/config/server.toml"),
+            &config,
+        ));
+    }
+
+    #[test]
+    fn custom_config_and_data_layout_has_only_explicit_writable_directories() {
+        let mut config = sample_server_config();
+        config.node_registry_path = PathBuf::from("/etc/nodelite/server.json");
+        config.snapshot_path = PathBuf::from("/var/lib/nodelite/snapshot.json");
+        config.history_db_path = PathBuf::from("/var/lib/nodelite/history.sqlite3");
+        let config_path = Path::new("/etc/nodelite/server.toml");
+        let paths = server_update_writable_paths(&config, config_path);
+        assert!(paths.contains(&PathBuf::from("/etc/nodelite")));
+        assert!(paths.contains(&PathBuf::from("/var/lib/nodelite")));
+        assert!(!paths.contains(&PathBuf::from("/")));
+        assert!(is_writable_paths_subset_of_install_root(
+            &paths,
+            Path::new("/"),
+            config_path,
+            &config
+        ));
+        assert!(!is_writable_paths_subset_of_install_root(
+            &[PathBuf::from("/")],
+            Path::new("/"),
+            config_path,
+            &config
+        ));
+        assert!(!is_writable_paths_subset_of_install_root(
+            &[PathBuf::from("/etc")],
+            Path::new("/"),
+            config_path,
+            &config
         ));
     }
 
@@ -310,7 +400,12 @@ mod tests {
         let config = sample_server_config();
         let log_path = Path::new("/tmp/nodelite-update.log");
         let cache_dir = server_update_cache_dir(&config);
-        let command = server_update_shell_command(log_path, &cache_dir, None);
+        let command = server_update_shell_command(
+            log_path,
+            &cache_dir,
+            None,
+            Path::new("/opt/nodelite/config/server.toml"),
+        );
 
         assert!(command.contains("umask 077"));
         assert!(

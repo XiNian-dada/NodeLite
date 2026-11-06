@@ -38,6 +38,7 @@ for item in (path, *path.parents):
     --proto '=https,http' --proto-redir '=https' "$BASE_URL/$enrollment_asset" -o "$SIGNED_STAGE/package.tar.gz" ||
     fail 'this release has no available signed enrollment package; the existing Agent was not changed'
   [ "$(calculate_sha256 "$SIGNED_STAGE/package.tar.gz")" = "$EXPECTED_SHA256" ] || fail 'enrollment package checksum mismatch'
+  verify_release_attestation "$SIGNED_STAGE/package.tar.gz" "$VERSION" || fail 'enrollment package provenance verification failed'
   /usr/bin/python3 -I - "$SIGNED_STAGE" <<'PY'
 import pathlib, sys, tarfile
 stage = pathlib.Path(sys.argv[1])

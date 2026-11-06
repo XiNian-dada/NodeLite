@@ -15,6 +15,7 @@ mod security;
 mod step_up;
 mod subprocess;
 mod types;
+mod update_lock;
 mod updates;
 
 pub(crate) use agent_delete::delete_agent;

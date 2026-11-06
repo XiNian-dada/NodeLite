@@ -129,6 +129,9 @@ jobs:
       - name: Test verified web update bootstrap
         run: sh scripts/test-server-web-update.sh
 
+      - name: Test release attestations
+        run: python3 scripts/test-release-attestations.py
+
       - name: Test release checksum manifest
         run: sh scripts/test-release-checksums.sh
 

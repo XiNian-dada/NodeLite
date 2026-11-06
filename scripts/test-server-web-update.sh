@@ -251,3 +251,33 @@ for signal_case in HUP:129 INT:130 TERM:143; do
   fi
 done
 unset FAKE_CURL_SIGNAL
+
+# Attestation failure must stop before downloaded code executes.
+cat > "$FAKE_BIN/gh" <<'EOF'
+#!/bin/sh
+exit "${FAKE_GH_EXIT:-0}"
+EOF
+chmod 0700 "$FAKE_BIN/gh"
+NODELITE_VERIFY_ATTESTATIONS=1
+FAKE_GH_EXIT=1
+export NODELITE_VERIFY_ATTESTATIONS FAKE_GH_EXIT
+rm -f "$MARKER_PATH"
+capture_bootstrap_status
+assert_status 1
+assert_installer_did_not_run
+grep -F 'installer provenance verification failed' "$LOG_PATH" >/dev/null
+FAKE_GH_EXIT=0
+export FAKE_GH_EXIT
+run_bootstrap
+[ -e "$MARKER_PATH" ]
+unset NODELITE_VERIFY_ATTESTATIONS FAKE_GH_EXIT
+
+# A second bootstrap cannot truncate the first log or start downloads.
+cp "$LOG_PATH" "$TEST_ROOT/first-update.log"
+(
+  exec 8>>"$LOG_PATH.lock"
+  flock -n 8
+  capture_bootstrap_status
+  assert_status 75
+)
+cmp "$LOG_PATH" "$TEST_ROOT/first-update.log"

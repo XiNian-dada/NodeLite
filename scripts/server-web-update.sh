@@ -75,6 +75,24 @@ run_secure_curl() {
   return "$command_status"
 }
 
+verify_release_attestation() {
+  case "${NODELITE_VERIFY_ATTESTATIONS:-0}" in
+    0) return 0 ;;
+    1) ;;
+    *) printf '%s\n' 'NODELITE_VERIFY_ATTESTATIONS must be 0 or 1' >&2; return 1 ;;
+  esac
+  case "$2" in
+    ""|*[!A-Za-z0-9._+-]*) printf '%s\n' 'attestation verification requires an explicit release tag' >&2; return 1 ;;
+  esac
+  command -v gh >/dev/null 2>&1 || { printf '%s\n' 'attestation verification requires GitHub CLI (gh)' >&2; return 1; }
+  gh attestation verify "$1" \
+    --repo XiNian-dada/NodeLite \
+    --signer-workflow XiNian-dada/NodeLite/.github/workflows/release.yml \
+    --source-ref "refs/tags/$2" \
+    --cert-oidc-issuer https://token.actions.githubusercontent.com \
+    --deny-self-hosted-runners
+}
+
 calculate_sha256() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | sed 's/[[:space:]].*$//'
@@ -92,7 +110,11 @@ trap 'handle_signal HUP 129' HUP
 trap 'handle_signal INT 130' INT
 trap 'handle_signal TERM 143' TERM
 
-: >"$log" || exit 1
+# 锁先于日志与下载，锁文件保持原 inode，退出时由内核释放。
+exec 8>>"$log.lock" || exit 1
+flock -n 8 || exit 75
+# 每次追加完整的开始/结束标记，保留前次升级诊断。
+: >>"$log" || exit 1
 printf '%s\n' "nodelite-update: started at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$log"
 mkdir -p "$cache_dir" || fail_update "failed to create private update cache"
 chmod 0700 "$cache_dir" || fail_update "failed to secure private update cache"
@@ -215,8 +237,11 @@ if [ "$actual_sha256" != "$expected_sha256" ]; then
 fi
 printf '%s\n' "nodelite-update: installer sha256=$actual_sha256 verified" >>"$log"
 
+verify_release_attestation "$tmp_script" "$target_tag" >>"$log" 2>&1 || fail_update "installer provenance verification failed"
 chmod 0700 "$tmp_script" || fail_update "failed to make verified installer executable"
 printf '%s\n' "nodelite-update: running verified installer in upgrade mode" >>"$log"
+NODELITE_SERVER_CONFIG_PATH="${NODELITE_SERVER_CONFIG_PATH:-}" \
+NODELITE_VERIFY_ATTESTATIONS="${NODELITE_VERIFY_ATTESTATIONS:-0}" \
 NODELITE_SERVER_VERSION="$target_tag" \
 NODELITE_SERVER_BASE_URL="$asset_base_url" \
 NODELITE_SERVER_MODE=upgrade \
