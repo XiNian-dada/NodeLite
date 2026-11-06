@@ -40,6 +40,8 @@ CONFIG_DIR="/etc/nodelite"
 MODE="${NODELITE_AGENT_MODE:-auto}"
 SIGNED_UPDATES=0
 WEB_UPDATES=0
+ENROLLMENT_SHA256="${NODELITE_ENROLLMENT_SHA256:-}"
+SIGNED_HELPER_SHA256="${NODELITE_SIGNED_HELPER_SHA256:-}"
 SIGNED_STAGE=""
 # Pin binaries, helpers and enrollment assets to the same release.
 VERSION="${NODELITE_AGENT_VERSION:-}"
@@ -634,6 +636,8 @@ while [ "$#" -gt 0 ]; do
     --disable-traffic-control) TRAFFIC_CONTROL=0; shift ;;
     --enable-signed-updates) SIGNED_UPDATES=1; shift ;;
     --enable-web-updates) SIGNED_UPDATES=1; WEB_UPDATES=1; shift ;;
+    --enrollment-sha256) need_value "$@"; ENROLLMENT_SHA256="$2"; shift 2 ;;
+    --signed-helper-sha256) need_value "$@"; SIGNED_HELPER_SHA256="$2"; shift 2 ;;
     --insecure-allow-http) INSECURE_HTTP=1; shift ;;
     --mode) need_value "$@"; MODE="$2"; shift 2 ;;
     --base-url) need_value "$@"; BASE_URL="$2"; shift 2 ;;
@@ -657,6 +661,8 @@ Optional:
   --disable-traffic-control
   --enable-signed-updates (optional Linux/systemd signed migration)
   --enable-web-updates (explicitly allow web-triggered signed updates; includes signed migration)
+  --enrollment-sha256 <independently trusted enrollment archive SHA256>
+  --signed-helper-sha256 <independently trusted install-agent-signed.sh SHA256>
   --mode <install|upgrade|auto>
   --base-url <release-base-url>
   --checksums-url <release-checksums-url>
@@ -715,6 +721,14 @@ fi
 select_release_target "$(uname -m)"
 ARTIFACT_NAME="nodelite-agent-$TARGET"
 
+if [ "$SIGNED_UPDATES" -eq 1 ]; then
+  [ -n "$VERSION" ] || fail 'signed enrollment requires NODELITE_AGENT_VERSION pinned to a reviewed release'
+  for pin in "$ENROLLMENT_SHA256" "$SIGNED_HELPER_SHA256"; do
+    [ "${#pin}" -eq 64 ] && ! printf '%s' "$pin" | grep -q '[^0-9a-f]' ||
+      fail 'signed enrollment requires independently trusted --enrollment-sha256 and --signed-helper-sha256 pins'
+  done
+fi
+
 if [ -n "$BINARY_URL" ]; then
   DOWNLOAD_URL="$BINARY_URL"
 else
@@ -755,6 +769,7 @@ if [ "$SIGNED_UPDATES" -eq 1 ]; then
   fetch_expected_sha256 install-agent-signed.sh
   fetch_bounded 1048576 60 "$BASE_URL/install-agent-signed.sh" "$TMP_PATH" || fail 'failed to fetch signed installer helper'
   [ "$(calculate_sha256 "$TMP_PATH")" = "$EXPECTED_SHA256" ] || fail 'signed installer helper checksum mismatch'
+  [ "$EXPECTED_SHA256" = "$SIGNED_HELPER_SHA256" ] || fail 'signed installer helper differs from the independently trusted pin'
   verify_release_attestation "$TMP_PATH" "$VERSION" || fail 'signed installer helper provenance verification failed'
   # shellcheck source=scripts/install-agent-signed.sh
   . "$TMP_PATH"
