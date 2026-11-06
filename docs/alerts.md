@@ -32,7 +32,7 @@ send_resolved = true
 ```
 
 - **SMTP**：支持 STARTTLS。
-- **Webhook**：向 `url` POST 一个 JSON 对象（包含事件类型、规则、节点和读数）。接收方需要能处理这个格式；Telegram、Slack 等服务通常需要一个中间转换层。企业微信群机器人地址（`qyapi.weixin.qq.com/cgi-bin/webhook/send`）会自动使用企业微信的文本消息格式，并检查返回的 `errcode`。
+- **Webhook**：向 `url` POST 一个 JSON 对象（包含事件类型、规则、节点和读数）。接收方需要能处理这个格式；Telegram、Discord、Slack 等服务通常需要一个中间转换层。企业微信群机器人地址（`qyapi.weixin.qq.com/cgi-bin/webhook/send`）会自动使用企业微信的文本消息格式，并检查返回的 `errcode`。
 - 每个渠道独立记录投递结果：一个渠道失败时只重试这个渠道，其他渠道不会重复收到；告警恢复时，恢复通知发给收到过触发通知的渠道。
 
 ## 规则
@@ -83,3 +83,25 @@ latency_warn_ms = 250
 cpu_warn_percent = 85
 memory_warn_percent = 90
 ```
+
+## 自定义 Webhook 请求契约
+
+普通 Webhook 收到 UTF-8 JSON（`Content-Type: application/json`）；触发/恢复通知示例：
+
+```json
+{
+  "version": 1,
+  "source": "nodelite",
+  "event": "triggered",
+  "occurred_at": "2026-11-06T00:00:00Z",
+  "rule": { "id": "cpu-hot", "name": "CPU high", "severity": "warning" },
+  "node": { "id": "example-node", "label": "Example" },
+  "reading": { "metric": "cpu_usage_percent", "value": 90, "threshold": 85 }
+}
+```
+
+`event` 为 `triggered` 或 `resolved`；无读数时 `reading` 为 `null`。巡检使用
+`event: "inspection_summary"`，并提供 `local_date`、`lookback_hours`、`totals` 和
+`highlights`。配置 `secret` 后，以请求原始 body 的 HMAC-SHA256 验证
+`X-NodeLite-Signature: sha256=<hex>`。接收端应返回 2xx；企业微信原生适配还要求
+JSON 回复的 `errcode` 为 0。其他平台的机器人格式需要接收端桥接转换。

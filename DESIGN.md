@@ -1,137 +1,38 @@
-# 性能优化 #1: 浏览器 WebSocket 集中 diff 广播
+# 浏览器 WebSocket 集中 diff 广播
 
-## 当前瓶颈
+本文描述当前实现。早期每个浏览器独立重算 diff 的方案已由集中后台任务替代；
+早期 200 节点、约 4 个浏览器的观测属于历史基准，不能作为当前性能结果。
 
-`ws/browser.rs` 当前为每个浏览器连接独立订阅脏信号、重算节点列表、执行 diff。
-在 N 节点、M 浏览器连接场景下，每秒产生：
-- **M × list_node_summaries** 调用 → M 次 registry RwLock 读锁竞争 + M×N 次克隆
-- **M × diff_node_lists** 计算 → M×O(N) 遍历 + HashMap 构建
-- **M × overview_snapshot** 调用 → M 次聚合统计重算
+## 数据流
 
-报告实测(200 节点、~4 浏览器)：4 连接共发出 ~40 upserts/s，单次节点变化被 diff 4 次。
+`SharedState` 的节点 revision 与脏信号触发 `state/browser_broadcast.rs` 中的
+`spawn_browser_incremental_task`。后台任务按 UI 刷新间隔合并变更，每批只生成一次
+节点列表、diff 和概览；序列化的帧由 `Arc` 共享并广播给浏览器会话。
 
-## 优化方案
-
-**集中广播架构**：用单个后台任务订阅脏信号，每秒最多一次执行 diff，把增量消息
-广播到专用 channel；各浏览器会话订阅该 channel，直接转发收到的消息(零锁、零 diff)。
-
-```
-[SharedState 脏信号]
-       ↓
-[集中 diff 任务] ← 1× list_node_summaries (去抖 1s)
-       ↓ diff_node_lists → Vec<BrowserIncrementalUpdate>
-[broadcast channel: 带 revision 的增量消息]
-    /     |      \
- [会话1] [会话2] [会话3] ← 直接转发,无锁无 diff
+```text
+节点变更 → revision / 脏信号 → 集中 diff 任务 → 共享序列化批次
+                                                    ↓
+                                        ws/browser.rs 的各浏览器会话
 ```
 
-收益：
-- 锁竞争 O(M) → O(1)
-- diff 计算 O(M×N) → O(N)
-- 概览重算 O(M) → O(1)
+`ws/browser.rs` 负责转发批次、心跳与连接生命周期，不再逐连接计算节点 diff。
+增量通道容量为 4 个批次，已被所有订阅者读取的批次可以释放；慢会话最多保留
+有限批次，落后时通过 `InitialState` 重同步。
 
-## 实现步骤
+## 快照与 revision
 
-### 1. 在 `state.rs` 中新增增量广播 channel
+连接建立和 `Lagged` 重同步复用单飞构建的全量帧。缓存只有在 revision 不早于
+最近已发布的增量且仍在新鲜度窗口内时才可复用。全量帧携带其节点 revision
+baseline；会话丢弃 `revision <= baseline` 的排队增量，避免旧批次覆盖较新快照。
 
-```rust
-pub(crate) struct BrowserIncrementalUpdate {
-    revision: u64,
-    message: Arc<BrowserMessage>,
-}
+无订阅者时后台任务跳过 diff 并释放基线与全量帧。任务使用弱引用，最后一个
+`SharedState` 释放后退出。发送大型批次时会话仍处理 Ping、Close 和发送超时。
 
-pub(crate) struct SharedState {
-    // ... existing fields
-    /// 集中 diff 任务广播的增量消息,各浏览器会话订阅后直接转发(零锁、零 diff)。
-    browser_incremental_tx: broadcast::Sender<BrowserIncrementalUpdate>,
-}
+## 验证与取舍
 
-impl SharedState {
-    pub(crate) fn subscribe_browser_incremental(&self) -> broadcast::Receiver<BrowserIncrementalUpdate> {
-        self.browser_incremental_tx.subscribe()
-    }
-}
-```
+Rust 单元及浏览器 WebSocket 集成测试覆盖全量、增量、离线、重同步、revision、
+心跳和未认证拒绝。性能与内存的测量方法见 [历史查询矩阵](docs/history-query-matrix.md)
+和 [基准记录](docs/benchmarks.md)；测量结果仅适用于各记录标明的环境。
 
-容量设为 256(每节点变化 1 条 upsert + 1 条 overview，200 节点峰值 ~400 条/秒 ÷ 4 浏览器 = 每连接 100/s，1秒窗口 buffer 足够)。
-
-### 2. 启动集中 diff 后台任务
-
-在 `SharedState::new` 中 `tokio::spawn` 后台任务：
-- 订阅 `subscribe_browser_updates()` 脏信号
-- 去抖(1秒 interval)
-- 每次 dirty tick:
-  1. `list_node_summaries` 一次
-  2. `diff_node_lists(&last_snapshot, &current)`
-  3. 在同一个 registry 读锁窗口内记录当前 `nodes_revision`
-  4. 把增量(`NodeUpsert`/`NodeRemoved`)+ `OverviewUpdate` 预序列化后合成一条 `BrowserIncrementalUpdate`(每 tick 只占一个通道槽位)
-  5. `browser_incremental_tx.send(update)` 广播
-
-**生命周期**：任务持有 `SharedState` weak ref，在最后一个 `SharedState` drop 时自然结束(脏信号 channel 关闭 → task 退出)。
-
-### 3. 改造 `run_browser_session` 订阅增量 channel
-
-删除会话内的：
-- `subscribe_browser_updates()` 订阅
-- `last_nodes` 快照维护
-- `diff_node_lists` 调用
-- `push_incremental_updates` 重算
-
-新逻辑：
-```rust
-let mut incremental_rx = shared.subscribe_browser_incremental();
-let mut baseline_revision = send_initial_state(&shared, &mut sender).await?;
-loop {
-    tokio::select! {
-        incoming = receiver.next() => { /* handle client messages */ }
-        incremental = incremental_rx.recv() => {
-            match incremental {
-                Ok(update) if update.revision > baseline_revision => {
-                    // 逐帧转发 update.frames(已预序列化,所有会话共享)
-                }
-                Ok(_) => {}
-                Err(RecvError::Lagged(_)) => {
-                    // 落后 → 重发全量 InitialState
-                    baseline_revision = send_initial_state(&shared, &mut sender).await?;
-                }
-                Err(RecvError::Closed) => return Ok(()),
-            }
-        }
-    }
-}
-```
-
-去抖 interval 删除(集中任务已去抖)；客户端 Ping/Pong 保持不变。
-
-### 4. `InitialState` 共享单份全量帧
-
-连接建立或 `Lagged` 时发送全量 `InitialState`。全量帧由 `browser_initial_state_frame` 单飞构建并缓存：
-只有缓存 revision 不早于最后一批已发布增量、且不超过 1 秒时才复用，因此每个 tick 最多构建一次全量。
-不能只按 revision 相等复用，高频上报下 revision 每几毫秒变化一次，缓存永远不会命中。
-后续增量统一从集中任务接收。无订阅者时 tick 跳过 diff，并释放基线与全量帧。
-增量通道容量为 4：所有订阅者读过或退订后批次即被释放，只有停滞的会话才会驻留，上限为 4 个批次。
-`InitialState` 会返回本次全量快照对应的 `nodes_revision` baseline。会话只转发
-`revision > baseline` 的增量，丢弃已排队但不晚于 baseline 的旧 diff，避免旧增量在
-`InitialState` 后到达并覆盖新快照。`Lagged` 重同步也刷新同一个 baseline。
-
-## 测试验证
-
-**行为不变性**由既有测试保障：
-- 12 条 `browser.rs` 单测(diff/分类逻辑未变)
-- 7 条集成测试(InitialState、upsert、变化、离线、静默期、ping/pong、未认证拒绝)
-
-**性能验证**(手动，不入 CI)：
-- 用负载测试工具建立 10+ 浏览器连接，观察服务端 CPU 与锁竞争指标
-- 预期：高并发下 registry RwLock 读锁等待时间显著下降
-
-## 风险与权衡
-
-- **broadcast channel 容量**：256 足够覆盖 1 秒窗口的峰值流量；若超出，慢连接收到 `Lagged` 后重发 `InitialState` 强制重同步(与当前行为一致)
-- **InitialState / 增量竞态**：服务端用 `nodes_revision` 作为快照 baseline，而非依赖时间戳或 drain。旧 revision 的排队增量会被丢弃，晚于 baseline 的增量继续转发。
-- **内存开销**：每条消息 `Arc` 共享(零拷贝)，总开销 < 当前逐连接克隆 `Vec<NodeListItem>`
-- **单点故障**：集中任务 panic → 所有浏览器连接失去增量推送；用 `catch_unwind` 或让任务自然退出(连接超时后客户端重连)
-
-## 后续优化空间
-
-- 若 200+ 节点时 `list_node_summaries` 克隆仍是瓶颈 → 引入 Copy-on-Write `im::Vector` 或 `Arc<Vec>`
-- 若增量广播 channel 成为竞争点 → 按连接 shard 到多个 channel(暂无必要，单 channel 可支撑数千订阅者)
+集中计算将重复 diff 从每浏览器一次减少为每批一次；共享帧减少复制，但慢连接
+仍占用有界的批次内存。广播落后时重新发送全量会增加瞬时流量，这是恢复一致性的取舍。
