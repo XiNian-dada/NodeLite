@@ -12,7 +12,7 @@ relative_links:
   enabled: true
   collections: false
 
-logo: /assets/brand-logo-light.webp
+logo: /assets/brand-logo-light.svg
 favicon_ico: /assets/brand-icon-light.svg
 search_enabled: true
 heading_anchors: true

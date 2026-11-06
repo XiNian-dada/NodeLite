@@ -1,7 +1,8 @@
 # 离线签名与静态发布仓库
 
-本工具供发布管理员使用，不在 Agent、Server 或网页内运行。尚未配置生产密钥、生产更新源
-或官方发布自动化；实验密钥不得转为生产密钥。首次迁移见
+本工具供发布管理员使用，不在 Agent、Server 或网页内运行。官方 GitHub 更新源现已配置
+`v3.1.0-rc.1` 的 Linux `testing` 通道及在线续签；启用方法和初始密钥保管情况见
+[GitHub 更新说明](../../docs/github-agent-updates.md)。实验密钥不得转为生产密钥。首次迁移见
 [迁移说明](../nodelite_migrate/README.md)。
 
 ## 目录与代码职责
