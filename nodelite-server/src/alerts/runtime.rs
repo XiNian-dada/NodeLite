@@ -19,7 +19,7 @@ use crate::state::SharedState;
 use super::delivery_metrics::{DELIVERY_QUEUE_CAPACITY, DELIVERY_RESULT_CAPACITY};
 use dispatcher::{CompletedDelivery, DeliverySender, delivery_channel, spawn_delivery_dispatcher};
 use drain::drain_delivery_dispatcher;
-use window::evaluate_alert_rules_with_history;
+pub(crate) use window::evaluate_alert_rules_with_history;
 
 mod dispatcher;
 mod drain;
@@ -305,7 +305,16 @@ async fn build_inspection_history_analysis(
                         / bucket_seconds) as usize;
                     let index = index.min(bucket_count.saturating_sub(1));
                     buckets[index].record(&point);
-                    history_highlight.record(&point, inspection);
+                }
+                match history.query_history_peaks(&node_id, since, now).await {
+                    Ok(peaks) => {
+                        for point in peaks {
+                            history_highlight.record(&point, inspection);
+                        }
+                    }
+                    Err(error) => {
+                        warn!(node_id = %node_id, error = ?error, "failed to load inspection peaks")
+                    }
                 }
                 if let Some(highlight) = history_highlight.finish(inspection) {
                     highlights.push(highlight);

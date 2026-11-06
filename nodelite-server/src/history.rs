@@ -14,6 +14,7 @@
 mod cache;
 mod diagnostics;
 mod init;
+mod peaks;
 mod query;
 mod query_limit;
 #[cfg(test)]

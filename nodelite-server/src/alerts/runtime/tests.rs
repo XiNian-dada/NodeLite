@@ -670,3 +670,53 @@ fn inspection_requires_enabled_delivery_channel() {
     config.webhook.enabled = true;
     assert!(should_check_inspection(&config));
 }
+
+#[tokio::test]
+async fn inspection_highlight_preserves_short_sample_peak_and_its_time() {
+    let dir = std::env::temp_dir().join(format!(
+        "nodelite-inspection-peak-{}",
+        Utc::now().timestamp_nanos_opt().expect("timestamp")
+    ));
+    let path = dir.join("history.sqlite");
+    let store = crate::history::HistoryStore::new(path.clone(), 1, 2, 512);
+    store.initialize().await;
+    assert!(store.is_available());
+    let connection = rusqlite::Connection::open(&path).expect("database");
+    let now = Utc::now();
+    let start = now - Duration::minutes(24);
+    for i in 0..60 {
+        connection.execute("INSERT INTO history_points(node_id, recorded_at, cpu_usage_percent, memory_used_percent, latency_ms) VALUES ('hk-01', ?1, ?2, 50, 20)", rusqlite::params![(start + Duration::seconds(i)).timestamp(), if i == 30 { 99.0 } else { 1.0 }]).expect("sample");
+    }
+    drop(connection);
+    let averages = store
+        .query_history_range("hk-01", start, now, 24)
+        .await
+        .expect("averages");
+    assert!(
+        averages
+            .iter()
+            .all(|point| point.cpu_usage_percent.is_none_or(|cpu| cpu < 85.0))
+    );
+    let mut builder = HistoryHighlightBuilder::new("hk-01".into(), "Hong Kong".into());
+    let inspection = InspectionConfig::default();
+    for point in store
+        .query_history_peaks("hk-01", start, now)
+        .await
+        .expect("peaks")
+    {
+        builder.record(&point, &inspection);
+    }
+    let highlight = builder.finish(&inspection).expect("short spike highlight");
+    let cpu = highlight
+        .events
+        .iter()
+        .find(|event| event.summary.contains("CPU peaked at 99%"))
+        .expect("CPU peak");
+    assert_eq!(
+        cpu.occurred_at.timestamp(),
+        (start + Duration::seconds(30)).timestamp()
+    );
+    store.shutdown().await;
+    drop(store);
+    std::fs::remove_dir_all(dir).expect("remove fixtures");
+}
