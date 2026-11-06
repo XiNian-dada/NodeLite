@@ -256,6 +256,19 @@ describe('WsClient', () => {
       expect(handler).toHaveBeenCalledWith(msg);
     });
 
+    it('does not dispatch a partially valid initial state', async () => {
+      server = new WS(wsUrl);
+      client = new WsClient(wsUrl, logger);
+      const handler = vi.fn();
+      client.on('initial_state', handler);
+      client.connect();
+      await server.connected;
+      server.send(JSON.stringify({ type: 'initial_state', generated_at: 'now', overview: {}, nodes: [null] }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(handler).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith('Ignoring invalid WebSocket browser message');
+    });
+
     it('ignores malformed JSON without dispatching handlers', async () => {
       server = new WS(wsUrl);
       client = new WsClient(wsUrl, logger);
@@ -468,6 +481,34 @@ describe('WsClient', () => {
   });
 
   describe('visibility handling', () => {
+    it('cancels a scheduled reconnect and a connecting socket while hidden', async () => {
+      vi.useFakeTimers();
+      server = new WS(wsUrl);
+      client = new WsClient(wsUrl, logger);
+      client.connect();
+      await vi.advanceTimersByTimeAsync(100);
+      await server.connected;
+      server.close();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(client.getState().kind).toBe('reconnecting');
+      Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+      server = new WS(wsUrl);
+      await vi.advanceTimersByTimeAsync(35_000);
+      expect(client.getState().kind).toBe('idle');
+      expect(client['ws']).toBeNull();
+      client.connect();
+      expect(client['ws']).toBeNull();
+      Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+      document.dispatchEvent(new Event('visibilitychange'));
+      expect(client.getState().kind).toBe('connecting');
+      Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(100);
+      expect(client['ws']).toBeNull();
+      expect(client.getState().kind).toBe('idle');
+    });
+
     it('closes connection and stays idle when tab becomes hidden', async () => {
       server = new WS(wsUrl);
       client = new WsClient(wsUrl, logger);
