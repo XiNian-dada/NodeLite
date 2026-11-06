@@ -123,7 +123,7 @@ pub struct HistoryStore {
     /// 节点 → 上一次成功节流通过的时间。每次 record_status 只做一次
     /// lock 往返(check + enqueue + 乐观更新),guard 不跨越任何 await/spawn_blocking,
     /// 因此与 SQLite I/O 解耦。
-    last_written_at: Arc<Mutex<HashMap<String, DateTime<Utc>>>>,
+    last_written_at: Arc<Mutex<HashMap<String, Instant>>>,
     /// 最近一次执行清理删除的 Unix 时间戳(0 = 从未)。Writer task 内部更新,
     /// 用 AtomicI64 避免再多一把 mutex。
     last_pruned_at: Arc<AtomicI64>,
@@ -433,31 +433,25 @@ impl HistoryStore {
         // 单次 mutex 往返完成"节流检查 + enqueue + 更新水位"。
         // 检查在 build_point 之前,被节流的心跳(常态路径)不付出构造样本的成本;
         // guard 跨越的全部是同步操作,不会把锁持有期拖进任何 await。
-        let recorded_at = status.last_seen.unwrap_or_else(Utc::now);
+        let now = Instant::now();
         let mut throttle = self.last_written_at.lock().await;
-        if let Some(previous) = throttle.get(status.identity.node_id.as_str()) {
-            let Ok(elapsed) = recorded_at
-                .signed_duration_since(previous.to_owned())
-                .to_std()
-            else {
-                return;
-            };
-            if elapsed < Duration::from_secs(DEFAULT_HISTORY_WRITE_INTERVAL_SECS) {
-                return;
-            }
+        if let Some(previous) = throttle.get(status.identity.node_id.as_str())
+            && now.duration_since(*previous)
+                < Duration::from_secs(DEFAULT_HISTORY_WRITE_INTERVAL_SECS)
+        {
+            return;
         }
 
         let Some(point) = build_point(status) else {
             return;
         };
         let node_id = point.node_id.clone();
-        let recorded_at = point.recorded_at;
 
         // try_send 在 channel 满时立即失败,这里宁可丢一条样本
         // 也不要让 WS 处理路径被反压;丢弃由 dropped_writes 计数提示运维。
         match try_enqueue(&tx, point) {
             Ok(()) => {
-                throttle.insert(node_id, recorded_at);
+                throttle.insert(node_id, now);
             }
             Err(QueueSendError::Full) => {
                 let dropped_total = record_dropped_write(&self.dropped_writes);

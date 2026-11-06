@@ -8,7 +8,9 @@ mod middleware;
 mod passkeys;
 mod two_factor;
 
-pub(crate) use healthz::{healthz, readyz};
+#[cfg(test)]
+pub(crate) use healthz::readyz_diagnostics;
+pub(crate) use healthz::{authenticated_readyz_diagnostics, healthz, readyz};
 pub(crate) use last_login::last_login;
 pub(crate) use middleware::require_readonly_auth;
 pub(crate) use passkeys::{finish_passkey_authentication, start_passkey_authentication};

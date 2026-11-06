@@ -441,7 +441,7 @@ impl SharedState {
     pub(crate) async fn metrics_text(&self, readiness: &ServerReadiness) -> Bytes {
         let revision = self.metrics_revision.load(Ordering::Acquire);
         let readiness_snapshot = ReadinessSnapshot::capture(readiness);
-        let max_age = Duration::from_secs(self.config.refresh_interval_secs.max(1));
+        let max_age = Duration::from_secs(self.config.refresh_interval_secs.clamp(1, 5));
 
         {
             let cache = self.metrics_cache.lock().await;

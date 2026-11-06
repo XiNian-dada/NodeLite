@@ -50,6 +50,9 @@ pub(super) fn build_overview_from_iter<'a>(
         };
         total_rx_bytes = total_rx_bytes.saturating_add(snapshot.network.total_rx_bytes);
         total_tx_bytes = total_tx_bytes.saturating_add(snapshot.network.total_tx_bytes);
+        if !status.online {
+            continue;
+        }
         if let Some(rx) = snapshot.network.rx_bytes_per_sec {
             current_rx_bytes_per_sec = sum_finite_f64(current_rx_bytes_per_sec, rx);
         }
@@ -171,7 +174,12 @@ mod tests {
                 Some(120),
                 Some(snapshot(10, 20, Some(1.5), Some(2.5))),
             ),
-            status("hk-02", false, Some(999), None),
+            status(
+                "hk-02",
+                false,
+                Some(999),
+                Some(snapshot(100, 200, Some(1000.0), Some(2000.0))),
+            ),
             status(
                 "hk-03",
                 true,
@@ -184,8 +192,8 @@ mod tests {
         assert_eq!(overview.total_nodes, 3);
         assert_eq!(overview.online_nodes, 2);
         assert_eq!(overview.offline_nodes, 1);
-        assert_eq!(overview.total_rx_bytes, 40);
-        assert_eq!(overview.total_tx_bytes, 60);
+        assert_eq!(overview.total_rx_bytes, 140);
+        assert_eq!(overview.total_tx_bytes, 260);
         assert_eq!(overview.current_rx_bytes_per_sec, 5.0);
         assert_eq!(overview.current_tx_bytes_per_sec, 7.0);
         assert_eq!(overview.average_latency_ms, Some(90.0));

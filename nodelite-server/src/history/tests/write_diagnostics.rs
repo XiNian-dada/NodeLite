@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use super::*;
 use crate::AppState;
-use crate::handlers::{metrics, readyz};
+use crate::handlers::{metrics, readyz_diagnostics};
 use crate::test_support::test_server_config;
 
 #[tokio::test]
@@ -105,7 +105,7 @@ async fn wait_for(
 }
 
 async fn diagnostics(state: &AppState) -> Value {
-    let response = readyz(State(state.clone())).await;
+    let response = readyz_diagnostics(State(state.clone())).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
