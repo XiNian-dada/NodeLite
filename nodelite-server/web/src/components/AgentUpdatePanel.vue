@@ -16,6 +16,9 @@ const loadError = ref('');
 const error = computed(() => requestError.value || loadError.value);
 const busy = ref(false);
 const confirming = ref(false);
+const localBusy = computed(
+  () => view.value?.status.capability === 'disabled' && view.value.status.reason === 'busy',
+);
 const progress = computed(
   () =>
     view.value &&
@@ -24,7 +27,7 @@ const progress = computed(
     ),
 );
 const explanation = computed(() => {
-  if (!view.value) return '';
+  if (!view.value || localBusy.value) return '';
   if (view.value.status.reason) return t(`agent_update.reason.${view.value.status.reason}`);
   if (!view.value.online) return t('agent_update.offline');
   if (!view.value.can_update && !progress.value) return t('agent_update.cooldown');
@@ -104,9 +107,11 @@ async function upgrade(): Promise<void> {
             role="status"
             aria-live="polite"
             data-test="agent-update-phase"
-            :data-phase="view.status.phase"
+            :data-phase="localBusy ? 'local_busy' : view.status.phase"
           >
-            {{ t(`agent_update.phase.${view.status.phase}`) }}
+            {{
+              t(localBusy ? 'agent_update.reason.busy' : `agent_update.phase.${view.status.phase}`)
+            }}
           </dd>
         </div>
       </dl>

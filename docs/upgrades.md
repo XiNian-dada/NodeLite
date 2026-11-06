@@ -32,12 +32,14 @@ curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/inst
 
 ## 可选：签名自动更新
 
-默认是上面的手动升级。Linux/systemd 节点可以改用签名更新器 [nodelite-updater](https://github.com/XiNian-dada/NodeLite/blob/main/nodelite-updater/README.md)，只需开启一次：
+默认是上面的手动升级。Linux/systemd 节点可以改用签名更新器 [nodelite-updater](https://github.com/XiNian-dada/NodeLite/blob/main/nodelite-updater/README.md)。首次开启需要维护者完成签名源部署并发布同版本迁移包。
 
-```bash
-curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/install-agent.sh | \
-  sudo sh -s -- --mode upgrade --enable-signed-updates
-```
+从独立可信的发布审批渠道取得适合节点架构的 `enable-web-updates-<target>.sh` 和摘要记录，
+核对版本、root、URL 和完整归档摘要后执行。该脚本先校验外层 installer，再传入固定的
+`NODELITE_AGENT_VERSION`、`--signed-helper-sha256` 和 `--enrollment-sha256`。
+如果只启用本地签名升级，把脚本中的 `--enable-web-updates` 改为 `--enable-signed-updates`。
+不要从 `latest` 下载后直接执行首次迁移，也不要把同一下载站的 SHA256 清单当作独立信任。
+维护者组包步骤见 [发布工具说明](https://github.com/XiNian-dada/NodeLite/blob/main/tools/nodelite_release/README.md)。
 
 之后照常执行 `--mode upgrade`，已迁移的节点会走本机签名策略。
 
@@ -48,11 +50,11 @@ curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/inst
 
 ## 可选：从面板升级 Agent
 
-在节点上用 `--enable-web-updates` 开启一次（包含签名迁移）：
+新节点按上面的经过独立审批的安装脚本启用。已经完成签名迁移、仅需允许网页触发的节点，
+可以在本机执行已安装且经过校验的恢复入口，完成一次本地签名升级并启用网页触发：
 
 ```bash
-curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/install-agent.sh | \
-  sudo sh -s -- --mode upgrade --enable-web-updates
+sudo python3 -I /usr/local/lib/nodelite-operator/recover.py --upgrade --enable-web-updates
 ```
 
 开启后可以在设置页或节点详情中发起升级。面板只发送触发信号，不能指定脚本、下载地址或安装路径；验签、切换和回滚仍由受限的更新器完成。操作需要二次确认，同一节点两次请求至少间隔 5 分钟。

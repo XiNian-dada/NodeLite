@@ -39,7 +39,7 @@ pub(crate) fn validate(state: &Journal) -> Result<()> {
 }
 
 pub(crate) fn snapshot(state: &mut Journal) {
-    let status = status(state);
+    let status = result_status(state);
     // Preserve the completed result even when a later local upgrade starts another transaction.
     if let Some(update) = &mut state.remote_update {
         update.status = status;
@@ -78,7 +78,7 @@ pub(crate) fn bind(state: &mut Journal, to: &Artifact) {
     }
 }
 
-pub(crate) fn status(state: &Journal) -> AgentUpdateStatus {
+fn result_status(state: &Journal) -> AgentUpdateStatus {
     let mut status = state
         .remote_update
         .as_ref()
@@ -102,6 +102,7 @@ pub(crate) fn status(state: &Journal) -> AgentUpdateStatus {
     if let Some(update) = &state.remote_update
         && let Some(transaction) = &state.transaction
         && update.target.as_deref() == Some(transaction.to.digest.as_str())
+        && update.status.target_sequence == Some(transaction.to.sequence)
     {
         status.phase = match state.phase {
             Phase::Prepared => UpdatePhase::Prepared,
@@ -114,11 +115,26 @@ pub(crate) fn status(state: &Journal) -> AgentUpdateStatus {
             Phase::Stable => status.phase,
         };
     }
+    status
+}
+
+pub(crate) fn status(state: &Journal) -> AgentUpdateStatus {
+    let mut status = result_status(state);
+    // Availability describes the current transaction, independently of the last web request.
+    status.capability = Capability::Ready;
+    let owns_transaction = state
+        .remote_update
+        .as_ref()
+        .zip(state.transaction.as_ref())
+        .is_some_and(|(update, transaction)| {
+            update.target.as_deref() == Some(transaction.to.digest.as_str())
+                && update.status.target_sequence == Some(transaction.to.sequence)
+        });
     if state.phase == Phase::ManualRecovery {
         status.capability = Capability::ManualRecovery;
         status.phase = UpdatePhase::ManualRecovery;
         status.reason = Some(Reason::ManualRecovery);
-    } else if state.remote_update.is_none() && !state.phase.terminal() {
+    } else if !state.phase.terminal() && !owns_transaction {
         status.capability = Capability::Disabled;
         status.reason = Some(Reason::Busy);
     }
@@ -269,6 +285,69 @@ mod tests {
         )
         .expect("state");
         (dir, store, policy, state)
+    }
+
+    #[test]
+    fn local_transactions_stay_busy_after_a_completed_remote_request() {
+        let (_dir, store, mut policy, mut state) = state();
+        policy.allow_remote_updates = true;
+        accept(
+            &mut state,
+            AgentUpdateRequest {
+                request_id: "f".repeat(32),
+                issued_at: 100,
+                expires_at: 160,
+            },
+            &policy,
+            100,
+        )
+        .expect("accept web update");
+        let previous = state.remote_update.as_mut().expect("previous web update");
+        previous.status.phase = UpdatePhase::Failed;
+        previous.status.reason = Some(Reason::UpdateFailed);
+        previous.status.target_sequence = Some(2);
+        previous.target = Some("a".repeat(64));
+        // Even identical code republished under a new sequence is a different local transaction.
+        for digest in ["a", "b"] {
+            state.transaction = Some(crate::state::Transaction {
+                from: state.installed.clone(),
+                to: Artifact {
+                    digest: digest.repeat(64),
+                    sequence: 3,
+                },
+                boot: "test-boot".into(),
+                deadline_ms: 1000,
+                old_invocation: "0".repeat(32),
+                bridge_exit: String::new(),
+                rollback_consumed: false,
+                recovery_requested: false,
+                stable_since_ms: None,
+                stable_sample_ms: None,
+                stable_invocation: None,
+            });
+            for phase in [
+                Phase::Prepared,
+                Phase::Stopping,
+                Phase::Trial,
+                Phase::RollbackIntent,
+            ] {
+                state.phase = phase;
+                assert_eq!(status(&state).capability, Capability::Disabled);
+                assert_eq!(status(&state).reason, Some(Reason::Busy));
+                store.save(&state).expect("persist local progress");
+                state = serde_json::from_slice(
+                    &crate::fs::read(&store.private().join("journal.json"), 65536)
+                        .expect("read progress"),
+                )
+                .expect("reload progress");
+            }
+            state.phase = Phase::Committed;
+            let result = status(&state);
+            assert_eq!(result.capability, Capability::Ready);
+            assert_eq!(result.phase, UpdatePhase::Failed);
+            assert_eq!(result.reason, Some(Reason::UpdateFailed));
+            assert_eq!(result.next_request_at, 400);
+        }
     }
 
     #[test]
