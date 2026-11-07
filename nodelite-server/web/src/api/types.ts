@@ -313,6 +313,7 @@ export interface AgentUpdateView {
   online: boolean;
   agent_version: string;
   can_update: boolean;
+  status_reported: boolean;
   status: {
     capability: 'ready' | 'disabled' | 'unsupported' | 'manual_recovery';
     phase: AgentUpdatePhase;

@@ -29,6 +29,7 @@ struct AgentUpdateView {
     online: bool,
     agent_version: String,
     can_update: bool,
+    status_reported: bool,
     status: AgentUpdateStatus,
 }
 
@@ -43,11 +44,12 @@ pub(crate) async fn agent_update(
     let Some(node) = state.shared.get_status(&node_id).await else {
         return settings_json_error(StatusCode::NOT_FOUND, "node not found");
     };
-    let (status, can_update) = state.agent_updates.view(&node_id, now());
+    let (status, can_update, status_reported) = state.agent_updates.view(&node_id, now());
     Json(AgentUpdateView {
         online: node.online,
         agent_version: node.identity.agent_version,
         can_update: can_update && node.online,
+        status_reported,
         status,
     })
     .into_response()

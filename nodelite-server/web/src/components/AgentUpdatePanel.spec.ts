@@ -13,6 +13,7 @@ function view(phase: AgentUpdateView['status']['phase'] = 'idle'): AgentUpdateVi
     online: true,
     agent_version: '3.0.5-test.1',
     can_update: phase === 'idle',
+    status_reported: true,
     status: {
       capability: 'ready',
       phase,
@@ -28,13 +29,11 @@ function view(phase: AgentUpdateView['status']['phase'] = 'idle'): AgentUpdateVi
 }
 
 const wrappers: VueWrapper[] = [];
-async function panel() {
+async function panel(locale = 'zh-CN') {
   const wrapper = mount(AgentUpdatePanel, {
     props: { nodeId: 'hk' },
     global: {
-      plugins: [
-        createI18n({ legacy: false, locale: 'zh-CN', flatJson: true, messages: dictionary }),
-      ],
+      plugins: [createI18n({ legacy: false, locale, flatJson: true, messages: dictionary })],
       stubs: { NativeDialog: { template: '<div><slot /></div>' } },
     },
   });
@@ -53,6 +52,79 @@ describe('AgentUpdatePanel', () => {
   afterEach(() => {
     wrappers.splice(0).forEach((wrapper) => wrapper.unmount());
     vi.useRealTimers();
+  });
+
+  it.each([
+    ['ready', null, 'enabled', '已启用'],
+    ['ready', 'rate_limited', 'enabled', '已启用'],
+    ['ready', 'update_failed', 'enabled', '已启用'],
+    ['disabled', 'busy', 'enabled', '已启用'],
+    ['disabled', 'not_enrolled', 'not_enabled', '未启用'],
+    ['disabled', 'disabled_by_policy', 'not_enabled', '未启用'],
+    ['unsupported', 'unsupported_environment', 'unsupported', '不支持'],
+    ['disabled', 'unsupported_environment', 'unsupported', '不支持'],
+    ['disabled', 'local_state_invalid', 'needs_attention', '需要检查'],
+    ['manual_recovery', 'manual_recovery', 'needs_attention', '需要检查'],
+    ['disabled', 'manual_recovery', 'needs_attention', '需要检查'],
+    ['disabled', null, 'unknown', '暂时无法确认'],
+  ] as const)(
+    'shows enrollment for %s/%s independently of button availability',
+    async (capability, reason, state, label) => {
+      const result = view();
+      result.can_update = false;
+      result.status.capability = capability;
+      result.status.reason = reason;
+      vi.mocked(apiClient.agentUpdate).mockResolvedValue(result);
+      const wrapper = await panel();
+      const badge = wrapper.get('[data-test="agent-update-enrollment"]');
+      expect(badge.attributes('data-enrollment')).toBe(state);
+      expect(badge.text()).toBe(label);
+      expect(wrapper.find('[data-test="agent-update-enable-help"]').exists()).toBe(
+        state === 'not_enabled',
+      );
+    },
+  );
+
+  it('does not treat the server default or a previous connection report as confirmed enrollment', async () => {
+    const unreported = view();
+    unreported.status_reported = false;
+    unreported.can_update = false;
+    unreported.status.capability = 'disabled';
+    unreported.status.reason = 'not_enrolled';
+    vi.mocked(apiClient.agentUpdate).mockResolvedValue(unreported);
+    const wrapper = await panel();
+    expect(wrapper.get('[data-test="agent-update-enrollment"]').text()).toBe('暂时无法确认');
+    expect(wrapper.get('[data-test="agent-update-reason"]').text()).toContain('等待 Agent 上报');
+    expect(wrapper.get('[data-test="agent-update-enable-help"]').attributes('href')).toBe(
+      'https://xinian-dada.github.io/NodeLite/upgrades.html',
+    );
+    unreported.status.capability = 'ready';
+    unreported.status.reason = null;
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(wrapper.get('[data-test="agent-update-enrollment"]').text()).toBe('暂时无法确认');
+    vi.mocked(apiClient.agentUpdate).mockResolvedValue(view());
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(wrapper.get('[data-test="agent-update-enrollment"]').text()).toBe('已启用');
+  });
+
+  it('updates the badge when the node enables web updates', async () => {
+    const disabled = view();
+    disabled.can_update = false;
+    disabled.status.capability = 'disabled';
+    disabled.status.reason = 'disabled_by_policy';
+    vi.mocked(apiClient.agentUpdate).mockResolvedValue(disabled);
+    const wrapper = await panel();
+    expect(wrapper.get('[data-test="agent-update-enrollment"]').text()).toBe('未启用');
+    vi.mocked(apiClient.agentUpdate).mockResolvedValue(view());
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(wrapper.get('[data-test="agent-update-enrollment"]').text()).toBe('已启用');
+    expect(wrapper.find('[data-test="agent-update-enable-help"]').exists()).toBe(false);
+  });
+
+  it('shows the enrollment label in English', async () => {
+    const wrapper = await panel('en');
+    expect(wrapper.get('[data-test="agent-update-enrollment"]').text()).toBe('Enabled');
+    expect(wrapper.text()).toContain('Web updates');
   });
 
   it('requires explicit confirmation and never treats an accepted request as success', async () => {
@@ -95,6 +167,7 @@ describe('AgentUpdatePanel', () => {
     vi.mocked(apiClient.agentUpdate).mockResolvedValueOnce(trial);
     const wrapper = await panel();
     expect(wrapper.text()).toContain('等待重连');
+    expect(wrapper.get('[data-test="agent-update-enrollment"]').text()).toBe('暂时无法确认');
     expect(wrapper.get('[data-test="agent-update-phase"]').attributes('data-phase')).toBe('trial');
     const committed = view('committed');
     committed.agent_version = '3.0.5-test.2';
@@ -122,12 +195,14 @@ describe('AgentUpdatePanel', () => {
     vi.mocked(apiClient.agentUpdate).mockRejectedValueOnce(new Error('status unavailable'));
     await vi.advanceTimersByTimeAsync(2000);
     expect(wrapper.get('[data-test="agent-update-error"]').text()).toContain('status unavailable');
+    expect(wrapper.get('[data-test="agent-update-enrollment"]').text()).toBe('暂时无法确认');
     expect(wrapper.get('[data-test="agent-update-phase"]').attributes('data-phase')).toBe('idle');
     expect(
       wrapper.get<HTMLButtonElement>('[data-test="agent-update-start"]').element.disabled,
     ).toBe(true);
     await vi.advanceTimersByTimeAsync(2000);
     expect(wrapper.find('[data-test="agent-update-error"]').exists()).toBe(false);
+    expect(wrapper.get('[data-test="agent-update-enrollment"]').text()).toBe('已启用');
     expect(
       wrapper.get<HTMLButtonElement>('[data-test="agent-update-start"]').element.disabled,
     ).toBe(false);
@@ -173,6 +248,7 @@ describe('AgentUpdatePanel', () => {
     );
     const wrapper = await panel();
     expect(wrapper.text()).toContain('等待数据');
+    expect(wrapper.get('[data-test="agent-update-enrollment"]').text()).toBe('暂时无法确认');
     expect(wrapper.find('[data-test="agent-update-version"]').exists()).toBe(false);
     const next = view();
     next.agent_version = '3.0.5-next-node';

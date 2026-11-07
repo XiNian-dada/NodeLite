@@ -19,6 +19,20 @@ const confirming = ref(false);
 const localBusy = computed(
   () => view.value?.status.capability === 'disabled' && view.value.status.reason === 'busy',
 );
+const enrollment = computed(() => {
+  if (!view.value?.online || !view.value.status_reported || loadError.value) return 'unknown';
+  const { capability, reason } = view.value.status;
+  if (
+    capability === 'manual_recovery' ||
+    reason === 'manual_recovery' ||
+    reason === 'local_state_invalid'
+  )
+    return 'needs_attention';
+  if (capability === 'unsupported' || reason === 'unsupported_environment') return 'unsupported';
+  if (reason === 'not_enrolled' || reason === 'disabled_by_policy') return 'not_enabled';
+  if (capability === 'ready' || localBusy.value) return 'enabled';
+  return 'unknown';
+});
 const progress = computed(
   () =>
     view.value &&
@@ -28,8 +42,9 @@ const progress = computed(
 );
 const explanation = computed(() => {
   if (!view.value || localBusy.value) return '';
-  if (view.value.status.reason) return t(`agent_update.reason.${view.value.status.reason}`);
   if (!view.value.online) return t('agent_update.offline');
+  if (!view.value.status_reported) return t('agent_update.enrollment.no_report');
+  if (view.value.status.reason) return t(`agent_update.reason.${view.value.status.reason}`);
   if (!view.value.can_update && !progress.value) return t('agent_update.cooldown');
   return '';
 });
@@ -91,6 +106,25 @@ async function upgrade(): Promise<void> {
       <h2 class="card-title">{{ t('agent_update.title') }}</h2>
     </header>
     <p class="agent-update__hint">{{ t('agent_update.hint') }}</p>
+    <div class="agent-update__enrollment" role="status" aria-live="polite">
+      <span>{{ t('agent_update.enrollment') }}</span>
+      <strong
+        class="agent-update__badge"
+        data-test="agent-update-enrollment"
+        :data-enrollment="enrollment"
+      >
+        {{ t(`agent_update.enrollment.${enrollment}`) }}
+      </strong>
+    </div>
+    <a
+      v-if="enrollment === 'not_enabled' || (view?.online && !view.status_reported)"
+      href="https://xinian-dada.github.io/NodeLite/upgrades.html"
+      target="_blank"
+      rel="noopener noreferrer"
+      data-test="agent-update-enable-help"
+    >
+      {{ t('agent_update.enrollment.help') }}
+    </a>
     <template v-if="view">
       <dl class="agent-update__details">
         <div>
@@ -178,6 +212,28 @@ async function upgrade(): Promise<void> {
   display: grid;
   gap: 0.75rem;
   margin: 0;
+}
+.agent-update__enrollment {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.agent-update__badge {
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: var(--bg-card-soft);
+  text-align: center;
+}
+.agent-update__badge[data-enrollment='enabled'] {
+  color: var(--accent-green);
+  background: var(--accent-green-soft);
+}
+.agent-update__badge[data-enrollment='not_enabled'],
+.agent-update__badge[data-enrollment='needs_attention'] {
+  color: var(--accent-yellow);
+  background: var(--accent-yellow-soft);
 }
 .agent-update__details > div {
   display: flex;
