@@ -97,10 +97,11 @@ impl AgentUpdates {
         }
     }
 
-    pub(crate) fn view(&self, node_id: &str, now: u64) -> (AgentUpdateStatus, bool) {
+    pub(crate) fn view(&self, node_id: &str, now: u64) -> (AgentUpdateStatus, bool, bool) {
         let unavailable = || {
             (
                 AgentUpdateStatus::unavailable(Capability::Disabled, Reason::NotEnrolled),
+                false,
                 false,
             )
         };
@@ -132,7 +133,7 @@ impl AgentUpdates {
             && status.capability == Capability::Ready
             && now >= status.next_request_at
             && !status.phase.in_progress();
-        (status, ready)
+        (status, ready, entry.reported)
     }
 
     pub(crate) fn reserve(
@@ -204,10 +205,13 @@ mod tests {
     #[test]
     fn capability_requires_a_current_session_and_pending_jobs_survive_reconnect() {
         let updates = AgentUpdates::default();
+        assert!(!updates.view("node", 100).2);
         updates.begin("node", 1);
         assert!(!updates.view("node", 100).1);
+        assert!(!updates.view("node", 100).2);
         updates.record("node", 1, ready());
         assert!(updates.view("node", 100).1);
+        assert!(updates.view("node", 100).2);
         let request = AgentUpdateRequest {
             request_id: "a".repeat(32),
             issued_at: 100,
@@ -222,12 +226,14 @@ mod tests {
         updates.begin("node", 2);
         updates.end("node", 1);
         updates.record("node", 1, ready());
+        assert!(!updates.view("node", 100).2);
         assert_eq!(updates.view("node", 100).0.phase, Phase::Queued);
         assert_eq!(updates.view("node", 160).0.phase, Phase::Unknown);
         let mut committed = ready();
         committed.request_id = Some("a".repeat(32));
         committed.phase = Phase::Committed;
         updates.record("node", 2, committed);
+        assert!(updates.view("node", 170).2);
         assert_eq!(updates.view("node", 170).0.phase, Phase::Committed);
         assert!(!updates.view("node", 170).1);
     }
@@ -254,6 +260,27 @@ mod tests {
         assert_eq!(updates.view("node", 100).0.phase, Phase::Queued);
         updates.forget("node");
         assert!(!updates.view("node", 100).1);
+        assert!(!updates.view("node", 100).2);
+    }
+
+    #[test]
+    fn disabled_reports_are_distinct_from_an_unreported_session() {
+        let updates = AgentUpdates::default();
+        updates.begin("node", 1);
+        assert!(!updates.view("node", 100).2);
+        updates.record(
+            "node",
+            1,
+            AgentUpdateStatus::unavailable(Capability::Disabled, Reason::NotEnrolled),
+        );
+        let (status, can_update, reported) = updates.view("node", 100);
+        assert_eq!(status.reason, Some(Reason::NotEnrolled));
+        assert!(!can_update);
+        assert!(reported);
+        updates.end("node", 1);
+        assert!(updates.view("node", 100).2);
+        updates.begin("node", 2);
+        assert!(!updates.view("node", 100).2);
     }
 
     #[test]
