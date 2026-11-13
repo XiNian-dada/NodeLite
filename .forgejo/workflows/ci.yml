@@ -195,8 +195,8 @@ jobs:
         path: nodelite-server/web/dist
     - name: Set up Rust MSRV
       run: |
-        rustup toolchain install 1.88.0 --profile minimal
-        rustup default 1.88.0
+        rustup toolchain install 1.89.0 --profile minimal
+        rustup default 1.89.0
     - name: Cache Cargo dependencies and build outputs
       uses: https://data.forgejo.org/actions/cache@f4b3439a656ba812b8cb417d2d49f9c810103092
       with:
