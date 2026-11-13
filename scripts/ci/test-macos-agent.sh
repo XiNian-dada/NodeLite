@@ -32,11 +32,15 @@ for target in x86_64-apple-darwin aarch64-apple-darwin; do
   cargo +1.93.1 build --locked --release -p nodelite-agent --target "$target"
   binary="$CARGO_TARGET_DIR/$target/release/nodelite-agent"
   description=$(file -b "$binary")
-  case "$target:$description" in
-    x86_64-apple-darwin:Mach-O\ 64-bit\ x86_64\ executable*) ;;
-    aarch64-apple-darwin:Mach-O\ 64-bit\ arm64\ executable*) ;;
-    *) printf 'Unexpected target binary: %s: %s\n' "$target" "$description" >&2; exit 1 ;;
+  case "$description" in
+    Mach-O\ 64-bit*executable*) ;;
+    *) printf 'Unexpected binary format: %s\n' "$description" >&2; exit 1 ;;
   esac
+  case "$target" in
+    x86_64-apple-darwin) expected_arch=x86_64 ;;
+    aarch64-apple-darwin) expected_arch=arm64 ;;
+  esac
+  [ "$(xcrun lipo -archs "$binary")" = "$expected_arch" ]
   printf '%s: %s\n' "$target" "$description" | tee -a dist/macos-native/BUILD_INFO.txt
   xcrun vtool -show-build "$binary" | tee -a dist/macos-native/BUILD_INFO.txt
   install -m 0755 "$binary" "dist/macos-native/nodelite-agent-$target"
