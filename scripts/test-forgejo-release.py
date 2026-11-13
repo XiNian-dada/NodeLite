@@ -59,6 +59,7 @@ class ReleaseTests(unittest.TestCase):
         self.directory = Path(self.temp.name)
         names = [f"nodelite-{binary}-{target}" for binary in ["server", "agent", "updater"]
                  for target in ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]]
+        names += [f"nodelite-agent-{target}" for target in ["x86_64-apple-darwin", "aarch64-apple-darwin"]]
         names += ["install-server.sh", "install-server-config.sh", "install-server-upgrade.sh",
                   "install-agent.sh", "install-agent-signed.sh", "THIRD_PARTY_NOTICES.md"]
         names += [f"nodelite-{binary}.cdx.json" for binary in ["proto", "server", "agent", "updater"]]
@@ -81,7 +82,7 @@ class ReleaseTests(unittest.TestCase):
         client = FakeClient()
         self.publish(client)
         self.assertTrue(client.published)
-        self.assertEqual(len(client.assets), 18)
+        self.assertEqual(len(client.assets), 20)
 
     def test_corruption_is_rejected_before_draft_creation(self):
         client = FakeClient()
@@ -113,8 +114,16 @@ class ReleaseTests(unittest.TestCase):
             self.publish(FakeClient())
         self.manifest()
         (self.directory / "unrelated.txt").write_text("preserve")
-        with self.assertRaisesRegex(ValueError, "exact Linux"):
+        with self.assertRaisesRegex(ValueError, "exact release"):
             self.publish(FakeClient())
+
+    def test_missing_macos_binary_blocks_publication_even_with_consistent_manifest(self):
+        (self.directory / "nodelite-agent-aarch64-apple-darwin").unlink()
+        self.manifest()
+        client = FakeClient()
+        with self.assertRaisesRegex(ValueError, "exact release"):
+            self.publish(client)
+        self.assertFalse(client.created)
 
     def test_token_cannot_be_redirected_to_another_origin(self):
         self.assertIsNone(publisher.NoRedirect().redirect_request(None, None, 302, "", {}, "https://other.example"))

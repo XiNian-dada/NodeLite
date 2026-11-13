@@ -52,13 +52,14 @@ class Client:
 def check_assets(directory, tag, commit, repository, server):
     targets = ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]
     names = {f"nodelite-{binary}-{target}" for binary in ["server", "agent", "updater"] for target in targets}
+    names |= {f"nodelite-agent-{target}" for target in ["x86_64-apple-darwin", "aarch64-apple-darwin"]}
     names |= {"install-server.sh", "install-server-config.sh", "install-server-upgrade.sh",
               "install-agent.sh", "install-agent-signed.sh", "THIRD_PARTY_NOTICES.md", "BUILD_INFO.json"}
     names |= {f"nodelite-{binary}.cdx.json" for binary in ["server", "agent", "proto", "updater"]}
     if any(not p.is_file() or p.is_symlink() for p in directory.iterdir()):
         raise ValueError("release directory must contain only regular files")
     if {p.name for p in directory.iterdir()} != names | {"SHA256SUMS.txt"}:
-        raise ValueError("release directory does not contain the exact Linux asset set")
+        raise ValueError("release directory does not contain the exact release asset set")
     hashes = {}
     for line in (directory / "SHA256SUMS.txt").read_text().splitlines():
         match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9_.-]+)", line)
@@ -96,7 +97,7 @@ def publish(client, directory, tag, commit, repository, server):
         release = client.request("POST", "/releases", {
             "tag_name": tag, "target_commitish": commit, "name": f"NodeLite {tag}",
             "draft": True, "prerelease": "-" in tag,
-            "body": f"Source commit: `{commit}`\n\nLinux x86_64/aarch64 musl binaries, installers, SBOM and SHA256SUMS.txt.\n"
+            "body": f"Source commit: `{commit}`\n\nLinux x86_64/aarch64 musl binaries, macOS Intel/ARM64 Agents, installers, SBOM and SHA256SUMS.txt.\n"
                     "BUILD_INFO.json is a build source record, not a signed attestation.\n"
                     "Default GitHub installer/update URLs and signed Agent enrollment remain separate.",
         })

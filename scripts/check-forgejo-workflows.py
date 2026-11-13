@@ -12,7 +12,7 @@ workflows = root / ".forgejo/workflows"
 expected = {"ci.yml", "coverage.yml", "release.yml", "pages.yml"}
 assert {p.name for p in workflows.glob("*.yml")} == expected
 assert not list((root / ".github/workflows").glob("*.yml")), "legacy workflows would run twice"
-assert "apple-darwin" not in (workflows / "ci.yml").read_text(), "macOS jobs are disabled"
+
 for path in sorted(workflows.glob("*.yml")):
     data = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
     assert "on" in data and data["jobs"], path
@@ -28,7 +28,8 @@ for path in sorted(workflows.glob("*.yml")):
         assert all(n in jobs for n in needs), (path, job_id, needs)
         image = job.get("container", {}).get("image")
         if image:
-            assert image == "nodelite-ci:20261113-v2", image
+            expected_image = "nodelite-macos-cross:20261113-v1" if job_id in {"agent-macos-cross", "build-agent-macos"} else "nodelite-ci:20261113-v2"
+            assert image == expected_image, image
         assert not job.get("container", {}).get("options"), "Runner controls container capabilities"
         names = [step.get("name", "") for step in job["steps"]]
         if any("pnpm " in step.get("run", "") for step in job["steps"]):
@@ -64,3 +65,11 @@ pages = (workflows / "pages.yml").read_text()
 assert "NODELITE_ONLINE_PRIVATE_KEY" not in pages and "schedule:" not in pages
 assert "deploy-pages" not in pages and 'test ! -d "$RUNNER_TEMP/nodelite-site/updates"' in pages
 print("Forgejo workflow dependencies, pinned Actions, shell syntax and publishing boundaries passed")
+
+ci = yaml.load((workflows / "ci.yml").read_text(), Loader=yaml.BaseLoader)
+release_jobs = yaml.load(release, Loader=yaml.BaseLoader)["jobs"]
+assert "build-agent-macos" in release_jobs["release"]["needs"]
+assert ci["jobs"]["agent-macos-cross"]["runs-on"] == "mainland"
+for target in ["x86_64-apple-darwin", "aarch64-apple-darwin"]:
+    assert target in (root / "scripts/ci/build-macos-agent.sh").read_text()
+    assert f"release-agent-macos/nodelite-agent-{target}" in release

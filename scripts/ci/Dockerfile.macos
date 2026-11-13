@@ -1,0 +1,14 @@
+# Keep the SDK private in the compiler's local Docker daemon.
+FROM nodelite-ci:20261113-v2
+ARG SDK_SHA256
+COPY MacOSX26.5.sdk.tar.gz /tmp/MacOSX26.5.sdk.tar.gz
+RUN test -n "$SDK_SHA256" && \
+    echo "$SDK_SHA256  /tmp/MacOSX26.5.sdk.tar.gz" | sha256sum -c - && \
+    mkdir -p /opt/macos && tar -xzf /tmp/MacOSX26.5.sdk.tar.gz -C /opt/macos && \
+    rm /tmp/MacOSX26.5.sdk.tar.gz
+RUN python3 -m venv /opt/macos-cross && \
+    /opt/macos-cross/bin/pip install --only-binary=:all: \
+    cargo-zigbuild==0.24.1 ziglang==0.13.0
+ENV PATH=/opt/macos-cross/bin:$PATH
+ENV SDKROOT=/opt/macos/MacOSX.sdk
+RUN rustup target add --toolchain 1.93.1 x86_64-apple-darwin aarch64-apple-darwin
