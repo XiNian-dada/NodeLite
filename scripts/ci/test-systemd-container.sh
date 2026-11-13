@@ -3,7 +3,8 @@
 set -euo pipefail
 binary=$(realpath "$1")
 root=$(cd "$(dirname "$0")/../.." && pwd)
-report="${RUNNER_TEMP:-/tmp}/systemd-report"
+report=/var/lib/nodelite-ci-report
+artifact_report="${RUNNER_TEMP:-/tmp}/systemd-report"
 mkdir -p "$report"
 [ "$(id -u)" -eq 0 ]
 [ -f /.dockerenv ] || { echo 'Run only in the dedicated disposable Docker job' >&2; exit 1; }
@@ -32,8 +33,8 @@ export NO_PROXY=localhost,127.0.0.1
 export no_proxy=localhost,127.0.0.1
 finish() {
   result=$?
-  journalctl --sync
-  journalctl --no-pager >"$NODELITE_TEST_REPORT/journal.log"
+  journalctl --sync || true
+  journalctl --no-pager >"$NODELITE_TEST_REPORT/journal.log" || true
   printf '%s\n' "$result" >"$NODELITE_TEST_REPORT/exit-code"
   systemctl --no-block exit "$result"
 }
@@ -56,6 +57,8 @@ timeout --signal=TERM --kill-after=10s 600s \
   ' >"$report/systemd.log" 2>&1
 status=$?
 set -e
+mkdir -p "$artifact_report"
+cp -a "$report/." "$artifact_report/"
 cat "$report/systemd.log"
 cat "$report/journal.log" 2>/dev/null || true
 [ "$status" -eq 0 ] && [ "$(cat "$report/exit-code" 2>/dev/null)" = 0 ] || exit 1

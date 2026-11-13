@@ -19,7 +19,7 @@ nav_order: 15
 
 `mainland-compiler` 是 Linux amd64 Runner。Rust 作业使用编译机上的 `nodelite-ci:20261113-v2` 专用 Debian 13 镜像（构建源见 `scripts/ci/Dockerfile`），Rust 固定为 1.93.1，显式限制 Cargo 编译并发为 2。前端依赖仍由现有 pnpm lockfile 固定，Actions 引用固定为完整 commit SHA。制品使用 Forgejo 支持的 v3 协议；musl 交叉编译通过固定版本 cargo-zigbuild 和 Zig 完成，无需向作业开放 Docker socket。
 
-`systemd-acceptance` 使用现有 DinD 内的专用 Docker 作业，通过独立 PID/mount/cgroup 命名空间启动真实 systemd。仅该作业增加 `SYS_ADMIN` 和 `NET_ADMIN` 能力，普通编译作业不变；不使用 privileged 模式、宿主机挂载或 Docker socket。测试结束后容器由 Runner 回收，失败保留日志。macOS CI 已按要求关闭，原配置保存在 `.github/legacy-workflows/ci.yml`；当前 Forgejo Release 不产出 macOS 二进制。
+`systemd-acceptance` 使用仓库专属的 `nodelite-systemd` Runner，在现有 DinD 内启动专用 Docker 作业，通过独立 PID/mount/cgroup 命名空间启动真实 systemd。仅该作业增加 `SYS_ADMIN` 和 `NET_ADMIN` 能力，专属 Runner 并发为 1、每个作业 2 CPU/3 GB，普通编译作业不变；不使用 privileged 模式、宿主机挂载或 Docker socket。测试结束后容器由 Runner 回收，失败保留日志。macOS CI 已按要求关闭，原配置保存在 `.github/legacy-workflows/ci.yml`；当前 Forgejo Release 不产出 macOS 二进制。
 
 Forgejo Release 的 `BUILD_INFO.json` 记录 source commit、tag 和仓库，属于构建记录，不是 GitHub OIDC 签名证明。原安装器的 GitHub attestation 校验保持原有拒绝策略；开启该校验的部署不能用 Forgejo 构建记录替代。安装器和运行中 Server 的默认 GitHub 更新 URL 尚未改变，使用 Forgejo Release 需要另外配置下载源与私有仓库认证。
 

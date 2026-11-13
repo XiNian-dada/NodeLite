@@ -19,8 +19,8 @@ for path in sorted(workflows.glob("*.yml")):
     jobs = data["jobs"]
     for job_id, job in jobs.items():
         runner = job["runs-on"]
-        if runner != "mainland":
-            assert False, (path, job_id, "unavailable Runner")
+        expected_runner = "nodelite-systemd" if job_id == "systemd-acceptance" else "mainland"
+        assert runner == expected_runner, (path, job_id, "unavailable Runner")
         assert int(job["timeout-minutes"]) <= 120
         needs = job.get("needs", [])
         if isinstance(needs, str):
@@ -29,10 +29,7 @@ for path in sorted(workflows.glob("*.yml")):
         image = job.get("container", {}).get("image")
         if image:
             assert image == "nodelite-ci:20261113-v2", image
-        options = job.get("container", {}).get("options", "")
-        if options:
-            assert job_id == "systemd-acceptance"
-            assert options == "--cap-add SYS_ADMIN --cap-add NET_ADMIN --cgroupns private"
+        assert not job.get("container", {}).get("options"), "Runner controls container capabilities"
         names = [step.get("name", "") for step in job["steps"]]
         if any("pnpm " in step.get("run", "") for step in job["steps"]):
             assert "Check provisioned build tools" in names, (path, job_id)

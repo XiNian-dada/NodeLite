@@ -480,10 +480,9 @@ jobs:
       image: nodelite-ci:20261113-v2
   systemd-acceptance:
     name: Real systemd acceptance (Docker)
-    runs-on: mainland
+    runs-on: nodelite-systemd
     container:
       image: nodelite-ci:20261113-v2
-      options: --cap-add SYS_ADMIN --cap-add NET_ADMIN --cgroupns private
     needs:
     - workflow-guards
     timeout-minutes: 45
