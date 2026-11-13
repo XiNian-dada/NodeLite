@@ -13,6 +13,7 @@ nav_order: 15
 | 工作流 | 当前行为 |
 | --- | --- |
 | CI | Rust fmt、clippy、workspace/MSRV 测试、前端 lint/typecheck/单测、浏览器及真实 Server E2E、fuzz smoke、安装器、依赖审计与 musl 交叉编译 |
+| Native macOS Agent CI | 在无头 macOS Intel 客体执行 proto/Agent 单测、Agent clippy、Intel/ARM64 构建与 Intel 实际采集；仅 main push 或手动触发 |
 | Coverage | 保留 75% 行覆盖率门槛，保存 XML/HTML 制品；不再上传 Codecov |
 | Release | 版本 tag 或从对应 tag 手动触发后验证并构建 Linux x86_64/aarch64 musl 的 Server、Agent、Updater、SBOM 和校验清单；上传完整草稿后再发布 Forgejo Release |
 | Documentation site artifact | 构建 Jekyll 文档，生成 `nodelite-docs-site` 制品中的 `nodelite-docs.tar.gz`；尚未部署公开站点 |
@@ -30,3 +31,7 @@ Forgejo Release 的 `BUILD_INFO.json` 记录 source commit、tag 和仓库，属
 源码按 `forgejo.sha` 从 Forgejo API 下载归档，使用同实例的作业 token 和现有 `SOURCE_ARCHIVE_PROXY` 下载路线。编译环境的工具安装不修改 Forgejo 主站容器。
 
 macOS 交叉编译镜像为编译机本地的 `nodelite-macos-cross:20261113-v1`，复用 Rust 1.93.1，固定 cargo-zigbuild 0.24.1 / Zig 0.13.0，并使用本机 Xcode 的 macOS 26.5 SDK。SDK 不进入 Git 或公开镜像仓库。ARM64 产物在当前 Mac 上通过 `--help` 启动检查；这不等同于完整的 macOS 运行测试。
+
+原生 macOS Runner `nodelite-macos` 是仓库专属的 `macos-x64:host` 环境，运行 macOS 14.8.9、SDK 15.2 / clang 16、Rust 1.93.1 与 Node 22.23.2。QEMU/KVM 容器不开放网页或 VNC，只经编译机 loopback SSH 管理；Runner 由 LaunchDaemon 自动启动，无需桌面登录。客体分配 2 vCPU/4 GiB、并发 1，保留系统 Frameworks 以运行真正的 macOS API。Intel 客体不能执行 ARM64 程序，因此 ARM64 仍只验证构建。
+
+Host 作业可以访问专用 CI 账户的持久文件，文件权限不能隔离该账户运行的不可信代码。原生工作流不接收 PR，仅运行受信任的 main push 和手动任务。下载归档仍绑定 `forgejo.sha`，在客体直接访问同一 Forgejo；Cargo 关闭 HTTP 多路复用。每个作业开始前检查至少 6 GiB 空闲，将 target 放在 Runner 临时目录，成功或失败后均清理该次构建输出。SDK、客体磁盘和 Runner 凭据不进入仓库。
