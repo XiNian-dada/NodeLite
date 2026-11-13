@@ -9,7 +9,7 @@ import yaml
 
 root = Path(__file__).resolve().parent.parent
 workflows = root / ".forgejo/workflows"
-expected = {"ci.yml", "coverage.yml", "release.yml", "pages.yml"}
+expected = {"ci.yml", "coverage.yml", "release.yml", "pages.yml", "macos.yml"}
 assert {p.name for p in workflows.glob("*.yml")} == expected
 assert not list((root / ".github/workflows").glob("*.yml")), "legacy workflows would run twice"
 
@@ -19,7 +19,7 @@ for path in sorted(workflows.glob("*.yml")):
     jobs = data["jobs"]
     for job_id, job in jobs.items():
         runner = job["runs-on"]
-        expected_runner = "nodelite-systemd" if job_id == "systemd-acceptance" else "mainland"
+        expected_runner = {"systemd-acceptance": "nodelite-systemd", "agent-macos-native": "macos-x64"}.get(job_id, "mainland")
         assert runner == expected_runner, (path, job_id, "unavailable Runner")
         assert int(job["timeout-minutes"]) <= 120
         needs = job.get("needs", [])
@@ -73,3 +73,12 @@ assert ci["jobs"]["agent-macos-cross"]["runs-on"] == "mainland"
 for target in ["x86_64-apple-darwin", "aarch64-apple-darwin"]:
     assert target in (root / "scripts/ci/build-macos-agent.sh").read_text()
     assert f"release-agent-macos/nodelite-agent-{target}" in release
+
+macos = yaml.load((workflows / "macos.yml").read_text(), Loader=yaml.BaseLoader)
+assert set(macos["on"]) == {"push", "workflow_dispatch"}
+assert macos["on"]["push"]["branches"] == ["main"]
+assert set(macos["jobs"]) == {"agent-macos-native"}
+native = macos["jobs"]["agent-macos-native"]
+assert native["runs-on"] == "macos-x64" and "container" not in native
+assert int(native["timeout-minutes"]) <= 45
+assert any(step.get("if") == "always()" and "cargo +1.93.1 clean" in step.get("run", "") for step in native["steps"])

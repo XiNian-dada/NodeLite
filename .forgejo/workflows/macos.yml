@@ -1,0 +1,61 @@
+name: Native macOS Agent CI
+'on':
+  push:
+    branches:
+    - main
+  workflow_dispatch: null
+jobs:
+  agent-macos-native:
+    name: macOS Agent native tests and builds
+    runs-on: macos-x64
+    timeout-minutes: 45
+    steps:
+    - name: Fetch exact source archive
+      env:
+        FORGEJO_TOKEN: ${{ forgejo.token }}
+        SOURCE_SERVER: ${{ forgejo.server_url }}
+        SOURCE_REPOSITORY: ${{ forgejo.repository }}
+        SOURCE_COMMIT: ${{ forgejo.sha }}
+      working-directory: .
+      run: |
+        set -euo pipefail
+        mkdir -p "$GITHUB_WORKSPACE"
+        printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 30 --max-time 180 --retry 2 --retry-delay 3 --retry-connrefused \
+          --config - --proxy '' \
+          --output "$RUNNER_TEMP/source.tar.gz" \
+          "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
+        tar -xzf "$RUNNER_TEMP/source.tar.gz" --strip-components=1 -C "$GITHUB_WORKSPACE"
+    - name: Run native macOS validation
+      env:
+        SOURCE_COMMIT: ${{ forgejo.sha }}
+      run: bash scripts/ci/test-macos-agent.sh
+    - name: Upload native macOS evidence and binaries
+      uses: https://data.forgejo.org/actions/upload-artifact@c6a3b2bd78b3985e4b2f15397fec357f0fd808de
+      with:
+        name: macos-native-agent
+        path: dist/macos-native/
+        if-no-files-found: error
+        retention-days: 7
+    - name: Remove this job build outputs
+      if: always()
+      run: |
+        set -euo pipefail
+        if [ -d "$RUNNER_TEMP/nodelite-macos-target" ]; then
+          cargo +1.93.1 clean --target-dir "$RUNNER_TEMP/nodelite-macos-target"
+        fi
+        df -h "$RUNNER_TEMP"
+concurrency:
+  group: nodelite-macos-${{ forgejo.ref }}
+  cancel-in-progress: false
+env:
+  CARGO_BUILD_JOBS: '2'
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+  LC_ALL: C
+  LANG: C
+  CI: 'true'
+defaults:
+  run:
+    shell: bash
