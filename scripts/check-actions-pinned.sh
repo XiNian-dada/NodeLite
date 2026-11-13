@@ -3,7 +3,7 @@ set -eu
 
 found=0
 
-for file in .github/workflows/*.yml .github/workflows/*.yaml; do
+for file in .forgejo/workflows/*.yml .forgejo/workflows/*.yaml .github/legacy-workflows/*.yml .github/legacy-workflows/*.yaml; do
   if [ ! -e "$file" ]; then
     continue
   fi
@@ -41,6 +41,6 @@ for file in .github/workflows/*.yml .github/workflows/*.yaml; do
 done
 
 if [ "$found" -ne 0 ]; then
-  printf '%s\n' "GitHub Actions uses must be pinned to full commit SHAs" >&2
+  printf '%s\n' "Actions uses must be pinned to full commit SHAs" >&2
   exit 1
 fi

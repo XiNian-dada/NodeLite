@@ -2,15 +2,16 @@
 
 [简体中文](README.md) | [English](README.en.md)
 
-[![CI](https://github.com/XiNian-dada/NodeLite/actions/workflows/ci.yml/badge.svg)](https://github.com/XiNian-dada/NodeLite/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/XiNian-dada/NodeLite/branch/main/graph/badge.svg)](https://codecov.io/gh/XiNian-dada/NodeLite)
+[![CI](https://akyuu.leeinx.com/XiNian-dada/NodeLite/actions/workflows/ci.yml/badge.svg)](https://akyuu.leeinx.com/XiNian-dada/NodeLite/actions?workflow=ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 # NodeLite
 
 NodeLite 是一个用 Rust 编写的服务器监控面板。每台被监控的机器运行一个 Agent，把指标通过 WebSocket 推送给 Server；Server 保存历史数据、评估告警，并提供内嵌的 Web 面板。
 
-📖 **文档**：<https://xinian-dada.github.io/NodeLite/>
+📖 **文档**：[仓库文档](docs/index.md) · [Forgejo 工作流及迁移状态](docs/forgejo.md)
+
+当前主仓库：[Forgejo](https://akyuu.leeinx.com/XiNian-dada/NodeLite)。文档站点由 Actions 生成下载制品；签名 Agent 更新待凭据和状态恢复后启用。下文 GitHub 安装源仍属于旧发布链路。
 
 ![面板截图](images/zh_cn/dark_home_page.png)
 

@@ -2,15 +2,16 @@
 
 [简体中文](README.md) | [English](README.en.md)
 
-[![CI](https://github.com/XiNian-dada/NodeLite/actions/workflows/ci.yml/badge.svg)](https://github.com/XiNian-dada/NodeLite/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/XiNian-dada/NodeLite/branch/main/graph/badge.svg)](https://codecov.io/gh/XiNian-dada/NodeLite)
+[![CI](https://akyuu.leeinx.com/XiNian-dada/NodeLite/actions/workflows/ci.yml/badge.svg)](https://akyuu.leeinx.com/XiNian-dada/NodeLite/actions?workflow=ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 # NodeLite
 
 NodeLite is a server monitoring dashboard written in Rust. Each monitored machine runs an agent that pushes metrics to the server over WebSocket; the server stores history, evaluates alerts, and serves an embedded web dashboard.
 
-📖 **Documentation** (Chinese): <https://xinian-dada.github.io/NodeLite/>
+📖 **Documentation**: [Repository docs](docs/index.md) · [Forgejo migration status](docs/forgejo.md)
+
+The primary repository is [Forgejo](https://akyuu.leeinx.com/XiNian-dada/NodeLite). Actions builds a downloadable documentation site; signed Agent updates remain paused until keys and state are recovered. GitHub install sources below belong to the former release pipeline.
 
 ![Dashboard screenshot](images/en/dark_home_page.png)
 

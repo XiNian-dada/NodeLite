@@ -1,0 +1,108 @@
+# Migrated for Forgejo; platform limitations are documented in docs/forgejo.md.
+name: Coverage
+'on':
+  push:
+    branches:
+    - main
+  pull_request: null
+  workflow_dispatch: {}
+jobs:
+  web-build:
+    name: Build Web Assets
+    runs-on: mainland
+    defaults:
+      run:
+        working-directory: nodelite-server/web
+    steps:
+    - name: Prepare Debian job dependencies
+      run: |
+        apt-get -o Acquire::Retries=3 update
+        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
+      working-directory: .
+    - name: Check out repository
+      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - name: Set up Node.js
+      uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: 22
+    - name: Install pinned pnpm
+      run: npm install --global pnpm@10.11.0
+    - name: Install dependencies
+      run: pnpm install --frozen-lockfile
+    - name: Build
+      run: pnpm build
+    - name: Upload web dist
+      uses: https://data.forgejo.org/actions/upload-artifact@c6a3b2bd78b3985e4b2f15397fec357f0fd808de
+      with:
+        name: web-dist-coverage
+        path: nodelite-server/web/dist
+        retention-days: 1
+    container:
+      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+    timeout-minutes: 90
+  coverage:
+    name: Test Coverage
+    runs-on: mainland
+    needs:
+    - web-build
+    steps:
+    - name: Prepare Debian job dependencies
+      run: |
+        apt-get -o Acquire::Retries=3 update
+        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
+    - name: Check out repository
+      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - name: Download web dist
+      uses: https://data.forgejo.org/actions/download-artifact@ad191675b41f6a5b46da9a048cb6893812da158b
+      with:
+        name: web-dist-coverage
+        path: nodelite-server/web/dist
+    - name: Set up Rust
+      run: |
+        rustup toolchain install stable --profile minimal
+        rustup default stable
+        rustup component add llvm-tools-preview
+    - name: Cache Cargo dependencies and build outputs
+      uses: https://data.forgejo.org/actions/cache@f4b3439a656ba812b8cb417d2d49f9c810103092
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+          fuzz/target
+        key: nodelite-coverage-coverage-native-${{ hashFiles('**/Cargo.lock') }}
+    - name: Install cargo-llvm-cov
+      run: cargo install cargo-llvm-cov --version 0.9.1 --locked
+    - name: Run coverage
+      env:
+        NODELITE_SKIP_WEB_BUILD: 1
+        RUSTFLAGS: --cfg=tarpaulin
+      run: |
+        cargo llvm-cov --workspace --locked --no-report
+        mkdir -p target/coverage
+        cargo llvm-cov report --cobertura --output-path target/coverage/cobertura.xml --fail-under-lines 75 --ignore-filename-regex 'nodelite-server/src/(load_test|test_support)\.rs'
+        cargo llvm-cov report --html --output-dir target/coverage --ignore-filename-regex 'nodelite-server/src/(load_test|test_support)\.rs'
+    - name: Upload HTML report as artifact
+      if: always()
+      uses: https://data.forgejo.org/actions/upload-artifact@c6a3b2bd78b3985e4b2f15397fec357f0fd808de
+      with:
+        name: coverage-report
+        path: target/coverage/
+        retention-days: 14
+    container:
+      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+    timeout-minutes: 90
+env:
+  CARGO_BUILD_JOBS: '2'
+  CARGO_TERM_COLOR: always
+  CI: 'true'
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: nodelite-coverage-${{ forgejo.ref }}
+  cancel-in-progress: true

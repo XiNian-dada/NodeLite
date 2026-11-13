@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix="nodelite-attest-test-") as directory:
         no_tag = subprocess.run(["sh", "-c", code.replace("candidate v1.2.3", "candidate ''")], env=dict(env, GH_RESULT="0"), capture_output=True)
         assert no_tag.returncode != 0
     assert len(set(functions)) == 1, "standalone verification policy drifted"
-workflow = (root / ".github/workflows/release.yml").read_text()
+workflow = (root / ".github/legacy-workflows/release.yml").read_text()
 assert workflow.index("- name: Attest release asset provenance") < workflow.index("- name: Create or update GitHub release")
 assert "subject-path: publish/*" in workflow
 assert 'if [ "$SOURCE_REF" != "refs/tags/$RELEASE_TAG" ]' in workflow

@@ -1,0 +1,385 @@
+# Migrated for Forgejo; platform limitations are documented in docs/forgejo.md.
+name: Release
+'on':
+  push:
+    tags:
+    - '*.*.*'
+    - v*.*.*
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and publish
+        required: true
+        type: string
+env:
+  RELEASE_TAG: ${{ inputs.tag || forgejo.ref_name }}
+  NODELITE_BUILD_TAG: ${{ inputs.tag || forgejo.ref_name }}
+  CARGO_BUILD_JOBS: '2'
+  CI: 'true'
+jobs:
+  validate:
+    name: Validate release tag
+    runs-on: mainland
+    steps:
+    - name: Prepare Debian job dependencies
+      run: |
+        apt-get -o Acquire::Retries=3 update
+        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
+    - name: Bind provenance to the release tag
+      env:
+        SOURCE_REF: ${{ forgejo.ref }}
+      run: |
+        if [ "$SOURCE_REF" != "refs/tags/$RELEASE_TAG" ]; then
+          echo "::error::Run this workflow from the release tag (workflow_dispatch --ref must match input tag)"
+          exit 1
+        fi
+    - name: Check out repository
+      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        fetch-depth: 0
+        ref: refs/tags/${{ env.RELEASE_TAG }}
+        persist-credentials: false
+    - name: Set up Node.js
+      uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: 22
+    - name: Install pinned pnpm
+      run: npm install --global pnpm@10.11.0
+    - name: Install pinned pnpm
+      run: npm install --global pnpm@10.11.0
+    - name: Install web dependencies
+      working-directory: nodelite-server/web
+      run: pnpm install --frozen-lockfile
+    - name: Audit web dependencies
+      working-directory: nodelite-server/web
+      run: pnpm audit --audit-level high
+    - name: Lint web
+      working-directory: nodelite-server/web
+      run: pnpm lint
+    - name: Type-check web
+      working-directory: nodelite-server/web
+      run: pnpm typecheck
+    - name: Unit test web
+      working-directory: nodelite-server/web
+      run: pnpm test
+    - name: Build web assets
+      working-directory: nodelite-server/web
+      run: pnpm build
+    - name: Guard against bulk inline scripts (CSP)
+      working-directory: nodelite-server/web
+      run: |
+        if perl -ne 'BEGIN{$/=undef} exit 1 if /<script>[^<]{800,}/' dist/index.html; then
+          echo "inline-script guard: ok"
+        else
+          echo "::error::dist/index.html contains an inline <script> longer than 800 chars"
+          exit 1
+        fi
+    - name: Set up Rust
+      run: |
+        rustup toolchain install stable --profile minimal
+        rustup default stable
+        rustup component add clippy rustfmt
+    - name: Cache Cargo dependencies and build outputs
+      uses: https://data.forgejo.org/actions/cache@f4b3439a656ba812b8cb417d2d49f9c810103092
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+          fuzz/target
+        key: nodelite-release-validate-native-${{ hashFiles('**/Cargo.lock') }}
+    - name: Install shellcheck
+      run: |
+        apt-get update
+        apt-get install -y shellcheck
+    - name: Install cargo-audit
+      run: cargo install cargo-audit --version 0.22.2 --locked
+    - name: Install cargo-deny
+      run: cargo install cargo-deny --version 0.19.10 --locked
+    - name: Check formatting
+      run: cargo fmt --all --check
+    - name: Run clippy
+      env:
+        NODELITE_SKIP_WEB_BUILD: 1
+      run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+    - name: Run tests
+      env:
+        NODELITE_SKIP_WEB_BUILD: 1
+      run: tini -s -- cargo test --workspace --locked
+    - name: Shellcheck installers
+      run: shellcheck scripts/install-server.sh scripts/install-server-config.sh scripts/install-server-upgrade.sh
+        scripts/install-agent.sh scripts/install-agent-signed.sh scripts/test-install-agent.sh scripts/server-web-update.sh
+        scripts/merge-release-checksums.sh scripts/test-install-server-summary.sh scripts/test-install-server-modules.sh
+        scripts/test-install-server-config.sh scripts/test-server-web-update.sh scripts/test-release-checksums.sh
+        scripts/check-demo-credentials.sh scripts/check-actions-pinned.sh
+    - name: Test Agent installer
+      run: |
+        sh scripts/test-install-agent.sh
+        python3 scripts/test-agent-enrollment-pins.py -v
+        python3 scripts/test-installer-versions.py -v
+    - name: Test signing and enrollment tooling
+      run: |
+        python3 -m venv "$RUNNER_TEMP/nodelite-operator-tests"
+        "$RUNNER_TEMP/nodelite-operator-tests/bin/pip" install --only-binary=:all: -r tools/nodelite_release/requirements.txt
+        "$RUNNER_TEMP/nodelite-operator-tests/bin/python" -m unittest discover -s tools -t . -v
+    - name: Test server config templates
+      run: sh scripts/test-install-server-config.sh
+    - name: Test version-bound installer helpers
+      run: sh scripts/test-install-server-modules.sh
+    - name: Test transactional server upgrades
+      run: python3 scripts/test-install-server-upgrade.py
+    - name: Test verified web update bootstrap
+      run: sh scripts/test-server-web-update.sh
+    - name: Test release checksum manifest
+      run: sh scripts/test-release-checksums.sh
+    - name: Audit dependency advisories
+      run: cargo audit --deny warnings
+    - name: Check dependency policy
+      run: cargo deny check
+    container:
+      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+    timeout-minutes: 120
+  build-linux:
+    name: Build ${{ matrix.target }}
+    needs: validate
+    runs-on: mainland
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+        - x86_64-unknown-linux-musl
+        - aarch64-unknown-linux-musl
+      max-parallel: 1
+    steps:
+    - name: Prepare Debian job dependencies
+      run: |
+        apt-get -o Acquire::Retries=3 update
+        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
+    - name: Check out repository
+      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        fetch-depth: 0
+        ref: refs/tags/${{ env.RELEASE_TAG }}
+        persist-credentials: false
+    - name: Set up Node.js
+      uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: 22
+    - name: Build web assets
+      working-directory: nodelite-server/web
+      run: |
+        pnpm install --frozen-lockfile
+        pnpm build
+    - name: Set up Rust
+      run: |
+        rustup toolchain install stable --profile minimal
+        rustup default stable
+    - name: Cache Cargo dependencies and build outputs
+      uses: https://data.forgejo.org/actions/cache@f4b3439a656ba812b8cb417d2d49f9c810103092
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+          fuzz/target
+        key: nodelite-release-build-linux-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+    - name: Install pinned musl cross toolchain
+      run: |
+        python3 -m venv "$RUNNER_TEMP/zig"
+        "$RUNNER_TEMP/zig/bin/pip" install --only-binary=:all: ziglang==0.13.0
+        printf '%s\n' "$RUNNER_TEMP/zig/bin" >> "$GITHUB_PATH"
+        cargo install cargo-zigbuild --version 0.24.1 --locked
+        rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+    - name: Disable local linker overrides for CI cross build
+      run: |
+        if [ -f .cargo/config.toml ]; then
+          mv .cargo/config.toml .cargo/config.toml.ci-bak
+        fi
+    - name: Build release server binary
+      run: |
+        NODELITE_BUILD_VERSION="${RELEASE_TAG#v}" \
+        NODELITE_SKIP_WEB_BUILD=1 \
+        cargo zigbuild --locked --release --target "${{ matrix.target }}" \
+          -p nodelite-server
+    - name: Build release agent binary
+      run: |
+        NODELITE_BUILD_VERSION="${RELEASE_TAG#v}" \
+        cargo zigbuild --locked --release --target "${{ matrix.target }}" \
+          -p nodelite-agent
+    - name: Collect release assets
+      run: |
+        NODELITE_BUILD_VERSION="${RELEASE_TAG#v}" cargo zigbuild --locked --release --target "${{ matrix.target }}" -p nodelite-updater
+        mkdir -p dist
+        cp "target/${{ matrix.target }}/release/nodelite-server" "dist/nodelite-server-${{ matrix.target }}"
+        cp "target/${{ matrix.target }}/release/nodelite-agent" "dist/nodelite-agent-${{ matrix.target }}"
+        cp "target/${{ matrix.target }}/release/nodelite-updater" "dist/nodelite-updater-${{ matrix.target }}"
+        sha256sum \
+          "dist/nodelite-server-${{ matrix.target }}" \
+          "dist/nodelite-agent-${{ matrix.target }}" \
+          "dist/nodelite-updater-${{ matrix.target }}" \
+          > "dist/SHA256SUMS-${{ matrix.target }}.txt"
+    - name: Upload build artifacts
+      uses: https://data.forgejo.org/actions/upload-artifact@c6a3b2bd78b3985e4b2f15397fec357f0fd808de
+      with:
+        name: release-${{ matrix.target }}
+        path: |
+          dist/nodelite-server-${{ matrix.target }}
+          dist/nodelite-agent-${{ matrix.target }}
+          dist/nodelite-updater-${{ matrix.target }}
+          dist/SHA256SUMS-${{ matrix.target }}.txt
+    - name: Upload installer scripts
+      if: matrix.target == 'x86_64-unknown-linux-musl'
+      uses: https://data.forgejo.org/actions/upload-artifact@c6a3b2bd78b3985e4b2f15397fec357f0fd808de
+      with:
+        name: release-scripts
+        path: |
+          scripts/install-server.sh
+          scripts/install-server-config.sh
+          scripts/install-server-upgrade.sh
+          scripts/install-agent.sh
+          scripts/install-agent-signed.sh
+          scripts/merge-release-checksums.sh
+    container:
+      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+    timeout-minutes: 120
+  sbom:
+    name: Generate SBOM
+    needs: validate
+    runs-on: mainland
+    steps:
+    - name: Prepare Debian job dependencies
+      run: |
+        apt-get -o Acquire::Retries=3 update
+        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
+    - name: Check out repository
+      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        fetch-depth: 0
+        ref: refs/tags/${{ env.RELEASE_TAG }}
+        persist-credentials: false
+    - name: Set up Rust
+      run: |
+        rustup toolchain install stable --profile minimal
+        rustup default stable
+    - name: Cache Cargo dependencies and build outputs
+      uses: https://data.forgejo.org/actions/cache@f4b3439a656ba812b8cb417d2d49f9c810103092
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+          fuzz/target
+        key: nodelite-release-sbom-native-${{ hashFiles('**/Cargo.lock') }}
+    - name: Install cargo-cyclonedx
+      run: cargo install cargo-cyclonedx --version 0.5.9 --locked
+    - name: Generate CycloneDX SBOM
+      run: |
+        mkdir -p dist
+        cargo cyclonedx \
+          --format json \
+          --spec-version 1.5 \
+          --target all \
+          --all \
+          --all-features
+        cp nodelite-proto/nodelite-proto.cdx.json dist/
+        cp nodelite-agent/nodelite-agent.cdx.json dist/
+        cp nodelite-server/nodelite-server.cdx.json dist/
+        cp nodelite-updater/nodelite-updater.cdx.json dist/
+        cp THIRD_PARTY_NOTICES.md dist/
+        sha256sum dist/*.cdx.json dist/THIRD_PARTY_NOTICES.md > dist/SHA256SUMS-sbom.txt
+    - name: Upload SBOM artifact
+      uses: https://data.forgejo.org/actions/upload-artifact@c6a3b2bd78b3985e4b2f15397fec357f0fd808de
+      with:
+        name: release-sbom
+        path: |
+          dist/nodelite-proto.cdx.json
+          dist/nodelite-agent.cdx.json
+          dist/nodelite-server.cdx.json
+          dist/nodelite-updater.cdx.json
+          dist/THIRD_PARTY_NOTICES.md
+          dist/SHA256SUMS-sbom.txt
+    container:
+      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+    timeout-minutes: 120
+  release:
+    name: Publish Forgejo Release
+    needs:
+    - build-linux
+    - sbom
+    runs-on: mainland
+    steps:
+    - name: Prepare Debian job dependencies
+      run: |
+        apt-get -o Acquire::Retries=3 update
+        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
+    - name: Check out exact release source
+      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+        ref: refs/tags/${{ env.RELEASE_TAG }}
+    - name: Download build artifacts
+      uses: https://data.forgejo.org/actions/download-artifact@ad191675b41f6a5b46da9a048cb6893812da158b
+      with:
+        path: release-assets
+    - name: Merge checksums
+      run: |
+        sh release-assets/release-scripts/merge-release-checksums.sh release-assets
+    - name: Record Forgejo build source
+      env:
+        SOURCE_COMMIT: ${{ forgejo.sha }}
+        SOURCE_REPOSITORY: ${{ forgejo.repository }}
+        SOURCE_SERVER: ${{ forgejo.server_url }}
+      run: |
+        python3 - <<'PYTHON'
+        import json, os
+        from pathlib import Path
+        Path("release-assets/BUILD_INFO.json").write_text(json.dumps({"commit": os.environ["SOURCE_COMMIT"], "tag": os.environ["RELEASE_TAG"], "repository": os.environ["SOURCE_REPOSITORY"], "server": os.environ["SOURCE_SERVER"], "signed_attestation": False}, sort_keys=True) + "\n")
+        PYTHON
+        (cd release-assets && sha256sum BUILD_INFO.json >> SHA256SUMS.txt)
+    - name: Stage and verify release assets
+      run: |
+        mkdir -p publish
+        cp \
+          release-assets/release-x86_64-unknown-linux-musl/nodelite-server-x86_64-unknown-linux-musl \
+          release-assets/release-x86_64-unknown-linux-musl/nodelite-agent-x86_64-unknown-linux-musl \
+          release-assets/release-x86_64-unknown-linux-musl/nodelite-updater-x86_64-unknown-linux-musl \
+          release-assets/release-aarch64-unknown-linux-musl/nodelite-server-aarch64-unknown-linux-musl \
+          release-assets/release-aarch64-unknown-linux-musl/nodelite-agent-aarch64-unknown-linux-musl \
+          release-assets/release-aarch64-unknown-linux-musl/nodelite-updater-aarch64-unknown-linux-musl \
+          release-assets/release-scripts/install-server.sh \
+          release-assets/release-scripts/install-server-config.sh \
+          release-assets/release-scripts/install-server-upgrade.sh \
+          release-assets/release-scripts/install-agent.sh \
+          release-assets/release-scripts/install-agent-signed.sh \
+          release-assets/release-sbom/nodelite-proto.cdx.json \
+          release-assets/release-sbom/nodelite-agent.cdx.json \
+          release-assets/release-sbom/nodelite-server.cdx.json \
+          release-assets/release-sbom/nodelite-updater.cdx.json \
+          release-assets/release-sbom/THIRD_PARTY_NOTICES.md \
+          release-assets/SHA256SUMS.txt \
+          release-assets/BUILD_INFO.json \
+          publish/
+        cd publish
+        sha256sum -c --strict SHA256SUMS.txt
+        ls -1 | grep -vx SHA256SUMS.txt | sort > ../published.list
+        awk '{print $2}' SHA256SUMS.txt | sort > ../manifest.list
+        if ! diff -u ../published.list ../manifest.list; then
+          echo "::error::SHA256SUMS.txt does not cover exactly the published assets"
+          exit 1
+        fi
+    - name: Publish complete Forgejo draft
+      env:
+        FORGEJO_TOKEN: ${{ forgejo.token }}
+        FORGEJO_SERVER: ${{ forgejo.server_url }}
+        FORGEJO_REPOSITORY: ${{ forgejo.repository }}
+        FORGEJO_COMMIT: ${{ forgejo.sha }}
+      run: python3 scripts/publish-forgejo-release.py --directory publish --tag "$RELEASE_TAG"
+    container:
+      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+    timeout-minutes: 120
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: nodelite-release-${{ forgejo.ref }}
+  cancel-in-progress: false

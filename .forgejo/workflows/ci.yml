@@ -1,0 +1,442 @@
+# Migrated for Forgejo; platform limitations are documented in docs/forgejo.md.
+name: CI
+'on':
+  push:
+    branches:
+    - main
+  pull_request: null
+  workflow_dispatch: null
+jobs:
+  workflow-guards:
+    name: Workflow Guards
+    runs-on: mainland
+    steps:
+    - name: Prepare Debian job dependencies
+      run: |
+        apt-get -o Acquire::Retries=3 update
+        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
+    - name: Check out repository
+      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - name: Check pinned Actions
+      run: sh scripts/check-actions-pinned.sh
+    - name: Validate Forgejo workflow contract
+      run: |
+        python3 scripts/check-forgejo-workflows.py
+        python3 scripts/test-forgejo-release.py
+    container:
+      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+    timeout-minutes: 90
+  lint-and-test:
+    name: Lint and Test
+    runs-on: mainland
+    needs:
+    - workflow-guards
+    - web-lint-and-test
+    steps:
+    - name: Prepare Debian job dependencies
+      run: |
+        apt-get -o Acquire::Retries=3 update
+        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
+    - name: Check out repository
+      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - name: Download web dist
+      uses: https://data.forgejo.org/actions/download-artifact@ad191675b41f6a5b46da9a048cb6893812da158b
+      with:
+        name: web-dist
+        path: nodelite-server/web/dist
+    - name: Set up Rust
+      run: |
+        rustup toolchain install stable --profile minimal
+        rustup default stable
+        rustup component add clippy rustfmt
+    - name: Cache Cargo dependencies and build outputs
+      uses: https://data.forgejo.org/actions/cache@f4b3439a656ba812b8cb417d2d49f9c810103092
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+          fuzz/target
+        key: nodelite-lint-and-test-native-${{ hashFiles('**/Cargo.lock') }}
+    - name: Install shellcheck
+      run: |
+        apt-get update
+        apt-get install -y shellcheck
+    - name: Install cargo-audit
+      run: cargo install cargo-audit --version 0.22.2 --locked
+    - name: Install cargo-deny
+      run: cargo install cargo-deny --version 0.19.10 --locked
+    - name: Check formatting
+      run: cargo fmt --all --check
+    - name: Run clippy
+      env:
+        NODELITE_SKIP_WEB_BUILD: 1
+      run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+    - name: Check standalone Agent configuration and dependencies
+      run: |
+        tini -s -- cargo test -p nodelite-proto --no-default-features --locked
+        tini -s -- cargo test -p nodelite-agent --locked
+        cargo tree -p nodelite-agent --edges normal --prefix none --format '{p}' > agent-dependencies.txt
+        if grep -E '^(ipnet|base32) ' agent-dependencies.txt; then
+          echo "Agent dependency graph includes server-only configuration dependencies" >&2
+          exit 1
+        fi
+    - name: Run tests
+      env:
+        NODELITE_SKIP_WEB_BUILD: 1
+      run: tini -s -- cargo test --workspace --locked
+    - name: Test offline signing and migration bundle boundaries
+      run: |
+        python3 -m venv "$RUNNER_TEMP/nodelite-operator-tests"
+        "$RUNNER_TEMP/nodelite-operator-tests/bin/pip" install --only-binary=:all: -r tools/nodelite_release/requirements.txt
+        PYTHONDONTWRITEBYTECODE=1 "$RUNNER_TEMP/nodelite-operator-tests/bin/python" -m unittest tools.nodelite_release.test_release tools.nodelite_release.test_maintenance tools.nodelite_release.test_web tools.nodelite_release.test_github tools.nodelite_migrate.test_bundle tools.nodelite_migrate.test_audit -v
+    - name: Shellcheck installers
+      run: shellcheck scripts/install-server.sh scripts/install-server-config.sh scripts/install-server-upgrade.sh
+        scripts/install-agent.sh scripts/install-agent-signed.sh scripts/test-install-agent.sh scripts/fixtures/preflight-agent.sh
+        scripts/server-web-update.sh scripts/merge-release-checksums.sh scripts/test-install-server-summary.sh scripts/test-install-server-modules.sh
+        scripts/test-install-server-config.sh scripts/test-server-web-update.sh scripts/test-release-checksums.sh
+        scripts/check-demo-credentials.sh scripts/check-actions-pinned.sh
+    - name: Test installer summaries
+      run: sh scripts/test-install-server-summary.sh
+    - name: Test server config templates
+      run: sh scripts/test-install-server-config.sh
+    - name: Test version-bound installer helpers
+      run: sh scripts/test-install-server-modules.sh
+    - name: Test transactional server upgrades
+      run: python3 scripts/test-install-server-upgrade.py
+    - name: Test Agent configuration migration and permissions
+      run: |
+        sh scripts/test-install-agent.sh
+        python3 scripts/test-agent-enrollment-pins.py -v
+        python3 scripts/test-installer-versions.py -v
+    - name: Test verified web update bootstrap
+      run: sh scripts/test-server-web-update.sh
+    - name: Test release attestations
+      run: python3 scripts/test-release-attestations.py
+    - name: Test release checksum manifest
+      run: sh scripts/test-release-checksums.sh
+    - name: Check demo credentials
+      run: sh scripts/check-demo-credentials.sh
+    - name: Audit dependency advisories
+      run: cargo audit --deny warnings
+    - name: Check dependency policy
+      run: cargo deny check advisories licenses bans
+    container:
+      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+    timeout-minutes: 90
+  msrv:
+    name: MSRV Check
+    runs-on: mainland
+    needs:
+    - workflow-guards
+    - web-lint-and-test
+    steps:
+    - name: Prepare Debian job dependencies
+      run: |
+        apt-get -o Acquire::Retries=3 update
+        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
+    - name: Check out repository
+      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - name: Download web dist
+      uses: https://data.forgejo.org/actions/download-artifact@ad191675b41f6a5b46da9a048cb6893812da158b
+      with:
+        name: web-dist
+        path: nodelite-server/web/dist
+    - name: Set up Rust MSRV
+      run: |
+        rustup toolchain install 1.88.0 --profile minimal
+        rustup default 1.88.0
+    - name: Cache Cargo dependencies and build outputs
+      uses: https://data.forgejo.org/actions/cache@f4b3439a656ba812b8cb417d2d49f9c810103092
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+          fuzz/target
+        key: nodelite-msrv-native-${{ hashFiles('**/Cargo.lock') }}
+    - name: Run tests with MSRV
+      env:
+        NODELITE_SKIP_WEB_BUILD: 1
+      run: tini -s -- cargo test --workspace --locked
+    container:
+      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+    timeout-minutes: 90
+  web-e2e:
+    name: Web E2E
+    runs-on: mainland
+    needs:
+    - workflow-guards
+    - web-lint-and-test
+    defaults:
+      run:
+        working-directory: nodelite-server/web
+    steps:
+    - name: Prepare Debian job dependencies
+      run: |
+        apt-get -o Acquire::Retries=3 update
+        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
+      working-directory: .
+    - name: Check out repository
+      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - name: Set up Node.js
+      uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: 22
+    - name: Install pinned pnpm
+      run: npm install --global pnpm@10.11.0
+    - name: Install pinned pnpm
+      run: npm install --global pnpm@10.11.0
+    - name: Install dependencies
+      run: pnpm install --frozen-lockfile
+    - name: Install Playwright
+      run: pnpm exec playwright install --with-deps chromium
+    - name: Run Playwright E2E
+      run: pnpm e2e:ci
+    - name: Set up Rust for live E2E
+      run: |
+        rustup toolchain install stable --profile minimal
+        rustup default stable
+    - name: Cache Cargo dependencies and build outputs
+      uses: https://data.forgejo.org/actions/cache@f4b3439a656ba812b8cb417d2d49f9c810103092
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+          fuzz/target
+        key: nodelite-web-e2e-native-${{ hashFiles('**/Cargo.lock') }}
+    - name: Run live Rust Server and WebSocket E2E (zero skips)
+      run: pnpm e2e:live
+    - name: Upload Playwright report
+      if: always()
+      uses: https://data.forgejo.org/actions/upload-artifact@c6a3b2bd78b3985e4b2f15397fec357f0fd808de
+      with:
+        name: playwright-report
+        path: |
+          nodelite-server/web/playwright-report/
+          nodelite-server/web/test-results/
+        retention-days: 7
+    container:
+      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+    timeout-minutes: 90
+  web-lint-and-test:
+    name: Web Lint and Test
+    runs-on: mainland
+    needs:
+    - workflow-guards
+    defaults:
+      run:
+        working-directory: nodelite-server/web
+    steps:
+    - name: Prepare Debian job dependencies
+      run: |
+        apt-get -o Acquire::Retries=3 update
+        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
+      working-directory: .
+    - name: Check out repository
+      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - name: Set up Node.js
+      uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: 22
+    - name: Install dependencies
+      run: pnpm install --frozen-lockfile
+    - name: Audit web dependencies
+      run: pnpm audit --audit-level high
+    - name: Lint
+      run: pnpm lint
+    - name: Type-check
+      run: pnpm typecheck
+    - name: Unit tests
+      run: pnpm test
+    - name: Build
+      run: pnpm build
+    - name: Guard against bulk inline scripts (CSP)
+      run: |
+        if perl -ne 'BEGIN{$/=undef} exit 1 if /<script>[^<]{800,}/' dist/index.html; then
+          echo "inline-script guard: ok"
+        else
+          echo "::error::dist/index.html contains an inline <script> longer than 800 chars"
+          exit 1
+        fi
+    - name: Upload web dist
+      uses: https://data.forgejo.org/actions/upload-artifact@c6a3b2bd78b3985e4b2f15397fec357f0fd808de
+      with:
+        name: web-dist
+        path: nodelite-server/web/dist
+        retention-days: 1
+    container:
+      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+    timeout-minutes: 90
+  cross-build:
+    name: Cross Build ${{ matrix.target }}
+    needs:
+    - workflow-guards
+    - lint-and-test
+    - msrv
+    - web-lint-and-test
+    runs-on: mainland
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+        - x86_64-unknown-linux-musl
+        - aarch64-unknown-linux-musl
+      max-parallel: 1
+    steps:
+    - name: Prepare Debian job dependencies
+      run: |
+        apt-get -o Acquire::Retries=3 update
+        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
+    - name: Check out repository
+      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - name: Download web dist
+      uses: https://data.forgejo.org/actions/download-artifact@ad191675b41f6a5b46da9a048cb6893812da158b
+      with:
+        name: web-dist
+        path: nodelite-server/web/dist
+    - name: Set up Rust
+      run: |
+        rustup toolchain install stable --profile minimal
+        rustup default stable
+    - name: Cache Cargo dependencies and build outputs
+      uses: https://data.forgejo.org/actions/cache@f4b3439a656ba812b8cb417d2d49f9c810103092
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+          fuzz/target
+        key: nodelite-cross-build-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+    - name: Install pinned musl cross toolchain
+      run: |
+        python3 -m venv "$RUNNER_TEMP/zig"
+        "$RUNNER_TEMP/zig/bin/pip" install --only-binary=:all: ziglang==0.13.0
+        printf '%s\n' "$RUNNER_TEMP/zig/bin" >> "$GITHUB_PATH"
+        cargo install cargo-zigbuild --version 0.24.1 --locked
+        rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+    - name: Disable local linker overrides for CI cross build
+      run: |
+        if [ -f .cargo/config.toml ]; then
+          mv .cargo/config.toml .cargo/config.toml.ci-bak
+        fi
+    - name: Cross build release binaries
+      env:
+        NODELITE_SKIP_WEB_BUILD: 1
+      run: |
+        cargo zigbuild --locked --release --target "${{ matrix.target }}" \
+          -p nodelite-server \
+          -p nodelite-agent
+    container:
+      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+    timeout-minutes: 90
+  agent-macos-build:
+    name: Agent macOS Build ${{ matrix.target }}
+    needs:
+    - workflow-guards
+    - lint-and-test
+    - msrv
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: macos-x64
+          target: x86_64-apple-darwin
+        - runner: macos-arm64
+          target: aarch64-apple-darwin
+    steps:
+    - name: Check out repository
+      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - name: Set up Rust
+      run: |
+        rustup toolchain install stable --profile minimal
+        rustup default stable
+        rustup target add "${{ matrix.target }}"
+    - name: Build agent for macOS release target
+      run: cargo check --locked --target "${{ matrix.target }}" -p nodelite-agent
+    timeout-minutes: 90
+    if: vars.NODELITE_MACOS_CI == 'enabled'
+  fuzz-smoke:
+    name: Fuzz Smoke
+    runs-on: mainland
+    timeout-minutes: 30
+    needs:
+    - workflow-guards
+    steps:
+    - name: Prepare Debian job dependencies
+      run: |
+        apt-get -o Acquire::Retries=3 update
+        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
+    - name: Check out repository
+      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - name: Set up Rust
+      run: |
+        rustup toolchain install stable --profile minimal
+        rustup default stable
+    - name: Cache Cargo dependencies and build outputs
+      uses: https://data.forgejo.org/actions/cache@f4b3439a656ba812b8cb417d2d49f9c810103092
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+          fuzz/target
+        key: nodelite-fuzz-smoke-native-${{ hashFiles('**/Cargo.lock') }}
+    - name: Test fuzz targets
+      run: tini -s -- cargo test --manifest-path fuzz/Cargo.toml --locked
+    - name: Run bounded protocol smoke
+      run: cargo run --manifest-path fuzz/Cargo.toml --locked --bin protocol_messages -- 20000
+    - name: Replay fuzz corpus
+      run: |
+        for bin in wire_message browser_message; do
+          cargo run --manifest-path fuzz/Cargo.toml --locked --bin "$bin" -- fuzz/corpus/protocol_messages
+        done
+    container:
+      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+  systemd-acceptance:
+    name: Real systemd acceptance (dedicated Runner)
+    if: vars.NODELITE_SYSTEMD_CI == 'enabled'
+    runs-on: nodelite-systemd
+    timeout-minutes: 45
+    steps:
+    - name: Check dedicated systemd host
+      run: |
+        test "$(id -u)" -eq 0
+        test "$(cat /proc/1/comm)" = systemd
+    - name: Check out repository
+      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - name: Test upgrades and installed traffic sandbox
+      run: |
+        python3 scripts/test-install-server-upgrade.py --systemd crash not_ready wrong_version success migrate_fail corrupt_backup restore_fail signal
+        test_binary=$(cargo test -p nodelite-agent --lib --no-run --locked --message-format=json | jq -r 'select(.reason == "compiler-artifact" and .profile.test == true) | .executable // empty')
+        sh scripts/test-traffic-control-systemd.sh "$test_binary"
+concurrency:
+  group: nodelite-ci-${{ forgejo.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_BUILD_JOBS: '2'
+  CARGO_TERM_COLOR: always
+  CI: 'true'
+defaults:
+  run:
+    shell: bash

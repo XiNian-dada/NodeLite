@@ -1,0 +1,1 @@
+These workflows preserve the former GitHub configuration for reference and fail-closed attestation tests. Forgejo executes only .forgejo/workflows/*.yml. Do not restore both workflow directories on Forgejo.
