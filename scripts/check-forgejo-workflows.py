@@ -12,6 +12,7 @@ workflows = root / ".forgejo/workflows"
 expected = {"ci.yml", "coverage.yml", "release.yml", "pages.yml"}
 assert {p.name for p in workflows.glob("*.yml")} == expected
 assert not list((root / ".github/workflows").glob("*.yml")), "legacy workflows would run twice"
+assert "apple-darwin" not in (workflows / "ci.yml").read_text(), "macOS jobs are disabled"
 for path in sorted(workflows.glob("*.yml")):
     data = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
     assert "on" in data and data["jobs"], path
@@ -19,7 +20,7 @@ for path in sorted(workflows.glob("*.yml")):
     for job_id, job in jobs.items():
         runner = job["runs-on"]
         if runner != "mainland":
-            assert job.get("if") and job_id in {"agent-macos-build", "systemd-acceptance"}, (path, job_id)
+            assert False, (path, job_id, "unavailable Runner")
         assert int(job["timeout-minutes"]) <= 120
         needs = job.get("needs", [])
         if isinstance(needs, str):
@@ -27,11 +28,15 @@ for path in sorted(workflows.glob("*.yml")):
         assert all(n in jobs for n in needs), (path, job_id, needs)
         image = job.get("container", {}).get("image")
         if image:
-            assert re.search(r"@sha256:[0-9a-f]{64}$", image), image
+            assert image == "nodelite-ci:20261113-v1", image
         names = [step.get("name", "") for step in job["steps"]]
-        if "Install pinned pnpm" in names:
-            assert names.index("Set up Node.js") < names.index("Install pinned pnpm")
-            assert names.index("Install pinned pnpm") < min(i for i, step in enumerate(job["steps"]) if "pnpm install --frozen-lockfile" in step.get("run", ""))
+        if any("pnpm " in step.get("run", "") for step in job["steps"]):
+            assert "Check provisioned build tools" in names, (path, job_id)
+            assert image == "nodelite-ci:20261113-v1"
+        assert "Fetch exact source archive" in names, (path, job_id)
+        archive = next(step for step in job["steps"] if step.get("name") == "Fetch exact source archive")
+        assert archive["env"]["SOURCE_COMMIT"] == "${{ forgejo.sha }}"
+        assert "--max-time 180" in archive["run"]
         for step in job["steps"]:
             uses = step.get("uses", "")
             if uses:

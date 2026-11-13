@@ -1,4 +1,3 @@
-# Migrated for Forgejo; platform limitations are documented in docs/forgejo.md.
 name: CI
 'on':
   push:
@@ -11,14 +10,31 @@ jobs:
     name: Workflow Guards
     runs-on: mainland
     steps:
-    - name: Prepare Debian job dependencies
+    - name: Check provisioned build tools
+      working-directory: .
       run: |
-        apt-get -o Acquire::Retries=3 update
-        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
-    - name: Check out repository
-      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        persist-credentials: false
+        node --version
+        pnpm --version
+        rustup --version
+        python3 -c "import yaml"
+        command -v tini
+    - name: Fetch exact source archive
+      env:
+        FORGEJO_TOKEN: ${{ forgejo.token }}
+        SOURCE_SERVER: ${{ forgejo.server_url }}
+        SOURCE_REPOSITORY: ${{ forgejo.repository }}
+        SOURCE_COMMIT: ${{ forgejo.sha }}
+        ARCHIVE_PROXY: ${{ vars.SOURCE_ARCHIVE_PROXY }}
+      working-directory: .
+      run: |
+        set -euo pipefail
+        mkdir -p "$GITHUB_WORKSPACE"
+        printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
+          --output "$RUNNER_TEMP/source.tar.gz" \
+          "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
+        tar -xzf "$RUNNER_TEMP/source.tar.gz" --strip-components=1 -C "$GITHUB_WORKSPACE"
     - name: Check pinned Actions
       run: sh scripts/check-actions-pinned.sh
     - name: Validate Forgejo workflow contract
@@ -26,8 +42,8 @@ jobs:
         python3 scripts/check-forgejo-workflows.py
         python3 scripts/test-forgejo-release.py
     container:
-      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
-    timeout-minutes: 90
+      image: nodelite-ci:20261113-v1
+    timeout-minutes: 10
   lint-and-test:
     name: Lint and Test
     runs-on: mainland
@@ -35,14 +51,31 @@ jobs:
     - workflow-guards
     - web-lint-and-test
     steps:
-    - name: Prepare Debian job dependencies
+    - name: Check provisioned build tools
+      working-directory: .
       run: |
-        apt-get -o Acquire::Retries=3 update
-        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
-    - name: Check out repository
-      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        persist-credentials: false
+        node --version
+        pnpm --version
+        rustup --version
+        python3 -c "import yaml"
+        command -v tini
+    - name: Fetch exact source archive
+      env:
+        FORGEJO_TOKEN: ${{ forgejo.token }}
+        SOURCE_SERVER: ${{ forgejo.server_url }}
+        SOURCE_REPOSITORY: ${{ forgejo.repository }}
+        SOURCE_COMMIT: ${{ forgejo.sha }}
+        ARCHIVE_PROXY: ${{ vars.SOURCE_ARCHIVE_PROXY }}
+      working-directory: .
+      run: |
+        set -euo pipefail
+        mkdir -p "$GITHUB_WORKSPACE"
+        printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
+          --output "$RUNNER_TEMP/source.tar.gz" \
+          "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
+        tar -xzf "$RUNNER_TEMP/source.tar.gz" --strip-components=1 -C "$GITHUB_WORKSPACE"
     - name: Download web dist
       uses: https://data.forgejo.org/actions/download-artifact@ad191675b41f6a5b46da9a048cb6893812da158b
       with:
@@ -50,26 +83,21 @@ jobs:
         path: nodelite-server/web/dist
     - name: Set up Rust
       run: |
-        rustup toolchain install stable --profile minimal
-        rustup default stable
+        rustup default 1.93.1
         rustup component add clippy rustfmt
     - name: Cache Cargo dependencies and build outputs
       uses: https://data.forgejo.org/actions/cache@f4b3439a656ba812b8cb417d2d49f9c810103092
       with:
         path: |
-          ~/.cargo/registry
-          ~/.cargo/git
+          /usr/local/cargo/registry
+          /usr/local/cargo/git
           target
           fuzz/target
         key: nodelite-lint-and-test-native-${{ hashFiles('**/Cargo.lock') }}
-    - name: Install shellcheck
-      run: |
-        apt-get update
-        apt-get install -y shellcheck
     - name: Install cargo-audit
       run: cargo install cargo-audit --version 0.22.2 --locked
     - name: Install cargo-deny
-      run: cargo install cargo-deny --version 0.19.10 --locked
+      run: cargo install cargo-deny --version 0.20.2 --locked
     - name: Check formatting
       run: cargo fmt --all --check
     - name: Run clippy
@@ -126,7 +154,7 @@ jobs:
     - name: Check dependency policy
       run: cargo deny check advisories licenses bans
     container:
-      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+      image: nodelite-ci:20261113-v1
     timeout-minutes: 90
   msrv:
     name: MSRV Check
@@ -135,14 +163,31 @@ jobs:
     - workflow-guards
     - web-lint-and-test
     steps:
-    - name: Prepare Debian job dependencies
+    - name: Check provisioned build tools
+      working-directory: .
       run: |
-        apt-get -o Acquire::Retries=3 update
-        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
-    - name: Check out repository
-      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        persist-credentials: false
+        node --version
+        pnpm --version
+        rustup --version
+        python3 -c "import yaml"
+        command -v tini
+    - name: Fetch exact source archive
+      env:
+        FORGEJO_TOKEN: ${{ forgejo.token }}
+        SOURCE_SERVER: ${{ forgejo.server_url }}
+        SOURCE_REPOSITORY: ${{ forgejo.repository }}
+        SOURCE_COMMIT: ${{ forgejo.sha }}
+        ARCHIVE_PROXY: ${{ vars.SOURCE_ARCHIVE_PROXY }}
+      working-directory: .
+      run: |
+        set -euo pipefail
+        mkdir -p "$GITHUB_WORKSPACE"
+        printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
+          --output "$RUNNER_TEMP/source.tar.gz" \
+          "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
+        tar -xzf "$RUNNER_TEMP/source.tar.gz" --strip-components=1 -C "$GITHUB_WORKSPACE"
     - name: Download web dist
       uses: https://data.forgejo.org/actions/download-artifact@ad191675b41f6a5b46da9a048cb6893812da158b
       with:
@@ -156,8 +201,8 @@ jobs:
       uses: https://data.forgejo.org/actions/cache@f4b3439a656ba812b8cb417d2d49f9c810103092
       with:
         path: |
-          ~/.cargo/registry
-          ~/.cargo/git
+          /usr/local/cargo/registry
+          /usr/local/cargo/git
           target
           fuzz/target
         key: nodelite-msrv-native-${{ hashFiles('**/Cargo.lock') }}
@@ -166,7 +211,7 @@ jobs:
         NODELITE_SKIP_WEB_BUILD: 1
       run: tini -s -- cargo test --workspace --locked
     container:
-      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+      image: nodelite-ci:20261113-v1
     timeout-minutes: 90
   web-e2e:
     name: Web E2E
@@ -178,23 +223,31 @@ jobs:
       run:
         working-directory: nodelite-server/web
     steps:
-    - name: Prepare Debian job dependencies
-      run: |
-        apt-get -o Acquire::Retries=3 update
-        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
+    - name: Check provisioned build tools
       working-directory: .
-    - name: Check out repository
-      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        persist-credentials: false
-    - name: Set up Node.js
-      uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-      with:
-        node-version: 22
-    - name: Install pinned pnpm
-      run: npm install --global pnpm@10.11.0
-    - name: Install pinned pnpm
-      run: npm install --global pnpm@10.11.0
+      run: |
+        node --version
+        pnpm --version
+        rustup --version
+        python3 -c "import yaml"
+        command -v tini
+    - name: Fetch exact source archive
+      env:
+        FORGEJO_TOKEN: ${{ forgejo.token }}
+        SOURCE_SERVER: ${{ forgejo.server_url }}
+        SOURCE_REPOSITORY: ${{ forgejo.repository }}
+        SOURCE_COMMIT: ${{ forgejo.sha }}
+        ARCHIVE_PROXY: ${{ vars.SOURCE_ARCHIVE_PROXY }}
+      working-directory: .
+      run: |
+        set -euo pipefail
+        mkdir -p "$GITHUB_WORKSPACE"
+        printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
+          --output "$RUNNER_TEMP/source.tar.gz" \
+          "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
+        tar -xzf "$RUNNER_TEMP/source.tar.gz" --strip-components=1 -C "$GITHUB_WORKSPACE"
     - name: Install dependencies
       run: pnpm install --frozen-lockfile
     - name: Install Playwright
@@ -203,14 +256,13 @@ jobs:
       run: pnpm e2e:ci
     - name: Set up Rust for live E2E
       run: |
-        rustup toolchain install stable --profile minimal
-        rustup default stable
+        rustup default 1.93.1
     - name: Cache Cargo dependencies and build outputs
       uses: https://data.forgejo.org/actions/cache@f4b3439a656ba812b8cb417d2d49f9c810103092
       with:
         path: |
-          ~/.cargo/registry
-          ~/.cargo/git
+          /usr/local/cargo/registry
+          /usr/local/cargo/git
           target
           fuzz/target
         key: nodelite-web-e2e-native-${{ hashFiles('**/Cargo.lock') }}
@@ -226,7 +278,7 @@ jobs:
           nodelite-server/web/test-results/
         retention-days: 7
     container:
-      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+      image: nodelite-ci:20261113-v1
     timeout-minutes: 90
   web-lint-and-test:
     name: Web Lint and Test
@@ -237,19 +289,31 @@ jobs:
       run:
         working-directory: nodelite-server/web
     steps:
-    - name: Prepare Debian job dependencies
-      run: |
-        apt-get -o Acquire::Retries=3 update
-        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
+    - name: Check provisioned build tools
       working-directory: .
-    - name: Check out repository
-      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        persist-credentials: false
-    - name: Set up Node.js
-      uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-      with:
-        node-version: 22
+      run: |
+        node --version
+        pnpm --version
+        rustup --version
+        python3 -c "import yaml"
+        command -v tini
+    - name: Fetch exact source archive
+      env:
+        FORGEJO_TOKEN: ${{ forgejo.token }}
+        SOURCE_SERVER: ${{ forgejo.server_url }}
+        SOURCE_REPOSITORY: ${{ forgejo.repository }}
+        SOURCE_COMMIT: ${{ forgejo.sha }}
+        ARCHIVE_PROXY: ${{ vars.SOURCE_ARCHIVE_PROXY }}
+      working-directory: .
+      run: |
+        set -euo pipefail
+        mkdir -p "$GITHUB_WORKSPACE"
+        printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
+          --output "$RUNNER_TEMP/source.tar.gz" \
+          "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
+        tar -xzf "$RUNNER_TEMP/source.tar.gz" --strip-components=1 -C "$GITHUB_WORKSPACE"
     - name: Install dependencies
       run: pnpm install --frozen-lockfile
     - name: Audit web dependencies
@@ -277,7 +341,7 @@ jobs:
         path: nodelite-server/web/dist
         retention-days: 1
     container:
-      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+      image: nodelite-ci:20261113-v1
     timeout-minutes: 90
   cross-build:
     name: Cross Build ${{ matrix.target }}
@@ -295,14 +359,31 @@ jobs:
         - aarch64-unknown-linux-musl
       max-parallel: 1
     steps:
-    - name: Prepare Debian job dependencies
+    - name: Check provisioned build tools
+      working-directory: .
       run: |
-        apt-get -o Acquire::Retries=3 update
-        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
-    - name: Check out repository
-      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        persist-credentials: false
+        node --version
+        pnpm --version
+        rustup --version
+        python3 -c "import yaml"
+        command -v tini
+    - name: Fetch exact source archive
+      env:
+        FORGEJO_TOKEN: ${{ forgejo.token }}
+        SOURCE_SERVER: ${{ forgejo.server_url }}
+        SOURCE_REPOSITORY: ${{ forgejo.repository }}
+        SOURCE_COMMIT: ${{ forgejo.sha }}
+        ARCHIVE_PROXY: ${{ vars.SOURCE_ARCHIVE_PROXY }}
+      working-directory: .
+      run: |
+        set -euo pipefail
+        mkdir -p "$GITHUB_WORKSPACE"
+        printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
+          --output "$RUNNER_TEMP/source.tar.gz" \
+          "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
+        tar -xzf "$RUNNER_TEMP/source.tar.gz" --strip-components=1 -C "$GITHUB_WORKSPACE"
     - name: Download web dist
       uses: https://data.forgejo.org/actions/download-artifact@ad191675b41f6a5b46da9a048cb6893812da158b
       with:
@@ -310,14 +391,13 @@ jobs:
         path: nodelite-server/web/dist
     - name: Set up Rust
       run: |
-        rustup toolchain install stable --profile minimal
-        rustup default stable
+        rustup default 1.93.1
     - name: Cache Cargo dependencies and build outputs
       uses: https://data.forgejo.org/actions/cache@f4b3439a656ba812b8cb417d2d49f9c810103092
       with:
         path: |
-          ~/.cargo/registry
-          ~/.cargo/git
+          /usr/local/cargo/registry
+          /usr/local/cargo/git
           target
           fuzz/target
         key: nodelite-cross-build-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
@@ -341,37 +421,8 @@ jobs:
           -p nodelite-server \
           -p nodelite-agent
     container:
-      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+      image: nodelite-ci:20261113-v1
     timeout-minutes: 90
-  agent-macos-build:
-    name: Agent macOS Build ${{ matrix.target }}
-    needs:
-    - workflow-guards
-    - lint-and-test
-    - msrv
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-        - runner: macos-x64
-          target: x86_64-apple-darwin
-        - runner: macos-arm64
-          target: aarch64-apple-darwin
-    steps:
-    - name: Check out repository
-      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        persist-credentials: false
-    - name: Set up Rust
-      run: |
-        rustup toolchain install stable --profile minimal
-        rustup default stable
-        rustup target add "${{ matrix.target }}"
-    - name: Build agent for macOS release target
-      run: cargo check --locked --target "${{ matrix.target }}" -p nodelite-agent
-    timeout-minutes: 90
-    if: vars.NODELITE_MACOS_CI == 'enabled'
   fuzz-smoke:
     name: Fuzz Smoke
     runs-on: mainland
@@ -379,24 +430,40 @@ jobs:
     needs:
     - workflow-guards
     steps:
-    - name: Prepare Debian job dependencies
+    - name: Check provisioned build tools
+      working-directory: .
       run: |
-        apt-get -o Acquire::Retries=3 update
-        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
-    - name: Check out repository
-      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        persist-credentials: false
+        node --version
+        pnpm --version
+        rustup --version
+        python3 -c "import yaml"
+        command -v tini
+    - name: Fetch exact source archive
+      env:
+        FORGEJO_TOKEN: ${{ forgejo.token }}
+        SOURCE_SERVER: ${{ forgejo.server_url }}
+        SOURCE_REPOSITORY: ${{ forgejo.repository }}
+        SOURCE_COMMIT: ${{ forgejo.sha }}
+        ARCHIVE_PROXY: ${{ vars.SOURCE_ARCHIVE_PROXY }}
+      working-directory: .
+      run: |
+        set -euo pipefail
+        mkdir -p "$GITHUB_WORKSPACE"
+        printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
+          --output "$RUNNER_TEMP/source.tar.gz" \
+          "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
+        tar -xzf "$RUNNER_TEMP/source.tar.gz" --strip-components=1 -C "$GITHUB_WORKSPACE"
     - name: Set up Rust
       run: |
-        rustup toolchain install stable --profile minimal
-        rustup default stable
+        rustup default 1.93.1
     - name: Cache Cargo dependencies and build outputs
       uses: https://data.forgejo.org/actions/cache@f4b3439a656ba812b8cb417d2d49f9c810103092
       with:
         path: |
-          ~/.cargo/registry
-          ~/.cargo/git
+          /usr/local/cargo/registry
+          /usr/local/cargo/git
           target
           fuzz/target
         key: nodelite-fuzz-smoke-native-${{ hashFiles('**/Cargo.lock') }}
@@ -410,26 +477,47 @@ jobs:
           cargo run --manifest-path fuzz/Cargo.toml --locked --bin "$bin" -- fuzz/corpus/protocol_messages
         done
     container:
-      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+      image: nodelite-ci:20261113-v1
   systemd-acceptance:
-    name: Real systemd acceptance (dedicated Runner)
-    if: vars.NODELITE_SYSTEMD_CI == 'enabled'
-    runs-on: nodelite-systemd
+    name: Real systemd acceptance (isolated VM)
+    runs-on: mainland
+    container:
+      image: nodelite-ci:20261113-v1
+    needs:
+    - workflow-guards
     timeout-minutes: 45
     steps:
-    - name: Check dedicated systemd host
+    - name: Fetch exact source archive
+      env:
+        FORGEJO_TOKEN: ${{ forgejo.token }}
+        SOURCE_SERVER: ${{ forgejo.server_url }}
+        SOURCE_REPOSITORY: ${{ forgejo.repository }}
+        SOURCE_COMMIT: ${{ forgejo.sha }}
+        ARCHIVE_PROXY: ${{ vars.SOURCE_ARCHIVE_PROXY }}
+      working-directory: .
       run: |
-        test "$(id -u)" -eq 0
-        test "$(cat /proc/1/comm)" = systemd
-    - name: Check out repository
-      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        persist-credentials: false
-    - name: Test upgrades and installed traffic sandbox
+        set -euo pipefail
+        mkdir -p "$GITHUB_WORKSPACE"
+        printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
+          --output "$RUNNER_TEMP/source.tar.gz" \
+          "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
+        tar -xzf "$RUNNER_TEMP/source.tar.gz" --strip-components=1 -C "$GITHUB_WORKSPACE"
+    - name: Build Agent system test binary
       run: |
-        python3 scripts/test-install-server-upgrade.py --systemd crash not_ready wrong_version success migrate_fail corrupt_backup restore_fail signal
         test_binary=$(cargo test -p nodelite-agent --lib --no-run --locked --message-format=json | jq -r 'select(.reason == "compiler-artifact" and .profile.test == true) | .executable // empty')
-        sh scripts/test-traffic-control-systemd.sh "$test_binary"
+        test -n "$test_binary"
+        echo "NODELITE_SYSTEM_TEST_BINARY=$test_binary" >> "$GITHUB_ENV"
+    - name: Test upgrades and traffic isolation in the guest
+      run: python3 scripts/ci/test-systemd-vm.py "$NODELITE_SYSTEM_TEST_BINARY"
+    - name: Preserve systemd acceptance report
+      if: always()
+      uses: https://data.forgejo.org/actions/upload-artifact@c6a3b2bd78b3985e4b2f15397fec357f0fd808de
+      with:
+        name: systemd-report
+        path: ${{ runner.temp }}/systemd-report/
+        retention-days: 7
 concurrency:
   group: nodelite-ci-${{ forgejo.ref }}
   cancel-in-progress: true

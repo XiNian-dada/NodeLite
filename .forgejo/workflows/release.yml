@@ -1,4 +1,3 @@
-# Migrated for Forgejo; platform limitations are documented in docs/forgejo.md.
 name: Release
 'on':
   push:
@@ -21,10 +20,14 @@ jobs:
     name: Validate release tag
     runs-on: mainland
     steps:
-    - name: Prepare Debian job dependencies
+    - name: Check provisioned build tools
+      working-directory: .
       run: |
-        apt-get -o Acquire::Retries=3 update
-        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
+        node --version
+        pnpm --version
+        rustup --version
+        python3 -c "import yaml"
+        command -v tini
     - name: Bind provenance to the release tag
       env:
         SOURCE_REF: ${{ forgejo.ref }}
@@ -33,20 +36,23 @@ jobs:
           echo "::error::Run this workflow from the release tag (workflow_dispatch --ref must match input tag)"
           exit 1
         fi
-    - name: Check out repository
-      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        fetch-depth: 0
-        ref: refs/tags/${{ env.RELEASE_TAG }}
-        persist-credentials: false
-    - name: Set up Node.js
-      uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-      with:
-        node-version: 22
-    - name: Install pinned pnpm
-      run: npm install --global pnpm@10.11.0
-    - name: Install pinned pnpm
-      run: npm install --global pnpm@10.11.0
+    - name: Fetch exact source archive
+      env:
+        FORGEJO_TOKEN: ${{ forgejo.token }}
+        SOURCE_SERVER: ${{ forgejo.server_url }}
+        SOURCE_REPOSITORY: ${{ forgejo.repository }}
+        SOURCE_COMMIT: ${{ forgejo.sha }}
+        ARCHIVE_PROXY: ${{ vars.SOURCE_ARCHIVE_PROXY }}
+      working-directory: .
+      run: |
+        set -euo pipefail
+        mkdir -p "$GITHUB_WORKSPACE"
+        printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
+          --output "$RUNNER_TEMP/source.tar.gz" \
+          "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
+        tar -xzf "$RUNNER_TEMP/source.tar.gz" --strip-components=1 -C "$GITHUB_WORKSPACE"
     - name: Install web dependencies
       working-directory: nodelite-server/web
       run: pnpm install --frozen-lockfile
@@ -76,26 +82,21 @@ jobs:
         fi
     - name: Set up Rust
       run: |
-        rustup toolchain install stable --profile minimal
-        rustup default stable
+        rustup default 1.93.1
         rustup component add clippy rustfmt
     - name: Cache Cargo dependencies and build outputs
       uses: https://data.forgejo.org/actions/cache@f4b3439a656ba812b8cb417d2d49f9c810103092
       with:
         path: |
-          ~/.cargo/registry
-          ~/.cargo/git
+          /usr/local/cargo/registry
+          /usr/local/cargo/git
           target
           fuzz/target
         key: nodelite-release-validate-native-${{ hashFiles('**/Cargo.lock') }}
-    - name: Install shellcheck
-      run: |
-        apt-get update
-        apt-get install -y shellcheck
     - name: Install cargo-audit
       run: cargo install cargo-audit --version 0.22.2 --locked
     - name: Install cargo-deny
-      run: cargo install cargo-deny --version 0.19.10 --locked
+      run: cargo install cargo-deny --version 0.20.2 --locked
     - name: Check formatting
       run: cargo fmt --all --check
     - name: Run clippy
@@ -137,7 +138,7 @@ jobs:
     - name: Check dependency policy
       run: cargo deny check
     container:
-      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+      image: nodelite-ci:20261113-v1
     timeout-minutes: 120
   build-linux:
     name: Build ${{ matrix.target }}
@@ -151,20 +152,31 @@ jobs:
         - aarch64-unknown-linux-musl
       max-parallel: 1
     steps:
-    - name: Prepare Debian job dependencies
+    - name: Check provisioned build tools
+      working-directory: .
       run: |
-        apt-get -o Acquire::Retries=3 update
-        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
-    - name: Check out repository
-      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        fetch-depth: 0
-        ref: refs/tags/${{ env.RELEASE_TAG }}
-        persist-credentials: false
-    - name: Set up Node.js
-      uses: https://data.forgejo.org/actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-      with:
-        node-version: 22
+        node --version
+        pnpm --version
+        rustup --version
+        python3 -c "import yaml"
+        command -v tini
+    - name: Fetch exact source archive
+      env:
+        FORGEJO_TOKEN: ${{ forgejo.token }}
+        SOURCE_SERVER: ${{ forgejo.server_url }}
+        SOURCE_REPOSITORY: ${{ forgejo.repository }}
+        SOURCE_COMMIT: ${{ forgejo.sha }}
+        ARCHIVE_PROXY: ${{ vars.SOURCE_ARCHIVE_PROXY }}
+      working-directory: .
+      run: |
+        set -euo pipefail
+        mkdir -p "$GITHUB_WORKSPACE"
+        printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
+          --output "$RUNNER_TEMP/source.tar.gz" \
+          "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
+        tar -xzf "$RUNNER_TEMP/source.tar.gz" --strip-components=1 -C "$GITHUB_WORKSPACE"
     - name: Build web assets
       working-directory: nodelite-server/web
       run: |
@@ -172,14 +184,13 @@ jobs:
         pnpm build
     - name: Set up Rust
       run: |
-        rustup toolchain install stable --profile minimal
-        rustup default stable
+        rustup default 1.93.1
     - name: Cache Cargo dependencies and build outputs
       uses: https://data.forgejo.org/actions/cache@f4b3439a656ba812b8cb417d2d49f9c810103092
       with:
         path: |
-          ~/.cargo/registry
-          ~/.cargo/git
+          /usr/local/cargo/registry
+          /usr/local/cargo/git
           target
           fuzz/target
         key: nodelite-release-build-linux-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
@@ -240,33 +251,47 @@ jobs:
           scripts/install-agent-signed.sh
           scripts/merge-release-checksums.sh
     container:
-      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+      image: nodelite-ci:20261113-v1
     timeout-minutes: 120
   sbom:
     name: Generate SBOM
     needs: validate
     runs-on: mainland
     steps:
-    - name: Prepare Debian job dependencies
+    - name: Check provisioned build tools
+      working-directory: .
       run: |
-        apt-get -o Acquire::Retries=3 update
-        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
-    - name: Check out repository
-      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        fetch-depth: 0
-        ref: refs/tags/${{ env.RELEASE_TAG }}
-        persist-credentials: false
+        node --version
+        pnpm --version
+        rustup --version
+        python3 -c "import yaml"
+        command -v tini
+    - name: Fetch exact source archive
+      env:
+        FORGEJO_TOKEN: ${{ forgejo.token }}
+        SOURCE_SERVER: ${{ forgejo.server_url }}
+        SOURCE_REPOSITORY: ${{ forgejo.repository }}
+        SOURCE_COMMIT: ${{ forgejo.sha }}
+        ARCHIVE_PROXY: ${{ vars.SOURCE_ARCHIVE_PROXY }}
+      working-directory: .
+      run: |
+        set -euo pipefail
+        mkdir -p "$GITHUB_WORKSPACE"
+        printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
+          --output "$RUNNER_TEMP/source.tar.gz" \
+          "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
+        tar -xzf "$RUNNER_TEMP/source.tar.gz" --strip-components=1 -C "$GITHUB_WORKSPACE"
     - name: Set up Rust
       run: |
-        rustup toolchain install stable --profile minimal
-        rustup default stable
+        rustup default 1.93.1
     - name: Cache Cargo dependencies and build outputs
       uses: https://data.forgejo.org/actions/cache@f4b3439a656ba812b8cb417d2d49f9c810103092
       with:
         path: |
-          ~/.cargo/registry
-          ~/.cargo/git
+          /usr/local/cargo/registry
+          /usr/local/cargo/git
           target
           fuzz/target
         key: nodelite-release-sbom-native-${{ hashFiles('**/Cargo.lock') }}
@@ -299,7 +324,7 @@ jobs:
           dist/THIRD_PARTY_NOTICES.md
           dist/SHA256SUMS-sbom.txt
     container:
-      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+      image: nodelite-ci:20261113-v1
     timeout-minutes: 120
   release:
     name: Publish Forgejo Release
@@ -308,15 +333,31 @@ jobs:
     - sbom
     runs-on: mainland
     steps:
-    - name: Prepare Debian job dependencies
+    - name: Check provisioned build tools
+      working-directory: .
       run: |
-        apt-get -o Acquire::Retries=3 update
-        apt-get -o Acquire::Retries=3 install -y --no-install-recommends nodejs python3 python3-venv python3-yaml pkg-config cmake clang sudo shellcheck jq iproute2 tini
-    - name: Check out exact release source
-      uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        persist-credentials: false
-        ref: refs/tags/${{ env.RELEASE_TAG }}
+        node --version
+        pnpm --version
+        rustup --version
+        python3 -c "import yaml"
+        command -v tini
+    - name: Fetch exact source archive
+      env:
+        FORGEJO_TOKEN: ${{ forgejo.token }}
+        SOURCE_SERVER: ${{ forgejo.server_url }}
+        SOURCE_REPOSITORY: ${{ forgejo.repository }}
+        SOURCE_COMMIT: ${{ forgejo.sha }}
+        ARCHIVE_PROXY: ${{ vars.SOURCE_ARCHIVE_PROXY }}
+      working-directory: .
+      run: |
+        set -euo pipefail
+        mkdir -p "$GITHUB_WORKSPACE"
+        printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
+          --output "$RUNNER_TEMP/source.tar.gz" \
+          "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
+        tar -xzf "$RUNNER_TEMP/source.tar.gz" --strip-components=1 -C "$GITHUB_WORKSPACE"
     - name: Download build artifacts
       uses: https://data.forgejo.org/actions/download-artifact@ad191675b41f6a5b46da9a048cb6893812da158b
       with:
@@ -375,7 +416,7 @@ jobs:
         FORGEJO_COMMIT: ${{ forgejo.sha }}
       run: python3 scripts/publish-forgejo-release.py --directory publish --tag "$RELEASE_TAG"
     container:
-      image: rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+      image: nodelite-ci:20261113-v1
     timeout-minutes: 120
 defaults:
   run:

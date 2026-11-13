@@ -1,9 +1,10 @@
 name: Documentation site artifact
-on:
+'on':
   push:
-    branches: [main]
-  pull_request:
-  workflow_dispatch:
+    branches:
+    - main
+  pull_request: null
+  workflow_dispatch: null
 concurrency:
   group: nodelite-docs-${{ forgejo.ref }}
   cancel-in-progress: true
@@ -12,28 +13,41 @@ jobs:
     runs-on: mainland
     timeout-minutes: 20
     steps:
-      - name: Checkout
-        uses: https://data.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          persist-credentials: false
-      - name: Install document build dependencies
-        run: |
-          apt-get -o Acquire::Retries=3 update
-          apt-get -o Acquire::Retries=3 install -y --no-install-recommends ruby-full ruby-dev build-essential zlib1g-dev
-          gem install bundler --version 2.6.9 --no-document
-      - name: Build documentation without publishing updates
-        run: |
-          bundle config set --local path "$RUNNER_TEMP/nodelite-docs-gems"
-          bundle install --gemfile=docs/Gemfile
-          bundle exec --gemfile=docs/Gemfile jekyll build --source docs --destination "$RUNNER_TEMP/nodelite-site" --config docs/_config.yml,docs/_config_forgejo.yml
-          test -s "$RUNNER_TEMP/nodelite-site/index.html"
-          test ! -d "$RUNNER_TEMP/nodelite-site/updates"
-          test -z "$(find "$RUNNER_TEMP/nodelite-site" -type l -print -quit)"
-          tar -czf "$RUNNER_TEMP/nodelite-docs.tar.gz" -C "$RUNNER_TEMP/nodelite-site" .
-      - name: Upload documentation site
-        uses: https://data.forgejo.org/actions/upload-artifact@c6a3b2bd78b3985e4b2f15397fec357f0fd808de
-        with:
-          name: nodelite-docs-site
-          path: ${{ runner.temp }}/nodelite-docs.tar.gz
-          if-no-files-found: error
-          retention-days: 14
+    - name: Fetch exact source archive
+      env:
+        FORGEJO_TOKEN: ${{ forgejo.token }}
+        SOURCE_SERVER: ${{ forgejo.server_url }}
+        SOURCE_REPOSITORY: ${{ forgejo.repository }}
+        SOURCE_COMMIT: ${{ forgejo.sha }}
+        ARCHIVE_PROXY: ${{ vars.SOURCE_ARCHIVE_PROXY }}
+      working-directory: .
+      run: |
+        set -euo pipefail
+        mkdir -p "$GITHUB_WORKSPACE"
+        printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
+          --output "$RUNNER_TEMP/source.tar.gz" \
+          "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
+        tar -xzf "$RUNNER_TEMP/source.tar.gz" --strip-components=1 -C "$GITHUB_WORKSPACE"
+    - name: Install document build dependencies
+      run: |
+        apt-get -o Acquire::Retries=3 update
+        apt-get -o Acquire::Retries=3 install -y --no-install-recommends ruby-full ruby-dev build-essential zlib1g-dev
+        gem install bundler --version 2.6.9 --no-document
+    - name: Build documentation without publishing updates
+      run: |
+        bundle config set --local path "$RUNNER_TEMP/nodelite-docs-gems"
+        bundle install --gemfile=docs/Gemfile
+        bundle exec --gemfile=docs/Gemfile jekyll build --source docs --destination "$RUNNER_TEMP/nodelite-site" --config docs/_config.yml,docs/_config_forgejo.yml
+        test -s "$RUNNER_TEMP/nodelite-site/index.html"
+        test ! -d "$RUNNER_TEMP/nodelite-site/updates"
+        test -z "$(find "$RUNNER_TEMP/nodelite-site" -type l -print -quit)"
+        tar -czf "$RUNNER_TEMP/nodelite-docs.tar.gz" -C "$RUNNER_TEMP/nodelite-site" .
+    - name: Upload documentation site
+      uses: https://data.forgejo.org/actions/upload-artifact@c6a3b2bd78b3985e4b2f15397fec357f0fd808de
+      with:
+        name: nodelite-docs-site
+        path: ${{ runner.temp }}/nodelite-docs.tar.gz
+        if-no-files-found: error
+        retention-days: 14
