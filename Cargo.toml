@@ -26,7 +26,8 @@ ipnet = { version = "2.11", features = ["serde"] }
 libc = "0.2"
 maxminddb = "0.27"
 openssl = { version = "0.10.81", features = ["vendored"] }
-rusqlite = { version = "0.41.1", features = ["bundled"] }
+# Preserve checked u64 SQL conversions used by history latency values.
+rusqlite = { version = "0.41.1", features = ["bundled", "fallible_uint"] }
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
