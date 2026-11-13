@@ -48,7 +48,7 @@ jobs:
         set -euo pipefail
         mkdir -p "$GITHUB_WORKSPACE"
         printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
-          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 30 --max-time 180 --retry 2 --retry-delay 3 --retry-connrefused \
           --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
           --output "$RUNNER_TEMP/source.tar.gz" \
           "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
@@ -58,7 +58,7 @@ jobs:
       run: pnpm install --frozen-lockfile
     - name: Audit web dependencies
       working-directory: nodelite-server/web
-      run: pnpm audit --audit-level high
+      run: pnpm audit --registry=https://registry.npmjs.org --audit-level high
     - name: Lint web
       working-directory: nodelite-server/web
       run: pnpm lint
@@ -138,7 +138,7 @@ jobs:
     - name: Check dependency policy
       run: cargo deny check
     container:
-      image: nodelite-ci:20261113-v1
+      image: nodelite-ci:20261113-v2
     timeout-minutes: 120
   build-linux:
     name: Build ${{ matrix.target }}
@@ -172,7 +172,7 @@ jobs:
         set -euo pipefail
         mkdir -p "$GITHUB_WORKSPACE"
         printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
-          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 30 --max-time 180 --retry 2 --retry-delay 3 --retry-connrefused \
           --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
           --output "$RUNNER_TEMP/source.tar.gz" \
           "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
@@ -251,7 +251,7 @@ jobs:
           scripts/install-agent-signed.sh
           scripts/merge-release-checksums.sh
     container:
-      image: nodelite-ci:20261113-v1
+      image: nodelite-ci:20261113-v2
     timeout-minutes: 120
   sbom:
     name: Generate SBOM
@@ -278,7 +278,7 @@ jobs:
         set -euo pipefail
         mkdir -p "$GITHUB_WORKSPACE"
         printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
-          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 30 --max-time 180 --retry 2 --retry-delay 3 --retry-connrefused \
           --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
           --output "$RUNNER_TEMP/source.tar.gz" \
           "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
@@ -324,7 +324,7 @@ jobs:
           dist/THIRD_PARTY_NOTICES.md
           dist/SHA256SUMS-sbom.txt
     container:
-      image: nodelite-ci:20261113-v1
+      image: nodelite-ci:20261113-v2
     timeout-minutes: 120
   release:
     name: Publish Forgejo Release
@@ -353,7 +353,7 @@ jobs:
         set -euo pipefail
         mkdir -p "$GITHUB_WORKSPACE"
         printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
-          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 30 --max-time 180 --retry 2 --retry-delay 3 --retry-connrefused \
           --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
           --output "$RUNNER_TEMP/source.tar.gz" \
           "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
@@ -416,7 +416,7 @@ jobs:
         FORGEJO_COMMIT: ${{ forgejo.sha }}
       run: python3 scripts/publish-forgejo-release.py --directory publish --tag "$RELEASE_TAG"
     container:
-      image: nodelite-ci:20261113-v1
+      image: nodelite-ci:20261113-v2
     timeout-minutes: 120
 defaults:
   run:

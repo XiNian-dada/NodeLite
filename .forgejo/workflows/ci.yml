@@ -30,7 +30,7 @@ jobs:
         set -euo pipefail
         mkdir -p "$GITHUB_WORKSPACE"
         printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
-          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 30 --max-time 180 --retry 2 --retry-delay 3 --retry-connrefused \
           --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
           --output "$RUNNER_TEMP/source.tar.gz" \
           "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
@@ -42,7 +42,7 @@ jobs:
         python3 scripts/check-forgejo-workflows.py
         python3 scripts/test-forgejo-release.py
     container:
-      image: nodelite-ci:20261113-v1
+      image: nodelite-ci:20261113-v2
     timeout-minutes: 10
   lint-and-test:
     name: Lint and Test
@@ -71,7 +71,7 @@ jobs:
         set -euo pipefail
         mkdir -p "$GITHUB_WORKSPACE"
         printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
-          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 30 --max-time 180 --retry 2 --retry-delay 3 --retry-connrefused \
           --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
           --output "$RUNNER_TEMP/source.tar.gz" \
           "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
@@ -154,7 +154,7 @@ jobs:
     - name: Check dependency policy
       run: cargo deny check advisories licenses bans
     container:
-      image: nodelite-ci:20261113-v1
+      image: nodelite-ci:20261113-v2
     timeout-minutes: 90
   msrv:
     name: MSRV Check
@@ -183,7 +183,7 @@ jobs:
         set -euo pipefail
         mkdir -p "$GITHUB_WORKSPACE"
         printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
-          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 30 --max-time 180 --retry 2 --retry-delay 3 --retry-connrefused \
           --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
           --output "$RUNNER_TEMP/source.tar.gz" \
           "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
@@ -211,7 +211,7 @@ jobs:
         NODELITE_SKIP_WEB_BUILD: 1
       run: tini -s -- cargo test --workspace --locked
     container:
-      image: nodelite-ci:20261113-v1
+      image: nodelite-ci:20261113-v2
     timeout-minutes: 90
   web-e2e:
     name: Web E2E
@@ -243,7 +243,7 @@ jobs:
         set -euo pipefail
         mkdir -p "$GITHUB_WORKSPACE"
         printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
-          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 30 --max-time 180 --retry 2 --retry-delay 3 --retry-connrefused \
           --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
           --output "$RUNNER_TEMP/source.tar.gz" \
           "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
@@ -278,7 +278,7 @@ jobs:
           nodelite-server/web/test-results/
         retention-days: 7
     container:
-      image: nodelite-ci:20261113-v1
+      image: nodelite-ci:20261113-v2
     timeout-minutes: 90
   web-lint-and-test:
     name: Web Lint and Test
@@ -309,7 +309,7 @@ jobs:
         set -euo pipefail
         mkdir -p "$GITHUB_WORKSPACE"
         printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
-          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 30 --max-time 180 --retry 2 --retry-delay 3 --retry-connrefused \
           --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
           --output "$RUNNER_TEMP/source.tar.gz" \
           "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
@@ -317,7 +317,7 @@ jobs:
     - name: Install dependencies
       run: pnpm install --frozen-lockfile
     - name: Audit web dependencies
-      run: pnpm audit --audit-level high
+      run: pnpm audit --registry=https://registry.npmjs.org --audit-level high
     - name: Lint
       run: pnpm lint
     - name: Type-check
@@ -341,7 +341,7 @@ jobs:
         path: nodelite-server/web/dist
         retention-days: 1
     container:
-      image: nodelite-ci:20261113-v1
+      image: nodelite-ci:20261113-v2
     timeout-minutes: 90
   cross-build:
     name: Cross Build ${{ matrix.target }}
@@ -379,7 +379,7 @@ jobs:
         set -euo pipefail
         mkdir -p "$GITHUB_WORKSPACE"
         printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
-          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 30 --max-time 180 --retry 2 --retry-delay 3 --retry-connrefused \
           --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
           --output "$RUNNER_TEMP/source.tar.gz" \
           "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
@@ -421,7 +421,7 @@ jobs:
           -p nodelite-server \
           -p nodelite-agent
     container:
-      image: nodelite-ci:20261113-v1
+      image: nodelite-ci:20261113-v2
     timeout-minutes: 90
   fuzz-smoke:
     name: Fuzz Smoke
@@ -450,7 +450,7 @@ jobs:
         set -euo pipefail
         mkdir -p "$GITHUB_WORKSPACE"
         printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
-          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 30 --max-time 180 --retry 2 --retry-delay 3 --retry-connrefused \
           --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
           --output "$RUNNER_TEMP/source.tar.gz" \
           "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
@@ -477,12 +477,13 @@ jobs:
           cargo run --manifest-path fuzz/Cargo.toml --locked --bin "$bin" -- fuzz/corpus/protocol_messages
         done
     container:
-      image: nodelite-ci:20261113-v1
+      image: nodelite-ci:20261113-v2
   systemd-acceptance:
-    name: Real systemd acceptance (isolated VM)
+    name: Real systemd acceptance (Docker)
     runs-on: mainland
     container:
-      image: nodelite-ci:20261113-v1
+      image: nodelite-ci:20261113-v2
+      options: --cap-add SYS_ADMIN --cap-add NET_ADMIN --cgroupns private
     needs:
     - workflow-guards
     timeout-minutes: 45
@@ -499,7 +500,7 @@ jobs:
         set -euo pipefail
         mkdir -p "$GITHUB_WORKSPACE"
         printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
-          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 30 --max-time 180 --retry 2 --retry-delay 3 --retry-connrefused \
           --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
           --output "$RUNNER_TEMP/source.tar.gz" \
           "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
@@ -509,8 +510,8 @@ jobs:
         test_binary=$(cargo test -p nodelite-agent --lib --no-run --locked --message-format=json | jq -r 'select(.reason == "compiler-artifact" and .profile.test == true) | .executable // empty')
         test -n "$test_binary"
         echo "NODELITE_SYSTEM_TEST_BINARY=$test_binary" >> "$GITHUB_ENV"
-    - name: Test upgrades and traffic isolation in the guest
-      run: python3 scripts/ci/test-systemd-vm.py "$NODELITE_SYSTEM_TEST_BINARY"
+    - name: Test upgrades and traffic isolation in Docker
+      run: bash scripts/ci/test-systemd-container.sh "$NODELITE_SYSTEM_TEST_BINARY"
     - name: Preserve systemd acceptance report
       if: always()
       uses: https://data.forgejo.org/actions/upload-artifact@c6a3b2bd78b3985e4b2f15397fec357f0fd808de

@@ -25,7 +25,7 @@ jobs:
         set -euo pipefail
         mkdir -p "$GITHUB_WORKSPACE"
         printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
-          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 15 --max-time 180 \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 30 --max-time 180 --retry 2 --retry-delay 3 --retry-connrefused \
           --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
           --output "$RUNNER_TEMP/source.tar.gz" \
           "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"

@@ -28,11 +28,15 @@ for path in sorted(workflows.glob("*.yml")):
         assert all(n in jobs for n in needs), (path, job_id, needs)
         image = job.get("container", {}).get("image")
         if image:
-            assert image == "nodelite-ci:20261113-v1", image
+            assert image == "nodelite-ci:20261113-v2", image
+        options = job.get("container", {}).get("options", "")
+        if options:
+            assert job_id == "systemd-acceptance"
+            assert options == "--cap-add SYS_ADMIN --cap-add NET_ADMIN --cgroupns private"
         names = [step.get("name", "") for step in job["steps"]]
         if any("pnpm " in step.get("run", "") for step in job["steps"]):
             assert "Check provisioned build tools" in names, (path, job_id)
-            assert image == "nodelite-ci:20261113-v1"
+            assert image == "nodelite-ci:20261113-v2"
         assert "Fetch exact source archive" in names, (path, job_id)
         archive = next(step for step in job["steps"] if step.get("name") == "Fetch exact source archive")
         assert archive["env"]["SOURCE_COMMIT"] == "${{ forgejo.sha }}"
