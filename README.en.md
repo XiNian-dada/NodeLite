@@ -11,7 +11,7 @@ NodeLite is a server monitoring dashboard written in Rust. Each monitored machin
 
 📖 **Documentation**: [Repository docs](docs/index.md) · [Forgejo migration status](docs/forgejo.md)
 
-The primary repository is [Forgejo](https://akyuu.leeinx.com/XiNian-dada/NodeLite). Actions builds a downloadable documentation site; signed Agent updates remain paused until keys and state are recovered. GitHub install sources below belong to the former release pipeline.
+The primary repository is [Forgejo](https://akyuu.leeinx.com/XiNian-dada/NodeLite). Actions builds a downloadable documentation site. Signed Agent updates remain paused until keys and state are recovered.
 
 ![Dashboard screenshot](images/en/dark_home_page.png)
 
@@ -27,11 +27,7 @@ The primary repository is [Forgejo](https://akyuu.leeinx.com/XiNian-dada/NodeLit
 
 ## Quick start
 
-Install the server on a Linux host with systemd:
-
-```bash
-curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/install-server.sh | sudo sh
-```
+Follow the [private Forgejo release instructions](docs/forgejo.md#从私有-release-安装或恢复升级) to install or upgrade the Server on a Linux host with systemd.
 
 The server listens on `127.0.0.1:8080`. In production, put it behind a reverse proxy with HTTPS. With Caddy that is:
 
@@ -50,22 +46,9 @@ Issue an install command for each machine you want to monitor (it contains a one
   install-agent --node-id hk-01 --node-label "Hong Kong 01"
 ```
 
-Run the printed `curl ... | sh` command on the target machine. The node shows up in the dashboard within a few seconds.
+Use the bootstrap URL and one-time token from the printed command with the [Agent installation steps](docs/forgejo.md#从私有-release-安装或恢复升级).
 
-Upgrade the server first, then the agents:
-
-```bash
-curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/install-server.sh | \
-  sudo NODELITE_SERVER_MODE=upgrade sh
-/usr/local/bin/nodelite-server --config /opt/nodelite/config/server.toml upgrade-agent
-```
-
-The official [GitHub-hosted signed Agent source](docs/github-agent-updates.md) is live for
-`v3.1.0-rc.1` on x86_64 and ARM64 Linux (`testing` channel). RC upgrades require that explicit tag;
-`latest` still selects the latest stable release. Eligible existing Linux Agents can use the
-[version-pinned enrollment command](docs/github-agent-updates.md#一次升级并启用网页更新) to upgrade and enable
-web-triggered updates in one step. Manually upgrading the Agent alone does not enable this feature.
-After enrollment, open the node details → Settings → Agent upgrade for future updates.
+Use the same release to upgrade the Server first, then the Agents. Agents enrolled in the signed update channel require the [signed source](docs/forgejo.md#签名-agent-更新) to be restored.
 
 ## Configuration
 

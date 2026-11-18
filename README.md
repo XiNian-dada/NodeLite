@@ -11,7 +11,7 @@ NodeLite 是一个用 Rust 编写的服务器监控面板。每台被监控的�
 
 📖 **文档**：[仓库文档](docs/index.md) · [Forgejo 工作流及迁移状态](docs/forgejo.md)
 
-当前主仓库：[Forgejo](https://akyuu.leeinx.com/XiNian-dada/NodeLite)。文档站点由 Actions 生成下载制品；签名 Agent 更新待凭据和状态恢复后启用。下文 GitHub 安装源仍属于旧发布链路。
+当前主仓库：[Forgejo](https://akyuu.leeinx.com/XiNian-dada/NodeLite)。文档站点由 Actions 生成下载制品；签名 Agent 更新待凭据和状态恢复后启用。
 
 ![面板截图](images/zh_cn/dark_home_page.png)
 
@@ -27,11 +27,7 @@ NodeLite 是一个用 Rust 编写的服务器监控面板。每台被监控的�
 
 ## 快速开始
 
-在一台 Linux（systemd）主机上安装 Server：
-
-```bash
-curl -fsSL https://github.com/XiNian-dada/NodeLite/releases/latest/download/install-server.sh | sudo sh
-```
+在 Linux（systemd）主机上按 [Forgejo 私有 Release 安装指南](docs/forgejo.md#从私有-release-安装或恢复升级)安装或升级 Server。
 
 Server 默认监听 `127.0.0.1:8080`，生产环境请放在 Nginx 或 Caddy 后面并启用 HTTPS（[反向代理](docs/reverse-proxy.md)）。
 
@@ -42,13 +38,13 @@ Server 默认监听 `127.0.0.1:8080`，生产环境请放在 Nginx 或 Caddy 后
   install-agent --node-id hk-01 --node-label "Hong Kong 01"
 ```
 
-把输出的 `curl ... | sh` 命令复制到目标机器执行，节点会在几秒内出现在面板上。完整步骤见[快速开始](docs/getting-started.md)。
+用输出中的 bootstrap 地址和一次性令牌在目标机器执行 [Agent 安装步骤](docs/forgejo.md#从私有-release-安装或恢复升级)。
 
 ## 文档
 
 - [快速开始](docs/getting-started.md) · [反向代理](docs/reverse-proxy.md) · [配置](docs/configuration.md)
 - [告警与巡检](docs/alerts.md) · [流量限速](docs/traffic-control.md) · [升级](docs/upgrades.md)
-- [GitHub 托管与网页 Agent 更新](docs/github-agent-updates.md)（RC 更新源已上线）
+- [签名与网页 Agent 更新](docs/forgejo.md#签名-agent-更新)（等待恢复）
 - [运维与排障](docs/operations.md) · [性能基准](docs/benchmarks.md) · [开发](docs/development.md)
 - [安全模型](SECURITY.md) · [架构设计](DESIGN.md) · [更新日志](CHANGELOG.md)
 

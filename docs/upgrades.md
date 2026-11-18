@@ -5,6 +5,8 @@ nav_order: 7
 
 # 升级
 
+GitHub 下载地址已失效。Forgejo Release 可用后，普通 Server 和 Agent 请按 [私有 Release 恢复步骤](forgejo.md#从私有-release-安装或恢复升级)升级。下文记录旧 GitHub 发布链路。
+
 **先升级 Server，再升级所有 Agent。** 旧版 Agent 可以继续用有效凭据上报，但不支持凭据续期的落盘确认，请在 Token 过期前完成升级。凭据续期与恢复的细节见 [Agent 凭证续期与安全升级](agent-credential-upgrades.md)。
 
 官方 [GitHub 签名更新源](https://xinian-dada.github.io/NodeLite/updates/)已经上线，当前提供

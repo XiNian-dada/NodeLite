@@ -24,9 +24,59 @@ nav_order: 15
 
 Forgejo Release 的 `BUILD_INFO.json` 记录 source commit、tag 和仓库，属于构建记录，不是 GitHub OIDC 签名证明。原安装器的 GitHub attestation 校验保持原有拒绝策略；开启该校验的部署不能用 Forgejo 构建记录替代。安装器和运行中 Server 的默认 GitHub 更新 URL 尚未改变，使用 Forgejo Release 需要另外配置下载源与私有仓库认证。
 
+## 从私有 Release 安装或恢复升级
+
+在 [Forgejo Releases](https://akyuu.leeinx.com/XiNian-dada/NodeLite/releases) 登录后，选择要安装的固定版本。下载同一版本的附件，保持文件名不变，再通过 SSH 将附件传到目标主机上的一个专用目录。目标主机无需配置 Forgejo 凭据。
+
+| 目标 | 所需附件 |
+| --- | --- |
+| Server（Linux） | `install-server.sh`、`install-server-config.sh`、`install-server-upgrade.sh`、对应架构的 `nodelite-server-*-unknown-linux-musl` |
+| Agent（Linux 或 macOS） | `install-agent.sh`、对应平台和架构的 `nodelite-agent-*` |
+
+两个目标均需下载 `SHA256SUMS.txt` 和 `BUILD_INFO.json`。在目标主机切换到附件目录，核对 `BUILD_INFO.json` 的 `tag` 和 `commit` 与 Forgejo Release 一致，再校验所用附件。以下以 Linux x86_64 的 Server 为例：
+
+```sh
+grep -E '  (BUILD_INFO\.json|install-server(-config|-upgrade)?\.sh|nodelite-server-x86_64-unknown-linux-musl)$' SHA256SUMS.txt | sha256sum -c -
+```
+
+确认每个所需文件都显示 `OK` 后，在该目录启动只监听本机的临时下载服务（需 Python 3）：
+
+```sh
+python3 -m http.server 18765 --bind 127.0.0.1
+```
+
+保持服务运行，在另一个终端进入同一个附件目录。先升级 Server，确认面板正常后再处理 Agent。将 `tag` 设为此次下载的确切版本：
+
+```sh
+tag=v3.1.0-rc.2
+source_url=http://127.0.0.1:18765
+sudo sh ./install-server.sh --mode upgrade --version "$tag" --base-url "$source_url"
+```
+
+全新 Server 使用 `--mode install`。已有自定义配置路径的 Server，请用 `sudo env NODELITE_SERVER_CONFIG_PATH=/绝对路径/server.toml sh ./install-server.sh ...` 指定原路径。已启用 GitHub attestation 强制校验的部署需继续遵循自己的发布验证策略。
+
+普通 Agent 同样先校验 `install-agent.sh` 和对应二进制（macOS 可用 `shasum -a 256 -c -`），再在 Agent 主机上从附件目录启动上述临时下载服务并执行：
+
+```sh
+tag=v3.1.0-rc.2
+source_url=http://127.0.0.1:18765
+sudo sh ./install-agent.sh --mode upgrade --version "$tag" --base-url "$source_url"
+```
+
+已有 Agent 会使用原有凭据，自定义部署需继续传入原目录参数。全新 Agent 在面板签发一次性安装命令，将其中的 `--bootstrap-url` 值填入下面的命令。安装器会提示输入一次性安装 Token。
+
+```sh
+sudo sh ./install-agent.sh --mode install --version "$tag" --base-url "$source_url" \
+  --bootstrap-url 'https://monitor.example.com/install/bootstrap'
+```
+
+完成后按 `Ctrl+C` 停止临时下载服务。
+
+已加入签名更新通道的 Agent 仍按本机策略验签和升级，需要恢复同一信任链的签名发布源。
+
 ## 签名 Agent 更新
 
-迁移期间签名 Agent 更新停用，文档制品不包含更新元数据。`updates/github.json`、离线批准内容和原签名校验代码保留。恢复前必须找回原状态分支、角色私钥及已批准的元数据，并明确新的更新发布 URL；不能通过初始化新状态、关闭签名验证或替换信任根绕过已有部署的连续性校验。此迁移未触发 Release，也未恢复定时签名或发布站点。
+迁移期间签名 Agent 更新停用，文档制品不包含更新元数据。`updates/github.json`、离线批准内容和原签名校验代码保留。恢复前必须找回原状态分支、角色私钥及已批准的元数据，并明确新的更新发布 URL；不能通过初始化新状态、关闭签名验证或替换信任根绕过已有部署的连续性校验。定时签名和更新站点仍待恢复。
 
 源码按 `forgejo.sha` 从 Forgejo API 下载归档，使用同实例的作业 token 和现有 `SOURCE_ARCHIVE_PROXY` 下载路线。编译环境的工具安装不修改 Forgejo 主站容器。
 
