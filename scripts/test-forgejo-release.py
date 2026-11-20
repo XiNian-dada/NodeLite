@@ -15,22 +15,24 @@ spec = importlib.util.spec_from_file_location("publisher", Path(__file__).with_n
 publisher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publisher)
 COMMIT = "a" * 40
+TAG_OBJECT = "b" * 40
 REPO = "owner/NodeLite"
 SERVER = "https://forgejo.example"
 TAG = "v1.2.3-rc.1"
 
 
 class FakeClient:
-    def __init__(self, *, existing=None, fail_upload=False):
+    def __init__(self, *, existing=None, fail_upload=False, tag_commit=COMMIT):
         self.existing = existing
         self.fail_upload = fail_upload
+        self.tag_commit = tag_commit
         self.assets = []
         self.published = False
         self.created = False
 
     def request(self, method, path, data=None):
-        if path.startswith("/commits/"):
-            return {"sha": COMMIT}
+        if method == "GET" and path == "/tags/" + TAG:
+            return {"id": TAG_OBJECT, "commit": {"sha": self.tag_commit}}
         if method == "GET" and path.startswith("/releases/tags/"):
             if self.existing is not None:
                 return self.existing
@@ -39,7 +41,7 @@ class FakeClient:
             assert data["draft"] is True and data["prerelease"] is True
             self.created = True
             return {"draft": True, "target_commitish": COMMIT, "id": 1}
-        if method == "GET":
+        if method == "GET" and path == "/releases/1/assets":
             return self.assets
         if method == "PATCH":
             self.published = True
@@ -88,6 +90,12 @@ class ReleaseTests(unittest.TestCase):
         client = FakeClient()
         (self.directory / "install-agent.sh").write_bytes(b"modified")
         with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+            self.publish(client)
+        self.assertFalse(client.created)
+
+    def test_tag_pointing_to_another_commit_blocks_publication(self):
+        client = FakeClient(tag_commit="c" * 40)
+        with self.assertRaisesRegex(ValueError, "tag no longer points at the built commit"):
             self.publish(client)
         self.assertFalse(client.created)
 

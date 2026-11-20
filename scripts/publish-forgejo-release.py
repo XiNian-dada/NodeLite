@@ -87,7 +87,7 @@ def publish(client, directory, tag, commit, repository, server):
         raise ValueError("expected full source commit SHA")
     names = check_assets(directory, tag, commit, repository, server)
     encoded_tag = urllib.parse.quote(tag, safe="")
-    if client.request("GET", "/commits/" + encoded_tag)["sha"] != commit:
+    if client.request("GET", "/tags/" + encoded_tag)["commit"]["sha"] != commit:
         raise ValueError("release tag no longer points at the built commit")
     try:
         release = client.request("GET", "/releases/tags/" + encoded_tag)
