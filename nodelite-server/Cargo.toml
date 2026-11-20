@@ -20,7 +20,7 @@ flate2.workspace = true
 hex.workspace = true
 hmac = "0.12"
 ipnet.workspace = true
-jiff = { workspace = true, features = ["tz-system", "tzdb-zoneinfo", "tzdb-concatenated", "tzdb-bundle-platform"] }
+jiff = { workspace = true, features = ["serde", "tz-system", "tzdb-zoneinfo", "tzdb-concatenated", "tzdb-bundle-platform"] }
 libc.workspace = true
 lru = "0.18.2"
 maxminddb.workspace = true
