@@ -2,7 +2,7 @@
 //!
 //! 根据滑动窗口均值计算 CPU、内存、磁盘与延迟阈值，判定规则命中状态并汇总结算巡检报告。
 
-use chrono::{DateTime, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{
     AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode, InspectionConfig, NodeSnapshot,
     NodeStatus,
@@ -42,7 +42,7 @@ pub(crate) struct InspectionHighlight {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct InspectionHighlightEvent {
-    pub(crate) occurred_at: DateTime<Utc>,
+    pub(crate) occurred_at: UtcTimestamp,
     pub(crate) summary: String,
 }
 
@@ -51,7 +51,7 @@ pub(crate) trait AlertStatusView {
     fn node_label(&self) -> &str;
     fn tags(&self) -> &[String];
     fn snapshot(&self) -> Option<&NodeSnapshot>;
-    fn last_seen(&self) -> Option<DateTime<Utc>>;
+    fn last_seen(&self) -> Option<UtcTimestamp>;
     fn latency_ms(&self) -> Option<u64>;
     fn online(&self) -> bool;
     fn traffic_usage_percent(&self) -> Option<u64> {
@@ -76,7 +76,7 @@ impl AlertStatusView for NodeStatus {
         self.snapshot.as_ref()
     }
 
-    fn last_seen(&self) -> Option<DateTime<Utc>> {
+    fn last_seen(&self) -> Option<UtcTimestamp> {
         self.last_seen
     }
 
@@ -92,7 +92,7 @@ impl AlertStatusView for NodeStatus {
 pub(crate) fn evaluate_rules<'a, I, S>(
     rules: &[AlertRuleConfig],
     statuses: I,
-    now: DateTime<Utc>,
+    now: UtcTimestamp,
 ) -> Vec<EvaluatedRule>
 where
     I: IntoIterator<Item = &'a S>,
@@ -114,7 +114,7 @@ where
 pub(crate) fn evaluate_rule<S>(
     rule: &AlertRuleConfig,
     status: &S,
-    now: DateTime<Utc>,
+    now: UtcTimestamp,
 ) -> Option<EvaluatedRule>
 where
     S: AlertStatusView + ?Sized,
@@ -138,7 +138,7 @@ where
 pub(crate) fn build_inspection_report<'a, I, S>(
     inspection: &InspectionConfig,
     statuses: I,
-    now: DateTime<Utc>,
+    now: UtcTimestamp,
 ) -> InspectionReport
 where
     I: IntoIterator<Item = &'a S>,
@@ -226,7 +226,7 @@ where
     }
 }
 
-fn rule_metric_value<S>(rule: &AlertRuleConfig, status: &S, now: DateTime<Utc>) -> Option<u64>
+fn rule_metric_value<S>(rule: &AlertRuleConfig, status: &S, now: UtcTimestamp) -> Option<u64>
 where
     S: AlertStatusView + ?Sized,
 {
@@ -253,7 +253,7 @@ where
     }
 }
 
-fn metric_value<S>(metric: AlertMetric, status: &S, now: DateTime<Utc>) -> Option<u64>
+fn metric_value<S>(metric: AlertMetric, status: &S, now: UtcTimestamp) -> Option<u64>
 where
     S: AlertStatusView + ?Sized,
 {
@@ -309,22 +309,22 @@ where
         .max()
 }
 
-fn offline_minutes<S>(status: &S, now: DateTime<Utc>) -> Option<u64>
+fn offline_minutes<S>(status: &S, now: UtcTimestamp) -> Option<u64>
 where
     S: AlertStatusView + ?Sized,
 {
     if status.online() {
         return None;
     }
-    let minutes = (now - status.last_seen()?).num_minutes();
+    let minutes = (now - status.last_seen()?).as_mins();
     Some(minutes.max(0) as u64)
 }
 
 fn offline_threshold_time<S>(
     status: &S,
-    now: DateTime<Utc>,
+    now: UtcTimestamp,
     offline_grace_minutes: u64,
-) -> DateTime<Utc>
+) -> UtcTimestamp
 where
     S: AlertStatusView + ?Sized,
 {
@@ -336,7 +336,7 @@ where
     crossed_at.min(now)
 }
 
-fn metric_observed_at<S>(status: &S, now: DateTime<Utc>) -> DateTime<Utc>
+fn metric_observed_at<S>(status: &S, now: UtcTimestamp) -> UtcTimestamp
 where
     S: AlertStatusView + ?Sized,
 {
@@ -349,7 +349,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use chrono::{Duration, Utc};
+    use jiff::SignedDuration;
+    use nodelite_proto::timestamp::UtcTimestamp;
     use nodelite_proto::{
         AlertChannel, AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode, AlertSeverity,
         InspectionConfig, NodeStatus,
@@ -359,7 +360,7 @@ mod tests {
     use crate::test_support::{fake_snapshot, synthetic_identity};
 
     fn sample_status(
-        now: chrono::DateTime<Utc>,
+        now: UtcTimestamp,
         node_id: &str,
         label: &str,
         online: bool,
@@ -374,7 +375,7 @@ mod tests {
             identity: synthetic_identity(node_id, label, "2.2.6", Some("6.8.0"), "edge"),
             snapshot: Some(snapshot),
             online,
-            last_seen: Some(now - Duration::minutes(30)),
+            last_seen: Some(now - SignedDuration::from_mins(30)),
             remote_ip: Some("203.0.113.8".to_string()),
             geoip_country: None,
             geoip_city: None,
@@ -426,7 +427,7 @@ mod tests {
             None
         }
 
-        fn last_seen(&self) -> Option<chrono::DateTime<Utc>> {
+        fn last_seen(&self) -> Option<UtcTimestamp> {
             None
         }
 
@@ -445,7 +446,7 @@ mod tests {
 
     #[test]
     fn evaluate_rule_uses_scope_and_threshold() {
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         let status = sample_status(now, "hk-01", "Hong Kong", true, 91.0, 140);
         let matched = evaluate_rule(&cpu_rule(), &status, now).expect("rule should match");
 
@@ -457,7 +458,7 @@ mod tests {
 
     #[test]
     fn evaluate_rule_requires_strict_threshold_comparisons() {
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         let status = sample_status(now, "hk-01", "Hong Kong", true, 90.0, 140);
 
         let mut gt_rule = cpu_rule();
@@ -478,7 +479,7 @@ mod tests {
 
     #[test]
     fn traffic_usage_rule_matches_its_exact_threshold() {
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         let rule = AlertRuleConfig {
             id: "traffic-50".to_string(),
             name: "Traffic usage".to_string(),
@@ -501,7 +502,7 @@ mod tests {
 
     #[test]
     fn build_inspection_report_counts_highlights() {
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         let status = sample_status(now, "hk-01", "Hong Kong", false, 88.0, 320);
         let report = build_inspection_report(&InspectionConfig::default(), &[status], now);
 

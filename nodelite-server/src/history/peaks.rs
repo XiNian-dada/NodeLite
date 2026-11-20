@@ -1,6 +1,6 @@
 //! 巡检峰值查询独立于图表均值缓存，复用查询并发限额。
 
-use chrono::{DateTime, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 
 use super::*;
 
@@ -8,15 +8,17 @@ impl HistoryStore {
     pub(crate) async fn query_history_peaks(
         &self,
         node_id: &str,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
+        start: UtcTimestamp,
+        end: UtcTimestamp,
     ) -> HistoryResult<Vec<HistoryPoint>> {
         if !self.is_available() {
             return Ok(Vec::new());
         }
-        let start =
-            start.max(Utc::now() - chrono::Duration::hours(DEFAULT_HISTORY_RETENTION_HOURS as i64));
-        let end = end.min(Utc::now());
+        let start = start.max(
+            UtcTimestamp::now()
+                - jiff::SignedDuration::from_hours(DEFAULT_HISTORY_RETENTION_HOURS as i64),
+        );
+        let end = end.min(UtcTimestamp::now());
         if end <= start {
             return Ok(Vec::new());
         }

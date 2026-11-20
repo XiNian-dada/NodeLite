@@ -6,7 +6,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use chrono::Utc;
+use nodelite_proto::timestamp::UtcTimestamp;
 use tracing::error;
 
 use crate::AppState;
@@ -96,7 +96,7 @@ async fn build_alert_settings_response(state: &AppState) -> AlertSettingsRespons
         std::sync::Arc::clone(&alerting)
     };
     let statuses = state.shared.list_statuses().await;
-    let now = Utc::now();
+    let now = UtcTimestamp::now();
     let matches = evaluate_alert_rules_with_history(
         &state.shared,
         &state.history,
@@ -240,7 +240,7 @@ fn build_alert_preview(
     config: &AlertingConfig,
     statuses: &[NodeStatus],
     matches: &[EvaluatedRule],
-    now: chrono::DateTime<Utc>,
+    now: UtcTimestamp,
 ) -> AlertPreview {
     let inspection = build_inspection_report(&config.inspection, statuses, now);
     AlertPreview {
@@ -294,7 +294,8 @@ fn build_alert_preview(
 
 #[cfg(test)]
 mod tests {
-    use chrono::{Duration, Utc};
+    use jiff::SignedDuration;
+    use nodelite_proto::timestamp::UtcTimestamp;
 
     use super::{build_alert_preview, merge_alerting_request};
     use crate::test_support::{fake_snapshot, synthetic_identity};
@@ -319,7 +320,7 @@ mod tests {
             identity: synthetic_identity(node_id, label, "2.2.6", Some("6.8.0"), "edge"),
             snapshot: Some(snapshot),
             online,
-            last_seen: Some(Utc::now() - Duration::minutes(30)),
+            last_seen: Some(UtcTimestamp::now() - SignedDuration::from_mins(30)),
             remote_ip: Some("203.0.113.8".to_string()),
             geoip_country: None,
             geoip_city: None,
@@ -425,7 +426,7 @@ mod tests {
             inspection: InspectionConfig::default(),
         };
 
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         let statuses = [status];
         let matches = crate::alerts::evaluate_rules(&config.rules, &statuses, now);
         let preview = build_alert_preview(&config, &statuses, &matches, now);

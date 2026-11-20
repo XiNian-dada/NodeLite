@@ -255,10 +255,10 @@ pub(super) async fn assert_status(
 }
 
 pub(super) async fn current_totp_code_with_margin(secret: &str) -> String {
-    while Utc::now().timestamp().rem_euclid(30) > 25 {
+    while UtcTimestamp::now().timestamp().rem_euclid(30) > 25 {
         sleep(Duration::from_millis(100)).await;
     }
     let secret = decode_totp_secret(secret).expect("test TOTP secret should decode");
-    let step = Utc::now().timestamp().max(0) as u64 / 30;
+    let step = UtcTimestamp::now().timestamp().max(0) as u64 / 30;
     totp_custom::<Sha1>(30, 6, &secret, step.saturating_mul(30))
 }

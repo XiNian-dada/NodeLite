@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use chrono::{Duration as ChronoDuration, Utc};
+use jiff::SignedDuration;
+use nodelite_proto::timestamp::UtcTimestamp;
 use rusqlite::{Connection, params};
 
 use crate::fs_security::{create_private_dir_all, ensure_directory_mode};
@@ -64,7 +65,7 @@ pub(super) fn prune_expired_records(
     retention_days: u64,
     max_rows: u64,
 ) -> Result<usize> {
-    let cutoff = Utc::now() - ChronoDuration::days(retention_days as i64);
+    let cutoff = UtcTimestamp::now() - SignedDuration::from_hours(24 * retention_days as i64);
     let expired = connection
         .execute(
             "DELETE FROM audit_log WHERE timestamp < ?1",

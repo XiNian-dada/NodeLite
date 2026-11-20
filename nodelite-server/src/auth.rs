@@ -25,8 +25,8 @@ use std::time::{Duration, Instant};
 use axum::extract::Request;
 use axum::http::{HeaderMap, header};
 use base64::Engine;
-use chrono::Utc;
 use getrandom::fill as fill_random;
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{ReadonlyAuthConfig, ServerConfig, normalize_totp_secret};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
@@ -521,8 +521,8 @@ pub fn decode_totp_secret(value: &str) -> Option<Vec<u8>> {
 /// [`TwoFactorSessions::try_mark_unused_totp_steps`],原子地检查并标记所有
 /// 匹配 step,避免 6 位码在相邻 step 碰撞时被重复使用。
 pub fn matching_totp_steps(totp_secret: Option<&[u8]>, code: &str) -> Vec<u64> {
-    // 时钟回拨到 1970 之前 chrono 会返回负值;退化到 0 而不是 panic。
-    let now_secs = Utc::now().timestamp().max(0) as u64;
+    // 时钟回拨到 1970 之前时，限制在 Unix 纪元以避免转为巨大的无符号值。
+    let now_secs = UtcTimestamp::now().timestamp().max(0) as u64;
     let now_step = now_secs / 30;
     matching_totp_steps_at(totp_secret, code, now_step)
 }

@@ -3,7 +3,8 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use chrono::{DateTime, Duration as ChronoDuration, TimeZone, Utc};
+use jiff::SignedDuration;
+use nodelite_proto::timestamp::UtcTimestamp;
 use tokio::runtime::Runtime;
 
 use super::{
@@ -33,7 +34,7 @@ fn legacy_node(
     node_id: &str,
     node_label: &str,
     token: &str,
-    token_expires_at: Option<DateTime<Utc>>,
+    token_expires_at: Option<UtcTimestamp>,
 ) -> RegisteredNode {
     RegisteredNode {
         node_id: node_id.to_string(),
@@ -46,7 +47,7 @@ fn legacy_node(
         pending_tokens: Vec::new(),
         token: token.to_string(),
         tags: Vec::new(),
-        created_at: Utc::now(),
+        created_at: UtcTimestamp::now(),
         token_expires_at,
         service_expires_at: None,
         service_unlimited: false,

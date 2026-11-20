@@ -5,9 +5,10 @@
 use anyhow::anyhow;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::{Algorithm, Argon2, Params, Version};
-use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use getrandom::fill as fill_random;
+use jiff::SignedDuration;
 use nodelite_proto::NodeIdentity;
+use nodelite_proto::timestamp::UtcTimestamp;
 
 use crate::auth::constant_time_compare_bytes;
 use crate::encoding::hex_encode;
@@ -18,7 +19,7 @@ use super::{
     RegistryResult,
 };
 
-pub(super) fn prune_expired_install_sessions(file: &mut RegistryFile, now: DateTime<Utc>) -> bool {
+pub(super) fn prune_expired_install_sessions(file: &mut RegistryFile, now: UtcTimestamp) -> bool {
     let original_len = file.install_sessions.len();
     file.install_sessions
         .retain(|session| session.expires_at > now);
@@ -28,7 +29,7 @@ pub(super) fn prune_expired_install_sessions(file: &mut RegistryFile, now: DateT
 pub(super) fn mint_install_session(
     file: &mut RegistryFile,
     node_id: &str,
-    now: DateTime<Utc>,
+    now: UtcTimestamp,
     node_session_token: String,
 ) -> RegistryResult<InstallSession> {
     file.install_sessions
@@ -37,14 +38,14 @@ pub(super) fn mint_install_session(
         token: generate_token()?,
         node_id: node_id.to_string(),
         created_at: now,
-        expires_at: now + ChronoDuration::minutes(INSTALL_TOKEN_TTL_MINUTES),
+        expires_at: now + SignedDuration::from_mins(INSTALL_TOKEN_TTL_MINUTES),
         node_session_token,
     };
     file.install_sessions.push(session.clone());
     Ok(session)
 }
 
-pub(super) fn token_is_unexpired(entry: &RegisteredNode, now: DateTime<Utc>) -> bool {
+pub(super) fn token_is_unexpired(entry: &RegisteredNode, now: UtcTimestamp) -> bool {
     entry
         .token_expires_at
         .map(|expires_at| now < expires_at)
@@ -56,10 +57,10 @@ pub(super) fn authorized_node_from_entry(
     entry: &RegisteredNode,
     registry_revision: u64,
     generation: u64,
-    token_expires_at: Option<DateTime<Utc>>,
+    token_expires_at: Option<UtcTimestamp>,
 ) -> RegistryResult<AuthorizedNode> {
     if token_expires_at
-        .map(|expires_at| Utc::now() >= expires_at)
+        .map(|expires_at| UtcTimestamp::now() >= expires_at)
         .unwrap_or(false)
     {
         return Err(RegistryError::TokenExpired {

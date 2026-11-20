@@ -7,7 +7,7 @@ use std::path::Path;
 use axum::Json;
 use axum::extract::State;
 use axum::response::IntoResponse;
-use chrono::{Datelike, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 
 use crate::AppState;
 use crate::auth::{TWO_FACTOR_AUTH_SECS, TWO_FACTOR_PENDING_SECS};
@@ -36,16 +36,14 @@ pub(crate) async fn settings(State(state): State<AppState>) -> impl IntoResponse
         .into_iter()
         .map(|status| (status.identity.node_id.clone(), status))
         .collect::<std::collections::HashMap<_, _>>();
-    let now = Utc::now();
+    let now = UtcTimestamp::now();
+    let month_start = now.utc_month_start();
     let traffic_usage_by_node = state
         .history
         .traffic_usages()
         .await
         .into_iter()
-        .filter(|usage| {
-            usage.cycle_started_at.year() == now.year()
-                && usage.cycle_started_at.month() == now.month()
-        })
+        .filter(|usage| usage.cycle_started_at.utc_month_start() == month_start)
         .map(|usage| (usage.node_id.clone(), usage))
         .collect::<std::collections::HashMap<_, _>>();
     let agents = state
@@ -70,7 +68,7 @@ pub(crate) async fn settings(State(state): State<AppState>) -> impl IntoResponse
                 token_expires_at: node.token_expires_at,
                 token_expires_in_secs: node
                     .token_expires_at
-                    .map(|expires_at| (expires_at - now).num_seconds()),
+                    .map(|expires_at| (expires_at - now).as_secs()),
                 service_expires_at: node.service_expires_at,
                 service_unlimited: node.service_unlimited,
                 renewal_price: node.renewal_price,

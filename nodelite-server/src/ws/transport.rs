@@ -92,7 +92,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use chrono::Utc;
+    use nodelite_proto::timestamp::UtcTimestamp;
     use nodelite_proto::{
         BrowserMessage, MAX_NODE_IDENTITY_TEXT_BYTES, MAX_NODE_TAG_BYTES, MAX_NODE_TAGS,
         NodeListIdentity, NodeListItem, NodeListLoadAverage, NodeListMemoryUsage, NodeListSnapshot,
@@ -146,9 +146,9 @@ mod tests {
 
         let nodes = (0..TARGET_NODES).map(max_sized_node).collect();
         let message = BrowserMessage::InitialState {
-            generated_at: Utc::now(),
+            generated_at: UtcTimestamp::now(),
             overview: OverviewData {
-                generated_at: Utc::now(),
+                generated_at: UtcTimestamp::now(),
                 total_nodes: TARGET_NODES,
                 online_nodes: TARGET_NODES,
                 offline_nodes: 0,

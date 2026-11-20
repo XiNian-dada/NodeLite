@@ -4,6 +4,7 @@
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use nodelite_proto::AlertSmtpConfig;
+use nodelite_proto::timestamp::UtcTimestamp;
 
 use crate::alerts::AlertEvent;
 
@@ -61,7 +62,7 @@ pub(super) fn build_alert_message(
         config.sender,
         recipients,
         subject,
-        event.occurred_at.to_rfc2822(),
+        email_date(event.occurred_at),
         ALERT_BOUNDARY,
         ALERT_BOUNDARY,
         text,
@@ -107,7 +108,7 @@ pub(super) fn build_inspection_message(
         config.sender,
         recipients,
         subject,
-        summary.occurred_at.to_rfc2822(),
+        email_date(summary.occurred_at),
         INSPECTION_BOUNDARY,
         INSPECTION_BOUNDARY,
         text,
@@ -541,8 +542,8 @@ fn inspection_trends_html(summary: &InspectionSummary<'_>) -> String {
     )
 }
 
-fn format_event_time(occurred_at: chrono::DateTime<chrono::Utc>) -> String {
-    occurred_at.format("%Y-%m-%d %H:%M UTC").to_string()
+fn format_event_time(occurred_at: UtcTimestamp) -> String {
+    occurred_at.strftime("%Y-%m-%d %H:%M UTC").to_string()
 }
 
 fn inspection_highlights_html(report: &crate::alerts::InspectionReport) -> String {
@@ -612,4 +613,8 @@ pub(super) fn validate_header_value(value: &str) -> Result<(), AlertDeliveryErro
         return Err(AlertDeliveryError::InvalidMailHeader);
     }
     Ok(())
+}
+
+fn email_date(time: UtcTimestamp) -> impl std::fmt::Display {
+    time.strftime("%a, %-d %b %Y %H:%M:%S +0000")
 }

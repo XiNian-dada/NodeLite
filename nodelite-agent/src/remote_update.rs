@@ -17,7 +17,9 @@ pub(crate) fn status() -> AgentUpdateStatus {
 
 pub(crate) fn request(request: AgentUpdateRequest) -> AgentUpdateStatus {
     let mut status = status();
-    let now = chrono::Utc::now().timestamp().max(0) as u64;
+    let now = nodelite_proto::timestamp::UtcTimestamp::now()
+        .timestamp()
+        .max(0) as u64;
     let reason = if !request.validate(now) {
         Some(Reason::InvalidRequest)
     } else if status.capability != Capability::Ready {
@@ -207,7 +209,9 @@ mod tests {
 
     #[test]
     fn an_unenrolled_agent_never_executes_an_update_request() {
-        let now = chrono::Utc::now().timestamp().max(0) as u64;
+        let now = nodelite_proto::timestamp::UtcTimestamp::now()
+            .timestamp()
+            .max(0) as u64;
         let status = request(AgentUpdateRequest {
             request_id: "a".repeat(32),
             issued_at: now,

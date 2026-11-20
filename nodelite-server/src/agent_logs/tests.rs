@@ -1,6 +1,6 @@
 //! 诊断日志预算、输入脱敏与并发写入回归测试模块。
 
-use chrono::Utc;
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{AgentLogsConfig, NoticeLevel};
 use tokio::task::JoinSet;
 
@@ -34,7 +34,7 @@ async fn record_entries_caps_per_node_and_surfaces_drops() {
     assert!(logs.iter().all(|entry| !entry.message.is_empty()));
     assert!(
         logs.iter()
-            .all(|entry| chrono::DateTime::parse_from_rfc3339(&entry.occurred_at).is_ok())
+            .all(|entry| entry.occurred_at.parse::<UtcTimestamp>().is_ok())
     );
 }
 
@@ -45,12 +45,12 @@ async fn record_entries_counts_sanitize_drops() {
     let store = AgentLogStore::new();
     let entries = vec![
         AgentLogEntry {
-            occurred_at: Utc::now().to_rfc3339(),
+            occurred_at: UtcTimestamp::now().to_rfc3339(),
             level: NoticeLevel::Info,
             message: "  ".to_string(), // sanitize_entry returns None
         },
         AgentLogEntry {
-            occurred_at: Utc::now().to_rfc3339(),
+            occurred_at: UtcTimestamp::now().to_rfc3339(),
             level: NoticeLevel::Info,
             message: "real entry".to_string(),
         },
@@ -67,7 +67,7 @@ async fn record_entries_counts_sanitize_drops() {
 async fn forget_missing_prunes_retired_node_buffers() {
     let store = AgentLogStore::new();
     let entry = AgentLogEntry {
-        occurred_at: Utc::now().to_rfc3339(),
+        occurred_at: UtcTimestamp::now().to_rfc3339(),
         level: NoticeLevel::Warn,
         message: "reconnecting".to_string(),
     };
@@ -203,7 +203,7 @@ async fn concurrent_record_entries_preserves_batches_across_many_nodes() {
 
 fn test_entry(message: String) -> AgentLogEntry {
     AgentLogEntry {
-        occurred_at: Utc::now().to_rfc3339(),
+        occurred_at: UtcTimestamp::now().to_rfc3339(),
         level: NoticeLevel::Info,
         message,
     }

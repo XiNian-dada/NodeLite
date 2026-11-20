@@ -1,7 +1,7 @@
 //! 历史查询聚合逻辑。
 
-use chrono::{DateTime, TimeZone, Utc};
 use nodelite_proto::HistoryPoint;
+use nodelite_proto::timestamp::UtcTimestamp;
 use rusqlite::{Connection, params};
 use thiserror::Error;
 
@@ -46,8 +46,8 @@ FROM history_points WHERE rowid IN (
 pub(super) fn query_history_peaks_between(
     connection: &Connection,
     node_id: &str,
-    since: DateTime<Utc>,
-    until: DateTime<Utc>,
+    since: UtcTimestamp,
+    until: UtcTimestamp,
 ) -> Result<Vec<HistoryPoint>, HistoryQueryError> {
     query_between(connection, node_id, since, until, 3, HISTORY_PEAK_QUERY_SQL)
 }
@@ -56,18 +56,18 @@ pub(super) fn query_history_peaks_between(
 pub(super) fn query_history(
     connection: &Connection,
     node_id: &str,
-    since: DateTime<Utc>,
+    since: UtcTimestamp,
     max_points: usize,
 ) -> Result<Vec<HistoryPoint>, HistoryQueryError> {
-    query_history_between(connection, node_id, since, Utc::now(), max_points)
+    query_history_between(connection, node_id, since, UtcTimestamp::now(), max_points)
 }
 
 /// 在 `[since, until]` 之间查询某节点的历史点,并按时间升序返回。
 pub(super) fn query_history_between(
     connection: &Connection,
     node_id: &str,
-    since: DateTime<Utc>,
-    until: DateTime<Utc>,
+    since: UtcTimestamp,
+    until: UtcTimestamp,
     max_points: usize,
 ) -> Result<Vec<HistoryPoint>, HistoryQueryError> {
     query_between(
@@ -83,8 +83,8 @@ pub(super) fn query_history_between(
 fn query_between(
     connection: &Connection,
     node_id: &str,
-    since: DateTime<Utc>,
-    until: DateTime<Utc>,
+    since: UtcTimestamp,
+    until: UtcTimestamp,
     max_points: usize,
     sql: &str,
 ) -> Result<Vec<HistoryPoint>, HistoryQueryError> {
@@ -106,10 +106,8 @@ fn query_between(
             let recorded_at = row.get::<_, i64>(1)?;
             Ok(HistoryPoint {
                 node_id: row.get(0)?,
-                recorded_at: Utc
-                    .timestamp_opt(recorded_at, 0)
-                    .single()
-                    .unwrap_or_else(Utc::now),
+                recorded_at: UtcTimestamp::from_second(recorded_at)
+                    .unwrap_or_else(UtcTimestamp::now),
                 cpu_usage_percent: row.get(2)?,
                 load_one: row.get(3)?,
                 load_five: row.get(4)?,

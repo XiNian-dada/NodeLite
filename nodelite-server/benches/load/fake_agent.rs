@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
-use chrono::{DateTime, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 use tokio::sync::{Barrier, mpsc, watch};
 use tokio::time::sleep;
 use tokio_tungstenite::connect_async;
@@ -22,8 +22,8 @@ use nodelite_server::bench_support::{
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct SeededHistoryRange {
-    pub(super) start_at: DateTime<Utc>,
-    pub(super) end_at: DateTime<Utc>,
+    pub(super) start_at: UtcTimestamp,
+    pub(super) end_at: UtcTimestamp,
 }
 
 pub(super) async fn run_fake_agent(
@@ -69,7 +69,7 @@ pub(super) fn fake_identity(credential: &AgentCredential) -> NodeIdentity {
 }
 
 pub(super) fn fake_snapshot(uptime_secs: u64) -> NodeSnapshot {
-    fake_snapshot_at(uptime_secs, Utc::now())
+    fake_snapshot_at(uptime_secs, UtcTimestamp::now())
 }
 
 pub(super) fn fake_snapshot_with_disks(uptime_secs: u64, disk_entries: usize) -> NodeSnapshot {
@@ -194,12 +194,14 @@ pub(super) async fn seed_history_points(
     credential: &AgentCredential,
     points: usize,
 ) -> Result<SeededHistoryRange> {
-    let now = Utc::now();
+    let now = UtcTimestamp::now();
     let spacing_secs = nodelite_proto::DEFAULT_HISTORY_WRITE_INTERVAL_SECS as i64;
-    let first_point_at = now - chrono::Duration::seconds((points as i64 - 1).max(0) * spacing_secs);
+    let first_point_at =
+        now - jiff::SignedDuration::from_secs((points as i64 - 1).max(0) * spacing_secs);
     let mut last_point_at = first_point_at;
     for index in 0..points {
-        let recorded_at = first_point_at + chrono::Duration::seconds(index as i64 * spacing_secs);
+        let recorded_at =
+            first_point_at + jiff::SignedDuration::from_secs(index as i64 * spacing_secs);
         last_point_at = recorded_at;
         let status = NodeStatus {
             identity: fake_identity(credential),

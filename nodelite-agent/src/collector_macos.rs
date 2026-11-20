@@ -15,7 +15,7 @@ mod tests;
 use std::time::Instant;
 
 use anyhow::Result;
-use chrono::Utc;
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{AgentConfig, LoadAverage, NetworkCounters, NodeIdentity, NodeSnapshot};
 use tracing::warn;
 
@@ -100,7 +100,7 @@ impl HostCollector {
         };
 
         Ok(NodeSnapshot {
-            collected_at: Utc::now(),
+            collected_at: UtcTimestamp::now(),
             cpu_usage_percent,
             load,
             memory,

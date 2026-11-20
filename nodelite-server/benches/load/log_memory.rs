@@ -1,7 +1,7 @@
 //! Fresh-process RSS checks include allocator retention under dense and sparse log workloads.
 
 use anyhow::{Context, Result, ensure};
-use chrono::Utc;
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{AgentLogEntry, AgentLogsConfig, NoticeLevel};
 use nodelite_server::bench_support::AgentLogStore;
 
@@ -31,7 +31,7 @@ pub(super) async fn run(sparse: bool) -> Result<()> {
                     &format!("log-node-{node:05}"),
                     (0..batch)
                         .map(|_| AgentLogEntry {
-                            occurred_at: Utc::now().to_rfc3339(),
+                            occurred_at: UtcTimestamp::now().to_rfc3339(),
                             level: NoticeLevel::Info,
                             message: if sparse {
                                 format!("round-{round}")

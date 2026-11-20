@@ -34,7 +34,9 @@ struct AgentUpdateView {
 }
 
 fn now() -> u64 {
-    chrono::Utc::now().timestamp().max(0) as u64
+    nodelite_proto::timestamp::UtcTimestamp::now()
+        .timestamp()
+        .max(0) as u64
 }
 
 pub(crate) async fn agent_update(

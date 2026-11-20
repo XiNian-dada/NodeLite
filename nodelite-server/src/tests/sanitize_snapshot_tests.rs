@@ -8,7 +8,7 @@ use nodelite_proto::config::{
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::path::PathBuf;
 
-use chrono::Utc;
+use nodelite_proto::timestamp::UtcTimestamp;
 
 use crate::sanitize::{
     MAX_SANITIZED_LOAD, MAX_SANITIZED_RATE_BYTES_PER_SEC, SanitizationReport, sanitize_snapshot,
@@ -80,7 +80,7 @@ fn sanitize_snapshot_clamps_invalid_metrics() {
         token_verify_max_parallelism: nodelite_proto::DEFAULT_TOKEN_VERIFY_MAX_PARALLELISM,
     };
     let snapshot = NodeSnapshot {
-        collected_at: Utc::now(),
+        collected_at: UtcTimestamp::now(),
         cpu_usage_percent: Some(f64::INFINITY),
         load: nodelite_proto::LoadAverage {
             one: -1.0,
@@ -171,7 +171,7 @@ fn sanitize_snapshot_preserves_unknown_cpu_usage() {
         PathBuf::from("./data/snapshot.json"),
     );
     let snapshot = NodeSnapshot {
-        collected_at: Utc::now(),
+        collected_at: UtcTimestamp::now(),
         cpu_usage_percent: None,
         load: nodelite_proto::LoadAverage {
             one: 0.0,
@@ -265,7 +265,7 @@ fn sanitize_caps_disk_field_string_length() {
     };
     let oversized = "x".repeat(MAX_SANITIZED_STRING_BYTES * 4);
     let snapshot = NodeSnapshot {
-        collected_at: Utc::now(),
+        collected_at: UtcTimestamp::now(),
         cpu_usage_percent: Some(10.0),
         load: nodelite_proto::LoadAverage {
             one: 0.0,
@@ -381,7 +381,7 @@ fn sanitize_snapshot_caps_disk_count_and_tracks_clean_reports() {
         })
         .collect();
     let snapshot = NodeSnapshot {
-        collected_at: Utc::now(),
+        collected_at: UtcTimestamp::now(),
         cpu_usage_percent: Some(10.0),
         load: nodelite_proto::LoadAverage {
             one: 0.5,
@@ -512,7 +512,7 @@ fn sanitize_snapshot_deduplicates_repeated_disk_devices() {
         token_verify_max_parallelism: nodelite_proto::DEFAULT_TOKEN_VERIFY_MAX_PARALLELISM,
     };
     let snapshot = NodeSnapshot {
-        collected_at: Utc::now(),
+        collected_at: UtcTimestamp::now(),
         cpu_usage_percent: Some(1.0),
         load: nodelite_proto::LoadAverage {
             one: 0.1,

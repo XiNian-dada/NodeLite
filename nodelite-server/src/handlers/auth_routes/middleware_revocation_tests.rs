@@ -177,7 +177,7 @@ fn totp_code(auth: &ReadonlyRouteAuth, offset_secs: u64) -> String {
         30,
         6,
         &secret,
-        chrono::Utc::now().timestamp() as u64 + offset_secs,
+        nodelite_proto::timestamp::UtcTimestamp::now().timestamp() as u64 + offset_secs,
     )
 }
 

@@ -5,7 +5,8 @@ use std::fs;
 use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow};
-use chrono::{Duration, Utc};
+use jiff::SignedDuration;
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{
     AgentConfig, LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot,
 };
@@ -76,8 +77,8 @@ impl HostCollector {
         let uptime_path = self.sys_root.join("proc/uptime");
         let uptime_secs = read_uptime(&uptime_path)?;
         // 由当前时刻反推启动时间,在 i64 转换溢出时退化为 i64::MAX 防止 panic。
-        let boot_time =
-            Utc::now() - Duration::seconds(i64::try_from(uptime_secs).unwrap_or(i64::MAX));
+        let boot_time = UtcTimestamp::now()
+            - SignedDuration::from_secs(i64::try_from(uptime_secs).unwrap_or(i64::MAX));
 
         let hostname_path = self.sys_root.join("proc/sys/kernel/hostname");
         let os_release_path = self.sys_root.join("etc/os-release");
@@ -154,7 +155,7 @@ impl HostCollector {
         )?;
 
         Ok(NodeSnapshot {
-            collected_at: Utc::now(),
+            collected_at: UtcTimestamp::now(),
             cpu_usage_percent,
             load,
             memory,

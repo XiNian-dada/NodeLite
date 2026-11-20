@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use chrono::Utc;
 use getrandom::fill as fill_random;
+use nodelite_proto::timestamp::UtcTimestamp;
 use thiserror::Error;
 use tokio::time::sleep;
 use tokio_tungstenite::tungstenite::Message;
@@ -73,7 +73,7 @@ impl AgentLogBuffer {
             return;
         }
         self.entries.push_back(AgentLogEntry {
-            occurred_at: Utc::now().to_rfc3339(),
+            occurred_at: UtcTimestamp::now().to_rfc3339(),
             level,
             message,
         });

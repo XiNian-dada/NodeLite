@@ -1,8 +1,8 @@
 //! 概览聚合与数值安全辅助逻辑。
 
-use chrono::Utc;
 #[cfg(test)]
 use nodelite_proto::NodeStatus;
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{NodeSnapshot, OverviewData};
 
 #[derive(Clone, Copy)]
@@ -66,7 +66,7 @@ pub(super) fn build_overview_from_iter<'a>(
         (latency_samples > 0).then(|| latency_total as f64 / latency_samples as f64);
 
     OverviewData {
-        generated_at: Utc::now(),
+        generated_at: UtcTimestamp::now(),
         total_nodes,
         online_nodes,
         offline_nodes,
@@ -90,7 +90,7 @@ fn sum_finite_f64(total: f64, value: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use chrono::Utc;
+    use nodelite_proto::timestamp::UtcTimestamp;
     use nodelite_proto::{
         LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot, NodeStatus,
     };
@@ -139,7 +139,7 @@ mod tests {
         tx_bytes_per_sec: Option<f64>,
     ) -> NodeSnapshot {
         NodeSnapshot {
-            collected_at: Utc::now(),
+            collected_at: UtcTimestamp::now(),
             cpu_usage_percent: Some(10.0),
             load: LoadAverage {
                 one: 1.0,

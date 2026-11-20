@@ -3,7 +3,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{DateTime, Local, NaiveDate, NaiveTime, Utc};
+use jiff::Zoned;
+use jiff::civil::{Date, Time};
+use nodelite_proto::timestamp::UtcTimestamp;
 use tokio::sync::{RwLock, mpsc};
 use tokio::task::JoinHandle;
 use tokio::time::{MissedTickBehavior, interval};
@@ -43,8 +45,8 @@ enum DeliveryJob {
     },
     Inspection {
         config: Arc<AlertingConfig>,
-        occurred_at: DateTime<Utc>,
-        local_date: NaiveDate,
+        occurred_at: UtcTimestamp,
+        local_date: Date,
         lookback_hours: u64,
         report: InspectionReport,
         trends: Vec<InspectionTrendPoint>,
@@ -61,7 +63,7 @@ enum DeliveryResult {
     },
     Inspection {
         config: Arc<AlertingConfig>,
-        local_date: NaiveDate,
+        local_date: Date,
         report: InspectionReport,
         outcome: DeliveryOutcome,
     },
@@ -117,7 +119,7 @@ async fn run_alert_runtime(
                     continue;
                 }
 
-                let now = Utc::now();
+                let now = UtcTimestamp::now();
                 if config.rules.is_empty() {
                     tracker.clear();
                 } else {
@@ -154,11 +156,11 @@ async fn enqueue_due_inspection(
     config: &Arc<AlertingConfig>,
     inspection_dispatch: &mut InspectionDispatchState,
     delivery_tx: &DeliverySender,
-    now: DateTime<Utc>,
+    now: UtcTimestamp,
 ) {
     if should_check_inspection(config)
         && let Some(local_date) =
-            inspection_dispatch.due_date(&config.inspection.local_time, Local::now(), now)
+            inspection_dispatch.due_date(&config.inspection.local_time, Zoned::now(), now)
     {
         let mut report = shared
             .build_alert_inspection_report(&config.inspection, now)
@@ -212,7 +214,7 @@ fn enqueue_alert_delivery(
     tracker: &mut AlertStateTracker,
     config: &Arc<AlertingConfig>,
     event: &AlertEvent,
-    now: DateTime<Utc>,
+    now: UtcTimestamp,
 ) {
     if delivery_tx
         .try_send(DeliveryJob::Alert {
@@ -238,8 +240,8 @@ fn enqueue_inspection_delivery(
     config: &Arc<AlertingConfig>,
     report: InspectionReport,
     trends: Vec<InspectionTrendPoint>,
-    local_date: NaiveDate,
-    now: DateTime<Utc>,
+    local_date: Date,
+    now: UtcTimestamp,
 ) {
     if delivery_tx
         .try_send(DeliveryJob::Inspection {
@@ -276,7 +278,7 @@ async fn build_inspection_history_analysis(
     shared: &SharedState,
     history: &HistoryStore,
     inspection: &InspectionConfig,
-    now: DateTime<Utc>,
+    now: UtcTimestamp,
 ) -> InspectionHistoryAnalysis {
     let bucket_count = inspection_trend_bucket_count(inspection.lookback_hours);
     let since = super::time_math::sub(
@@ -368,22 +370,22 @@ fn merge_inspection_highlights(
     current
 }
 
-fn latest_highlight_time(highlight: &InspectionHighlight) -> DateTime<Utc> {
+fn latest_highlight_time(highlight: &InspectionHighlight) -> UtcTimestamp {
     highlight
         .events
         .iter()
         .map(|event| event.occurred_at)
         .max()
-        .unwrap_or_else(Utc::now)
+        .unwrap_or_else(UtcTimestamp::now)
 }
 
 fn inspection_trend_bucket_count(lookback_hours: u64) -> usize {
     (lookback_hours.max(1) as usize).min(INSPECTION_TREND_BUCKETS)
 }
 
-fn trend_label(since: DateTime<Utc>, bucket_seconds: i64, index: usize) -> String {
-    (since + chrono::Duration::seconds(bucket_seconds.saturating_mul(index as i64)))
-        .format("%H:%M")
+fn trend_label(since: UtcTimestamp, bucket_seconds: i64, index: usize) -> String {
+    (since + jiff::SignedDuration::from_secs(bucket_seconds.saturating_mul(index as i64)))
+        .strftime("%H:%M")
         .to_string()
 }
 
@@ -484,12 +486,7 @@ impl HistoryHighlightBuilder {
         }
     }
 
-    fn record_cpu(
-        &mut self,
-        occurred_at: DateTime<Utc>,
-        value: u64,
-        inspection: &InspectionConfig,
-    ) {
+    fn record_cpu(&mut self, occurred_at: UtcTimestamp, value: u64, inspection: &InspectionConfig) {
         if value >= inspection.cpu_warn_percent {
             update_peak(&mut self.cpu_peak, occurred_at, value);
         }
@@ -497,7 +494,7 @@ impl HistoryHighlightBuilder {
 
     fn record_memory(
         &mut self,
-        occurred_at: DateTime<Utc>,
+        occurred_at: UtcTimestamp,
         value: u64,
         inspection: &InspectionConfig,
     ) {
@@ -508,7 +505,7 @@ impl HistoryHighlightBuilder {
 
     fn record_latency(
         &mut self,
-        occurred_at: DateTime<Utc>,
+        occurred_at: UtcTimestamp,
         value: u64,
         inspection: &InspectionConfig,
     ) {
@@ -559,11 +556,11 @@ impl HistoryHighlightBuilder {
 
 #[derive(Debug, Clone, Copy)]
 struct MetricPeak {
-    occurred_at: DateTime<Utc>,
+    occurred_at: UtcTimestamp,
     value: u64,
 }
 
-fn update_peak(peak: &mut Option<MetricPeak>, occurred_at: DateTime<Utc>, value: u64) {
+fn update_peak(peak: &mut Option<MetricPeak>, occurred_at: UtcTimestamp, value: u64) {
     if peak.is_none_or(|peak| {
         value > peak.value || value == peak.value && occurred_at > peak.occurred_at
     }) {
@@ -580,10 +577,10 @@ fn handle_alert_delivery_result(
 ) {
     let failed = outcome.error.is_some();
     if let Some(resolved) =
-        tracker.record_delivery_outcome(event, outcome.delivered, failed, Utc::now())
+        tracker.record_delivery_outcome(event, outcome.delivered, failed, UtcTimestamp::now())
     {
         log_alert_event(&resolved);
-        enqueue_alert_delivery(delivery_tx, tracker, config, &resolved, Utc::now());
+        enqueue_alert_delivery(delivery_tx, tracker, config, &resolved, UtcTimestamp::now());
     }
     if let Some(error) = outcome.error {
         warn!(
@@ -600,7 +597,7 @@ fn handle_alert_delivery_result(
 fn handle_inspection_delivery_result(
     inspection_dispatch: &mut InspectionDispatchState,
     config: &AlertingConfig,
-    local_date: NaiveDate,
+    local_date: Date,
     report: &InspectionReport,
     outcome: DeliveryOutcome,
 ) {
@@ -619,7 +616,7 @@ fn handle_inspection_delivery_result(
             );
         }
         Err(error) => {
-            inspection_dispatch.mark_failed(Utc::now());
+            inspection_dispatch.mark_failed(UtcTimestamp::now());
             warn!(
                 error = ?error,
                 webhook = %webhook_endpoint_label(&config.webhook.url),
@@ -657,11 +654,11 @@ fn alert_event_kind(kind: AlertEventKind) -> &'static str {
 
 #[derive(Debug, Default)]
 struct InspectionDispatchState {
-    last_sent_date: Option<NaiveDate>,
-    pending_date: Option<NaiveDate>,
-    last_failed_at: Option<DateTime<Utc>>,
+    last_sent_date: Option<Date>,
+    pending_date: Option<Date>,
+    last_failed_at: Option<UtcTimestamp>,
     /// Channels that already received the summary for that date; retries skip them.
-    sent_channels: Option<(NaiveDate, ChannelSet)>,
+    sent_channels: Option<(Date, ChannelSet)>,
 }
 
 impl InspectionDispatchState {
@@ -676,28 +673,18 @@ impl InspectionDispatchState {
         self.sent_channels = None;
     }
 
-    fn due_date(
-        &self,
-        configured_time: &str,
-        local_now: DateTime<Local>,
-        now: DateTime<Utc>,
-    ) -> Option<NaiveDate> {
+    fn due_date(&self, configured_time: &str, local_now: Zoned, now: UtcTimestamp) -> Option<Date> {
         let scheduled_time = parse_inspection_local_time(configured_time)?;
-        self.due_date_for(
-            local_now.date_naive(),
-            local_now.time(),
-            scheduled_time,
-            now,
-        )
+        self.due_date_for(local_now.date(), local_now.time(), scheduled_time, now)
     }
 
     fn due_date_for(
         &self,
-        local_date: NaiveDate,
-        local_time: NaiveTime,
-        scheduled_time: NaiveTime,
-        now: DateTime<Utc>,
-    ) -> Option<NaiveDate> {
+        local_date: Date,
+        local_time: Time,
+        scheduled_time: Time,
+        now: UtcTimestamp,
+    ) -> Option<Date> {
         if self.last_sent_date == Some(local_date)
             || self.pending_date == Some(local_date)
             || local_time < scheduled_time
@@ -705,32 +692,31 @@ impl InspectionDispatchState {
             return None;
         }
         if self.last_failed_at.is_some_and(|last_failed_at| {
-            now.signed_duration_since(last_failed_at)
-                < chrono::Duration::seconds(INSPECTION_RETRY_INTERVAL_SECS)
+            now - last_failed_at < jiff::SignedDuration::from_secs(INSPECTION_RETRY_INTERVAL_SECS)
         }) {
             return None;
         }
         Some(local_date)
     }
 
-    fn mark_sent(&mut self, local_date: NaiveDate) {
+    fn mark_sent(&mut self, local_date: Date) {
         self.last_sent_date = Some(local_date);
         self.pending_date = None;
         self.last_failed_at = None;
     }
 
-    fn mark_pending(&mut self, local_date: NaiveDate) {
+    fn mark_pending(&mut self, local_date: Date) {
         self.pending_date = Some(local_date);
     }
 
-    fn channels_due(&self, local_date: NaiveDate) -> ChannelSet {
+    fn channels_due(&self, local_date: Date) -> ChannelSet {
         match self.sent_channels {
             Some((date, sent)) if date == local_date => ChannelSet::ALL.without(sent),
             _ => ChannelSet::ALL,
         }
     }
 
-    fn record_sent_channels(&mut self, local_date: NaiveDate, delivered: ChannelSet) {
+    fn record_sent_channels(&mut self, local_date: Date, delivered: ChannelSet) {
         let sent = match self.sent_channels {
             Some((date, sent)) if date == local_date => sent.union(delivered),
             // A result for an earlier day that finishes after midnight must not reset today's.
@@ -740,7 +726,7 @@ impl InspectionDispatchState {
         self.sent_channels = Some((local_date, sent));
     }
 
-    fn mark_failed(&mut self, now: DateTime<Utc>) {
+    fn mark_failed(&mut self, now: UtcTimestamp) {
         self.pending_date = None;
         self.last_failed_at = Some(now);
     }
@@ -757,12 +743,12 @@ fn should_check_inspection(config: &AlertingConfig) -> bool {
     smtp_enabled || webhook_enabled
 }
 
-fn parse_inspection_local_time(value: &str) -> Option<NaiveTime> {
+fn parse_inspection_local_time(value: &str) -> Option<Time> {
     let mut parts = value.trim().split(':');
     let (Some(hours), Some(minutes), None) = (parts.next(), parts.next(), parts.next()) else {
         return None;
     };
-    NaiveTime::from_hms_opt(hours.parse::<u32>().ok()?, minutes.parse::<u32>().ok()?, 0)
+    Time::new(hours.parse().ok()?, minutes.parse().ok()?, 0, 0).ok()
 }
 
 #[cfg(test)]

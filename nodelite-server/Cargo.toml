@@ -12,7 +12,6 @@ argon2.workspace = true
 axum.workspace = true
 base32 = "0.5"
 base64.workspace = true
-chrono.workspace = true
 clap.workspace = true
 dashmap = "6.1"
 futures.workspace = true
@@ -21,6 +20,7 @@ flate2.workspace = true
 hex.workspace = true
 hmac = "0.12"
 ipnet.workspace = true
+jiff = { workspace = true, features = ["tz-system", "tzdb-zoneinfo", "tzdb-concatenated", "tzdb-bundle-platform"] }
 libc.workspace = true
 lru = "0.18.2"
 maxminddb.workspace = true

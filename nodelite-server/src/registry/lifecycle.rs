@@ -6,8 +6,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use chrono::Utc;
 use lru::LruCache;
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{validate_identifier, validate_non_empty};
 use parking_lot::Mutex as ParkingLotMutex;
 use tokio::sync::{RwLock, Semaphore};
@@ -147,7 +147,7 @@ impl NodeRegistry {
         let path = Arc::clone(&self.path);
         let guard = self.write_guard().await;
         let (removed, file) = mutate_registry_file(path.as_ref(), guard, move |file| {
-            prune_expired_install_sessions(file, Utc::now());
+            prune_expired_install_sessions(file, UtcTimestamp::now());
             let Some(index) = file.nodes.iter().position(|node| node.node_id == node_id) else {
                 return Err(RegistryError::NodeNotFound(node_id.clone()));
             };
@@ -257,7 +257,7 @@ impl NodeRegistry {
         let token = token.to_string();
         let guard = self.write_guard().await;
         let (result, file) = mutate_registry_file(self.path.as_path(), guard, move |file| {
-            let pruned = prune_expired_install_sessions(file, Utc::now());
+            let pruned = prune_expired_install_sessions(file, UtcTimestamp::now());
             let Some(index) = file
                 .install_sessions
                 .iter()

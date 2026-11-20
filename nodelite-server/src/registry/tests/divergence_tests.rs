@@ -193,7 +193,7 @@ fn expire_install_sessions_on_disk(path: &Path, version_bump: u64) {
     let content = std::fs::read_to_string(path).expect("registry file should be readable");
     let mut value: serde_json::Value =
         serde_json::from_str(&content).expect("registry file should parse");
-    let past = serde_json::to_value(Utc::now() - ChronoDuration::hours(1))
+    let past = serde_json::to_value(UtcTimestamp::now() - SignedDuration::from_hours(1))
         .expect("timestamp should serialize");
     for session in value["install_sessions"]
         .as_array_mut()

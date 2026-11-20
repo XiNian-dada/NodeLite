@@ -9,10 +9,7 @@ use nodelite_proto::{
 #[test]
 fn newer_session_replaces_older_one() {
     let registry = Registry::default();
-    let now = Utc
-        .with_ymd_and_hms(2026, 5, 7, 0, 0, 0)
-        .single()
-        .expect("valid test datetime");
+    let now = UtcTimestamp::from_utc(2026, 5, 7, 0, 0, 0).expect("valid test datetime");
     let identity = NodeIdentity {
         node_id: "hk-01".to_string(),
         node_label: "Hong Kong 01".to_string(),
@@ -40,7 +37,7 @@ fn newer_session_replaces_older_one() {
         Some("198.51.100.11".to_string()),
         None,
         None,
-        now + ChronoDuration::seconds(3),
+        now + SignedDuration::from_secs(3),
     );
 
     assert!(
@@ -53,7 +50,7 @@ fn newer_session_replaces_older_one() {
             .update_snapshot(
                 "hk-01",
                 2,
-                sample_snapshot(now + ChronoDuration::seconds(4)),
+                sample_snapshot(now + SignedDuration::from_secs(4)),
                 now,
             )
             .is_some()
@@ -63,10 +60,7 @@ fn newer_session_replaces_older_one() {
 #[test]
 fn newer_session_refreshes_remote_ip_and_geoip() {
     let registry = Registry::default();
-    let now = Utc
-        .with_ymd_and_hms(2026, 5, 7, 0, 0, 0)
-        .single()
-        .expect("valid test datetime");
+    let now = UtcTimestamp::from_utc(2026, 5, 7, 0, 0, 0).expect("valid test datetime");
     let identity = sample_identity();
 
     registry.register_node(
@@ -93,7 +87,7 @@ fn newer_session_refreshes_remote_ip_and_geoip() {
             longitude: Some(139.6503),
         }),
         None,
-        now + ChronoDuration::seconds(3),
+        now + SignedDuration::from_secs(3),
     );
 
     let status = registry
@@ -117,10 +111,7 @@ fn newer_session_refreshes_remote_ip_and_geoip() {
 #[test]
 fn stale_nodes_are_marked_offline() {
     let registry = Registry::default();
-    let now = Utc
-        .with_ymd_and_hms(2026, 5, 7, 0, 0, 0)
-        .single()
-        .expect("valid test datetime");
+    let now = UtcTimestamp::from_utc(2026, 5, 7, 0, 0, 0).expect("valid test datetime");
 
     registry.register_node(
         7,
@@ -131,7 +122,7 @@ fn stale_nodes_are_marked_offline() {
         now,
     );
     assert_eq!(
-        registry.mark_stale(Duration::from_secs(10), now + ChronoDuration::seconds(15)),
+        registry.mark_stale(Duration::from_secs(10), now + SignedDuration::from_secs(15)),
         1
     );
     assert!(
@@ -146,10 +137,7 @@ fn stale_nodes_are_marked_offline() {
 #[test]
 fn session_control_is_only_available_for_current_online_session() {
     let registry = Registry::default();
-    let now = Utc
-        .with_ymd_and_hms(2026, 5, 7, 0, 0, 0)
-        .single()
-        .expect("valid test datetime");
+    let now = UtcTimestamp::from_utc(2026, 5, 7, 0, 0, 0).expect("valid test datetime");
     registry.register_node(
         7,
         sample_identity(),
@@ -169,7 +157,7 @@ fn session_control_is_only_available_for_current_online_session() {
         Some("198.51.100.11".to_string()),
         None,
         None,
-        now + ChronoDuration::seconds(1),
+        now + SignedDuration::from_secs(1),
     );
     assert!(
         registry.session_control("hk-01").is_none(),
@@ -180,10 +168,7 @@ fn session_control_is_only_available_for_current_online_session() {
 #[test]
 fn mark_disconnected_clears_session_control() {
     let registry = Registry::default();
-    let now = Utc
-        .with_ymd_and_hms(2026, 5, 7, 0, 0, 0)
-        .single()
-        .expect("valid test datetime");
+    let now = UtcTimestamp::from_utc(2026, 5, 7, 0, 0, 0).expect("valid test datetime");
     registry.register_node(
         9,
         sample_identity(),
@@ -203,10 +188,7 @@ fn mark_disconnected_clears_session_control() {
 #[test]
 fn registry_spreads_runtime_entries_across_shards() {
     let registry = Registry::default();
-    let now = Utc
-        .with_ymd_and_hms(2026, 5, 7, 0, 0, 0)
-        .single()
-        .expect("valid test datetime");
+    let now = UtcTimestamp::from_utc(2026, 5, 7, 0, 0, 0).expect("valid test datetime");
 
     for index in 0..64 {
         let node_id = format!("node-{index:03}");
@@ -242,10 +224,7 @@ fn registry_spreads_runtime_entries_across_shards() {
 #[test]
 fn browser_view_holds_shard_locks_until_revision_capture() {
     let registry = Registry::default();
-    let now = Utc
-        .with_ymd_and_hms(2026, 5, 7, 0, 0, 0)
-        .single()
-        .expect("valid test datetime");
+    let now = UtcTimestamp::from_utc(2026, 5, 7, 0, 0, 0).expect("valid test datetime");
 
     registry.register_node(
         1,
@@ -292,7 +271,7 @@ fn runtime_entry_retained_heap_is_lower_than_cached_external_models() {
         .map(|index| format!("fleet:edge-region-hk-{index:02}"))
         .collect();
 
-    let mut snapshot = sample_snapshot(Utc::now());
+    let mut snapshot = sample_snapshot(UtcTimestamp::now());
     snapshot.disks = (0..128)
         .map(|index| DiskUsage {
             device: format!("/dev/disk/by-id/nodelite-review-device-{index:03}"),
@@ -316,7 +295,7 @@ fn runtime_entry_retained_heap_is_lower_than_cached_external_models() {
         location_override_latitude: None,
         location_override_longitude: None,
         snapshot: Some(snapshot),
-        last_seen: Some(Utc::now()),
+        last_seen: Some(UtcTimestamp::now()),
         latency_ms: Some(42),
         online: true,
     };
@@ -340,7 +319,7 @@ fn runtime_entry_retained_heap_is_lower_than_cached_external_models() {
 #[tokio::test]
 async fn restore_statuses_reassembles_detail_and_lightweight_api_views() {
     let shared = SharedState::new(Arc::new(sample_config()));
-    let mut snapshot = sample_snapshot(Utc::now());
+    let mut snapshot = sample_snapshot(UtcTimestamp::now());
     snapshot.disks.resize_with(4, sample_disk_usage);
     let restored = NodeStatus {
         identity: sample_identity(),
@@ -354,7 +333,7 @@ async fn restore_statuses_reassembles_detail_and_lightweight_api_views() {
         location_override_latitude: None,
         location_override_longitude: None,
         snapshot: Some(snapshot),
-        last_seen: Some(Utc::now()),
+        last_seen: Some(UtcTimestamp::now()),
         latency_ms: Some(42),
         online: true,
     };
@@ -411,9 +390,9 @@ async fn registry_disk_entries_total_counts_snapshot_disks() {
         )
         .await;
 
-    let mut first = sample_snapshot(Utc::now());
+    let mut first = sample_snapshot(UtcTimestamp::now());
     first.disks.resize_with(2, sample_disk_usage);
-    let mut second = sample_snapshot(Utc::now());
+    let mut second = sample_snapshot(UtcTimestamp::now());
     second.disks.resize_with(3, sample_disk_usage);
 
     assert!(
@@ -435,10 +414,7 @@ async fn registry_disk_entries_total_counts_snapshot_disks() {
 #[test]
 fn alert_evaluation_borrows_runtime_entries() {
     let registry = Registry::default();
-    let now = Utc
-        .with_ymd_and_hms(2026, 5, 7, 0, 0, 0)
-        .single()
-        .expect("valid test datetime");
+    let now = UtcTimestamp::from_utc(2026, 5, 7, 0, 0, 0).expect("valid test datetime");
     let mut identity = sample_identity();
     identity.tags = vec!["edge".to_string()];
     registry.register_node(

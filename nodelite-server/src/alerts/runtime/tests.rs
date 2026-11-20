@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use chrono::{Duration, NaiveDate, NaiveTime, Utc};
+use jiff::SignedDuration;
+use jiff::civil::{Date, Time};
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{
     AlertChannel, AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode, AlertSeverity,
     AlertingConfig, HistoryPoint, InspectionConfig, NodeStatus,
@@ -71,12 +73,7 @@ fn report() -> InspectionReport {
     }
 }
 
-fn history_point(
-    recorded_at: chrono::DateTime<Utc>,
-    cpu: f64,
-    memory: f64,
-    latency: u64,
-) -> HistoryPoint {
+fn history_point(recorded_at: UtcTimestamp, cpu: f64, memory: f64, latency: u64) -> HistoryPoint {
     HistoryPoint {
         node_id: "hk-01".to_string(),
         recorded_at,
@@ -96,7 +93,7 @@ fn history_point(
 fn status_with_cpu(
     node_id: &str,
     node_label: &str,
-    now: chrono::DateTime<Utc>,
+    now: UtcTimestamp,
     cpu: f64,
     memory_percent: u64,
     latency_ms: Option<u64>,
@@ -125,10 +122,10 @@ fn status_with_cpu(
 
 #[test]
 fn alert_window_average_uses_history_instead_of_current_spike() {
-    let now = Utc::now();
+    let now = UtcTimestamp::now();
     let points = vec![
-        history_point(now - Duration::minutes(4), 40.0, 60.0, 90),
-        history_point(now - Duration::minutes(2), 50.0, 62.0, 100),
+        history_point(now - SignedDuration::from_mins(4), 40.0, 60.0, 90),
+        history_point(now - SignedDuration::from_mins(2), 50.0, 62.0, 100),
     ];
     let status = status_with_cpu("hk-01", "Hong Kong", now, 95.0, 64, Some(110));
     let mut history_by_node = std::collections::HashMap::new();
@@ -144,7 +141,7 @@ fn alert_window_average_uses_history_instead_of_current_spike() {
 
 #[test]
 fn alert_window_average_falls_back_to_current_sample_without_history() {
-    let now = Utc::now();
+    let now = UtcTimestamp::now();
     let status = status_with_cpu("hk-01", "Hong Kong", now, 95.0, 64, Some(110));
     let history_by_node = std::collections::HashMap::new();
 
@@ -156,15 +153,19 @@ fn alert_window_average_falls_back_to_current_sample_without_history() {
 
 #[test]
 fn alert_window_average_filters_to_rule_window() {
-    let now = Utc::now();
+    let now = UtcTimestamp::now();
     let points = vec![
-        history_point(now - Duration::minutes(9), 100.0, 100.0, 400),
-        history_point(now - Duration::minutes(4), 80.0, 80.0, 120),
-        history_point(now - Duration::minutes(2), 90.0, 90.0, 180),
+        history_point(now - SignedDuration::from_mins(9), 100.0, 100.0, 400),
+        history_point(now - SignedDuration::from_mins(4), 80.0, 80.0, 120),
+        history_point(now - SignedDuration::from_mins(2), 90.0, 90.0, 180),
     ];
 
     assert_eq!(
-        average_history_metric(&AlertMetric::LatencyMs, &points, now - Duration::minutes(5)),
+        average_history_metric(
+            &AlertMetric::LatencyMs,
+            &points,
+            now - SignedDuration::from_mins(5)
+        ),
         Some(150)
     );
 }
@@ -198,21 +199,21 @@ fn webhook_alerting_config(url: String) -> Arc<AlertingConfig> {
 #[test]
 fn inspection_dispatch_waits_until_configured_time() {
     let state = InspectionDispatchState::new();
-    let date = NaiveDate::from_ymd_opt(2026, 5, 27).expect("date should be valid");
-    let scheduled = NaiveTime::from_hms_opt(9, 0, 0).expect("time should be valid");
+    let date = Date::new(2026, 5, 27).expect("date should be valid");
+    let scheduled = Time::new(9, 0, 0, 0).expect("time should be valid");
 
     assert!(
         state
             .due_date_for(
                 date,
-                NaiveTime::from_hms_opt(8, 59, 0).expect("time should be valid"),
+                Time::new(8, 59, 0, 0).expect("time should be valid"),
                 scheduled,
-                Utc::now(),
+                UtcTimestamp::now(),
             )
             .is_none()
     );
     assert_eq!(
-        state.due_date_for(date, scheduled, scheduled, Utc::now()),
+        state.due_date_for(date, scheduled, scheduled, UtcTimestamp::now()),
         Some(date)
     );
 }
@@ -220,38 +221,42 @@ fn inspection_dispatch_waits_until_configured_time() {
 #[test]
 fn inspection_dispatch_sends_once_per_local_date() {
     let mut state = InspectionDispatchState::new();
-    let date = NaiveDate::from_ymd_opt(2026, 5, 27).expect("date should be valid");
-    let time = NaiveTime::from_hms_opt(9, 0, 0).expect("time should be valid");
+    let date = Date::new(2026, 5, 27).expect("date should be valid");
+    let time = Time::new(9, 0, 0, 0).expect("time should be valid");
 
     state.mark_sent(date);
 
-    assert!(state.due_date_for(date, time, time, Utc::now()).is_none());
+    assert!(
+        state
+            .due_date_for(date, time, time, UtcTimestamp::now())
+            .is_none()
+    );
     assert_eq!(
         state.due_date_for(
-            date.succ_opt().expect("next day should exist"),
+            date.tomorrow().expect("next day should exist"),
             time,
             time,
-            Utc::now()
+            UtcTimestamp::now()
         ),
-        Some(date.succ_opt().expect("next day should exist"))
+        Some(date.tomorrow().expect("next day should exist"))
     );
 }
 
 #[test]
 fn inspection_dispatch_delays_retry_after_failure() {
     let mut state = InspectionDispatchState::new();
-    let date = NaiveDate::from_ymd_opt(2026, 5, 27).expect("date should be valid");
-    let time = NaiveTime::from_hms_opt(9, 0, 0).expect("time should be valid");
-    let now = Utc::now();
+    let date = Date::new(2026, 5, 27).expect("date should be valid");
+    let time = Time::new(9, 0, 0, 0).expect("time should be valid");
+    let now = UtcTimestamp::now();
     state.mark_failed(now);
 
     assert!(
         state
-            .due_date_for(date, time, time, now + Duration::minutes(1))
+            .due_date_for(date, time, time, now + SignedDuration::from_mins(1))
             .is_none()
     );
     assert_eq!(
-        state.due_date_for(date, time, time, now + Duration::minutes(6)),
+        state.due_date_for(date, time, time, now + SignedDuration::from_mins(6)),
         Some(date)
     );
 }
@@ -259,7 +264,7 @@ fn inspection_dispatch_delays_retry_after_failure() {
 #[test]
 fn inspection_retry_skips_channels_that_already_sent_today() {
     let mut state = InspectionDispatchState::new();
-    let date = NaiveDate::from_ymd_opt(2026, 5, 27).expect("date should be valid");
+    let date = Date::new(2026, 5, 27).expect("date should be valid");
     let webhook_only = ChannelSet {
         webhook: true,
         smtp: false,
@@ -267,7 +272,7 @@ fn inspection_retry_skips_channels_that_already_sent_today() {
     assert_eq!(state.channels_due(date), ChannelSet::ALL);
 
     state.record_sent_channels(date, webhook_only);
-    state.mark_failed(Utc::now());
+    state.mark_failed(UtcTimestamp::now());
     assert_eq!(
         state.channels_due(date),
         ChannelSet {
@@ -276,7 +281,7 @@ fn inspection_retry_skips_channels_that_already_sent_today() {
         }
     );
 
-    let next_day = date.succ_opt().expect("next day should exist");
+    let next_day = date.tomorrow().expect("next day should exist");
     assert_eq!(
         state.channels_due(next_day),
         ChannelSet::ALL,
@@ -301,26 +306,30 @@ fn inspection_retry_skips_channels_that_already_sent_today() {
 #[test]
 fn inspection_dispatch_suppresses_duplicate_while_pending() {
     let mut state = InspectionDispatchState::new();
-    let date = NaiveDate::from_ymd_opt(2026, 5, 27).expect("date should be valid");
-    let time = NaiveTime::from_hms_opt(9, 0, 0).expect("time should be valid");
+    let date = Date::new(2026, 5, 27).expect("date should be valid");
+    let time = Time::new(9, 0, 0, 0).expect("time should be valid");
 
     state.mark_pending(date);
 
-    assert!(state.due_date_for(date, time, time, Utc::now()).is_none());
+    assert!(
+        state
+            .due_date_for(date, time, time, UtcTimestamp::now())
+            .is_none()
+    );
 }
 
 #[test]
 fn history_highlight_builder_keeps_peak_events_with_thresholds() {
     let inspection = InspectionConfig::default();
-    let now = Utc::now();
+    let now = UtcTimestamp::now();
     let mut builder = HistoryHighlightBuilder::new("hk-01".to_string(), "Hong Kong".to_string());
 
     builder.record(
-        &history_point(now - Duration::hours(2), 82.0, 88.0, 180),
+        &history_point(now - SignedDuration::from_hours(2), 82.0, 88.0, 180),
         &inspection,
     );
     builder.record(
-        &history_point(now - Duration::hours(1), 92.0, 91.0, 320),
+        &history_point(now - SignedDuration::from_hours(1), 92.0, 91.0, 320),
         &inspection,
     );
     builder.record(&history_point(now, 89.0, 93.0, 280), &inspection);
@@ -342,7 +351,7 @@ fn history_highlight_builder_keeps_peak_events_with_thresholds() {
 
 #[test]
 fn merge_inspection_highlights_groups_events_by_node() {
-    let now = Utc::now();
+    let now = UtcTimestamp::now();
     let current = vec![InspectionHighlight {
         node_id: "hk-01".to_string(),
         node_label: "Hong Kong".to_string(),
@@ -355,7 +364,7 @@ fn merge_inspection_highlights_groups_events_by_node() {
         node_id: "hk-01".to_string(),
         node_label: "Hong Kong".to_string(),
         events: vec![InspectionHighlightEvent {
-            occurred_at: now - Duration::hours(1),
+            occurred_at: now - SignedDuration::from_hours(1),
             summary: "CPU peaked at 92% (warn >= 85%)".to_string(),
         }],
     }];
@@ -372,7 +381,7 @@ fn merge_inspection_highlights_groups_events_by_node() {
 
 #[test]
 fn enqueue_alert_delivery_records_failure_when_queue_is_full() {
-    let now = Utc::now();
+    let now = UtcTimestamp::now();
     let rules = vec![rule()];
     let config = alerting_config();
     let mut tracker = AlertStateTracker::new();
@@ -390,7 +399,7 @@ fn enqueue_alert_delivery_records_failure_when_queue_is_full() {
     enqueue_alert_delivery(&delivery_tx, &mut tracker, &config, &event, now);
     assert_eq!(metrics.snapshot().queue_full, 1);
     assert_eq!(metrics.snapshot().outstanding, 1);
-    let retry = tracker.update(&rules, &[matched(92)], now + Duration::minutes(5));
+    let retry = tracker.update(&rules, &[matched(92)], now + SignedDuration::from_mins(5));
 
     assert_eq!(retry.len(), 1);
     assert_eq!(retry[0].kind, AlertEventKind::Triggered);
@@ -402,7 +411,7 @@ fn enqueue_alert_delivery_records_failure_when_queue_is_full() {
 
 #[test]
 fn alert_delivery_failure_result_allows_retry() {
-    let now = Utc::now();
+    let now = UtcTimestamp::now();
     let rules = vec![rule()];
     let config = alerting_config();
     let mut tracker = AlertStateTracker::new();
@@ -431,7 +440,7 @@ fn alert_delivery_failure_result_allows_retry() {
             error: Some(AlertDeliveryError::Timeout),
         },
     );
-    let retry = tracker.update(&rules, &[matched(93)], now + Duration::minutes(6));
+    let retry = tracker.update(&rules, &[matched(93)], now + SignedDuration::from_mins(6));
 
     assert_eq!(retry.len(), 1);
     assert_eq!(retry[0].kind, AlertEventKind::Triggered);
@@ -462,7 +471,7 @@ async fn delivery_dispatcher_drains_in_flight_jobs_after_queue_closes() {
     });
     let config = webhook_alerting_config(format!("http://{addr}/alerts"));
     let event = AlertStateTracker::new()
-        .update(&[rule()], &[matched(91)], Utc::now())
+        .update(&[rule()], &[matched(91)], UtcTimestamp::now())
         .pop()
         .expect("matched rule should trigger alert");
     let metrics = AlertDeliveryMetrics::default();
@@ -516,13 +525,13 @@ async fn delivery_dispatcher_shutdown_times_out() {
 
 #[test]
 fn process_delivery_result_enqueues_resolved_after_trigger_success() {
-    let now = Utc::now();
+    let now = UtcTimestamp::now();
     let rules = vec![rule()];
     let config = alerting_config();
     let mut tracker = AlertStateTracker::new();
     let mut inspection_dispatch = InspectionDispatchState::new();
     let first = tracker.update(&rules, &[matched(91)], now);
-    let skipped = tracker.update(&rules, &[], now + Duration::minutes(1));
+    let skipped = tracker.update(&rules, &[], now + SignedDuration::from_mins(1));
     let metrics = AlertDeliveryMetrics::default();
     let (delivery_tx, mut delivery_rx) = delivery_channel(4, metrics.clone());
     let (result_tx, mut result_rx) = mpsc::channel(8);
@@ -556,7 +565,7 @@ fn process_delivery_result_enqueues_resolved_after_trigger_success() {
     match queued.0 {
         DeliveryJob::Alert { event, .. } => {
             assert_eq!(event.kind, AlertEventKind::Resolved);
-            assert_eq!(event.occurred_at, now + Duration::minutes(1));
+            assert_eq!(event.occurred_at, now + SignedDuration::from_mins(1));
         }
         DeliveryJob::Inspection { .. } => panic!("expected alert delivery job"),
     }
@@ -564,9 +573,9 @@ fn process_delivery_result_enqueues_resolved_after_trigger_success() {
 
 #[test]
 fn enqueue_inspection_delivery_marks_pending_and_queues_job() {
-    let now = Utc::now();
-    let date = NaiveDate::from_ymd_opt(2026, 5, 27).expect("date should be valid");
-    let time = NaiveTime::from_hms_opt(9, 0, 0).expect("time should be valid");
+    let now = UtcTimestamp::now();
+    let date = Date::new(2026, 5, 27).expect("date should be valid");
+    let time = Time::new(9, 0, 0, 0).expect("time should be valid");
     let config = alerting_config();
     let mut inspection_dispatch = InspectionDispatchState::new();
     let metrics = AlertDeliveryMetrics::default();
@@ -605,9 +614,9 @@ fn enqueue_inspection_delivery_marks_pending_and_queues_job() {
 
 #[test]
 fn enqueue_inspection_delivery_marks_retry_when_queue_is_full() {
-    let now = Utc::now();
-    let date = NaiveDate::from_ymd_opt(2026, 5, 27).expect("date should be valid");
-    let time = NaiveTime::from_hms_opt(9, 0, 0).expect("time should be valid");
+    let now = UtcTimestamp::now();
+    let date = Date::new(2026, 5, 27).expect("date should be valid");
+    let time = Time::new(9, 0, 0, 0).expect("time should be valid");
     let config = alerting_config();
     let mut inspection_dispatch = InspectionDispatchState::new();
     let metrics = AlertDeliveryMetrics::default();
@@ -636,11 +645,11 @@ fn enqueue_inspection_delivery_marks_retry_when_queue_is_full() {
 
     assert!(
         inspection_dispatch
-            .due_date_for(date, time, time, now + Duration::minutes(1))
+            .due_date_for(date, time, time, now + SignedDuration::from_mins(1))
             .is_none()
     );
     assert_eq!(
-        inspection_dispatch.due_date_for(date, time, time, now + Duration::minutes(6)),
+        inspection_dispatch.due_date_for(date, time, time, now + SignedDuration::from_mins(6)),
         Some(date)
     );
 }
@@ -649,7 +658,7 @@ fn enqueue_inspection_delivery_marks_retry_when_queue_is_full() {
 fn parse_inspection_time_accepts_valid_hh_mm() {
     assert_eq!(
         parse_inspection_local_time("09:30"),
-        NaiveTime::from_hms_opt(9, 30, 0)
+        Some(Time::constant(9, 30, 0, 0))
     );
     assert!(parse_inspection_local_time("24:61").is_none());
 }
@@ -675,17 +684,17 @@ fn inspection_requires_enabled_delivery_channel() {
 async fn inspection_highlight_preserves_short_sample_peak_and_its_time() {
     let dir = std::env::temp_dir().join(format!(
         "nodelite-inspection-peak-{}",
-        Utc::now().timestamp_nanos_opt().expect("timestamp")
+        UtcTimestamp::now().as_nanosecond()
     ));
     let path = dir.join("history.sqlite");
     let store = crate::history::HistoryStore::new(path.clone(), 1, 2, 512);
     store.initialize().await;
     assert!(store.is_available());
     let connection = rusqlite::Connection::open(&path).expect("database");
-    let now = Utc::now();
-    let start = now - Duration::minutes(24);
+    let now = UtcTimestamp::now();
+    let start = now - SignedDuration::from_mins(24);
     for i in 0..60 {
-        connection.execute("INSERT INTO history_points(node_id, recorded_at, cpu_usage_percent, memory_used_percent, latency_ms) VALUES ('hk-01', ?1, ?2, 50, 20)", rusqlite::params![(start + Duration::seconds(i)).timestamp(), if i == 30 { 99.0 } else { 1.0 }]).expect("sample");
+        connection.execute("INSERT INTO history_points(node_id, recorded_at, cpu_usage_percent, memory_used_percent, latency_ms) VALUES ('hk-01', ?1, ?2, 50, 20)", rusqlite::params![(start + SignedDuration::from_secs(i)).timestamp(), if i == 30 { 99.0 } else { 1.0 }]).expect("sample");
     }
     drop(connection);
     let averages = store
@@ -714,7 +723,7 @@ async fn inspection_highlight_preserves_short_sample_peak_and_its_time() {
         .expect("CPU peak");
     assert_eq!(
         cpu.occurred_at.timestamp(),
-        (start + Duration::seconds(30)).timestamp()
+        (start + SignedDuration::from_secs(30)).timestamp()
     );
     store.shutdown().await;
     drop(store);

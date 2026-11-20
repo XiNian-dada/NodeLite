@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use chrono::{DateTime, Duration, Utc};
+use jiff::SignedDuration;
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{
     DEFAULT_HISTORY_QUERY_CONCURRENCY, DEFAULT_HISTORY_READ_CACHE_KIB, HistoryPoint, LoadAverage,
     MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot, NodeStatus,
@@ -34,7 +35,7 @@ fn test_history_store(db_path: PathBuf) -> HistoryStore {
     )
 }
 
-fn fake_status_for(node_id: &str, recorded_at: chrono::DateTime<Utc>) -> NodeStatus {
+fn fake_status_for(node_id: &str, recorded_at: UtcTimestamp) -> NodeStatus {
     NodeStatus {
         identity: NodeIdentity {
             node_id: node_id.to_string(),

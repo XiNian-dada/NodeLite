@@ -183,7 +183,7 @@ fn update_service_metadata_persists_display_fields() {
         let registry = NodeRegistry::load(&path)
             .await
             .expect("registry should load");
-        let expires_at = Utc.with_ymd_and_hms(2026, 12, 31, 0, 0, 0).unwrap();
+        let expires_at = UtcTimestamp::from_utc(2026, 12, 31, 0, 0, 0).unwrap();
 
         let updated = registry
             .update_service_metadata(
@@ -264,7 +264,7 @@ fn update_service_metadata_can_mark_service_unlimited() {
         let registry = NodeRegistry::load(&path)
             .await
             .expect("registry should load");
-        let expires_at = Utc.with_ymd_and_hms(2026, 12, 31, 0, 0, 0).unwrap();
+        let expires_at = UtcTimestamp::from_utc(2026, 12, 31, 0, 0, 0).unwrap();
 
         let updated = registry
             .update_service_metadata(

@@ -8,7 +8,7 @@ use axum::Json;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use chrono::Utc;
+use nodelite_proto::timestamp::UtcTimestamp;
 use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 use tokio::time::timeout;
@@ -206,7 +206,7 @@ pub(crate) async fn refresh_node_token(
             );
         }
     };
-    let now = Utc::now();
+    let now = UtcTimestamp::now();
 
     (
         StatusCode::OK,
@@ -214,8 +214,7 @@ pub(crate) async fn refresh_node_token(
             ok: true,
             message: "agent token refreshed and pushed to the online node".to_string(),
             token_expires_at,
-            token_expires_in_secs: token_expires_at
-                .map(|expires_at| (expires_at - now).num_seconds()),
+            token_expires_in_secs: token_expires_at.map(|expires_at| (expires_at - now).as_secs()),
         }),
     )
         .into_response()

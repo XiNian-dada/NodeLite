@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{
     GeoIpLocation, NodeIdentity, NodeListIdentity, NodeListItem, NodeListItemView,
     NodeListSnapshot, NodeSnapshot, NodeStatus,
@@ -32,7 +32,7 @@ pub(super) struct NodeEntry {
     pub(super) location_override_latitude: Option<f64>,
     pub(super) location_override_longitude: Option<f64>,
     pub(super) snapshot: Option<NodeSnapshot>,
-    pub(super) last_seen: Option<DateTime<Utc>>,
+    pub(super) last_seen: Option<UtcTimestamp>,
     pub(super) latency_ms: Option<u64>,
     pub(super) online: bool,
     pub(super) active_session_id: Option<u64>,
@@ -46,7 +46,7 @@ impl NodeEntry {
         remote_ip: Option<String>,
         geoip: Option<GeoIpLocation>,
         location_override: Option<GeoIpLocation>,
-        now: DateTime<Utc>,
+        now: UtcTimestamp,
         string_pool: &crate::string_pool::StringPool,
     ) -> Self {
         let (geoip_country, geoip_city, geoip_latitude, geoip_longitude) =
@@ -116,7 +116,7 @@ impl NodeEntry {
         remote_ip: Option<String>,
         geoip: Option<GeoIpLocation>,
         location_override: Option<GeoIpLocation>,
-        now: DateTime<Utc>,
+        now: UtcTimestamp,
         string_pool: &crate::string_pool::StringPool,
     ) {
         let (geoip_country, geoip_city, geoip_latitude, geoip_longitude) =
@@ -245,7 +245,7 @@ impl AlertStatusView for NodeEntry {
         self.snapshot.as_ref()
     }
 
-    fn last_seen(&self) -> Option<DateTime<Utc>> {
+    fn last_seen(&self) -> Option<UtcTimestamp> {
         self.last_seen
     }
 

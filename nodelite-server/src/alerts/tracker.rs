@@ -4,8 +4,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use chrono::{DateTime, Duration, Utc};
+use jiff::SignedDuration;
 use nodelite_proto::AlertRuleConfig;
+use nodelite_proto::timestamp::UtcTimestamp;
 
 use super::channels::ChannelSet;
 use super::time_math;
@@ -31,7 +32,7 @@ impl AlertEventKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AlertEvent {
     pub(crate) kind: AlertEventKind,
-    pub(crate) occurred_at: DateTime<Utc>,
+    pub(crate) occurred_at: UtcTimestamp,
     pub(crate) rule: AlertRuleConfig,
     pub(crate) node_id: String,
     pub(crate) node_label: String,
@@ -55,9 +56,9 @@ struct AlertInstanceKey {
 struct ActiveAlertState {
     node_label: String,
     last_reading: AlertMetricReading,
-    last_notified_at: DateTime<Utc>,
+    last_notified_at: UtcTimestamp,
     /// A cooldown repeat starts a new round even while a failed channel is still retrying.
-    round_started_at: DateTime<Utc>,
+    round_started_at: UtcTimestamp,
     /// Channels that received the current notification round; retries skip them.
     round_delivered: ChannelSet,
     /// False until the first delivery attempt reports back.
@@ -66,7 +67,7 @@ struct ActiveAlertState {
     retry_pending: bool,
     /// Channels that ever received this alert; the resolved notice goes only to them.
     ever_delivered: ChannelSet,
-    resolved_at: Option<DateTime<Utc>>,
+    resolved_at: Option<UtcTimestamp>,
 }
 
 impl ActiveAlertState {
@@ -100,7 +101,7 @@ impl AlertStateTracker {
         &mut self,
         rules: &[AlertRuleConfig],
         matches: &[EvaluatedRule],
-        now: DateTime<Utc>,
+        now: UtcTimestamp,
     ) -> Vec<AlertEvent> {
         let rules_by_id = rules
             .iter()
@@ -206,7 +207,7 @@ impl AlertStateTracker {
         event: &AlertEvent,
         delivered: ChannelSet,
         failed: bool,
-        now: DateTime<Utc>,
+        now: UtcTimestamp,
     ) -> Option<AlertEvent> {
         if event.kind != AlertEventKind::Triggered {
             return None;
@@ -243,34 +244,34 @@ impl AlertStateTracker {
     }
 
     #[cfg(test)]
-    pub(crate) fn record_delivery_failure(&mut self, event: &AlertEvent, now: DateTime<Utc>) {
+    pub(crate) fn record_delivery_failure(&mut self, event: &AlertEvent, now: UtcTimestamp) {
         self.record_delivery_outcome(event, ChannelSet::NONE, true, now);
     }
 
     #[cfg(test)]
     pub(crate) fn record_delivery_success(&mut self, event: &AlertEvent) -> Option<AlertEvent> {
-        self.record_delivery_outcome(event, ChannelSet::ALL, false, Utc::now())
+        self.record_delivery_outcome(event, ChannelSet::ALL, false, UtcTimestamp::now())
     }
 }
 
 fn should_repeat_alert(
-    last_notified_at: DateTime<Utc>,
+    last_notified_at: UtcTimestamp,
     cooldown_minutes: u64,
-    now: DateTime<Utc>,
+    now: UtcTimestamp,
 ) -> bool {
-    now.signed_duration_since(last_notified_at) >= time_math::minutes(cooldown_minutes)
+    now - last_notified_at >= time_math::minutes(cooldown_minutes)
 }
 
-fn retry_notified_at(cooldown_minutes: u64, now: DateTime<Utc>) -> DateTime<Utc> {
+fn retry_notified_at(cooldown_minutes: u64, now: UtcTimestamp) -> UtcTimestamp {
     let retry_offset = time_math::minutes(cooldown_minutes)
-        - Duration::minutes(DELIVERY_FAILURE_RETRY_DELAY_MINUTES);
+        - SignedDuration::from_mins(DELIVERY_FAILURE_RETRY_DELAY_MINUTES);
     time_math::sub(now, retry_offset)
 }
 
 fn triggered_event(
     rule: &AlertRuleConfig,
     matched: &EvaluatedRule,
-    now: DateTime<Utc>,
+    now: UtcTimestamp,
 ) -> AlertEvent {
     AlertEvent {
         kind: AlertEventKind::Triggered,
@@ -285,7 +286,8 @@ fn triggered_event(
 
 #[cfg(test)]
 mod tests {
-    use chrono::{Duration, Utc};
+    use jiff::SignedDuration;
+    use nodelite_proto::timestamp::UtcTimestamp;
     use nodelite_proto::{
         AlertChannel, AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode, AlertSeverity,
     };
@@ -327,12 +329,12 @@ mod tests {
 
     #[test]
     fn update_emits_trigger_once_inside_cooldown() {
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         let rules = vec![rule(true)];
         let mut tracker = AlertStateTracker::new();
 
         let first = tracker.update(&rules, &[matched(91)], now);
-        let second = tracker.update(&rules, &[matched(92)], now + Duration::minutes(10));
+        let second = tracker.update(&rules, &[matched(92)], now + SignedDuration::from_mins(10));
 
         assert_eq!(first.len(), 1);
         assert_eq!(first[0].kind, AlertEventKind::Triggered);
@@ -341,12 +343,12 @@ mod tests {
 
     #[test]
     fn update_repeats_trigger_after_cooldown() {
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         let rules = vec![rule(true)];
         let mut tracker = AlertStateTracker::new();
 
         let _ = tracker.update(&rules, &[matched(91)], now);
-        let repeated = tracker.update(&rules, &[matched(93)], now + Duration::minutes(30));
+        let repeated = tracker.update(&rules, &[matched(93)], now + SignedDuration::from_mins(30));
 
         assert_eq!(repeated.len(), 1);
         assert_eq!(repeated[0].kind, AlertEventKind::Triggered);
@@ -358,14 +360,15 @@ mod tests {
 
     #[test]
     fn record_delivery_failure_allows_early_retry() {
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         let rules = vec![rule(true)];
         let mut tracker = AlertStateTracker::new();
         let first = tracker.update(&rules, &[matched(91)], now);
 
         tracker.record_delivery_failure(&first[0], now);
-        let retry_too_soon = tracker.update(&rules, &[matched(92)], now + Duration::minutes(4));
-        let retry = tracker.update(&rules, &[matched(93)], now + Duration::minutes(5));
+        let retry_too_soon =
+            tracker.update(&rules, &[matched(92)], now + SignedDuration::from_mins(4));
+        let retry = tracker.update(&rules, &[matched(93)], now + SignedDuration::from_mins(5));
 
         assert!(retry_too_soon.is_empty());
         assert_eq!(retry.len(), 1);
@@ -378,13 +381,13 @@ mod tests {
 
     #[test]
     fn update_emits_resolved_when_match_disappears() {
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         let rules = vec![rule(true)];
         let mut tracker = AlertStateTracker::new();
 
         let first = tracker.update(&rules, &[matched(91)], now);
         assert!(tracker.record_delivery_success(&first[0]).is_none());
-        let resolved = tracker.update(&rules, &[], now + Duration::minutes(5));
+        let resolved = tracker.update(&rules, &[], now + SignedDuration::from_mins(5));
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].kind, AlertEventKind::Resolved);
@@ -393,24 +396,24 @@ mod tests {
 
     #[test]
     fn update_skips_resolved_event_when_rule_disables_it() {
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         let rules = vec![rule(false)];
         let mut tracker = AlertStateTracker::new();
 
         let _ = tracker.update(&rules, &[matched(91)], now);
-        let resolved = tracker.update(&rules, &[], now + Duration::minutes(5));
+        let resolved = tracker.update(&rules, &[], now + SignedDuration::from_mins(5));
 
         assert!(resolved.is_empty());
     }
 
     #[test]
     fn update_skips_resolved_until_trigger_delivery_succeeds() {
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         let rules = vec![rule(true)];
         let mut tracker = AlertStateTracker::new();
 
         let first = tracker.update(&rules, &[matched(91)], now);
-        let skipped = tracker.update(&rules, &[], now + Duration::minutes(5));
+        let skipped = tracker.update(&rules, &[], now + SignedDuration::from_mins(5));
 
         assert_eq!(first.len(), 1);
         assert!(skipped.is_empty());
@@ -418,31 +421,31 @@ mod tests {
 
     #[test]
     fn delivery_success_after_resolution_returns_pending_resolved_event() {
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         let rules = vec![rule(true)];
         let mut tracker = AlertStateTracker::new();
 
         let first = tracker.update(&rules, &[matched(91)], now);
-        let skipped = tracker.update(&rules, &[], now + Duration::minutes(5));
+        let skipped = tracker.update(&rules, &[], now + SignedDuration::from_mins(5));
         let resolved = tracker
             .record_delivery_success(&first[0])
             .expect("resolved event should be returned once trigger delivery succeeds");
 
         assert!(skipped.is_empty());
         assert_eq!(resolved.kind, AlertEventKind::Resolved);
-        assert_eq!(resolved.occurred_at, now + Duration::minutes(5));
+        assert_eq!(resolved.occurred_at, now + SignedDuration::from_mins(5));
         assert_eq!(resolved.node_id, "hk-01");
     }
 
     #[test]
     fn update_emits_resolved_after_trigger_delivery_succeeds() {
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         let rules = vec![rule(true)];
         let mut tracker = AlertStateTracker::new();
 
         let first = tracker.update(&rules, &[matched(91)], now);
         assert!(tracker.record_delivery_success(&first[0]).is_none());
-        let resolved = tracker.update(&rules, &[], now + Duration::minutes(5));
+        let resolved = tracker.update(&rules, &[], now + SignedDuration::from_mins(5));
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].kind, AlertEventKind::Resolved);
@@ -460,7 +463,7 @@ mod tests {
     #[test]
     fn partial_failure_retries_only_the_failed_channel() {
         let rules = vec![rule(true)];
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         let mut tracker = AlertStateTracker::new();
         let first = tracker.update(&rules, &[matched(95)], now);
         assert_eq!(first[0].channels, ChannelSet::ALL);
@@ -470,12 +473,12 @@ mod tests {
                 .record_delivery_outcome(&first[0], WEBHOOK_ONLY, true, now)
                 .is_none()
         );
-        let retry = tracker.update(&rules, &[matched(95)], now + Duration::minutes(6));
+        let retry = tracker.update(&rules, &[matched(95)], now + SignedDuration::from_mins(6));
         assert_eq!(retry.len(), 1);
         assert_eq!(retry[0].channels, SMTP_ONLY, "webhook already has it");
 
         tracker.record_delivery_outcome(&retry[0], SMTP_ONLY, false, now);
-        let repeat = tracker.update(&rules, &[matched(95)], now + Duration::minutes(40));
+        let repeat = tracker.update(&rules, &[matched(95)], now + SignedDuration::from_mins(40));
         assert_eq!(
             repeat[0].channels,
             ChannelSet::ALL,
@@ -486,18 +489,18 @@ mod tests {
     #[test]
     fn resolved_notice_reaches_channels_that_got_the_trigger_despite_a_failing_one() {
         let rules = vec![rule(true)];
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         let mut tracker = AlertStateTracker::new();
         let first = tracker.update(&rules, &[matched(95)], now);
         tracker.record_delivery_outcome(&first[0], WEBHOOK_ONLY, true, now);
 
-        let resolved = tracker.update(&rules, &[], now + Duration::minutes(1));
+        let resolved = tracker.update(&rules, &[], now + SignedDuration::from_mins(1));
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].kind, AlertEventKind::Resolved);
         assert_eq!(resolved[0].channels, WEBHOOK_ONLY);
         assert!(
             tracker
-                .update(&rules, &[], now + Duration::minutes(10))
+                .update(&rules, &[], now + SignedDuration::from_mins(10))
                 .is_empty()
         );
     }
@@ -505,7 +508,7 @@ mod tests {
     #[test]
     fn resolved_notice_waits_until_some_channel_has_the_trigger() {
         let rules = vec![rule(true)];
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         let mut tracker = AlertStateTracker::new();
         let first = tracker.update(&rules, &[matched(95)], now);
         tracker.record_delivery_outcome(&first[0], ChannelSet::NONE, true, now);
@@ -520,16 +523,16 @@ mod tests {
     #[test]
     fn healthy_channel_still_gets_cooldown_repeats_while_another_keeps_failing() {
         let rules = vec![rule(true)];
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         let mut tracker = AlertStateTracker::new();
         let first = tracker.update(&rules, &[matched(95)], now);
         tracker.record_delivery_outcome(&first[0], WEBHOOK_ONLY, true, now);
-        let retry_at = now + Duration::minutes(6);
+        let retry_at = now + SignedDuration::from_mins(6);
         let retry = tracker.update(&rules, &[matched(95)], retry_at);
         assert_eq!(retry[0].channels, SMTP_ONLY);
         tracker.record_delivery_outcome(&retry[0], ChannelSet::NONE, true, retry_at);
 
-        let repeat = tracker.update(&rules, &[matched(95)], now + Duration::minutes(31));
+        let repeat = tracker.update(&rules, &[matched(95)], now + SignedDuration::from_mins(31));
         assert_eq!(repeat.len(), 1);
         assert_eq!(
             repeat[0].channels,
@@ -541,7 +544,7 @@ mod tests {
     #[test]
     fn resolved_notice_is_released_when_no_channel_applied() {
         let rules = vec![rule(true)];
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         let mut tracker = AlertStateTracker::new();
         let first = tracker.update(&rules, &[matched(95)], now);
         assert!(
@@ -557,15 +560,19 @@ mod tests {
 
     #[test]
     fn update_clears_active_state_when_rule_is_disabled() {
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         let enabled_rule = rule(true);
         let mut disabled_rule = enabled_rule.clone();
         disabled_rule.enabled = false;
         let mut tracker = AlertStateTracker::new();
 
         let first = tracker.update(std::slice::from_ref(&enabled_rule), &[matched(91)], now);
-        let disabled = tracker.update(&[disabled_rule], &[], now + Duration::minutes(5));
-        let reenabled = tracker.update(&[enabled_rule], &[matched(92)], now + Duration::minutes(6));
+        let disabled = tracker.update(&[disabled_rule], &[], now + SignedDuration::from_mins(5));
+        let reenabled = tracker.update(
+            &[enabled_rule],
+            &[matched(92)],
+            now + SignedDuration::from_mins(6),
+        );
 
         assert_eq!(first.len(), 1);
         assert!(

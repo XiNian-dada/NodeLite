@@ -29,7 +29,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow};
-use chrono::{DateTime, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{
     DEFAULT_HISTORY_RETENTION_HOURS, DEFAULT_HISTORY_WRITE_INTERVAL_SECS,
     DEFAULT_HISTORY_WRITER_BATCH_MAX, DEFAULT_HISTORY_WRITER_FLUSH_INTERVAL_MS, HistoryPoint,
@@ -391,7 +391,8 @@ impl HistoryStore {
     }
 
     pub(crate) fn traffic_throttle_hold_expired(&self) -> bool {
-        self.traffic.throttle_hold_expired(chrono::Utc::now())
+        self.traffic
+            .throttle_hold_expired(nodelite_proto::timestamp::UtcTimestamp::now())
     }
 
     pub(crate) async fn traffic_usages(&self) -> Vec<TrafficUsage> {
@@ -503,8 +504,9 @@ impl HistoryStore {
 
         let clamped_window_hours = window_hours.clamp(1, DEFAULT_HISTORY_RETENTION_HOURS);
         let clamped_max_points = max_points.max(60);
-        let since = Utc::now() - chrono::Duration::hours(clamped_window_hours as i64);
-        let until = Utc::now();
+        let since =
+            UtcTimestamp::now() - jiff::SignedDuration::from_hours(clamped_window_hours as i64);
+        let until = UtcTimestamp::now();
 
         self.query_history_with_cache(node_id, since, until, clamped_max_points)
             .await
@@ -514,16 +516,17 @@ impl HistoryStore {
     pub async fn query_history_range(
         &self,
         node_id: &str,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
+        start: UtcTimestamp,
+        end: UtcTimestamp,
         max_points: usize,
     ) -> HistoryResult<Vec<HistoryPoint>> {
         if !self.is_available() {
             return Ok(Vec::new());
         }
 
-        let now = Utc::now();
-        let retention_floor = now - chrono::Duration::hours(DEFAULT_HISTORY_RETENTION_HOURS as i64);
+        let now = UtcTimestamp::now();
+        let retention_floor =
+            now - jiff::SignedDuration::from_hours(DEFAULT_HISTORY_RETENTION_HOURS as i64);
         let clamped_start = start.max(retention_floor);
         let clamped_end = end.min(now);
         if clamped_end <= clamped_start {
@@ -540,8 +543,8 @@ impl HistoryStore {
     async fn query_history_with_cache(
         &self,
         node_id: &str,
-        since: DateTime<Utc>,
-        until: DateTime<Utc>,
+        since: UtcTimestamp,
+        until: UtcTimestamp,
         max_points: usize,
     ) -> HistoryResult<Vec<HistoryPoint>> {
         let cache_key = CacheKey::new(node_id, since.timestamp(), until.timestamp(), max_points);

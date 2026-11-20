@@ -4,12 +4,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use chrono::{TimeZone, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 
 use super::counters::COUNTER_REGRESSION_HOLD_SECS;
 use super::{
     TrafficFlushBarrier, TrafficLedgerHealth, TrafficPersistenceError, TrafficSample,
-    TrafficTracker, counted_bytes, run_traffic_writer, utc_month_start,
+    TrafficTracker, counted_bytes, run_traffic_writer,
 };
 use crate::registry::TrafficAccounting;
 
@@ -64,10 +64,10 @@ fn traffic_accounting_uses_the_configured_direction() {
 
 #[test]
 fn month_start_is_utc_not_the_server_local_timezone() {
-    let now = Utc.with_ymd_and_hms(2026, 7, 30, 16, 0, 0).unwrap();
+    let now = UtcTimestamp::from_utc(2026, 7, 30, 16, 0, 0).unwrap();
     assert_eq!(
-        utc_month_start(now),
-        Utc.with_ymd_and_hms(2026, 7, 1, 0, 0, 0).unwrap()
+        now.utc_month_start(),
+        UtcTimestamp::from_utc(2026, 7, 1, 0, 0, 0).unwrap()
     );
 }
 
@@ -153,7 +153,7 @@ async fn legacy_ledger_rows_are_migrated_and_keep_their_usage() {
     connection
         .execute(
             "INSERT INTO traffic_usage VALUES ('node-a', ?1, 'bidirectional', 700, 900, 100)",
-            [utc_month_start(Utc::now()).timestamp()],
+            [UtcTimestamp::now().utc_month_start().timestamp()],
         )
         .expect("legacy row should insert");
     drop(connection);
@@ -420,7 +420,7 @@ fn seed_ledger_row(db_path: &Path, accounting: &str, used_bytes: &str) {
         .execute(
             "INSERT INTO traffic_usage VALUES ('node-a', ?1, ?2, ?3, 0, 0)",
             rusqlite::params![
-                utc_month_start(Utc::now()).timestamp(),
+                UtcTimestamp::now().utc_month_start().timestamp(),
                 accounting,
                 used_bytes
             ],
@@ -515,10 +515,10 @@ async fn recovery_after_a_rebaseline_is_not_billed_across_a_server_restart() {
 #[test]
 fn throttle_hold_expires_only_after_the_month_the_process_started_in() {
     let tracker = TrafficTracker::new(Arc::new(test_db_path("hold-expiry")), 0);
-    let now = Utc::now();
-    let next_month = utc_month_start(now) + chrono::Duration::days(32);
+    let now = UtcTimestamp::now();
+    let next_month = now.utc_month_start() + jiff::SignedDuration::from_hours(24 * 32);
     assert!(!tracker.throttle_hold_expired(now));
-    assert!(!tracker.throttle_hold_expired(now - chrono::Duration::days(40)));
+    assert!(!tracker.throttle_hold_expired(now - jiff::SignedDuration::from_hours(24 * 40)));
     assert!(tracker.throttle_hold_expired(next_month));
 }
 

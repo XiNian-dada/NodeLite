@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{
     DEFAULT_HISTORY_RETENTION_HOURS, HistoryPoint, MAX_WRITER_BATCH_SIZE, NodeStatus, percentage,
 };
@@ -141,14 +141,17 @@ async fn flush_history_batch(batch: &mut Vec<HistoryPoint>, context: &WriterCont
 
 /// 判断本轮 flush 是否需要顺带做一次 DELETE。基于原子时间戳的 CAS,
 /// 多次同时调用不会重复触发,且 writer 是单线程消费者,这里实际上 race-free。
-fn should_prune_now(last_pruned_at: &AtomicI64) -> Option<DateTime<Utc>> {
-    let now_ts = Utc::now().timestamp();
+fn should_prune_now(last_pruned_at: &AtomicI64) -> Option<UtcTimestamp> {
+    let now_ts = UtcTimestamp::now().timestamp();
     let prev_ts = last_pruned_at.load(Ordering::Relaxed);
     if prev_ts > 0 && now_ts.saturating_sub(prev_ts) < HISTORY_PRUNE_MIN_INTERVAL.as_secs() as i64 {
         return None;
     }
     last_pruned_at.store(now_ts, Ordering::Relaxed);
-    Some(Utc::now() - chrono::Duration::hours(DEFAULT_HISTORY_RETENTION_HOURS as i64))
+    Some(
+        UtcTimestamp::now()
+            - jiff::SignedDuration::from_hours(DEFAULT_HISTORY_RETENTION_HOURS as i64),
+    )
 }
 
 /// 写入一批历史记录,提交后按需分批删除过期记录。
@@ -162,7 +165,7 @@ fn write_history_batch(
     db_path: &PathBuf,
     connection: &mut Connection,
     points: &[HistoryPoint],
-    prune_before: Option<DateTime<Utc>>,
+    prune_before: Option<UtcTimestamp>,
     artifacts_hardened_after_write: &AtomicBool,
 ) -> Result<(), BatchWriteError> {
     if points.is_empty() {
@@ -227,10 +230,7 @@ fn write_history_batch(
 pub(super) const HISTORY_PRUNE_BATCH_ROWS: i64 = 5_000;
 
 /// 分批删除 `cutoff` 之前的历史点，每批一个独立的自动提交语句。返回删除总行数。
-pub(super) fn prune_history_before(
-    connection: &Connection,
-    cutoff: DateTime<Utc>,
-) -> Result<usize> {
+pub(super) fn prune_history_before(connection: &Connection, cutoff: UtcTimestamp) -> Result<usize> {
     let mut statement = connection.prepare_cached(
         "DELETE FROM history_points WHERE rowid IN (
             SELECT rowid FROM history_points
@@ -259,7 +259,7 @@ pub(super) fn write_history_point(
     db_path: &PathBuf,
     connection: &mut Connection,
     point: &HistoryPoint,
-    prune_before: Option<DateTime<Utc>>,
+    prune_before: Option<UtcTimestamp>,
     artifacts_hardened_after_write: &AtomicBool,
 ) -> Result<()> {
     write_history_batch(
@@ -285,7 +285,7 @@ pub(super) fn build_history_point(status: &NodeStatus) -> Option<HistoryPoint> {
         .fold(0_u64, |total, disk| total.saturating_add(disk.used_bytes));
     let disk_used_percent =
         (total_disk_bytes > 0).then(|| percentage(used_disk_bytes, total_disk_bytes));
-    let recorded_at = status.last_seen.unwrap_or_else(Utc::now);
+    let recorded_at = status.last_seen.unwrap_or_else(UtcTimestamp::now);
 
     Some(HistoryPoint {
         node_id: status.identity.node_id.clone(),

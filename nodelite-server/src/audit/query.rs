@@ -1,7 +1,7 @@
 //! 审计日志分页查询与过滤辅助模块。
 
 use anyhow::anyhow;
-use chrono::{TimeZone, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 use rusqlite::{Connection, params_from_iter, types::Value as SqlValue};
 use serde_json::Value;
 
@@ -50,7 +50,7 @@ pub(super) fn query_events(
             })?;
             Ok(AuditEvent {
                 id: row.get(0)?,
-                timestamp: Utc.timestamp_opt(timestamp, 0).single().ok_or_else(|| {
+                timestamp: UtcTimestamp::from_second(timestamp).ok_or_else(|| {
                     rusqlite::Error::FromSqlConversionFailure(
                         1,
                         rusqlite::types::Type::Integer,
@@ -108,7 +108,8 @@ fn build_audit_query(query: &AuditQuery) -> AuditSql {
 
 #[cfg(test)]
 mod tests {
-    use chrono::{Duration, Utc};
+    use jiff::SignedDuration;
+    use nodelite_proto::timestamp::UtcTimestamp;
     use rusqlite::Connection;
 
     use super::{super::storage::AUDIT_TABLE_SQL, *};
@@ -140,9 +141,9 @@ mod tests {
 
     #[test]
     fn filtered_audit_query_uses_active_predicates_without_or_null() {
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         let audit_sql = build_audit_query(&AuditQuery {
-            start: Some(now - Duration::hours(1)),
+            start: Some(now - SignedDuration::from_hours(1)),
             end: Some(now),
             event_type: Some(AuditEventType::LoginFailure),
             success: Some(false),

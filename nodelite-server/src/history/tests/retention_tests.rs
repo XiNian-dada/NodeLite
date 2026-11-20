@@ -1,7 +1,5 @@
 //! 保留清理的索引访问路径与分批删除测试。
 
-use chrono::TimeZone;
-
 use super::*;
 use crate::history::{HISTORY_PRUNE_BATCH_ROWS, prune_history_before};
 
@@ -98,10 +96,7 @@ fn prune_deletes_in_bounded_batches_and_keeps_recent_rows() {
     let start = 1_800_000_000_i64;
     seed_rows(&mut connection, start, expired + 100);
 
-    let cutoff = Utc
-        .timestamp_opt(start + expired, 0)
-        .single()
-        .expect("valid cutoff");
+    let cutoff = UtcTimestamp::from_second(start + expired).expect("valid cutoff");
     let deleted = prune_history_before(&connection, cutoff).expect("prune should succeed");
     assert_eq!(deleted as i64, expired);
     let (remaining, oldest): (i64, i64) = connection
@@ -121,10 +116,10 @@ fn write_batch_with_prune_commits_samples_and_removes_expired_rows() {
     let db_path = temp_history_db_path("retention-write");
     let mut connection = initialize_database(&db_path, 5).expect("database should initialize");
     let hardened = AtomicBool::new(false);
-    let now = Utc::now();
+    let now = UtcTimestamp::now();
     let old = HistoryPoint {
         node_id: "hk-01".to_string(),
-        recorded_at: now - Duration::days(30),
+        recorded_at: now - SignedDuration::from_hours(24 * 30),
         cpu_usage_percent: Some(1.0),
         load_one: None,
         load_five: None,
@@ -145,7 +140,7 @@ fn write_batch_with_prune_commits_samples_and_removes_expired_rows() {
         &db_path,
         &mut connection,
         &fresh,
-        Some(now - Duration::days(14)),
+        Some(now - SignedDuration::from_hours(24 * 14)),
         &hardened,
     )
     .expect("fresh row with prune");

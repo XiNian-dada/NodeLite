@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Datelike, TimeZone, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 use parking_lot::Mutex as ParkingLotMutex;
 use rusqlite::{Connection, params};
 use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
@@ -37,7 +37,7 @@ pub(super) const TRAFFIC_LOAD_RETRY_INTERVAL: Duration = Duration::from_secs(30)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TrafficUsage {
     pub(crate) node_id: String,
-    pub(crate) cycle_started_at: DateTime<Utc>,
+    pub(crate) cycle_started_at: UtcTimestamp,
     pub(crate) used_bytes: u64,
     pub(crate) accounting: TrafficAccounting,
 }
@@ -91,7 +91,7 @@ pub(super) struct TrafficTracker {
     health: Arc<ParkingLotMutex<TrafficLedgerHealth>>,
     load_retry_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     recovered_after_startup: Arc<AtomicBool>,
-    started_cycle: DateTime<Utc>,
+    started_cycle: UtcTimestamp,
 }
 
 impl TrafficTracker {
@@ -106,7 +106,7 @@ impl TrafficTracker {
             health: Arc::new(ParkingLotMutex::new(TrafficLedgerHealth::default())),
             load_retry_handle: Arc::new(Mutex::new(None)),
             recovered_after_startup: Arc::new(AtomicBool::new(false)),
-            started_cycle: utc_month_start(Utc::now()),
+            started_cycle: UtcTimestamp::now().utc_month_start(),
         }
     }
 
@@ -153,8 +153,8 @@ impl TrafficTracker {
 
     /// 账本只在进程启动后加载失败时才不可用，此前的用量未知。进入新自然月后用量必然已经
     /// 清零，继续保持上月的限速没有依据。
-    pub(super) fn throttle_hold_expired(&self, now: DateTime<Utc>) -> bool {
-        utc_month_start(now) > self.started_cycle
+    pub(super) fn throttle_hold_expired(&self, now: UtcTimestamp) -> bool {
+        now.utc_month_start() > self.started_cycle
     }
 
     pub(super) async fn initialize(&self) -> Result<()> {
@@ -195,8 +195,8 @@ impl TrafficTracker {
         let usage = {
             let mut state = self.state.lock().await;
 
-            let now = Utc::now();
-            let cycle_started_at = utc_month_start(now);
+            let now = UtcTimestamp::now();
+            let cycle_started_at = now.utc_month_start();
             let entry = state
                 .entry(node_id.to_string())
                 .or_insert_with(|| TrafficUsageState {
@@ -312,16 +312,6 @@ fn counted_bytes(accounting: TrafficAccounting, rx_delta: u64, tx_delta: u64) ->
     }
 }
 
-fn utc_month_start(now: DateTime<Utc>) -> DateTime<Utc> {
-    match Utc
-        .with_ymd_and_hms(now.year(), now.month(), 1, 0, 0, 0)
-        .single()
-    {
-        Some(month_start) => month_start,
-        None => now,
-    }
-}
-
 fn load_traffic_state(
     db_path: &Path,
     sqlite_busy_timeout_secs: u64,
@@ -367,9 +357,7 @@ fn load_traffic_state(
             tx_high_water,
         ) = row?;
         // 跳过坏行等于把该节点的用量清零，下一次写入还会覆盖原值，所以整体判定为不可用。
-        let cycle_started_at = Utc
-            .timestamp_opt(cycle_started_at, 0)
-            .single()
+        let cycle_started_at = UtcTimestamp::from_second(cycle_started_at)
             .with_context(|| format!("invalid traffic cycle start for node {node_id}"))?;
         let accounting = accounting_from_db(&accounting)
             .with_context(|| format!("invalid traffic accounting for node {node_id}"))?;

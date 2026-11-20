@@ -10,9 +10,9 @@ use std::time::Duration;
 use std::time::Instant;
 
 use anyhow::anyhow;
-use chrono::{DateTime, Utc};
 #[cfg(test)]
 use lru::LruCache;
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{NodeIdentity, validate_non_empty};
 #[cfg(test)]
 use parking_lot::Mutex as ParkingLotMutex;
@@ -33,7 +33,7 @@ use super::{
 #[derive(Debug, Clone, Copy)]
 struct MatchedToken {
     generation: u64,
-    expires_at: Option<DateTime<Utc>>,
+    expires_at: Option<UtcTimestamp>,
 }
 
 impl NodeRegistry {
@@ -102,7 +102,7 @@ impl NodeRegistry {
         if matched.generation != generation
             || matched
                 .expires_at
-                .is_some_and(|expiry| Utc::now() >= expiry)
+                .is_some_and(|expiry| UtcTimestamp::now() >= expiry)
         {
             return Err(RegistryError::Unauthorized);
         }
@@ -133,7 +133,7 @@ impl NodeRegistry {
                 node,
                 session_generation,
                 self.registry_revision(),
-                Utc::now(),
+                UtcTimestamp::now(),
             )
         })
     }
@@ -175,7 +175,7 @@ impl NodeRegistry {
         }
 
         for pending in &entry.pending_tokens {
-            if Utc::now() < pending.expires_at
+            if UtcTimestamp::now() < pending.expires_at
                 && self.verify_hashed_token(input, &pending.token_hash).await?
             {
                 return Ok(Some(MatchedToken {
@@ -191,7 +191,7 @@ impl NodeRegistry {
         let Some(generation) = entry.previous_token_generation else {
             return Ok(None);
         };
-        if entry.previous_token_hash.is_empty() || Utc::now() >= valid_until {
+        if entry.previous_token_hash.is_empty() || UtcTimestamp::now() >= valid_until {
             return Ok(None);
         }
         if self
@@ -336,7 +336,7 @@ pub(super) fn token_status_for_node(
     node: &RegisteredNode,
     session_generation: u64,
     registry_revision: u64,
-    now: DateTime<Utc>,
+    now: UtcTimestamp,
 ) -> Option<RegistryTokenStatus> {
     if session_generation == node.token_generation && super::token::token_is_unexpired(node, now) {
         return Some(RegistryTokenStatus {

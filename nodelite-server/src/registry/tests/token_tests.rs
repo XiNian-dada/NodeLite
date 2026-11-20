@@ -28,10 +28,10 @@ async fn issued_tokens_default_to_thirty_day_expiry() {
         .node
         .token_expires_at
         .expect("issued token should carry expiry");
-    let remaining = expires_at - Utc::now();
+    let remaining = expires_at - UtcTimestamp::now();
     assert!(
-        remaining >= ChronoDuration::days(29)
-            && remaining <= ChronoDuration::days(30) + ChronoDuration::minutes(1),
+        remaining >= SignedDuration::from_hours(24 * 29)
+            && remaining <= SignedDuration::from_hours(24 * 30) + SignedDuration::from_mins(1),
         "expected about 30 days of remaining validity, got {remaining:?}",
     );
 
@@ -86,7 +86,7 @@ async fn refreshed_token_grace_survives_registry_restart_and_expires() {
     let grace_deadline = previous
         .token_expires_at
         .expect("previous token should expose its grace deadline");
-    assert!(grace_deadline > Utc::now());
+    assert!(grace_deadline > UtcTimestamp::now());
     assert!(restarted.is_token_current("grace-01", 1).await);
     restarted
         .authorize(&identity, &new_token)
@@ -100,7 +100,7 @@ async fn refreshed_token_grace_survives_registry_restart_and_expires() {
     let node = file.nodes.first_mut().expect("node should exist");
     assert!(!node.previous_token_hash.is_empty());
     assert_eq!(node.previous_token_generation, Some(1));
-    node.previous_token_valid_until = Some(Utc::now() - ChronoDuration::seconds(1));
+    node.previous_token_valid_until = Some(UtcTimestamp::now() - SignedDuration::from_secs(1));
     std::fs::write(
         &path,
         serde_json::to_string_pretty(&file).expect("registry should serialize"),
@@ -144,7 +144,7 @@ fn expired_tokens_are_not_current_after_handshake() {
                 "expired-01",
                 "Expired 01",
                 "secret",
-                Some(Utc::now() - ChronoDuration::seconds(1)),
+                Some(UtcTimestamp::now() - SignedDuration::from_secs(1)),
             )],
             install_sessions: Vec::new(),
         };
@@ -171,7 +171,7 @@ fn expired_tokens_are_not_current_after_handshake() {
 
 #[test]
 fn token_is_expired_at_exact_expiry_moment() {
-    let expires_at = Utc.with_ymd_and_hms(2026, 5, 18, 12, 0, 0).unwrap();
+    let expires_at = UtcTimestamp::from_utc(2026, 5, 18, 12, 0, 0).unwrap();
     let entry = RegisteredNode {
         node_id: "boundary-01".to_string(),
         node_label: "Boundary 01".to_string(),
@@ -183,7 +183,7 @@ fn token_is_expired_at_exact_expiry_moment() {
         pending_tokens: Vec::new(),
         token: "secret".to_string(),
         tags: Vec::new(),
-        created_at: expires_at - ChronoDuration::minutes(5),
+        created_at: expires_at - SignedDuration::from_mins(5),
         token_expires_at: Some(expires_at),
         service_expires_at: None,
         service_unlimited: false,
@@ -200,7 +200,7 @@ fn token_is_expired_at_exact_expiry_moment() {
     assert!(!token_is_unexpired(&entry, expires_at));
     assert!(token_is_unexpired(
         &entry,
-        expires_at - ChronoDuration::nanoseconds(1),
+        expires_at - SignedDuration::from_nanos(1),
     ));
 }
 

@@ -1,6 +1,7 @@
 //! 审计日志查询与过滤测试模块。
 
-use chrono::{Duration as ChronoDuration, Utc};
+use jiff::SignedDuration;
+use nodelite_proto::timestamp::UtcTimestamp;
 use serde_json::json;
 use tokio::runtime::Runtime;
 
@@ -94,10 +95,10 @@ fn audit_log_query_combines_optional_filters() {
         let db_path = temp_dir.join("audit.sqlite3");
         let audit = AuditLog::new(sample_config(db_path.clone()), 5);
         audit.initialize().await.expect("audit should initialize");
-        let base = Utc::now();
+        let base = UtcTimestamp::now();
 
         let stale_failure = NewAuditEvent {
-            timestamp: base - ChronoDuration::hours(2),
+            timestamp: base - SignedDuration::from_hours(2),
             event_type: AuditEventType::LoginFailure,
             user: Some("viewer".to_string()),
             node_id: None,
@@ -141,8 +142,8 @@ fn audit_log_query_combines_optional_filters() {
 
         let events = audit
             .query(AuditQuery {
-                start: Some(base - ChronoDuration::minutes(5)),
-                end: Some(base + ChronoDuration::minutes(5)),
+                start: Some(base - SignedDuration::from_mins(5)),
+                end: Some(base + SignedDuration::from_mins(5)),
                 event_type: Some(AuditEventType::LoginFailure),
                 success: Some(false),
                 limit: 10,
@@ -172,7 +173,7 @@ fn audit_log_prunes_records_older_than_retention_window() {
         audit.initialize().await.expect("audit should initialize");
 
         let old_event = NewAuditEvent {
-            timestamp: Utc::now() - ChronoDuration::days(3),
+            timestamp: UtcTimestamp::now() - SignedDuration::from_hours(24 * 3),
             event_type: AuditEventType::LoginFailure,
             user: None,
             node_id: None,

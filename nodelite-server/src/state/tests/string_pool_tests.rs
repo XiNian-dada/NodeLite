@@ -32,7 +32,7 @@ async fn string_pool_saves_memory_in_realistic_geoip_distribution() {
 
     let config = Arc::new(super::sample_config());
     let shared = SharedState::new(config);
-    let now = chrono::Utc::now();
+    let now = nodelite_proto::timestamp::UtcTimestamp::now();
 
     // 注册 1000 个节点，GeoIP 数据高度重复
     for i in 0..1000 {

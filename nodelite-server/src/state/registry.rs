@@ -7,7 +7,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{
     AlertRuleConfig, GeoIpLocation, InspectionConfig, MetricsConfig, NodeIdentity, NodeListItem,
     NodeListItemView, NodeSnapshot, NodeStatus, OverviewData,
@@ -60,7 +60,7 @@ impl Registry {
         remote_ip: Option<String>,
         geoip: Option<GeoIpLocation>,
         location_override: Option<GeoIpLocation>,
-        now: DateTime<Utc>,
+        now: UtcTimestamp,
     ) {
         let node_id = identity.node_id.clone();
         let mut shard = write_lock(self.shard_for(&node_id));
@@ -95,7 +95,7 @@ impl Registry {
         node_id: &str,
         session_id: u64,
         snapshot: NodeSnapshot,
-        now: DateTime<Utc>,
+        now: UtcTimestamp,
     ) -> Option<NodeStatus> {
         let mut shard = write_lock(self.shard_for(node_id));
         let entry = shard.nodes.get_mut(node_id)?;
@@ -114,7 +114,7 @@ impl Registry {
         node_id: &str,
         session_id: u64,
         latency_ms: u64,
-        now: DateTime<Utc>,
+        now: UtcTimestamp,
     ) -> bool {
         let mut shard = write_lock(self.shard_for(node_id));
         let Some(entry) = shard.nodes.get_mut(node_id) else {
@@ -169,7 +169,7 @@ impl Registry {
         true
     }
 
-    pub(super) fn mark_stale(&self, threshold: Duration, now: DateTime<Utc>) -> usize {
+    pub(super) fn mark_stale(&self, threshold: Duration, now: UtcTimestamp) -> usize {
         let mut marked = 0;
 
         for shard in &self.shards {
@@ -178,7 +178,7 @@ impl Registry {
                 let Some(last_seen) = entry.last_seen else {
                     continue;
                 };
-                let Ok(elapsed) = (now - last_seen).to_std() else {
+                let Ok(elapsed) = Duration::try_from(now - last_seen) else {
                     continue;
                 };
                 if elapsed >= threshold && entry.online {
@@ -246,7 +246,7 @@ impl Registry {
     pub(super) fn evaluate_alert_rules(
         &self,
         rules: &[AlertRuleConfig],
-        now: DateTime<Utc>,
+        now: UtcTimestamp,
     ) -> Vec<EvaluatedRule> {
         let shards = self.read_all_shards();
         evaluate_rules(rules, sorted_entries(&shards), now)
@@ -255,7 +255,7 @@ impl Registry {
     pub(super) fn build_alert_inspection_report(
         &self,
         inspection: &InspectionConfig,
-        now: DateTime<Utc>,
+        now: UtcTimestamp,
     ) -> InspectionReport {
         let shards = self.read_all_shards();
         build_alert_inspection_report(inspection, sorted_entries(&shards), now)

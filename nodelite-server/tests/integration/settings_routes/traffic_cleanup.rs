@@ -178,7 +178,7 @@ fn seed_retained_history(state: &crate::AppState) -> Result<()> {
     let connection = rusqlite::Connection::open(&state.shared.config().history_db_path)?;
     connection.execute(
         "INSERT INTO history_points (node_id, recorded_at, memory_used_percent) VALUES (?1, ?2, 50)",
-        rusqlite::params![NODE, Utc::now().timestamp()],
+        rusqlite::params![NODE, UtcTimestamp::now().timestamp()],
     )?;
     Ok(())
 }

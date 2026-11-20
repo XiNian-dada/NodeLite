@@ -114,7 +114,7 @@ fn stored(cred_id: &str) -> StoredPasskey {
     StoredPasskey {
         id: Uuid::new_v4(),
         label: cred_id.to_string(),
-        created_at: chrono::Utc::now(),
+        created_at: nodelite_proto::timestamp::UtcTimestamp::now(),
         passkey: fake_passkey(cred_id),
     }
 }

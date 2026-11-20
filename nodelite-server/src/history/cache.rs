@@ -184,14 +184,14 @@ impl HistoryQueryCache {
 
 #[cfg(test)]
 mod tests {
-    use chrono::Utc;
+    use nodelite_proto::timestamp::UtcTimestamp;
 
     use super::*;
 
     fn point(node_id: &str) -> HistoryPoint {
         HistoryPoint {
             node_id: node_id.to_string(),
-            recorded_at: Utc::now(),
+            recorded_at: UtcTimestamp::now(),
             cpu_usage_percent: Some(1.0),
             load_one: Some(0.1),
             load_five: Some(0.2),

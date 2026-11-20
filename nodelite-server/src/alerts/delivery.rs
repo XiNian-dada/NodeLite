@@ -5,7 +5,8 @@
 use std::future::Future;
 use std::time::Duration;
 
-use chrono::{DateTime, NaiveDate, Utc};
+use jiff::civil::Date;
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{AlertChannel, AlertSmtpConfig, AlertingConfig};
 use thiserror::Error;
 use tokio::time::sleep;
@@ -110,8 +111,8 @@ impl DeliveryErrors {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct InspectionSummary<'a> {
-    pub(crate) occurred_at: DateTime<Utc>,
-    pub(crate) local_date: NaiveDate,
+    pub(crate) occurred_at: UtcTimestamp,
+    pub(crate) local_date: Date,
     pub(crate) lookback_hours: u64,
     pub(crate) report: &'a InspectionReport,
     pub(crate) trends: &'a [InspectionTrendPoint],
@@ -250,7 +251,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use chrono::Utc;
+    use nodelite_proto::timestamp::UtcTimestamp;
     use nodelite_proto::{
         AlertChannel, AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode, AlertSeverity,
         AlertSmtpConfig, AlertSmtpTransport, AlertWebhookConfig, AlertingConfig, InspectionConfig,
@@ -347,8 +348,8 @@ mod tests {
         };
         let trends = Vec::new();
         let summary = InspectionSummary {
-            occurred_at: Utc::now(),
-            local_date: chrono::NaiveDate::from_ymd_opt(2026, 5, 27).expect("date should be valid"),
+            occurred_at: UtcTimestamp::now(),
+            local_date: jiff::civil::Date::new(2026, 5, 27).expect("date should be valid"),
             lookback_hours: 24,
             report: &report,
             trends: &trends,
@@ -502,8 +503,8 @@ mod tests {
         };
         let trends = Vec::new();
         let summary = InspectionSummary {
-            occurred_at: Utc::now(),
-            local_date: chrono::NaiveDate::from_ymd_opt(2026, 5, 27).expect("date should be valid"),
+            occurred_at: UtcTimestamp::now(),
+            local_date: jiff::civil::Date::new(2026, 5, 27).expect("date should be valid"),
             lookback_hours: 24,
             report: &report,
             trends: &trends,
@@ -621,7 +622,7 @@ mod tests {
     fn sample_event() -> AlertEvent {
         AlertEvent {
             kind: AlertEventKind::Triggered,
-            occurred_at: Utc::now(),
+            occurred_at: UtcTimestamp::now(),
             rule: AlertRuleConfig {
                 id: "cpu-hot".to_string(),
                 name: "CPU hot".to_string(),

@@ -1,7 +1,7 @@
 //! 审计事件载荷、查询过滤与错误类型定义。
 
 use anyhow::Error;
-use chrono::{DateTime, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::truncate_string_to_byte_boundary;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -61,7 +61,7 @@ impl AuditEventType {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AuditEvent {
     pub id: i64,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: UtcTimestamp,
     pub event_type: AuditEventType,
     pub user: Option<String>,
     pub node_id: Option<String>,
@@ -73,7 +73,7 @@ pub struct AuditEvent {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NewAuditEvent {
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: UtcTimestamp,
     pub event_type: AuditEventType,
     pub user: Option<String>,
     pub node_id: Option<String>,
@@ -86,7 +86,7 @@ pub struct NewAuditEvent {
 impl NewAuditEvent {
     pub fn now(event_type: AuditEventType, ip_address: impl Into<String>, success: bool) -> Self {
         Self {
-            timestamp: Utc::now(),
+            timestamp: UtcTimestamp::now(),
             event_type,
             user: None,
             node_id: None,
@@ -129,8 +129,8 @@ fn bound_detail_strings(value: &mut Value) {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AuditQuery {
-    pub start: Option<DateTime<Utc>>,
-    pub end: Option<DateTime<Utc>>,
+    pub start: Option<UtcTimestamp>,
+    pub end: Option<UtcTimestamp>,
     pub event_type: Option<AuditEventType>,
     pub success: Option<bool>,
     pub limit: usize,

@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use crate::timestamp::UtcTimestamp;
 use serde::{Deserialize, Serialize};
 
 /// 节点身份信息,在 Agent 启动并发送 `Hello` 时确定,后续不再变更。
@@ -28,7 +28,7 @@ pub struct NodeIdentity {
     /// Agent 二进制版本。
     pub agent_version: String,
     /// 主机启动时间,无法采集时为空。
-    pub boot_time: Option<DateTime<Utc>>,
+    pub boot_time: Option<UtcTimestamp>,
     #[serde(default)]
     /// 部署方自定义标签。
     pub tags: Vec<String>,
@@ -149,7 +149,7 @@ pub struct GeoIpLocation {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NodeSnapshot {
     /// Agent 采集该快照的 UTC 时间。
-    pub collected_at: DateTime<Utc>,
+    pub collected_at: UtcTimestamp,
     /// CPU 使用率在 Agent 首次采样时没有前值可做差分,因此可能为空。
     #[serde(default)]
     pub cpu_usage_percent: Option<f64>,
@@ -215,7 +215,7 @@ pub struct NodeStatus {
     /// 最新完整快照,首次 metrics 到达前为空。
     pub snapshot: Option<NodeSnapshot>,
     /// Server 最近一次收到该节点消息的 UTC 时间。
-    pub last_seen: Option<DateTime<Utc>>,
+    pub last_seen: Option<UtcTimestamp>,
     /// 最近一次心跳测得的延迟毫秒数。
     pub latency_ms: Option<u64>,
     /// 节点当前是否在线。
@@ -311,7 +311,7 @@ pub struct HistoryPoint {
     /// 该采样所属的节点 ID。
     pub node_id: String,
     /// 采样写入历史库的 UTC 时间。
-    pub recorded_at: DateTime<Utc>,
+    pub recorded_at: UtcTimestamp,
     /// CPU 使用率百分比。
     pub cpu_usage_percent: Option<f64>,
     #[serde(default)]
@@ -342,7 +342,7 @@ pub struct HistoryPoint {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OverviewData {
     /// 生成该概览的 UTC 时间。
-    pub generated_at: DateTime<Utc>,
+    pub generated_at: UtcTimestamp,
     /// registry 中的节点总数。
     pub total_nodes: usize,
     /// 当前在线节点数。

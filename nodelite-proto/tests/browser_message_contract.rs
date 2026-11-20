@@ -2,7 +2,7 @@
 
 use std::{env, fs, path::PathBuf};
 
-use chrono::{TimeZone, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{
     BrowserMessage, NodeListIdentity, NodeListItem, NodeListLoadAverage, NodeListMemoryUsage,
     NodeListSnapshot, OverviewData,
@@ -69,10 +69,8 @@ fn render_contract_fixture() -> String {
 }
 
 fn contract_fixture() -> BrowserMessageContract {
-    let generated_at = Utc
-        .with_ymd_and_hms(2026, 7, 1, 12, 34, 56)
-        .single()
-        .expect("valid fixture timestamp");
+    let generated_at =
+        UtcTimestamp::from_utc(2026, 7, 1, 12, 34, 56).expect("valid fixture timestamp");
     let overview = OverviewData {
         generated_at,
         total_nodes: 1,

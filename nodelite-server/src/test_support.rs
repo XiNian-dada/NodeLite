@@ -11,9 +11,9 @@ use anyhow::{Context, Result, anyhow, bail};
 use axum::Router;
 use axum::middleware::{from_fn, from_fn_with_state};
 use axum::routing::get;
-use chrono::{DateTime, Utc};
 use futures::{SinkExt, StreamExt};
 use getrandom::fill as fill_random;
+use nodelite_proto::timestamp::UtcTimestamp;
 use serde::de::DeserializeOwned;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -278,7 +278,7 @@ impl TestServer {
         }
     }
 
-    pub async fn request_live_token_refresh(&self, node_id: &str) -> Result<DateTime<Utc>> {
+    pub async fn request_live_token_refresh(&self, node_id: &str) -> Result<UtcTimestamp> {
         let response_rx: tokio::sync::oneshot::Receiver<Result<SessionRefreshReply, String>> = self
             .shared
             .request_live_token_refresh(node_id)
@@ -691,5 +691,5 @@ fn fake_identity(node: &TestNode) -> NodeIdentity {
 }
 
 pub fn fake_snapshot(uptime_secs: u64) -> NodeSnapshot {
-    fake_snapshot_at(uptime_secs, Utc::now())
+    fake_snapshot_at(uptime_secs, UtcTimestamp::now())
 }

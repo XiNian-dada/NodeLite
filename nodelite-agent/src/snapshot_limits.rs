@@ -47,7 +47,7 @@ pub(crate) fn metrics_frame(mut snapshot: NodeSnapshot, compressed: bool) -> Res
 
 #[cfg(test)]
 mod tests {
-    use chrono::Utc;
+    use nodelite_proto::timestamp::UtcTimestamp;
     use nodelite_proto::{
         DiskUsage, LoadAverage, MAX_METRICS_FRAME_BYTES, MAX_SNAPSHOT_DISKS, MemoryUsage,
         MetricsMessage, NetworkCounters, NodeSnapshot, WireMessage,
@@ -59,7 +59,7 @@ mod tests {
 
     fn snapshot(disks: usize) -> NodeSnapshot {
         NodeSnapshot {
-            collected_at: Utc::now(),
+            collected_at: UtcTimestamp::now(),
             cpu_usage_percent: Some(1.0),
             load: LoadAverage {
                 one: 0.1,

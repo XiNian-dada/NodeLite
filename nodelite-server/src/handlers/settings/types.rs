@@ -2,7 +2,7 @@
 //!
 //! 定义安全配置脱敏视图、告警规则设置、密码修改与安装请求等序列化结构。
 
-use chrono::{DateTime, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{
     AlertChannel, AlertComparator, AlertMetric, AlertScopeMode, AlertSeverity, AlertSmtpTransport,
 };
@@ -66,9 +66,9 @@ pub(crate) struct SettingsAgentToken {
     pub(crate) agent_version: Option<String>,
     pub(crate) remote_ip: Option<String>,
     pub(crate) tags: Vec<String>,
-    pub(crate) token_expires_at: Option<DateTime<Utc>>,
+    pub(crate) token_expires_at: Option<UtcTimestamp>,
     pub(crate) token_expires_in_secs: Option<i64>,
-    pub(crate) service_expires_at: Option<DateTime<Utc>>,
+    pub(crate) service_expires_at: Option<UtcTimestamp>,
     pub(crate) service_unlimited: bool,
     pub(crate) renewal_price: Option<String>,
     pub(crate) traffic_limit_bytes: Option<u64>,
@@ -89,7 +89,7 @@ pub(crate) struct SettingsAgentToken {
 /// Omitted fields keep their stored value; an explicit `null` clears a nullable field.
 pub(crate) struct UpdateNodeServiceMetadataRequest {
     #[serde(default, deserialize_with = "present")]
-    pub(crate) service_expires_at: Option<Option<DateTime<Utc>>>,
+    pub(crate) service_expires_at: Option<Option<UtcTimestamp>>,
     #[serde(default)]
     pub(crate) service_unlimited: Option<bool>,
     #[serde(default, deserialize_with = "present")]
@@ -229,7 +229,7 @@ pub(crate) struct GenerateAgentInstallResponse {
     pub(crate) node_id: String,
     pub(crate) node_label: String,
     pub(crate) created: bool,
-    pub(crate) install_token_expires_at: DateTime<Utc>,
+    pub(crate) install_token_expires_at: UtcTimestamp,
     pub(crate) install_command: String,
 }
 
@@ -246,7 +246,7 @@ pub(crate) struct DeleteAgentRequest {
 pub(crate) struct NodeTokenRefreshResponse {
     pub(crate) ok: bool,
     pub(crate) message: String,
-    pub(crate) token_expires_at: Option<DateTime<Utc>>,
+    pub(crate) token_expires_at: Option<UtcTimestamp>,
     pub(crate) token_expires_in_secs: Option<i64>,
 }
 
@@ -318,7 +318,7 @@ pub(crate) struct InspectionSettingsView {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct AlertPreview {
-    pub(crate) generated_at: DateTime<Utc>,
+    pub(crate) generated_at: UtcTimestamp,
     pub(crate) triggered_rules: Vec<TriggeredRulePreview>,
     pub(crate) inspection: InspectionPreview,
 }
@@ -350,7 +350,7 @@ pub(crate) struct InspectionHighlight {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct InspectionHighlightEvent {
-    pub(crate) occurred_at: DateTime<Utc>,
+    pub(crate) occurred_at: UtcTimestamp,
     pub(crate) summary: String,
 }
 

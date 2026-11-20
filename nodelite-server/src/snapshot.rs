@@ -173,7 +173,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use chrono::Utc;
+    use nodelite_proto::timestamp::UtcTimestamp;
     use nodelite_proto::{NodeIdentity, NodeStatus};
     use tokio::runtime::Runtime;
 
@@ -384,7 +384,7 @@ mod tests {
             location_override_latitude: None,
             location_override_longitude: None,
             snapshot: None,
-            last_seen: Some(Utc::now()),
+            last_seen: Some(UtcTimestamp::now()),
             latency_ms: None,
             online: false,
         }

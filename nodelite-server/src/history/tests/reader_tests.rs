@@ -4,17 +4,17 @@ use std::sync::Arc;
 
 use super::*;
 
-fn seed_concurrent_query_history(db_path: &PathBuf) -> DateTime<Utc> {
+fn seed_concurrent_query_history(db_path: &PathBuf) -> UtcTimestamp {
     let mut connection = initialize_database(db_path, 5).expect("database should initialize");
     let hardened = AtomicBool::new(false);
-    let start = Utc::now() - Duration::hours(2);
+    let start = UtcTimestamp::now() - SignedDuration::from_hours(2);
     for index in 0..240 {
         write_history_point(
             db_path,
             &mut connection,
             &HistoryPoint {
                 node_id: "hk-01".to_string(),
-                recorded_at: start + Duration::seconds(index * 30),
+                recorded_at: start + SignedDuration::from_secs(index * 30),
                 cpu_usage_percent: Some(index as f64),
                 load_one: Some(index as f64 / 10.0),
                 load_five: Some(index as f64 / 20.0),
@@ -36,7 +36,7 @@ fn seed_concurrent_query_history(db_path: &PathBuf) -> DateTime<Utc> {
 
 #[test]
 fn history_point_uses_server_last_seen_timestamp() {
-    let now = Utc::now();
+    let now = UtcTimestamp::now();
     let status = NodeStatus {
         identity: NodeIdentity {
             node_id: "hk-01".to_string(),
@@ -60,7 +60,7 @@ fn history_point_uses_server_last_seen_timestamp() {
         location_override_latitude: None,
         location_override_longitude: None,
         snapshot: Some(NodeSnapshot {
-            collected_at: now + Duration::hours(24),
+            collected_at: now + SignedDuration::from_hours(24),
             cpu_usage_percent: Some(42.0),
             load: LoadAverage {
                 one: 0.1,
@@ -107,14 +107,14 @@ fn query_history_between_buckets_and_limits_results() {
     let db_path = temp_dir.join("history.sqlite3");
     let mut connection = initialize_database(&db_path, 5).expect("database should initialize");
     let hardened = AtomicBool::new(false);
-    let start = Utc::now() - Duration::hours(6);
+    let start = UtcTimestamp::now() - SignedDuration::from_hours(6);
     for index in 0..180 {
         write_history_point(
             &db_path,
             &mut connection,
             &HistoryPoint {
                 node_id: "hk-01".to_string(),
-                recorded_at: start + Duration::seconds(index * 120),
+                recorded_at: start + SignedDuration::from_secs(index * 120),
                 cpu_usage_percent: Some(index as f64),
                 load_one: Some(index as f64 / 10.0),
                 load_five: Some(index as f64 / 20.0),
@@ -132,7 +132,7 @@ fn query_history_between_buckets_and_limits_results() {
         .expect("history point should persist");
     }
 
-    let points = query_history_between(&connection, "hk-01", start, Utc::now(), 24)
+    let points = query_history_between(&connection, "hk-01", start, UtcTimestamp::now(), 24)
         .expect("history query should succeed");
     assert!(!points.is_empty());
     assert!(points.len() <= 24);
@@ -189,7 +189,7 @@ async fn query_history_does_not_wait_for_write_connection_lock() {
     store.initialize().await;
     assert!(store.is_available());
 
-    let status = fake_status_for("hk-01", Utc::now());
+    let status = fake_status_for("hk-01", UtcTimestamp::now());
     store.record_status(&status).await;
     store.shutdown().await;
 
@@ -220,7 +220,7 @@ async fn concurrent_history_queries_use_independent_read_connections() {
     store.initialize().await;
     assert!(store.is_available());
 
-    let end = start + Duration::seconds(240 * 30);
+    let end = start + SignedDuration::from_secs(240 * 30);
     let tasks = (0..8)
         .map(|_| {
             let store = store.clone();
@@ -334,7 +334,7 @@ async fn queued_same_key_queries_recheck_cache_after_acquiring_a_permit() {
     store.initialize().await;
     assert!(store.is_available());
 
-    let end = start + Duration::seconds(240 * 30);
+    let end = start + SignedDuration::from_secs(240 * 30);
     let start_barrier = Arc::new(tokio::sync::Barrier::new(21));
     let tasks = (0..20)
         .map(|_| {
@@ -383,7 +383,7 @@ async fn cancelling_running_query_keeps_permit_until_blocking_work_finishes() {
     store.initialize().await;
     assert!(store.is_available());
 
-    let end = start + Duration::seconds(240 * 30);
+    let end = start + SignedDuration::from_secs(240 * 30);
     let query_store = store.clone();
     let query_task = tokio::spawn(async move {
         query_store

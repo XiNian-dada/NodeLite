@@ -9,7 +9,7 @@ use axum::body::Bytes;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use chrono::{TimeZone, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 use serde::{Deserialize, Serialize};
 use tracing::error;
 
@@ -280,7 +280,7 @@ pub(crate) async fn audit_log(
 ) -> Response {
     let limit = query.limit.unwrap_or(100).clamp(1, 500);
     let start = match query.start {
-        Some(start) => match Utc.timestamp_opt(start, 0).single() {
+        Some(start) => match UtcTimestamp::from_second(start) {
             Some(value) => Some(value),
             None => {
                 return (StatusCode::BAD_REQUEST, "invalid audit start timestamp").into_response();
@@ -289,7 +289,7 @@ pub(crate) async fn audit_log(
         None => None,
     };
     let end = match query.end {
-        Some(end) => match Utc.timestamp_opt(end, 0).single() {
+        Some(end) => match UtcTimestamp::from_second(end) {
             Some(value) => Some(value),
             None => {
                 return (StatusCode::BAD_REQUEST, "invalid audit end timestamp").into_response();
@@ -361,11 +361,11 @@ pub(crate) async fn node_history(
 
     let history_result = match (query.start, query.end) {
         (Some(start), Some(end)) => {
-            let Some(start_at) = Utc.timestamp_opt(start, 0).single() else {
+            let Some(start_at) = UtcTimestamp::from_second(start) else {
                 return (StatusCode::BAD_REQUEST, "invalid history start timestamp")
                     .into_response();
             };
-            let Some(end_at) = Utc.timestamp_opt(end, 0).single() else {
+            let Some(end_at) = UtcTimestamp::from_second(end) else {
                 return (StatusCode::BAD_REQUEST, "invalid history end timestamp").into_response();
             };
             if end_at <= start_at {

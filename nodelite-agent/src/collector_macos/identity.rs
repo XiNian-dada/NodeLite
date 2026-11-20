@@ -3,7 +3,8 @@
 use std::fs;
 
 use anyhow::{Context, Result, anyhow};
-use chrono::{Duration, Utc};
+use jiff::SignedDuration;
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{AgentConfig, NodeIdentity};
 use tracing::warn;
 
@@ -11,7 +12,8 @@ use super::syscall;
 
 pub(super) fn collect_identity(config: &AgentConfig, agent_version: &str) -> Result<NodeIdentity> {
     let uptime_secs = syscall::read_uptime_secs()?;
-    let boot_time = Utc::now() - Duration::seconds(i64::try_from(uptime_secs).unwrap_or(i64::MAX));
+    let boot_time = UtcTimestamp::now()
+        - SignedDuration::from_secs(i64::try_from(uptime_secs).unwrap_or(i64::MAX));
 
     Ok(NodeIdentity {
         node_id: config.node_id.clone(),

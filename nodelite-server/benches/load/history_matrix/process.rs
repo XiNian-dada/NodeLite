@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
-use chrono::{DateTime, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 
 use super::{MatrixCase, MatrixCaseResult, run_matrix_case};
 
@@ -48,8 +48,8 @@ pub(super) async fn run_history_query_matrix_child() -> Result<()> {
 pub(super) async fn run_case_process(
     temp_dir: &Path,
     db_path: &Path,
-    start: DateTime<Utc>,
-    end: DateTime<Utc>,
+    start: UtcTimestamp,
+    end: UtcTimestamp,
     case_index: usize,
     case: MatrixCase,
 ) -> Result<MatrixCaseResult> {
@@ -116,9 +116,9 @@ where
         .with_context(|| format!("parse {name}"))
 }
 
-fn timestamp_env(name: &str) -> Result<DateTime<Utc>> {
+fn timestamp_env(name: &str) -> Result<UtcTimestamp> {
     let timestamp = parse_env::<i64>(name)?;
-    DateTime::from_timestamp(timestamp, 0).with_context(|| format!("invalid {name}"))
+    UtcTimestamp::from_second(timestamp).with_context(|| format!("invalid {name}"))
 }
 
 fn optional_u64_env(name: &str) -> Result<Option<u64>> {

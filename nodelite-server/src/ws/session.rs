@@ -490,11 +490,14 @@ async fn handle_session_command(
 ) -> Result<LoopAction, super::ProtocolError> {
     match command {
         SessionCommand::AgentUpdate(request) => {
-            if !request.validate(chrono::Utc::now().timestamp().max(0) as u64)
-                || !state
-                    .shared
-                    .is_current_session(&session.node_id, session.session_id)
-                    .await
+            if !request.validate(
+                nodelite_proto::timestamp::UtcTimestamp::now()
+                    .timestamp()
+                    .max(0) as u64,
+            ) || !state
+                .shared
+                .is_current_session(&session.node_id, session.session_id)
+                .await
                 || !ensure_current_token(
                     state,
                     session,

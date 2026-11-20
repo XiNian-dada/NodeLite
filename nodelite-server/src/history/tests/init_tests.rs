@@ -68,7 +68,7 @@ fn history_database_artifacts_are_mode_600() {
             &mut connection,
             &HistoryPoint {
                 node_id: "hk-01".to_string(),
-                recorded_at: Utc::now(),
+                recorded_at: UtcTimestamp::now(),
                 cpu_usage_percent: Some(1.0),
                 load_one: Some(1.1),
                 load_five: Some(1.2),
@@ -131,9 +131,9 @@ async fn query_history_range_reports_query_error_when_read_database_is_missing()
     let store = test_history_store(db_path.clone());
     store.available.store(true, Ordering::Relaxed);
 
-    let now = Utc::now();
+    let now = UtcTimestamp::now();
     let error = store
-        .query_history_range("hk-01", now - Duration::hours(1), now, 60)
+        .query_history_range("hk-01", now - SignedDuration::from_hours(1), now, 60)
         .await
         .expect_err("range query should surface read connection error");
 
@@ -215,7 +215,7 @@ fn history_accepts_unknown_cpu_usage_after_schema_migration() {
         assert_eq!(count, 1);
     }
 
-    let recorded_at = Utc::now();
+    let recorded_at = UtcTimestamp::now();
     write_history_point(
         &db_path,
         &mut connection,
@@ -241,8 +241,8 @@ fn history_accepts_unknown_cpu_usage_after_schema_migration() {
     let points = query_history_between(
         &connection,
         "hk-01",
-        recorded_at - Duration::seconds(1),
-        recorded_at + Duration::seconds(1),
+        recorded_at - SignedDuration::from_secs(1),
+        recorded_at + SignedDuration::from_secs(1),
         60,
     )
     .expect("history query should succeed");

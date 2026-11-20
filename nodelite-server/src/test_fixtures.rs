@@ -3,8 +3,8 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use chrono::{DateTime, Utc};
 use futures::{SinkExt, StreamExt};
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{
     DiskUsage, LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity, NodeSnapshot, NoticeLevel,
     WireMessage,
@@ -35,12 +35,12 @@ pub fn synthetic_identity(
         cpu_model: Some("Rust Hypervisor".to_string()),
         cpu_cores: 4,
         agent_version: agent_version.to_string(),
-        boot_time: Some(Utc::now()),
+        boot_time: Some(UtcTimestamp::now()),
         tags: vec![tag.to_string()],
     }
 }
 
-pub fn fake_snapshot_at(uptime_secs: u64, collected_at: DateTime<Utc>) -> NodeSnapshot {
+pub fn fake_snapshot_at(uptime_secs: u64, collected_at: UtcTimestamp) -> NodeSnapshot {
     NodeSnapshot {
         collected_at,
         cpu_usage_percent: Some(12.5 + (uptime_secs % 7) as f64),

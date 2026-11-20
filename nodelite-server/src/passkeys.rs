@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tracing::warn;
@@ -82,14 +82,14 @@ pub(crate) enum PasskeyError {
 pub(crate) struct PasskeySummary {
     pub(crate) id: Uuid,
     pub(crate) label: String,
-    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) created_at: UtcTimestamp,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 struct StoredPasskey {
     id: Uuid,
     label: String,
-    created_at: DateTime<Utc>,
+    created_at: UtcTimestamp,
     passkey: Passkey,
 }
 
@@ -240,7 +240,7 @@ impl PasskeyService {
             let stored = StoredPasskey {
                 id: Uuid::new_v4(),
                 label,
-                created_at: Utc::now(),
+                created_at: UtcTimestamp::now(),
                 passkey,
             };
             let summary = PasskeySummary {

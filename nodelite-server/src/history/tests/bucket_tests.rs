@@ -1,13 +1,11 @@
 //! 历史查询分桶边界测试：桶数不超过预算，且请求结束点的采样不会被截掉。
 
-use chrono::TimeZone;
-
 use super::*;
 
 const START: i64 = 1_800_000_000;
 
-fn at(ts: i64) -> DateTime<Utc> {
-    Utc.timestamp_opt(ts, 0).single().expect("valid timestamp")
+fn at(ts: i64) -> UtcTimestamp {
+    UtcTimestamp::from_second(ts).expect("valid timestamp")
 }
 
 fn seeded(test_name: &str, offsets: &[i64], spike_offset: i64) -> rusqlite::Connection {

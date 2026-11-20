@@ -53,7 +53,7 @@ fn prune_removes_the_oldest_rows_above_the_row_limit() {
     std::fs::create_dir_all(&temp_dir).expect("temp dir should exist");
     let db_path = temp_dir.join("audit.sqlite3");
     let connection = super::storage::open_audit_connection(&db_path, 5).expect("audit db opens");
-    let now = chrono::Utc::now().timestamp();
+    let now = nodelite_proto::timestamp::UtcTimestamp::now().timestamp();
     for index in 0..1_500_i64 {
         connection
             .execute(

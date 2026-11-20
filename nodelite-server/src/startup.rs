@@ -691,7 +691,7 @@ mod tests {
     async fn invalid_audit_path_does_not_abort_startup() {
         let dir = std::env::temp_dir().join(format!(
             "nodelite-startup-audit-{}",
-            chrono::Utc::now().timestamp_nanos_opt().expect("timestamp")
+            nodelite_proto::timestamp::UtcTimestamp::now().as_nanosecond()
         ));
         std::fs::create_dir_all(&dir).expect("fixture");
         let path = dir.join("not-a-directory");

@@ -10,7 +10,7 @@ use axum::http::{Request, Response, StatusCode, header};
 use axum::middleware::{from_fn, from_fn_with_state};
 use axum::routing::{delete, post};
 use base64::Engine;
-use chrono::Utc;
+use nodelite_proto::timestamp::UtcTimestamp;
 use serde_json::{Value, json};
 use tokio::time::sleep;
 use totp_lite::{Sha1, totp_custom};
@@ -441,7 +441,7 @@ async fn settings_node_token_refresh_covers_success_offline_and_timeout_paths() 
             return;
         };
         let _ = response.send(Ok(SessionRefreshReply {
-            token_expires_at: Utc::now() + chrono::Duration::days(30),
+            token_expires_at: UtcTimestamp::now() + jiff::SignedDuration::from_hours(24 * 30),
         }));
     });
 
@@ -660,7 +660,7 @@ async fn settings_agent_delete_revokes_enrollment_and_removes_runtime_node() -> 
         .record_entries(
             "edge-sin-01",
             vec![nodelite_proto::AgentLogEntry {
-                occurred_at: chrono::Utc::now().to_rfc3339(),
+                occurred_at: nodelite_proto::timestamp::UtcTimestamp::now().to_rfc3339(),
                 level: nodelite_proto::NoticeLevel::Info,
                 message: "before deletion".to_string(),
             }],

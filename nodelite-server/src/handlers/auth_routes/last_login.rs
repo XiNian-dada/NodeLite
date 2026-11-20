@@ -122,24 +122,22 @@ fn previous_login(events: &[AuditEvent], current_id: Option<i64>) -> Option<&Aud
                 == Some(true)
             && event.ip_address == current.ip_address
             && event.user_agent == current.user_agent
-            && (current.timestamp - event.timestamp).num_seconds().abs() <= 5;
+            && (current.timestamp - event.timestamp).as_secs().abs() <= 5;
         !same_basic_burst
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::{Duration, TimeZone, Utc};
+    use jiff::SignedDuration;
+    use nodelite_proto::timestamp::UtcTimestamp;
     use serde_json::json;
 
     use super::*;
 
     #[test]
     fn skips_parallel_basic_requests_from_the_same_browser_login() {
-        let now = Utc
-            .timestamp_opt(1_700_000_000, 0)
-            .single()
-            .expect("timestamp");
+        let now = UtcTimestamp::from_second(1_700_000_000).expect("timestamp");
         let login = |id, timestamp, agent: &str| AuditEvent {
             id,
             timestamp,
@@ -152,10 +150,10 @@ mod tests {
             details: json!({ "basic_auth_only": true }),
         };
         let events = [
-            login(4, now + Duration::seconds(2), "browser"),
-            login(3, now + Duration::seconds(1), "browser"),
+            login(4, now + SignedDuration::from_secs(2), "browser"),
+            login(3, now + SignedDuration::from_secs(1), "browser"),
             login(2, now, "browser"),
-            login(1, now - Duration::minutes(1), "browser"),
+            login(1, now - SignedDuration::from_mins(1), "browser"),
         ];
         assert_eq!(
             previous_login(&events, Some(3)).map(|event| event.id),

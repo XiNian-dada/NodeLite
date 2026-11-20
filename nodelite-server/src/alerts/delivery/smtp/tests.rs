@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use chrono::Utc;
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{
     AlertChannel, AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode, AlertSeverity,
     AlertSmtpConfig, AlertSmtpTransport,
@@ -231,11 +231,11 @@ fn build_inspection_message_includes_totals_and_highlights() {
             node_label: "Hong Kong <edge>".to_string(),
             events: vec![
                 InspectionHighlightEvent {
-                    occurred_at: Utc::now(),
+                    occurred_at: UtcTimestamp::now(),
                     summary: "Offline for 30 min (grace 10 min)".to_string(),
                 },
                 InspectionHighlightEvent {
-                    occurred_at: Utc::now(),
+                    occurred_at: UtcTimestamp::now(),
                     summary: "RTT 320 ms (warn >= 250 ms) & jitter".to_string(),
                 },
             ],
@@ -243,8 +243,8 @@ fn build_inspection_message_includes_totals_and_highlights() {
     };
     let trends = sample_trends();
     let summary = super::InspectionSummary {
-        occurred_at: Utc::now(),
-        local_date: chrono::NaiveDate::from_ymd_opt(2026, 5, 27).expect("date should be valid"),
+        occurred_at: UtcTimestamp::now(),
+        local_date: jiff::civil::Date::new(2026, 5, 27).expect("date should be valid"),
         lookback_hours: 168,
         report: &report,
         trends: &trends,
@@ -379,7 +379,7 @@ fn smtp_config(port: u16) -> AlertSmtpConfig {
 fn sample_event() -> AlertEvent {
     AlertEvent {
         kind: AlertEventKind::Triggered,
-        occurred_at: Utc::now(),
+        occurred_at: UtcTimestamp::now(),
         rule: AlertRuleConfig {
             id: "cpu-hot".to_string(),
             name: "CPU hot".to_string(),

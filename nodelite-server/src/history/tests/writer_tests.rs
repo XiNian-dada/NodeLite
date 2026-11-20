@@ -57,7 +57,7 @@ async fn record_status_flushes_through_writer_task_to_sqlite() {
     assert!(store.is_available());
 
     // 写入 5 个不同节点的样本(同节点会被 throttle 拦掉,所以这里用不同 node_id)。
-    let now = Utc::now();
+    let now = UtcTimestamp::now();
     for i in 0..5 {
         let node_id = format!("node-{i:02}");
         let status = fake_status_for(&node_id, now);
@@ -102,13 +102,13 @@ async fn history_writer_flushes_when_configured_batch_max_is_reached() {
 
     let paused_at = tokio::time::Instant::now();
     store
-        .record_status(&fake_status_for("batch-node-01", Utc::now()))
+        .record_status(&fake_status_for("batch-node-01", UtcTimestamp::now()))
         .await;
     tokio::task::yield_now().await;
     assert_eq!(persisted_history_point_count(&db_path), 0);
 
     store
-        .record_status(&fake_status_for("batch-node-02", Utc::now()))
+        .record_status(&fake_status_for("batch-node-02", UtcTimestamp::now()))
         .await;
     wait_for_persisted_history_point_count(&db_path, 2).await;
     assert_eq!(tokio::time::Instant::now(), paused_at);
@@ -136,7 +136,7 @@ async fn history_writer_flushes_at_configured_interval() {
     tokio::task::yield_now().await;
 
     store
-        .record_status(&fake_status_for("interval-node", Utc::now()))
+        .record_status(&fake_status_for("interval-node", UtcTimestamp::now()))
         .await;
     tokio::task::yield_now().await;
     assert_eq!(persisted_history_point_count(&db_path), 0);
@@ -165,7 +165,7 @@ async fn record_status_does_not_throttle_after_queue_full_drop() {
     for index in 0..HISTORY_CHANNEL_CAPACITY {
         tx.try_send(HistoryPoint {
             node_id: format!("queued-{index}"),
-            recorded_at: Utc::now(),
+            recorded_at: UtcTimestamp::now(),
             cpu_usage_percent: Some(1.0),
             load_one: Some(1.1),
             load_five: Some(1.2),
@@ -184,7 +184,7 @@ async fn record_status_does_not_throttle_after_queue_full_drop() {
         *guard = Some(tx);
     }
 
-    let status = fake_status_for("hk-01", Utc::now());
+    let status = fake_status_for("hk-01", UtcTimestamp::now());
     store.record_status(&status).await;
 
     assert_eq!(store.dropped_writes(), 1);
@@ -211,7 +211,7 @@ async fn record_status_skips_point_build_when_throttled() {
         *guard = Some(tx);
     }
 
-    let now = Utc::now();
+    let now = UtcTimestamp::now();
     {
         let mut guard = store.last_written_at.lock().await;
         guard.insert("hk-01".to_string(), std::time::Instant::now());
@@ -246,7 +246,7 @@ async fn record_status_is_noop_after_shutdown() {
     store.shutdown().await;
 
     // shutdown 不会触发 dropped 计数;它走的是 writer_tx 被 take 走的快速 return 路径。
-    let status = fake_status_for("hk-01", Utc::now());
+    let status = fake_status_for("hk-01", UtcTimestamp::now());
     store.record_status(&status).await;
     assert_eq!(store.dropped_writes(), 0);
 
@@ -261,14 +261,17 @@ async fn wall_clock_rollback_does_not_stop_history_writes() {
     let db_path = temp_history_db_path("wall-clock-rollback");
     let store = test_history_store(db_path.clone());
     store.initialize().await;
-    let now = Utc::now();
+    let now = UtcTimestamp::now();
     store.record_status(&fake_status_for("hk-01", now)).await;
     store.last_written_at.lock().await.insert(
         "hk-01".into(),
         std::time::Instant::now() - std::time::Duration::from_secs(61),
     );
     store
-        .record_status(&fake_status_for("hk-01", now - chrono::Duration::hours(1)))
+        .record_status(&fake_status_for(
+            "hk-01",
+            now - jiff::SignedDuration::from_hours(1),
+        ))
         .await;
     store.shutdown().await;
     assert_eq!(persisted_history_point_count(&db_path), 2);

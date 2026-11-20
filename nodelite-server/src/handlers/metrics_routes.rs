@@ -3,6 +3,7 @@
 use crate::ServerReadiness;
 #[cfg(test)]
 use nodelite_proto::NodeStatus;
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{MetricsConfig, NodeIdentity, NodeSnapshot, OverviewData};
 
 mod agent_logs;
@@ -52,7 +53,7 @@ pub(crate) fn render_prometheus_metrics_from_iter<'a>(
 pub(crate) struct PrometheusNode<'a> {
     pub(crate) identity: &'a NodeIdentity,
     pub(crate) snapshot: Option<&'a NodeSnapshot>,
-    pub(crate) last_seen: Option<chrono::DateTime<chrono::Utc>>,
+    pub(crate) last_seen: Option<UtcTimestamp>,
     pub(crate) latency_ms: Option<u64>,
     pub(crate) online: bool,
 }

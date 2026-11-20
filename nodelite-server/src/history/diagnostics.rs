@@ -10,7 +10,7 @@ pub(crate) struct HistoryWriteMetrics {
 
 impl HistoryWriteMetrics {
     pub(super) fn record_success(&mut self) {
-        self.last_success_at = chrono::Utc::now().timestamp();
+        self.last_success_at = nodelite_proto::timestamp::UtcTimestamp::now().timestamp();
         self.degraded = false;
     }
 

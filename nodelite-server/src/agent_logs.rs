@@ -3,9 +3,9 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
 use tokio::sync::Mutex;
 
+use nodelite_proto::timestamp::{UtcTimestamp, normalize_log_timestamp};
 use nodelite_proto::{
     AgentLogEntry, AgentLogsConfig, truncate_to_byte_boundary, validate_identifier,
 };
@@ -245,9 +245,8 @@ fn sanitize_entry(mut entry: AgentLogEntry) -> Option<AgentLogEntry> {
         return None;
     }
     entry.message = truncate_to_byte_boundary(message, MAX_LOG_MESSAGE_BYTES).to_string();
-    entry.occurred_at = DateTime::parse_from_rfc3339(&entry.occurred_at)
-        .map(|timestamp| timestamp.to_rfc3339())
-        .unwrap_or_else(|_| Utc::now().to_rfc3339());
+    entry.occurred_at = normalize_log_timestamp(&entry.occurred_at)
+        .unwrap_or_else(|| UtcTimestamp::now().to_rfc3339());
     Some(entry)
 }
 

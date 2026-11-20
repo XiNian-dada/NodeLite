@@ -5,7 +5,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{Duration as ChronoDuration, TimeZone, Utc};
+use jiff::SignedDuration;
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{
     DiskUsage, GeoIpLocation, LoadAverage, MemoryUsage, NetworkCounters, NodeIdentity,
     NodeSnapshot, ReadonlyAuthConfig, ServerConfig, WsConfig, percentage,
@@ -102,7 +103,7 @@ fn sample_config() -> ServerConfig {
     }
 }
 
-fn sample_snapshot(now: chrono::DateTime<Utc>) -> NodeSnapshot {
+fn sample_snapshot(now: UtcTimestamp) -> NodeSnapshot {
     NodeSnapshot {
         collected_at: now,
         cpu_usage_percent: Some(percentage(1, 2)),

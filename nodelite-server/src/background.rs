@@ -428,7 +428,7 @@ mod tests {
                 .record_entries(
                     id,
                     vec![AgentLogEntry {
-                        occurred_at: chrono::Utc::now().to_rfc3339(),
+                        occurred_at: nodelite_proto::timestamp::UtcTimestamp::now().to_rfc3339(),
                         level: NoticeLevel::Info,
                         message: "fixture".into(),
                     }],
@@ -505,7 +505,8 @@ mod tests {
                     "node",
                     (0..64)
                         .map(|_| AgentLogEntry {
-                            occurred_at: chrono::Utc::now().to_rfc3339(),
+                            occurred_at: nodelite_proto::timestamp::UtcTimestamp::now()
+                                .to_rfc3339(),
                             level: NoticeLevel::Info,
                             message: "x".repeat(512),
                         })

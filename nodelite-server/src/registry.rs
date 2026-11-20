@@ -29,8 +29,8 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, Utc};
 use lru::LruCache;
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{GeoIpLocation, NodeIdentity};
 use parking_lot::Mutex as ParkingLotMutex;
 use serde::{Deserialize, Serialize};
@@ -119,7 +119,7 @@ pub(crate) struct TrafficQuota {
 /// 设置页保存的节点服务与流量套餐元数据。
 #[derive(Debug, Clone)]
 pub(crate) struct NodeServiceMetadata {
-    pub(crate) service_expires_at: Option<DateTime<Utc>>,
+    pub(crate) service_expires_at: Option<UtcTimestamp>,
     pub(crate) service_unlimited: bool,
     pub(crate) renewal_price: Option<String>,
     pub(crate) traffic_limit_bytes: Option<u64>,
@@ -156,7 +156,7 @@ pub struct RegisteredNode {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous_token_generation: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub previous_token_valid_until: Option<DateTime<Utc>>,
+    pub previous_token_valid_until: Option<UtcTimestamp>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending_tokens: Vec<PendingToken>,
     /// Legacy: 旧版本的明文 token 字段。新版本启动后会一次性把它哈希到
@@ -166,13 +166,13 @@ pub struct RegisteredNode {
     pub token: String,
     #[serde(default)]
     pub tags: Vec<String>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: UtcTimestamp,
     /// Token 过期时间。None 表示永不过期(向后兼容旧版本注册表)。
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub token_expires_at: Option<DateTime<Utc>>,
+    pub token_expires_at: Option<UtcTimestamp>,
     /// 运营侧记录的服务器/套餐到期时间,仅用于设置页展示与提醒。
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub service_expires_at: Option<DateTime<Utc>>,
+    pub service_expires_at: Option<UtcTimestamp>,
     /// 运营侧标记的自持有/无限期服务器,为 true 时不展示到期倒计时。
     #[serde(default, skip_serializing_if = "is_false")]
     pub service_unlimited: bool,
@@ -205,7 +205,7 @@ pub struct PendingToken {
     pub refresh_id: String,
     pub token_hash: String,
     pub generation: u64,
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: UtcTimestamp,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -222,7 +222,7 @@ fn is_bidirectional(value: &TrafficAccounting) -> bool {
 pub struct AuthorizedNode {
     pub identity: NodeIdentity,
     pub generation: u64,
-    pub token_expires_at: Option<DateTime<Utc>>,
+    pub token_expires_at: Option<UtcTimestamp>,
     pub registry_revision: u64,
     pub location_override: Option<GeoIpLocation>,
 }
@@ -231,7 +231,7 @@ pub struct AuthorizedNode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RegistryTokenStatus {
     pub generation: u64,
-    pub token_expires_at: Option<DateTime<Utc>>,
+    pub token_expires_at: Option<UtcTimestamp>,
     pub registry_revision: u64,
 }
 
@@ -257,8 +257,8 @@ pub struct ConsumedInstall {
 pub struct InstallSession {
     pub token: String,
     pub node_id: String,
-    pub created_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
+    pub created_at: UtcTimestamp,
+    pub expires_at: UtcTimestamp,
     /// 节点的明文 session token, 仅在 install 流程消费之前短暂持有。
     /// 老版本的 install_session 不带这个字段,旧的 install_token 在升级后
     /// 自然过期(15min)、不可恢复 —— 运维需要重新颁发 install_token。
@@ -322,7 +322,7 @@ pub struct IssueNodeResult {
     pub created: bool,
     pub rotated_token: bool,
     pub install_token: String,
-    pub install_token_expires_at: DateTime<Utc>,
+    pub install_token_expires_at: UtcTimestamp,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]

@@ -1,7 +1,7 @@
 //! Agent 与 Server 之间通过 WebSocket 交换的消息定义。
 //! 默认使用 JSON 文本帧；双方协商后，只有 Metrics 可以使用独立压缩的二进制帧。
 
-use chrono::{DateTime, Utc};
+use crate::timestamp::UtcTimestamp;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::model::{NodeIdentity, NodeListItem, NodeSnapshot, OverviewData};
@@ -271,7 +271,7 @@ pub enum BrowserMessage {
     /// 连接建立(以及重连 / 服务端 lag 恢复)时下发的全量快照,客户端整体替换本地状态。
     InitialState {
         /// Server 生成该消息的 UTC 时间。
-        generated_at: DateTime<Utc>,
+        generated_at: UtcTimestamp,
         /// 当前全局概览。
         overview: OverviewData,
         /// 当前节点列表全量快照。
@@ -280,21 +280,21 @@ pub enum BrowserMessage {
     /// 概览聚合数字更新(整体替换,体积很小)。
     OverviewUpdate {
         /// Server 生成该消息的 UTC 时间。
-        generated_at: DateTime<Utc>,
+        generated_at: UtcTimestamp,
         /// 新的全局概览。
         overview: OverviewData,
     },
     /// 单节点增量:新增或更新一行,客户端按 `node_id` 合并进本地 Map。
     NodeUpsert {
         /// Server 生成该消息的 UTC 时间。
-        generated_at: DateTime<Utc>,
+        generated_at: UtcTimestamp,
         /// 新增或更新的节点列表项。
         node: Box<NodeListItem>,
     },
     /// 单节点移除(注销),客户端按 `node_id` 删除。
     NodeRemoved {
         /// Server 生成该消息的 UTC 时间。
-        generated_at: DateTime<Utc>,
+        generated_at: UtcTimestamp,
         /// 被移除的节点 ID。
         node_id: String,
     },
@@ -316,7 +316,7 @@ mod tests {
             serde_json::json!({"entries": []})
         );
     }
-    use chrono::{TimeZone, Utc};
+    use crate::timestamp::UtcTimestamp;
 
     use super::{
         AgentLogEntry, AgentLogsMessage, HelloMessage, NetworkThrottleMessage, NoticeLevel,
@@ -422,7 +422,7 @@ mod tests {
             cpu_model: Some("AMD EPYC".to_string()),
             cpu_cores: 8,
             agent_version: "0.1.0".to_string(),
-            boot_time: Some(Utc.with_ymd_and_hms(2026, 5, 7, 0, 0, 0).unwrap()),
+            boot_time: Some(UtcTimestamp::from_utc(2026, 5, 7, 0, 0, 0).unwrap()),
             tags: vec!["apac".to_string()],
         };
         let hello = WireMessage::Hello(HelloMessage {
@@ -435,7 +435,7 @@ mod tests {
         });
         let snapshot = WireMessage::Metrics(super::MetricsMessage {
             snapshot: NodeSnapshot {
-                collected_at: Utc.with_ymd_and_hms(2026, 5, 7, 1, 0, 0).unwrap(),
+                collected_at: UtcTimestamp::from_utc(2026, 5, 7, 1, 0, 0).unwrap(),
                 cpu_usage_percent: Some(42.5),
                 load: LoadAverage {
                     one: 0.3,
@@ -468,8 +468,7 @@ mod tests {
         let agent_logs = WireMessage::AgentLogs(AgentLogsMessage {
             traffic_control: None,
             entries: vec![AgentLogEntry {
-                occurred_at: Utc
-                    .with_ymd_and_hms(2026, 5, 7, 1, 2, 3)
+                occurred_at: UtcTimestamp::from_utc(2026, 5, 7, 1, 2, 3)
                     .unwrap()
                     .to_rfc3339(),
                 level: NoticeLevel::Info,
@@ -536,7 +535,7 @@ mod tests {
             NodeListSnapshot, OverviewData,
         };
 
-        let generated_at = Utc.with_ymd_and_hms(2026, 5, 31, 12, 0, 0).unwrap();
+        let generated_at = UtcTimestamp::from_utc(2026, 5, 31, 12, 0, 0).unwrap();
         let overview = OverviewData {
             generated_at,
             total_nodes: 3,

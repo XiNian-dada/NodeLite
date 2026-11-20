@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use chrono::Utc;
+use nodelite_proto::timestamp::UtcTimestamp;
 use tokio::sync::Notify;
 use tokio::time::{sleep, timeout};
 
@@ -19,7 +19,7 @@ use super::*;
 
 fn job() -> DeliveryJob {
     let event = AlertStateTracker::new()
-        .update(&[rule()], &[matched(91)], Utc::now())
+        .update(&[rule()], &[matched(91)], UtcTimestamp::now())
         .pop()
         .expect("matched rule triggers an event");
     DeliveryJob::Alert {

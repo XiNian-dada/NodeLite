@@ -4,7 +4,8 @@
 
 use std::path::Path;
 
-use chrono::{Duration as ChronoDuration, Utc};
+use jiff::SignedDuration;
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{
     MAX_NODE_IDENTITY_TEXT_BYTES, MAX_NODE_TAG_BYTES, MAX_NODE_TAGS, normalize_string_list,
     validate_bounded_text, validate_identifier, validate_tag_list,
@@ -51,7 +52,7 @@ async fn issue_node_guarded(
 
     let request = request.clone();
     let (result, _) = mutate_registry_file(path, guard, move |file| {
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         prune_expired_install_sessions(file, now);
         let mut rotated_token = false;
 
@@ -88,7 +89,7 @@ async fn issue_node_guarded(
                 file.nodes[index].previous_token_generation = None;
                 file.nodes[index].previous_token_valid_until = None;
                 file.nodes[index].token_expires_at =
-                    Some(now + ChronoDuration::days(DEFAULT_TOKEN_VALIDITY_DAYS));
+                    Some(now + SignedDuration::from_hours(24 * DEFAULT_TOKEN_VALIDITY_DAYS));
                 file.nodes[index].token.clear();
                 rotated_token = true;
                 new_token
@@ -133,7 +134,9 @@ async fn issue_node_guarded(
             token: String::new(),
             tags: normalized_tags.clone(),
             created_at: now,
-            token_expires_at: Some(now + ChronoDuration::days(DEFAULT_TOKEN_VALIDITY_DAYS)),
+            token_expires_at: Some(
+                now + SignedDuration::from_hours(24 * DEFAULT_TOKEN_VALIDITY_DAYS),
+            ),
             service_expires_at: None,
             service_unlimited: false,
             renewal_price: None,

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use chrono::{DateTime, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 use tokio::sync::{mpsc, oneshot};
 
 /// 每个 WebSocket 会话最多积压的控制命令数。
@@ -113,7 +113,7 @@ impl Drop for SessionRefreshPermit {
 /// 一次在线 token 续期完成后返回给调用方的摘要。
 #[derive(Debug, Clone)]
 pub(crate) struct SessionRefreshReply {
-    pub token_expires_at: DateTime<Utc>,
+    pub token_expires_at: UtcTimestamp,
 }
 
 /// 向在线节点下发控制命令时可能遇到的失败类型。
@@ -146,7 +146,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::task::{Context, Wake, Waker};
 
-    use chrono::Utc;
+    use nodelite_proto::timestamp::UtcTimestamp;
     use tokio::sync::{mpsc, oneshot};
 
     use super::{
@@ -173,7 +173,7 @@ mod tests {
     fn refresh_reply_wakes_callers_only_after_releasing_permit() {
         for result in [
             Ok(SessionRefreshReply {
-                token_expires_at: Utc::now(),
+                token_expires_at: UtcTimestamp::now(),
             }),
             Err("durable storage failed".to_string()),
         ] {

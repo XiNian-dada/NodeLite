@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
-use chrono::{DateTime, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Barrier;
@@ -165,7 +165,7 @@ async fn warm_covering_index(db_path: &Path) -> Result<()> {
     .context("join history matrix warmup task")?
 }
 
-async fn seed_matrix_database(db_path: &Path) -> Result<(DateTime<Utc>, DateTime<Utc>)> {
+async fn seed_matrix_database(db_path: &Path) -> Result<(UtcTimestamp, UtcTimestamp)> {
     let bootstrap = HistoryStore::new(
         db_path.to_path_buf(),
         5,
@@ -184,15 +184,15 @@ async fn seed_matrix_database(db_path: &Path) -> Result<(DateTime<Utc>, DateTime
         .context("join history matrix seed task")?
 }
 
-fn seed_rows(db_path: &Path) -> Result<(DateTime<Utc>, DateTime<Utc>)> {
+fn seed_rows(db_path: &Path) -> Result<(UtcTimestamp, UtcTimestamp)> {
     let mut connection = Connection::open(db_path)
         .with_context(|| format!("open history matrix database {}", db_path.display()))?;
     let transaction = connection
         .transaction()
         .context("start history matrix seed transaction")?;
-    let end = Utc::now();
-    let start =
-        end - chrono::Duration::seconds((MATRIX_POINTS_PER_NODE.saturating_sub(1) * 30) as i64);
+    let end = UtcTimestamp::now();
+    let start = end
+        - jiff::SignedDuration::from_secs((MATRIX_POINTS_PER_NODE.saturating_sub(1) * 30) as i64);
     {
         let mut statement = transaction
             .prepare(
@@ -209,7 +209,8 @@ fn seed_rows(db_path: &Path) -> Result<(DateTime<Utc>, DateTime<Utc>)> {
         for node_index in 0..MATRIX_NODE_COUNT {
             let node_id = format!("matrix-node-{node_index:04}");
             for point_index in 0..MATRIX_POINTS_PER_NODE {
-                let recorded_at = start + chrono::Duration::seconds((point_index * 30) as i64);
+                let recorded_at =
+                    start + jiff::SignedDuration::from_secs((point_index * 30) as i64);
                 statement.execute(params![
                     node_id,
                     recorded_at.timestamp(),
@@ -235,8 +236,8 @@ fn seed_rows(db_path: &Path) -> Result<(DateTime<Utc>, DateTime<Utc>)> {
 
 async fn run_matrix_case(
     db_path: &Path,
-    start: DateTime<Utc>,
-    end: DateTime<Utc>,
+    start: UtcTimestamp,
+    end: UtcTimestamp,
     label: String,
     query_concurrency: usize,
     read_cache_kib: Option<u64>,
@@ -264,8 +265,8 @@ async fn run_matrix_case(
 
 async fn measure_matrix_case(
     store: &HistoryStore,
-    start: DateTime<Utc>,
-    end: DateTime<Utc>,
+    start: UtcTimestamp,
+    end: UtcTimestamp,
     label: String,
     query_concurrency: usize,
     read_cache_kib: Option<u64>,

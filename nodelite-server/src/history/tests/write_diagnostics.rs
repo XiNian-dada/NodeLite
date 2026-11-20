@@ -32,7 +32,7 @@ async fn check_failure_and_recovery(full: bool) {
     };
     state
         .history
-        .record_status(&fake_status_for(&node_id, Utc::now()))
+        .record_status(&fake_status_for(&node_id, UtcTimestamp::now()))
         .await;
     wait_for(&state.history, |m| m.failures == 1).await;
     assert_degraded(&state).await;
@@ -50,7 +50,7 @@ async fn check_failure_and_recovery(full: bool) {
     }
     state
         .history
-        .record_status(&fake_status_for("recovered", Utc::now()))
+        .record_status(&fake_status_for("recovered", UtcTimestamp::now()))
         .await;
     wait_for(&state.history, |m| m.last_success_at > 0).await;
     let recovered = diagnostics(&state).await;
@@ -163,7 +163,7 @@ async fn assert_degraded(state: &AppState) {
 }
 
 async fn assert_realtime_updates_continue(state: &AppState) {
-    let status = fake_status_for("live-node", Utc::now());
+    let status = fake_status_for("live-node", UtcTimestamp::now());
     let session = state
         .shared
         .register_node(status.identity, None, None, None)

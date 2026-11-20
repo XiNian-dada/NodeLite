@@ -2,7 +2,8 @@
 
 use anyhow::{Result, anyhow};
 use axum::extract::ws::{Message, WebSocket};
-use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use jiff::SignedDuration;
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::truncate_to_byte_boundary;
 use tracing::{debug, info, warn};
 
@@ -87,7 +88,7 @@ pub(crate) async fn ensure_current_token(
     if session.registry_revision == state.registry.registry_revision()
         && session
             .token_expires_at
-            .map(|expires_at| Utc::now() < expires_at)
+            .map(|expires_at| UtcTimestamp::now() < expires_at)
             .unwrap_or(true)
     {
         return true;
@@ -132,7 +133,8 @@ pub(crate) async fn should_refresh_agent_token(
         }
         return Ok(true);
     }
-    let refresh_after = Utc::now() + ChronoDuration::days(AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS);
+    let refresh_after = UtcTimestamp::now()
+        + SignedDuration::from_hours(24 * AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS);
     if session.registry_revision == registry.registry_revision() {
         return Ok(token_needs_refresh(session.token_expires_at, refresh_after));
     }
@@ -160,8 +162,8 @@ fn apply_current_token_status(session: &mut ActiveSession, status: RegistryToken
 }
 
 fn token_needs_refresh(
-    token_expires_at: Option<DateTime<Utc>>,
-    refresh_after: DateTime<Utc>,
+    token_expires_at: Option<UtcTimestamp>,
+    refresh_after: UtcTimestamp,
 ) -> bool {
     token_expires_at
         .map(|expires_at| expires_at <= refresh_after)
@@ -176,7 +178,8 @@ fn agent_refresh_request_due(session: &ActiveSession) -> bool {
     {
         return false;
     }
-    let refresh_after = Utc::now() + ChronoDuration::days(AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS);
+    let refresh_after = UtcTimestamp::now()
+        + SignedDuration::from_hours(24 * AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS);
     session.pending_refresh.is_some()
         || token_needs_refresh(session.token_expires_at, refresh_after)
 }
@@ -187,7 +190,7 @@ pub(crate) async fn refresh_session_token(
     registry: &NodeRegistry,
     session: &mut ActiveSession,
     trigger: &str,
-) -> Result<DateTime<Utc>> {
+) -> Result<UtcTimestamp> {
     if !session.supports_token_refresh_ack {
         anyhow::bail!("Agent upgrade required for durable token renewal");
     }
@@ -294,7 +297,7 @@ pub(super) fn apply_committed_refresh(
     session: &mut ActiveSession,
     token: String,
     generation: u64,
-    expires_at: DateTime<Utc>,
+    expires_at: UtcTimestamp,
 ) {
     session.session_generation = generation;
     session.session_token = token;
@@ -307,7 +310,7 @@ pub(super) fn apply_committed_refresh(
 mod tests {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    use chrono::Utc;
+    use nodelite_proto::timestamp::UtcTimestamp;
     use tokio::io::duplex;
     use tokio_tungstenite::WebSocketStream;
     use tokio_tungstenite::tungstenite::protocol::{Message as TungsteniteMessage, Role};
@@ -321,14 +324,16 @@ mod tests {
 
     #[tokio::test]
     async fn agent_refresh_requests_follow_the_renewal_window_and_pacing() {
-        let window = chrono::Duration::days(AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS);
+        let window = jiff::SignedDuration::from_hours(24 * AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS);
 
         let mut far_from_expiry = session();
-        far_from_expiry.token_expires_at = Some(Utc::now() + window + chrono::Duration::days(1));
+        far_from_expiry.token_expires_at =
+            Some(UtcTimestamp::now() + window + jiff::SignedDuration::from_hours(24));
         assert!(!agent_refresh_request_due(&far_from_expiry));
 
         let mut near_expiry = session();
-        near_expiry.token_expires_at = Some(Utc::now() + window - chrono::Duration::days(1));
+        near_expiry.token_expires_at =
+            Some(UtcTimestamp::now() + window - jiff::SignedDuration::from_hours(24));
         assert!(agent_refresh_request_due(&near_expiry));
 
         near_expiry.refresh_retry_at = tokio::time::Instant::now() + Duration::from_secs(60);
@@ -376,30 +381,30 @@ mod tests {
 
     #[test]
     fn token_without_expiry_is_refreshed() {
-        let refresh_after =
-            Utc::now() + chrono::Duration::days(AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS);
+        let refresh_after = UtcTimestamp::now()
+            + jiff::SignedDuration::from_hours(24 * AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS);
 
         assert!(token_needs_refresh(None, refresh_after));
     }
 
     #[test]
     fn token_expiring_inside_refresh_window_is_refreshed() {
-        let refresh_after =
-            Utc::now() + chrono::Duration::days(AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS);
+        let refresh_after = UtcTimestamp::now()
+            + jiff::SignedDuration::from_hours(24 * AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS);
 
         assert!(token_needs_refresh(
-            Some(refresh_after - chrono::Duration::minutes(1)),
+            Some(refresh_after - jiff::SignedDuration::from_mins(1)),
             refresh_after,
         ));
     }
 
     #[test]
     fn token_expiring_after_refresh_window_is_not_refreshed() {
-        let refresh_after =
-            Utc::now() + chrono::Duration::days(AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS);
+        let refresh_after = UtcTimestamp::now()
+            + jiff::SignedDuration::from_hours(24 * AGENT_TOKEN_REFRESH_BEFORE_EXPIRY_DAYS);
 
         assert!(!token_needs_refresh(
-            Some(refresh_after + chrono::Duration::minutes(1)),
+            Some(refresh_after + jiff::SignedDuration::from_mins(1)),
             refresh_after,
         ));
     }
@@ -407,7 +412,7 @@ mod tests {
     #[test]
     fn current_token_status_updates_session_cache() {
         let mut session = session();
-        let expires_at = Utc::now() + chrono::Duration::days(30);
+        let expires_at = UtcTimestamp::now() + jiff::SignedDuration::from_hours(24 * 30);
         let status = RegistryTokenStatus {
             generation: 3,
             token_expires_at: Some(expires_at),
@@ -424,7 +429,7 @@ mod tests {
         let mut session = session();
         let status = RegistryTokenStatus {
             generation: 4,
-            token_expires_at: Some(Utc::now() + chrono::Duration::days(30)),
+            token_expires_at: Some(UtcTimestamp::now() + jiff::SignedDuration::from_hours(24 * 30)),
             registry_revision: 12,
         };
 

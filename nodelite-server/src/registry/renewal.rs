@@ -1,6 +1,7 @@
 //! Two-phase credential renewal stores only candidate hashes until durable Agent confirmation.
 
-use chrono::{DateTime, Duration, Utc};
+use jiff::SignedDuration;
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::validate_identifier;
 
 use super::auth::token_status_for_node;
@@ -17,7 +18,7 @@ pub(crate) struct PreparedToken {
     pub token: String,
     pub refresh_id: String,
     pub generation: u64,
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: UtcTimestamp,
 }
 
 impl NodeRegistry {
@@ -26,7 +27,7 @@ impl NodeRegistry {
         &self,
         node_id: &str,
         generation: u64,
-    ) -> RegistryResult<(String, DateTime<Utc>, u64)> {
+    ) -> RegistryResult<(String, UtcTimestamp, u64)> {
         let candidate = self.prepare_token_refresh(node_id, generation).await?;
         let (generation, expires_at) = self
             .commit_token_refresh(node_id, &candidate.refresh_id)
@@ -46,7 +47,7 @@ impl NodeRegistry {
         let (prepared, file) = mutate_registry_file(self.path.as_ref(), guard, move |file| {
             let node = file.nodes.iter_mut().find(|n| n.node_id == node_id)
                 .ok_or_else(|| RegistryError::NodeNotFound(node_id.clone()))?;
-            let now = Utc::now();
+            let now = UtcTimestamp::now();
             if token_status_for_node(node, generation, 0, now).is_none() {
                 return Err(RegistryError::Unauthorized);
             }
@@ -57,7 +58,7 @@ impl NodeRegistry {
             let next = node.pending_tokens.iter().map(|p| p.generation)
                 .chain(std::iter::once(node.token_generation)).max().unwrap_or(node.token_generation)
                 .checked_add(1).ok_or_else(|| RegistryError::validation("token generation exhausted"))?;
-            let expires_at = now + Duration::days(DEFAULT_TOKEN_VALIDITY_DAYS);
+            let expires_at = now + SignedDuration::from_hours(24 * DEFAULT_TOKEN_VALIDITY_DAYS);
             node.pending_tokens.push(PendingToken { refresh_id: refresh_id.clone(),
                 token_hash: token_hash.clone(), generation: next, expires_at });
             Ok((PreparedToken { token: token.clone(), refresh_id: refresh_id.clone(),
@@ -74,7 +75,7 @@ impl NodeRegistry {
             .registered_node(node_id)
             .await
             .ok_or_else(|| RegistryError::NodeNotFound(node_id.to_string()))?;
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         if token_status_for_node(&node, generation, 0, now).is_none() {
             return Err(RegistryError::Unauthorized);
         }
@@ -119,7 +120,7 @@ impl NodeRegistry {
         &self,
         node_id: &str,
         refresh_id: &str,
-    ) -> RegistryResult<(u64, DateTime<Utc>)> {
+    ) -> RegistryResult<(u64, UtcTimestamp)> {
         crate::sanitize::validate_refresh_id(refresh_id).map_err(RegistryError::validation)?;
         let node_id = node_id.to_string();
         let refresh_id = refresh_id.to_string();
@@ -130,7 +131,7 @@ impl NodeRegistry {
                 .iter_mut()
                 .find(|n| n.node_id == node_id)
                 .ok_or(RegistryError::Unauthorized)?;
-            let now = Utc::now();
+            let now = UtcTimestamp::now();
             let candidate = node
                 .pending_tokens
                 .iter()
@@ -142,8 +143,10 @@ impl NodeRegistry {
             node.previous_token_generation = Some(node.token_generation);
             node.previous_token_valid_until = Some(
                 node.token_expires_at
-                    .map(|expiry| expiry.min(now + Duration::minutes(TOKEN_REFRESH_GRACE_MINUTES)))
-                    .unwrap_or(now + Duration::minutes(TOKEN_REFRESH_GRACE_MINUTES)),
+                    .map(|expiry| {
+                        expiry.min(now + SignedDuration::from_mins(TOKEN_REFRESH_GRACE_MINUTES))
+                    })
+                    .unwrap_or(now + SignedDuration::from_mins(TOKEN_REFRESH_GRACE_MINUTES)),
             );
             node.token_generation = candidate.generation;
             node.token_expires_at = Some(candidate.expires_at);

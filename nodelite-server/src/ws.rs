@@ -28,7 +28,7 @@ use std::net::{IpAddr, SocketAddr};
 use axum::extract::{ConnectInfo, State, WebSocketUpgrade};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
-use chrono::{DateTime, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 use serde_json::json;
 use tracing::{error, warn};
 
@@ -55,7 +55,7 @@ struct ActiveSession {
     session_id: u64,
     session_token: String,
     session_generation: u64,
-    token_expires_at: Option<DateTime<Utc>>,
+    token_expires_at: Option<UtcTimestamp>,
     registry_revision: u64,
 }
 
@@ -165,7 +165,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use axum::extract::ws::Message;
-    use chrono::Utc;
+    use nodelite_proto::timestamp::UtcTimestamp;
     use nodelite_proto::{HelloMessage, NodeIdentity, WIRE_PROTOCOL_VERSION, WireMessage};
     use tokio::sync::oneshot;
 
@@ -371,9 +371,9 @@ mod tests {
                 .await,
             session_token: issued.node_session_token,
             session_generation: authorized.generation,
-            token_expires_at: authorized
-                .token_expires_at
-                .or(Some(Utc::now() + chrono::Duration::days(30))),
+            token_expires_at: authorized.token_expires_at.or(Some(
+                UtcTimestamp::now() + jiff::SignedDuration::from_hours(24 * 30),
+            )),
             registry_revision: authorized.registry_revision,
         };
 

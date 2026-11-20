@@ -5,10 +5,7 @@ use super::*;
 #[test]
 fn overview_saturates_totals_and_skips_invalid_rates() {
     let registry = Registry::default();
-    let now = Utc
-        .with_ymd_and_hms(2026, 5, 7, 0, 0, 0)
-        .single()
-        .expect("valid test datetime");
+    let now = UtcTimestamp::from_utc(2026, 5, 7, 0, 0, 0).expect("valid test datetime");
 
     registry.register_node(
         1,
@@ -55,10 +52,7 @@ fn overview_saturates_totals_and_skips_invalid_rates() {
 #[test]
 fn overview_avoids_overflow_when_summing_latency() {
     let registry = Registry::default();
-    let now = Utc
-        .with_ymd_and_hms(2026, 5, 7, 0, 0, 0)
-        .single()
-        .expect("valid test datetime");
+    let now = UtcTimestamp::from_utc(2026, 5, 7, 0, 0, 0).expect("valid test datetime");
 
     registry.register_node(
         1,

@@ -109,7 +109,7 @@ async fn duplicate_old_acknowledgement_does_not_cancel_the_next_transaction() ->
         agent.acknowledge_refresh(&second, true).await?;
         Ok::<_, anyhow::Error>(second)
     })?;
-    assert!(result > chrono::Utc::now());
+    assert!(result > nodelite_proto::timestamp::UtcTimestamp::now());
     agent.send_fake_metrics(5).await?;
     assert!(
         server
@@ -130,8 +130,10 @@ async fn exhausted_candidate_budget_keeps_valid_current_credentials_and_metrics_
         .await?;
     let path = server.registry.path();
     let mut file: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
-    file["nodes"][0]["token_expires_at"] =
-        serde_json::json!((chrono::Utc::now() + chrono::Duration::days(6)).to_rfc3339());
+    file["nodes"][0]["token_expires_at"] = serde_json::json!(
+        (nodelite_proto::timestamp::UtcTimestamp::now() + jiff::SignedDuration::from_hours(24 * 6))
+            .to_rfc3339()
+    );
     std::fs::write(path, serde_json::to_vec(&file)?)?;
     server.registry.reload().await?;
     for _ in 0..crate::registry::renewal::MAX_PENDING_TOKENS {

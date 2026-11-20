@@ -5,8 +5,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{DateTime, NaiveDate, Utc};
 use hmac::{Hmac, Mac};
+use jiff::civil::Date;
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{AlertMetric, AlertSeverity, AlertWebhookConfig};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -32,7 +33,7 @@ struct AlertNotification<'a> {
     version: u8,
     source: &'static str,
     event: &'static str,
-    occurred_at: DateTime<Utc>,
+    occurred_at: UtcTimestamp,
     rule: AlertRuleNotification<'a>,
     node: AlertNodeNotification<'a>,
     reading: Option<AlertReadingNotification>,
@@ -63,8 +64,8 @@ struct InspectionSummaryNotification<'a> {
     version: u8,
     source: &'static str,
     event: &'static str,
-    occurred_at: DateTime<Utc>,
-    local_date: NaiveDate,
+    occurred_at: UtcTimestamp,
+    local_date: Date,
     lookback_hours: u64,
     totals: InspectionTotalsNotification,
     highlights: Vec<InspectionHighlightNotification<'a>>,
@@ -87,7 +88,7 @@ struct InspectionHighlightNotification<'a> {
 
 #[derive(Debug, Serialize)]
 struct InspectionHighlightEventNotification<'a> {
-    occurred_at: DateTime<Utc>,
+    occurred_at: UtcTimestamp,
     summary: &'a str,
 }
 
@@ -614,7 +615,7 @@ mod response_tests;
 
 #[cfg(test)]
 mod tests {
-    use chrono::Utc;
+    use nodelite_proto::timestamp::UtcTimestamp;
     use nodelite_proto::{
         AlertChannel, AlertComparator, AlertMetric, AlertRuleConfig, AlertScopeMode, AlertSeverity,
     };
@@ -667,7 +668,7 @@ mod tests {
     fn sample_event() -> AlertEvent {
         AlertEvent {
             kind: AlertEventKind::Triggered,
-            occurred_at: Utc::now(),
+            occurred_at: UtcTimestamp::now(),
             rule: AlertRuleConfig {
                 id: "cpu-hot".to_string(),
                 name: "CPU hot".to_string(),

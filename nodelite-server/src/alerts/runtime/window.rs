@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use chrono::{DateTime, Datelike, TimeZone, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{AlertMetric, AlertRuleConfig, HistoryPoint, NodeStatus};
 use tracing::warn;
 
@@ -42,7 +42,7 @@ impl AlertStatusView for TrafficAlertStatus {
         None
     }
 
-    fn last_seen(&self) -> Option<DateTime<Utc>> {
+    fn last_seen(&self) -> Option<UtcTimestamp> {
         None
     }
 
@@ -64,7 +64,7 @@ pub(crate) async fn evaluate_alert_rules_with_history(
     history: &HistoryStore,
     registry: &NodeRegistry,
     rules: &[AlertRuleConfig],
-    now: DateTime<Utc>,
+    now: UtcTimestamp,
 ) -> Vec<EvaluatedRule> {
     let mut matches = if rules.iter().any(rule_uses_history_average) {
         let statuses = shared.list_statuses().await;
@@ -91,7 +91,7 @@ async fn evaluate_traffic_usage_rules(
     history: &HistoryStore,
     registry: &NodeRegistry,
     rules: &[AlertRuleConfig],
-    now: DateTime<Utc>,
+    now: UtcTimestamp,
 ) -> Vec<EvaluatedRule> {
     if !rules
         .iter()
@@ -99,13 +99,7 @@ async fn evaluate_traffic_usage_rules(
     {
         return Vec::new();
     }
-    let month_started_at = match Utc
-        .with_ymd_and_hms(now.year(), now.month(), 1, 0, 0, 0)
-        .single()
-    {
-        Some(month_started_at) => month_started_at,
-        None => now,
-    };
+    let month_started_at = now.utc_month_start();
     let usage_by_node = history
         .traffic_usages()
         .await
@@ -144,7 +138,7 @@ async fn load_alert_history(
     history: &HistoryStore,
     rules: &[AlertRuleConfig],
     statuses: &[NodeStatus],
-    now: DateTime<Utc>,
+    now: UtcTimestamp,
 ) -> HashMap<String, Vec<HistoryPoint>> {
     let mut history_by_node = HashMap::new();
     for status in statuses {
@@ -188,7 +182,7 @@ pub(super) fn evaluate_rule_with_history(
     rule: &AlertRuleConfig,
     status: &NodeStatus,
     history_by_node: &HashMap<String, Vec<HistoryPoint>>,
-    now: DateTime<Utc>,
+    now: UtcTimestamp,
 ) -> Option<EvaluatedRule> {
     if rule_uses_history_average(rule) && rule_matches_scope(rule, status) {
         let since = super::super::time_math::sub(
@@ -232,7 +226,7 @@ fn rule_uses_history_average(rule: &AlertRuleConfig) -> bool {
 pub(super) fn average_history_metric(
     metric: &AlertMetric,
     points: &[HistoryPoint],
-    since: DateTime<Utc>,
+    since: UtcTimestamp,
 ) -> Option<u64> {
     match metric {
         AlertMetric::CpuUsagePercent => average_history_percent(

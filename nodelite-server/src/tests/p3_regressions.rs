@@ -14,7 +14,8 @@ use axum::{
     http::{Request, StatusCode, header},
     response::IntoResponse,
 };
-use chrono::{Duration, Utc};
+use jiff::SignedDuration;
+use nodelite_proto::timestamp::UtcTimestamp;
 use serde_json::Value;
 use std::sync::Arc;
 use tower::util::ServiceExt;
@@ -57,11 +58,11 @@ async fn preview_matches_runtime_window_and_traffic_evaluation() {
         .update_snapshot("hk-01", session, snapshot)
         .await
         .expect("snapshot");
-    let now = Utc::now();
+    let now = UtcTimestamp::now();
     let connection =
         rusqlite::Connection::open(&state.shared.config().history_db_path).expect("history");
     for i in 0..5 {
-        connection.execute("INSERT INTO history_points(node_id,recorded_at,cpu_usage_percent,memory_used_percent) VALUES (?1,?2,?3,50)", rusqlite::params!["hk-01", (now - Duration::minutes(i)).timestamp(), 10.0]).expect("cold window");
+        connection.execute("INSERT INTO history_points(node_id,recorded_at,cpu_usage_percent,memory_used_percent) VALUES (?1,?2,?3,50)", rusqlite::params!["hk-01", (now - SignedDuration::from_mins(i)).timestamp(), 10.0]).expect("cold window");
     }
     drop(connection);
     for (tx, uptime) in [(0, 100), (950, 101)] {

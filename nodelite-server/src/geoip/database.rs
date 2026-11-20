@@ -4,7 +4,6 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use chrono::Datelike;
 use flate2::read::GzDecoder;
 use tracing::warn;
 
@@ -53,12 +52,12 @@ pub(super) async fn download_dbip_database(config: &GeoIpConfig) -> Result<()> {
         .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
         .build()
         .context("build geoip download client")?;
-    let now = chrono::Utc::now();
+    let date = nodelite_proto::timestamp::UtcTimestamp::now().utc_date();
 
     let urls = dbip_download_urls(
         config.edition,
-        now.year(),
-        now.month(),
+        i32::from(date.year()),
+        u32::try_from(date.month()).unwrap_or(1),
         DBIP_DOWNLOAD_ATTEMPTS,
     );
     download_from_urls(&client, config, &urls).await
@@ -208,7 +207,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "nodelite-geoip-fallback-{}-{}",
             std::process::id(),
-            chrono::Utc::now().timestamp_nanos_opt().expect("timestamp")
+            nodelite_proto::timestamp::UtcTimestamp::now().as_nanosecond()
         ));
         let mut config = crate::test_support::test_server_config(
             "127.0.0.1:8080".parse().expect("listen"),

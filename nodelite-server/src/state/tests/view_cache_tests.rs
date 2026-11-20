@@ -148,7 +148,7 @@ async fn snapshot_update_only_invalidates_nodes_view() {
 
     assert!(
         shared
-            .update_snapshot("hk-01", session_id, sample_snapshot(Utc::now()))
+            .update_snapshot("hk-01", session_id, sample_snapshot(UtcTimestamp::now()))
             .await
             .is_some()
     );
@@ -197,7 +197,7 @@ async fn metrics_cache_reuses_and_invalidates_cleanly() {
         .await;
     assert!(
         shared
-            .update_snapshot("hk-01", session_id, sample_snapshot(Utc::now()))
+            .update_snapshot("hk-01", session_id, sample_snapshot(UtcTimestamp::now()))
             .await
             .is_some()
     );

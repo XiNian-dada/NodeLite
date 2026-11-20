@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use axum::body::Bytes;
-use chrono::{DateTime, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::{
     GeoIpLocation, NodeIdentity, NodeListItem, NodeListItemView, NodeSnapshot, NodeStatus,
     OverviewData, ServerConfig,
@@ -64,7 +64,7 @@ pub(crate) struct BrowserViewDirty;
 /// 浏览器全量快照及其对应的节点视图 revision。
 pub(crate) struct BrowserSnapshot {
     pub(crate) revision: u64,
-    pub(crate) generated_at: DateTime<Utc>,
+    pub(crate) generated_at: UtcTimestamp,
     pub(crate) overview: OverviewData,
     pub(crate) nodes: Vec<NodeListItem>,
 }
@@ -172,7 +172,7 @@ impl SharedState {
         location_override: Option<GeoIpLocation>,
     ) -> u64 {
         let session_id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
-        let now = Utc::now();
+        let now = UtcTimestamp::now();
         self.registry.register_node(
             session_id,
             identity,
@@ -196,9 +196,9 @@ impl SharedState {
         session_id: u64,
         snapshot: NodeSnapshot,
     ) -> Option<NodeStatus> {
-        let status = self
-            .registry
-            .update_snapshot(node_id, session_id, snapshot, Utc::now());
+        let status =
+            self.registry
+                .update_snapshot(node_id, session_id, snapshot, UtcTimestamp::now());
         if status.is_some() {
             self.bump_nodes_revision_only();
         }
@@ -207,9 +207,9 @@ impl SharedState {
 
     /// 更新某节点的最新延迟值,语义同 `update_snapshot`(只 bump nodes_revision)。
     pub async fn update_latency(&self, node_id: &str, session_id: u64, latency_ms: u64) -> bool {
-        let updated = self
-            .registry
-            .update_latency(node_id, session_id, latency_ms, Utc::now());
+        let updated =
+            self.registry
+                .update_latency(node_id, session_id, latency_ms, UtcTimestamp::now());
         if updated {
             self.bump_nodes_revision_only();
         }
@@ -247,7 +247,7 @@ impl SharedState {
     pub async fn mark_stale(&self) -> usize {
         let marked = self.registry.mark_stale(
             Duration::from_secs(self.config.stale_after_secs),
-            Utc::now(),
+            UtcTimestamp::now(),
         );
         if marked > 0 {
             self.bump_view_revision();
@@ -277,7 +277,7 @@ impl SharedState {
     /// 返回浏览器全量视图和对应 revision。nodes/overview 来自同一组 registry 分片读视图,
     /// revision 用于让浏览器端识别后续增量是否基于同一代节点视图。
     pub(crate) async fn browser_snapshot(&self) -> BrowserSnapshot {
-        let generated_at = Utc::now();
+        let generated_at = UtcTimestamp::now();
         let (nodes, overview, revision) = self
             .registry
             .browser_view_with_revision(|| self.nodes_revision.load(Ordering::Acquire));

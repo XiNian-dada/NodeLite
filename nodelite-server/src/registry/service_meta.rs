@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 use nodelite_proto::validate_identifier;
 
 use crate::sanitize::sanitize_renewal_price;
@@ -19,7 +19,7 @@ use super::{
 /// `None` keeps the stored value; `Some(None)` clears a nullable field.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct NodeServiceMetadataPatch {
-    pub(crate) service_expires_at: Option<Option<DateTime<Utc>>>,
+    pub(crate) service_expires_at: Option<Option<UtcTimestamp>>,
     pub(crate) service_unlimited: Option<bool>,
     pub(crate) renewal_price: Option<Option<String>>,
     pub(crate) traffic_limit_bytes: Option<Option<u64>>,

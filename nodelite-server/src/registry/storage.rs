@@ -8,7 +8,7 @@ use std::fs::Metadata;
 use std::path::Path;
 use std::time::SystemTime;
 
-use chrono::Utc;
+use nodelite_proto::timestamp::UtcTimestamp;
 use tokio::fs;
 
 use self::write::mutate_registry_file_sync;
@@ -141,7 +141,7 @@ pub(super) async fn load_registry_state(
     guard.check(path, existing.as_ref().map(|file| file.version))?;
     let mut file = existing.unwrap_or_default();
     // 过期安装会话仍带明文 session token，只在内存里丢弃会让它留在磁盘上直到下一次写入。
-    let pruned_sessions = prune_expired_install_sessions(&mut file, Utc::now());
+    let pruned_sessions = prune_expired_install_sessions(&mut file, UtcTimestamp::now());
 
     // 展示字段先迁移到当前安全边界，再执行严格校验；通过后才做昂贵的
     // Argon2 token 迁移，避免损坏的注册表在拒绝前消耗额外资源。
@@ -164,7 +164,7 @@ pub(super) async fn migrate_registry_file(
 ) -> RegistryResult<RegistryFile> {
     // Rebase migrations on the latest durable file using the same commit protection as edits.
     let ((), file) = mutate_registry_file(path, guard, |file| {
-        prune_expired_install_sessions(file, Utc::now());
+        prune_expired_install_sessions(file, UtcTimestamp::now());
         migrate_legacy_tokens(file)?;
         // The synchronous loader has already normalized legacy display metadata.
         Ok(((), true))

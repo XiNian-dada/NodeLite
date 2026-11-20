@@ -9,7 +9,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::{HeaderMap, Request, StatusCode, header};
 use axum::middleware::from_fn_with_state;
 use axum::routing::{get, post};
-use chrono::{TimeZone, Utc};
+use nodelite_proto::timestamp::UtcTimestamp;
 use serde_json::json;
 use tokio::runtime::Runtime;
 use tower::util::ServiceExt;
@@ -141,10 +141,8 @@ fn last_login_uses_session_event_id_when_login_timestamps_match() {
         let state = AppState::test_fixture(config.into(), Arc::new(temp_dir.join("server.toml")))
             .await
             .expect("state fixture should build");
-        let timestamp = Utc
-            .timestamp_opt(1_700_000_000, 0)
-            .single()
-            .expect("fixed timestamp should be valid");
+        let timestamp =
+            UtcTimestamp::from_second(1_700_000_000).expect("fixed timestamp should be valid");
 
         let mut previous_login =
             NewAuditEvent::now(AuditEventType::LoginSuccess, "198.51.100.24", true);
@@ -213,10 +211,8 @@ fn last_login_uses_two_factor_session_event_id_when_login_timestamps_match() {
         let state = AppState::test_fixture(config.into(), Arc::new(temp_dir.join("server.toml")))
             .await
             .expect("state fixture should build");
-        let timestamp = Utc
-            .timestamp_opt(1_700_000_000, 0)
-            .single()
-            .expect("fixed timestamp should be valid");
+        let timestamp =
+            UtcTimestamp::from_second(1_700_000_000).expect("fixed timestamp should be valid");
 
         let mut previous_login =
             NewAuditEvent::now(AuditEventType::LoginSuccess, "198.51.100.24", true);

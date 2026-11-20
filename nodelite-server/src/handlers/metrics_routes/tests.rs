@@ -1,6 +1,6 @@
 //! Prometheus 指标渲染辅助函数测试模块。
 
-use chrono::Utc;
+use nodelite_proto::timestamp::UtcTimestamp;
 
 use super::{
     ApiCacheMetrics, PrometheusNode, RuntimeMetrics, SqliteWalCheckpointMetrics,
@@ -473,7 +473,7 @@ fn sample_status(node_id: &str, node_label: &str, uptime_secs: u64, load_15m: f6
         location_override_latitude: None,
         location_override_longitude: None,
         snapshot: Some(NodeSnapshot {
-            collected_at: Utc::now(),
+            collected_at: UtcTimestamp::now(),
             cpu_usage_percent: Some(42.0),
             load: LoadAverage {
                 one: 0.25,
@@ -505,7 +505,7 @@ fn sample_status(node_id: &str, node_label: &str, uptime_secs: u64, load_15m: f6
                 packet_loss_percent: Some(0.5),
             },
         }),
-        last_seen: Some(Utc::now()),
+        last_seen: Some(UtcTimestamp::now()),
         latency_ms: Some(12),
         online: true,
     }
@@ -513,7 +513,7 @@ fn sample_status(node_id: &str, node_label: &str, uptime_secs: u64, load_15m: f6
 
 fn sample_overview() -> OverviewData {
     OverviewData {
-        generated_at: Utc::now(),
+        generated_at: UtcTimestamp::now(),
         total_nodes: 2,
         online_nodes: 2,
         offline_nodes: 0,

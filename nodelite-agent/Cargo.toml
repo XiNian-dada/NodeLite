@@ -16,7 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
-chrono = { version = "0.4", default-features = false, features = ["now", "std"] }
+jiff.workspace = true
 clap.workspace = true
 futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 getrandom.workspace = true
