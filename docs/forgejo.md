@@ -48,7 +48,7 @@ python3 -m http.server 18765 --bind 127.0.0.1
 保持服务运行，在另一个终端进入同一个附件目录。先升级 Server，确认面板正常后再处理 Agent。将 `tag` 设为此次下载的确切版本：
 
 ```sh
-tag=v3.1.0-rc.2
+tag=v3.1.0-rc.3
 source_url=http://127.0.0.1:18765
 sudo sh ./install-server.sh --mode upgrade --version "$tag" --base-url "$source_url"
 ```
@@ -58,7 +58,7 @@ sudo sh ./install-server.sh --mode upgrade --version "$tag" --base-url "$source_
 普通 Agent 同样先校验 `install-agent.sh` 和对应二进制（macOS 可用 `shasum -a 256 -c -`），再在 Agent 主机上从附件目录启动上述临时下载服务并执行：
 
 ```sh
-tag=v3.1.0-rc.2
+tag=v3.1.0-rc.3
 source_url=http://127.0.0.1:18765
 sudo sh ./install-agent.sh --mode upgrade --version "$tag" --base-url "$source_url"
 ```
