@@ -9,7 +9,7 @@ import yaml
 
 root = Path(__file__).resolve().parent.parent
 workflows = root / ".forgejo/workflows"
-expected = {"ci.yml", "coverage.yml", "release.yml", "pages.yml", "macos.yml"}
+expected = {"ci.yml", "coverage.yml", "release.yml", "pages.yml", "macos.yml", "sync-github.yml"}
 assert {p.name for p in workflows.glob("*.yml")} == expected
 assert not list((root / ".github/workflows").glob("*.yml")), "legacy workflows would run twice"
 

@@ -1,0 +1,44 @@
+name: Sync Main and Tags to GitHub
+'on':
+  push:
+    branches:
+    - main
+    tags:
+    - '**'
+  workflow_dispatch: null
+jobs:
+  sync-github:
+    name: Non-pruning GitHub Sync
+    runs-on: mainland
+    timeout-minutes: 15
+    container:
+      image: nodelite-ci:20261113-v2
+    steps:
+    - name: Fetch exact source archive
+      env:
+        FORGEJO_TOKEN: ${{ forgejo.token }}
+        SOURCE_SERVER: ${{ forgejo.server_url }}
+        SOURCE_REPOSITORY: ${{ forgejo.repository }}
+        SOURCE_COMMIT: ${{ forgejo.sha }}
+        ARCHIVE_PROXY: ${{ vars.SOURCE_ARCHIVE_PROXY }}
+      working-directory: .
+      run: |
+        set -euo pipefail
+        mkdir -p "$GITHUB_WORKSPACE"
+        printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | \
+          curl -q --fail --silent --show-error --proto '=https' --connect-timeout 30 --max-time 180 --retry 2 --retry-delay 3 --retry-connrefused \
+          --config - --proxy "$ARCHIVE_PROXY" --noproxy '' \
+          --output "$RUNNER_TEMP/source.tar.gz" \
+          "$SOURCE_SERVER/api/v1/repos/$SOURCE_REPOSITORY/archive/$SOURCE_COMMIT.tar.gz"
+        tar -xzf "$RUNNER_TEMP/source.tar.gz" --strip-components=1 -C "$GITHUB_WORKSPACE"
+    - name: Push ref without pruning remote branches or tags
+      env:
+        FORGEJO_TOKEN: ${{ forgejo.token }}
+        SOURCE_SERVER: ${{ forgejo.server_url }}
+        SOURCE_REPOSITORY: ${{ forgejo.repository }}
+        SOURCE_REF: ${{ forgejo.ref }}
+        SOURCE_COMMIT: ${{ forgejo.sha }}
+        ARCHIVE_PROXY: ${{ vars.SOURCE_ARCHIVE_PROXY }}
+        GH_SYNC_TOKEN: ${{ secrets.GH_SYNC_TOKEN }}
+        GH_RELEASE_TOKEN: ${{ secrets.GH_RELEASE_TOKEN }}
+      run: bash scripts/ci/sync-github-mirror.sh
